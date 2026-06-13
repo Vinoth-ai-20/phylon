@@ -23,7 +23,7 @@ pub enum SystemOrder {
 /// The main orchestrator for tick advancement.
 pub struct SimulationScheduler {
     pub current_tick: Tick,
-    tick_rate: u32,
+    pub tick_rate: u32,
     tick_duration: Duration,
     last_tick_end: Instant,
 }

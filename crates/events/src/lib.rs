@@ -68,9 +68,9 @@ impl EventBus {
     /// Register a new event type on the bus.
     pub fn register<E: 'static + Send + Sync + Clone>(&mut self) {
         let tid = TypeId::of::<E>();
-        if !self.senders.contains_key(&tid) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.senders.entry(tid) {
             let (tx, rx) = unbounded::<E>();
-            self.senders.insert(tid, Box::new(tx));
+            e.insert(Box::new(tx));
             self.receivers.insert(tid, Box::new(rx));
         }
     }
