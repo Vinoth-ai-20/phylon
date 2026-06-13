@@ -46,7 +46,7 @@ cargo run --release --bin phylon
 
 ## Current Status
 
-Phase 0 (Foundation) is active and complete. The 29-crate workspace, configuration loaders, deterministic scheduler, and cross-domain event bus are implemented and successfully compile. A minimal `winit` application loop with `wgpu` surface initialization is present. The core simulation logic, physics integration, and GUI debug renderer do not yet exist and are slated for Phase 1.
+Phase 3 (Biology & Ecology) is complete. The workspace features a fixed-tick scheduler, GPU-accelerated field diffusion, deterministic rigid-body physics, and a full biological life-cycle (metabolism, genetics, reproduction, CPU-based foraging). The `app` binary launches a real-time WGPU debug visualizer running at 60Hz. Phase 4 (Cognition & Behavior) is slated next.
 
 ## Documentation
 

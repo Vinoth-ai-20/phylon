@@ -4,27 +4,31 @@ This document defines the core implementation phases, milestones, and acceptance
 
 ## Phase 0: Foundation (v0.0.1)
 
-*Current Phase*
-
+- **Status**: Complete.
 - **Acceptance Criteria**: Workspace scaffolding, crate DAG established without cycles. Core configurations (`config`, `common`), fixed-tick execution (`scheduler`), and basic `app` loop open a stable window. Zero warnings.
 - **Key Crates**: `common`, `config`, `events`, `scheduler`, `app`.
 
 ## Phase 1: World Core & Debug Renderer (v0.1)
 
+- **Status**: Complete.
 - **Acceptance Criteria**: ECS `world` active. `physics` implemented with Symplectic Euler. `rendering` can draw a minimal colored dot representation of entities.
 - **Key Crates**: `world`, `spatial`, `physics`, `rendering`.
 
 ## Phase 2: Fields & Environment (v0.2)
 
+- **Status**: Complete.
 - **Acceptance Criteria**: `diffusion` fields active via WGSL compute shaders. `environment` biomes and chunk terrain loaded and visible.
 - **Key Crates**: `diffusion`, `environment`, `gpu`.
 
 ## Phase 3: Biology & Ecology (v0.3)
 
+- **Status**: Complete.
 - **Acceptance Criteria**: Organism life-cycle (`metabolism`, `reproduction`, `genetics`). Basic food chain logic (`ecology`). Death and birth occur.
 - **Key Crates**: `organisms`, `genetics`, `reproduction`, `metabolism`, `ecology`.
 
 ## Phase 4: Cognition & Behavior (v0.4)
+
+*Current Phase*
 
 - **Acceptance Criteria**: `sensing` raycasting working. `brain` forward passes operational via `burn`. Entities react to sensory input to make decisions (`behavior`).
 - **Key Crates**: `sensing`, `brain`, `behavior`, `evolution`.
