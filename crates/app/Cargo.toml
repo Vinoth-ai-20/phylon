@@ -1,0 +1,16 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { workspace = true }
+phylon_config = { workspace = true }
+scheduler = { workspace = true }
+winit = { workspace = true }
+wgpu = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+puffin = { workspace = true }
+anyhow = { workspace = true }
+pollster = { workspace = true }

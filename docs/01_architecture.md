@@ -1,0 +1,29 @@
+# Phylon Architecture
+
+Phylon is a research-grade Artificial Life Laboratory built entirely in Rust. It utilizes a three-layer boundary system to maintain a clean architecture, separating the core simulation from the application loop and output systems.
+
+## Three-Layer Boundary
+
+1. **Simulation Core (`world`, `physics`, `diffusion`, `organisms`, `ecology`, etc.)**
+   The core simulation is strictly deterministic, running on the CPU using `rayon` for parallelism and utilizing the GPU via `wgpu` strictly as a compute accelerator for massive data-parallel tasks (like diffusion and neural inference). The simulation layer has no knowledge of how it is rendered or stored.
+
+2. **Application Orchestration (`app`, `config`, `scheduler`, `events`)**
+   The application layer manages the execution of the simulation. It drives the main event loop, handles the deterministic fixed-timestep updates, loads configurations, and acts as the central hub for the event bus.
+
+3. **Output & I/O (`rendering`, `ui`, `storage`, `network`, `analytics`)**
+   The output layer acts on the state of the simulation. Rendering visualizes the state asynchronously or via interpolation. Storage persists snapshots. Network enables remote observation and control.
+
+## Data Flow: Tick to Rendered Frame
+
+1. **Tick Advancement**: The `scheduler` initiates a tick based on the fixed timestep.
+2. **CPU Simulation Phases**: Simulation systems (`physics`, `behavior`, `ecology`) run sequentially or via `rayon` parallel iterators on the `world` state. State changes and significant actions trigger events on the `events` bus.
+3. **GPU Compute Dispatch**: For fields (`diffusion`) and neural networks (`brain`), the CPU dispatches batched operations to the GPU.
+4. **GPU Readback**: After compute dispatches, necessary data (e.g., organism neural outputs or field gradients) is read back to the CPU with fixed precision policies to inform the next phase of CPU logic.
+5. **State Finalization**: The tick concludes, and the canonical CPU state is finalized.
+6. **Frame Presentation**: Between ticks or aligned with them, the `app` requests a redraw. `rendering` reads the latest canonical world state (and interpolated positions for smooth visuals), dispatches rendering pipelines, and `ui` draws the interface over it.
+
+## Interfaces & Crate Communications
+
+- **Traits & Types**: Domain models use newtype patterns and generic traits.
+- **Channels**: Communication between the compute-heavy simulation (`rayon`) and asynchronous I/O (`tokio`) occurs exclusively via lock-free channels (`crossbeam`).
+- **Events**: Cross-domain simulation actions (e.g., an organism dying, reproducing, or a field spiking) are published to the `events` bus, allowing decoupled systems like `analytics` or `ecology` to react without direct dependencies.

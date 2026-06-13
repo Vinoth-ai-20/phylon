@@ -1,0 +1,10 @@
+[package]
+name = "scheduler"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { workspace = true }
+events = { workspace = true }
+tracing = { workspace = true }
+puffin = { workspace = true }
