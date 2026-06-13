@@ -52,7 +52,8 @@ pub struct DebugRenderer {
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     camera_bind_group_layout: wgpu::BindGroupLayout,
-    instance_buffer: Option<wgpu::Buffer>,
+    instance_buffer: wgpu::Buffer,
+    instance_capacity: u32,
     instance_count: u32,
 }
 
@@ -163,6 +164,14 @@ impl DebugRenderer {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        let initial_capacity = 10_000;
+        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Instance Buffer"),
+            size: (initial_capacity * std::mem::size_of::<EntityInstance>()) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             pipeline,
             vertex_buffer,
@@ -170,7 +179,8 @@ impl DebugRenderer {
             camera_buffer,
             camera_bind_group,
             camera_bind_group_layout,
-            instance_buffer: None,
+            instance_buffer,
+            instance_capacity: initial_capacity as u32,
             instance_count: 0,
         }
     }
@@ -229,28 +239,28 @@ impl DebugRenderer {
         self.instance_count = instances.len() as u32;
 
         if self.instance_count > 0 {
-            use wgpu::util::DeviceExt;
-            self.instance_buffer = Some(device.create_buffer_init(
-                &wgpu::util::BufferInitDescriptor {
+            if self.instance_count > self.instance_capacity {
+                self.instance_capacity = self.instance_count.next_power_of_two();
+                self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("Instance Buffer"),
-                    contents: bytemuck::cast_slice(&instances),
-                    usage: wgpu::BufferUsages::VERTEX,
-                },
-            ));
+                    size: (self.instance_capacity as usize * std::mem::size_of::<EntityInstance>()) as wgpu::BufferAddress,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+            }
+            queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
         }
     }
 
     pub fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
         if self.instance_count > 0 {
-            if let Some(instance_buffer) = &self.instance_buffer {
-                render_pass.set_pipeline(&self.pipeline);
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..self.instance_count);
-            }
+            render_pass.set_pipeline(&self.pipeline);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+            render_pass
+                .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..self.instance_count);
         }
     }
 
@@ -322,6 +332,7 @@ pub struct FieldRenderer {
     index_buffer: wgpu::Buffer,
     params_buffer: wgpu::Buffer,
     bind_group_layout: wgpu::BindGroupLayout,
+    bind_groups_cache: Option<[wgpu::BindGroup; 2]>,
 }
 
 impl FieldRenderer {
@@ -437,48 +448,60 @@ impl FieldRenderer {
             index_buffer,
             params_buffer,
             bind_group_layout,
+            bind_groups_cache: None,
         }
     }
 
     pub fn prepare(
         &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         field: &diffusion::DiffusionField,
+        camera_buffer: &wgpu::Buffer,
     ) {
         let params = FieldParams { width: field.width, height: field.height };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
+
+        if self.bind_groups_cache.is_none() {
+            let create_bg = |buffer: &wgpu::Buffer| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Field Dynamic Bind Group"),
+                    layout: &self.bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: camera_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: self.params_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: buffer.as_entire_binding(),
+                        },
+                    ],
+                })
+            };
+            self.bind_groups_cache = Some([
+                create_bg(&field.buffer_a),
+                create_bg(&field.buffer_b),
+            ]);
+        }
     }
 
     pub fn render<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
-        device: &wgpu::Device,
-        camera_buffer: &'a wgpu::Buffer,
         field: &'a diffusion::DiffusionField,
     ) {
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Field Dynamic Bind Group"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.params_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: field.current_buffer().as_entire_binding(),
-                },
-            ],
-        });
-
-        render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &bind_group, &[]);
-        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        render_pass.draw_indexed(0..FIELD_INDICES.len() as u32, 0, 0..1);
+        let bg_idx = if field.flip { 1 } else { 0 };
+        if let Some(cache) = &self.bind_groups_cache {
+            render_pass.set_pipeline(&self.pipeline);
+            render_pass.set_bind_group(0, &cache[bg_idx], &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.draw_indexed(0..FIELD_INDICES.len() as u32, 0, 0..1);
+        }
     }
 }

@@ -101,8 +101,8 @@ impl PhylonApp {
         }
         
         if let Some(field_renderer) = &mut self.field_renderer {
-            if let Some(field) = &self.diffusion_field {
-                field_renderer.prepare(queue, field);
+            if let (Some(field), Some(renderer)) = (&self.diffusion_field, &self.renderer) {
+                field_renderer.prepare(device, queue, field, renderer.camera_buffer());
             }
         }
 
@@ -137,8 +137,8 @@ impl PhylonApp {
             });
 
             // Render Field Overlay first (in background)
-            if let (Some(field_renderer), Some(field), Some(renderer)) = (&self.field_renderer, &self.diffusion_field, &self.renderer) {
-                field_renderer.render(&mut render_pass, device, renderer.camera_buffer(), field);
+            if let (Some(field_renderer), Some(field)) = (&self.field_renderer, &self.diffusion_field) {
+                field_renderer.render(&mut render_pass, field);
             }
 
             // Render Entities on top
