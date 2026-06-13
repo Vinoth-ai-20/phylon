@@ -10,3 +10,10 @@ world = { workspace = true }
 physics = { workspace = true }
 tracing = { workspace = true }
 puffin = { workspace = true }
+organisms = { workspace = true }
+genetics = { workspace = true }
+reproduction = { workspace = true }
+metabolism = { workspace = true }
+ecology = { workspace = true }
+phylon_config = { workspace = true }
+hecs = { workspace = true }

@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 common = { workspace = true }
 crossbeam = { workspace = true }
+genetics = { workspace = true }

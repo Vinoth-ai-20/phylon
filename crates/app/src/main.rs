@@ -41,22 +41,29 @@ impl PhylonApp {
         let tick_rate = config.simulation.tick_rate;
         let mut world = PhylonWorld::new(config.simulation.world_chunk_size as f32);
 
-        // Spawn 10,000 dummy organisms to test physics and rendering
+        // Spawn 100 starter organisms
         let mut rng = rand::thread_rng();
-        let spawn_range = 800.0;
-        for _ in 0..10_000 {
+        let spawn_range = 400.0;
+        for _ in 0..100 {
+            let genome = genetics::Genome::default();
             world.spawn((
+                organisms::Organism,
+                organisms::Age(0),
+                organisms::Energy(100.0),
+                organisms::Health::default(),
+                genome.clone(),
+                reproduction::ReproductionCooldown(0),
                 Position(Vec2::new(
                     rng.gen_range(-spawn_range..spawn_range),
                     rng.gen_range(-spawn_range..spawn_range),
                 )),
                 Velocity(Vec2::new(
-                    rng.gen_range(-50.0..50.0),
-                    rng.gen_range(-50.0..50.0),
+                    rng.gen_range(-10.0..10.0),
+                    rng.gen_range(-10.0..10.0),
                 )),
                 Acceleration(Vec2::ZERO),
                 Mass(1.0),
-                Radius(2.0),
+                Radius(genome.size),
             ));
         }
 

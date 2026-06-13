@@ -3,18 +3,24 @@
 use hecs::World;
 use physics::Position;
 use spatial::UniformGrid;
+use events::EventBus;
 
 /// The canonical simulation world containing the ECS and global indices.
 pub struct PhylonWorld {
     pub ecs: World,
     pub spatial_index: UniformGrid,
+    pub event_bus: EventBus,
 }
 
 impl PhylonWorld {
     pub fn new(chunk_size: f32) -> Self {
+        let mut event_bus = EventBus::new();
+        event_bus.register::<events::PhylonEvent>();
+        
         Self {
             ecs: World::new(),
             spatial_index: UniformGrid::new(chunk_size),
+            event_bus,
         }
     }
 

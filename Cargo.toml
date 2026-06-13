@@ -16,6 +16,11 @@ rendering = { path = "crates/rendering" }
 gpu = { path = "crates/gpu" }
 diffusion = { path = "crates/diffusion" }
 environment = { path = "crates/environment" }
+organisms = { path = "crates/organisms" }
+genetics = { path = "crates/genetics" }
+reproduction = { path = "crates/reproduction" }
+metabolism = { path = "crates/metabolism" }
+ecology = { path = "crates/ecology" }
 wgpu = "22.1"
 winit = "0.30"
 egui = "0.28"

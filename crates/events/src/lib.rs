@@ -34,6 +34,16 @@ pub enum PhylonEvent {
         cause: DeathCause,
         tick: Tick,
     },
+    BirthEvent {
+        parent: Option<EntityId>,
+        genome: genetics::Genome,
+        initial_energy: f32,
+        position: common::Vec2,
+    },
+    DeathEvent {
+        id: EntityId,
+        reason: DeathCause,
+    },
     ReproductionEvent {
         parent: EntityId,
         child: EntityId,

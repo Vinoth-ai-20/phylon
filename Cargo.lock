@@ -97,13 +97,16 @@ dependencies = [
  "anyhow",
  "common",
  "diffusion",
+ "genetics",
  "gpu",
+ "organisms",
  "phylon_config",
  "physics",
  "pollster",
  "puffin",
  "rand",
  "rendering",
+ "reproduction",
  "scheduler",
  "tracing",
  "tracing-subscriber",
@@ -658,6 +661,17 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 [[package]]
 name = "ecology"
 version = "0.1.0"
+dependencies = [
+ "common",
+ "events",
+ "hecs",
+ "organisms",
+ "physics",
+ "puffin",
+ "rand",
+ "rand_chacha",
+ "spatial",
+]
 
 [[package]]
 name = "either"
@@ -706,6 +720,7 @@ version = "0.1.0"
 dependencies = [
  "common",
  "crossbeam",
+ "genetics",
 ]
 
 [[package]]
@@ -788,6 +803,13 @@ dependencies = [
 [[package]]
 name = "genetics"
 version = "0.1.0"
+dependencies = [
+ "common",
+ "rand",
+ "rand_chacha",
+ "rand_distr",
+ "serde",
+]
 
 [[package]]
 name = "gethostname"
@@ -1152,6 +1174,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "libm"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[package]]
 name = "libredox"
 version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1232,6 +1260,15 @@ dependencies = [
 [[package]]
 name = "metabolism"
 version = "0.1.0"
+dependencies = [
+ "common",
+ "events",
+ "genetics",
+ "hecs",
+ "organisms",
+ "physics",
+ "puffin",
+]
 
 [[package]]
 name = "metal"
@@ -1355,6 +1392,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+ "libm",
 ]
 
 [[package]]
@@ -1620,6 +1658,11 @@ dependencies = [
 [[package]]
 name = "organisms"
 version = "0.1.0"
+dependencies = [
+ "common",
+ "hecs",
+ "serde",
+]
 
 [[package]]
 name = "owned_ttf_parser"
@@ -1907,6 +1950,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand_distr"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
+dependencies = [
+ "num-traits",
+ "rand",
+]
+
+[[package]]
 name = "rand_xorshift"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1995,6 +2048,16 @@ dependencies = [
 [[package]]
 name = "reproduction"
 version = "0.1.0"
+dependencies = [
+ "common",
+ "events",
+ "genetics",
+ "hecs",
+ "organisms",
+ "physics",
+ "rand",
+ "rand_chacha",
+]
 
 [[package]]
 name = "research"
@@ -2083,9 +2146,16 @@ name = "scheduler"
 version = "0.1.0"
 dependencies = [
  "common",
+ "ecology",
  "events",
+ "genetics",
+ "hecs",
+ "metabolism",
+ "organisms",
+ "phylon_config",
  "physics",
  "puffin",
+ "reproduction",
  "tracing",
  "world",
 ]

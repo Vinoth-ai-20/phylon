@@ -4,4 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-
+common = { workspace = true }
+hecs = { workspace = true }
+organisms = { workspace = true }
+physics = { workspace = true }
+genetics = { workspace = true }
+events = { workspace = true }
+puffin = { workspace = true }
