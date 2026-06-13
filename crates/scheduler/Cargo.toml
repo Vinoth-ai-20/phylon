@@ -6,5 +6,7 @@ edition = "2021"
 [dependencies]
 common = { workspace = true }
 events = { workspace = true }
+world = { workspace = true }
+physics = { workspace = true }
 tracing = { workspace = true }
 puffin = { workspace = true }

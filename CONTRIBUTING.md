@@ -12,7 +12,7 @@ cargo build --release
 Execute the test suite utilizing `cargo-nextest` for concurrent test execution (or standard `cargo test`):
 
 ```bash
-cargo nextest run
+cargo test
 ```
 
 ## Branching Strategy

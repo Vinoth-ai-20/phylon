@@ -4,4 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-
+common = { workspace = true }
+spatial = { workspace = true }
+hecs = { workspace = true }
+glam = { workspace = true }
+puffin = { workspace = true }

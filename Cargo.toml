@@ -9,6 +9,10 @@ common = { path = "crates/common" }
 phylon_config = { path = "crates/config" }
 events = { path = "crates/events" }
 scheduler = { path = "crates/scheduler" }
+world = { path = "crates/world" }
+spatial = { path = "crates/spatial" }
+physics = { path = "crates/physics" }
+rendering = { path = "crates/rendering" }
 wgpu = "22.1"
 winit = "0.30"
 egui = "0.28"
@@ -24,6 +28,7 @@ config = "0.14"
 rand = "0.8"
 rand_chacha = "0.3"
 rayon = "1.10"
+rustc-hash = "1.1"
 crossbeam = "0.8"
 tokio = { version = "1.39", features = ["full"] }
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls"] }
@@ -42,6 +47,7 @@ cpal = "0.15"
 tokio-tungstenite = "0.23"
 quinn = "0.11"
 pollster = "0.3"
+bytemuck = { version = "1.18", features = ["derive"] }
 
 [profile.release]
 opt-level = 3

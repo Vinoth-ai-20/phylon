@@ -39,7 +39,7 @@ impl SimulationScheduler {
     }
 
     /// Advance the simulation by exactly one tick.
-    pub fn tick_loop(&mut self) {
+    pub fn tick_loop(&mut self, world: &mut world::PhylonWorld) {
         puffin::profile_function!();
 
         // Maintain fixed tick rate
@@ -54,21 +54,21 @@ impl SimulationScheduler {
         let tick_span = span!(Level::TRACE, "tick", tick = self.current_tick.0);
         let _enter = tick_span.enter();
 
-        self.run_phase(SystemOrder::PrePhysics);
-        self.run_phase(SystemOrder::Physics);
-        self.run_phase(SystemOrder::Diffusion);
-        self.run_phase(SystemOrder::Sensing);
-        self.run_phase(SystemOrder::Brain);
-        self.run_phase(SystemOrder::Behavior);
-        self.run_phase(SystemOrder::Metabolism);
-        self.run_phase(SystemOrder::Ecology);
-        self.run_phase(SystemOrder::Reproduction);
-        self.run_phase(SystemOrder::PostTick);
-        self.run_phase(SystemOrder::Analytics);
+        self.run_phase(SystemOrder::PrePhysics, world);
+        self.run_phase(SystemOrder::Physics, world);
+        self.run_phase(SystemOrder::Diffusion, world);
+        self.run_phase(SystemOrder::Sensing, world);
+        self.run_phase(SystemOrder::Brain, world);
+        self.run_phase(SystemOrder::Behavior, world);
+        self.run_phase(SystemOrder::Metabolism, world);
+        self.run_phase(SystemOrder::Ecology, world);
+        self.run_phase(SystemOrder::Reproduction, world);
+        self.run_phase(SystemOrder::PostTick, world);
+        self.run_phase(SystemOrder::Analytics, world);
     }
 
     /// Run a specific phase in the system order.
-    fn run_phase(&self, phase: SystemOrder) {
+    fn run_phase(&self, phase: SystemOrder, world: &mut world::PhylonWorld) {
         let phase_name = match phase {
             SystemOrder::PrePhysics => "PrePhysics",
             SystemOrder::Physics => "Physics",
@@ -85,7 +85,12 @@ impl SimulationScheduler {
         puffin::profile_scope!(phase_name);
         let _phase_span = span!(Level::TRACE, "phase", name = %phase_name).entered();
 
-        // TODO(phase-1): dispatch to actual crates based on phase
+        if phase == SystemOrder::Physics {
+            let dt = self.tick_duration.as_secs_f32();
+            physics::symplectic_euler_integration(&mut world.ecs, dt);
+            physics::world_bounds_collision(&mut world.ecs, common::Vec2::new(1000.0, 1000.0));
+            world.update_spatial_index();
+        }
     }
 }
 
@@ -96,8 +101,9 @@ mod tests {
     #[test]
     fn test_tick_advancement() {
         let mut scheduler = SimulationScheduler::new(60);
+        let mut world = world::PhylonWorld::default();
         assert_eq!(scheduler.current_tick, Tick(0));
-        scheduler.tick_loop();
+        scheduler.tick_loop(&mut world);
         assert_eq!(scheduler.current_tick, Tick(1));
     }
 }

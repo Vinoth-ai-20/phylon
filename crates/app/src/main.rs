@@ -1,7 +1,11 @@
 //! The main application binary for Phylon.
 
 use anyhow::Result;
+use common::Vec2;
 use phylon_config::PhylonConfig;
+use physics::{Acceleration, Mass, Position, Radius, Velocity};
+use rand::Rng;
+use rendering::DebugRenderer;
 use scheduler::SimulationScheduler;
 use std::path::Path;
 use tracing::{error, info};
@@ -12,10 +16,13 @@ use winit::{
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowId},
 };
+use world::PhylonWorld;
 
 struct PhylonApp {
     config: PhylonConfig,
     scheduler: SimulationScheduler,
+    world: PhylonWorld,
+    renderer: Option<DebugRenderer>,
     window: Option<std::sync::Arc<Window>>,
     surface: Option<wgpu::Surface<'static>>,
     device: Option<wgpu::Device>,
@@ -27,9 +34,32 @@ struct PhylonApp {
 impl PhylonApp {
     fn new(config: PhylonConfig) -> Self {
         let tick_rate = config.simulation.tick_rate;
+        let mut world = PhylonWorld::new(config.simulation.world_chunk_size as f32);
+
+        // Spawn 10,000 dummy organisms to test physics and rendering
+        let mut rng = rand::thread_rng();
+        let spawn_range = 800.0;
+        for _ in 0..10_000 {
+            world.spawn((
+                Position(Vec2::new(
+                    rng.gen_range(-spawn_range..spawn_range),
+                    rng.gen_range(-spawn_range..spawn_range),
+                )),
+                Velocity(Vec2::new(
+                    rng.gen_range(-50.0..50.0),
+                    rng.gen_range(-50.0..50.0),
+                )),
+                Acceleration(Vec2::ZERO),
+                Mass(1.0),
+                Radius(2.0),
+            ));
+        }
+
         Self {
             config,
             scheduler: SimulationScheduler::new(tick_rate),
+            world,
+            renderer: None,
             window: None,
             surface: None,
             device: None,
@@ -49,12 +79,18 @@ impl PhylonApp {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        if let Some(renderer) = &mut self.renderer {
+            if let Some(config) = &self.surface_config {
+                renderer.prepare(device, queue, &mut self.world, config);
+            }
+        }
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
 
         {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
@@ -62,8 +98,8 @@ impl PhylonApp {
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
+                            g: 0.1,
+                            b: 0.12,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -73,6 +109,10 @@ impl PhylonApp {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            if let Some(renderer) = &self.renderer {
+                renderer.render(&mut render_pass);
+            }
         }
 
         queue.submit(std::iter::once(encoder.finish()));
@@ -126,6 +166,9 @@ impl ApplicationHandler for PhylonApp {
 
             surface.configure(&device, &surface_config);
 
+            let renderer = DebugRenderer::new(&device, &surface_config);
+            self.renderer = Some(renderer);
+
             self.surface = Some(surface);
             self.device = Some(device);
             self.queue = Some(queue);
@@ -158,7 +201,7 @@ impl ApplicationHandler for PhylonApp {
                 }
                 WindowEvent::RedrawRequested => {
                     // Tick simulation
-                    self.scheduler.tick_loop();
+                    self.scheduler.tick_loop(&mut self.world);
 
                     // Render
                     if self.surface.is_some() {
