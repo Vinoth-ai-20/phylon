@@ -4,4 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-
+common = { workspace = true }
+gpu = { workspace = true }
+wgpu = { workspace = true }
+bytemuck = { workspace = true }
+puffin = { workspace = true }

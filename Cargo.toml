@@ -13,6 +13,9 @@ world = { path = "crates/world" }
 spatial = { path = "crates/spatial" }
 physics = { path = "crates/physics" }
 rendering = { path = "crates/rendering" }
+gpu = { path = "crates/gpu" }
+diffusion = { path = "crates/diffusion" }
+environment = { path = "crates/environment" }
 wgpu = "22.1"
 winit = "0.30"
 egui = "0.28"
@@ -48,6 +51,7 @@ tokio-tungstenite = "0.23"
 quinn = "0.11"
 pollster = "0.3"
 bytemuck = { version = "1.18", features = ["derive"] }
+noise = "0.9"
 
 [profile.release]
 opt-level = 3

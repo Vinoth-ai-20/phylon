@@ -1,2 +1,1 @@
-// gpu crate
-pub fn init() {}
+pub mod compute;

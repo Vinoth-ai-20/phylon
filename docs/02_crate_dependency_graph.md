@@ -1,8 +1,9 @@
 # Crate Dependency Graph
 
-Phylon is structured into highly modular crates with strict dependency rules to prevent cycles and enforce architectural boundaries. 
+Phylon is structured into highly modular crates with strict dependency rules to prevent cycles and enforce architectural boundaries.
 
 ## Dependency Rules
+
 - `common` has zero internal dependencies.
 - Circular dependencies are strictly forbidden.
 - Simulation crates never depend on output/I/O crates (`rendering`, `ui`, `storage`).
@@ -57,4 +58,5 @@ app
     ├── spatial ──> common
     └── common
 ```
+
 *Note: Edges flow downwards to dependencies. Cycles are impossible.*

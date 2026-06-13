@@ -7,7 +7,7 @@
         max_active_chunks: 512,
         target_organism_count: 100000,
         diffusion_step_size: 0.1,
-        physics_integrator: SymplecticEuler,
+        physics_integrator: "SymplecticEuler",
     ),
     render: (
         vsync: true,

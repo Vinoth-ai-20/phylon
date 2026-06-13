@@ -3,6 +3,7 @@
 Phylon operates on an abstract set of dimensionless simulation units. Real-world physical mapping is defined per-experiment, but internally, the engine remains mathematically abstract to avoid precision artifacts at extreme scales.
 
 ## Simulation Units
+
 - `SimLength (su)`: Base spatial unit.
 - `SimMass (smu)`: Base mass unit.
 - `SimTime (st)`: Base time unit (one tick).
@@ -18,6 +19,7 @@ Phylon operates on an abstract set of dimensionless simulation units. Real-world
 Field diffusion is governed by a standard 2D diffusion equation:
 ∂u/∂t = D ∇²u - λu + S
 Where:
+
 - D = Diffusion coefficient
 - ∇²u = Discrete Laplacian
 - λ = Decay constant
@@ -25,7 +27,8 @@ Where:
 
 *Numerical Method*: Explicit Euler using a 5-point discrete Laplacian stencil. GPU compute shaders parallelize the calculation across the grid. The `diffusion_step_size` configures the integration step limit to ensure the Courant-Friedrichs-Lewy (CFL) condition is not violated, preventing unstable oscillating gradients.
 
-## Boundary Handling: Ghost Cells
+## Boundary Handling: Neumann Boundaries
 
-The world is infinite, but computation is bounded by active chunks.
-When diffusion occurs at a chunk edge, the compute shader reads from a 1-cell wide padding border called a "ghost cell". Ghost cells mirror the state of adjacent chunks or resolve to 0 (or a configurable ambient boundary condition) if the adjacent chunk is not loaded. Before the diffusion shader runs, the CPU copies overlap data between adjacent loaded chunks into their respective GPU ghost cell buffers to ensure smooth continuous gradients across arbitrary chunk seams.
+The world handles field diffusion at boundaries using **Neumann (reflecting) boundary conditions**. The field gradients at the edges of the active simulation area are assumed to be zero, preventing mass/energy loss across the boundary and ensuring conservation within the active zone.
+
+When chunks are loaded dynamically, boundary ghost cells apply these Neumann conditions if the adjacent chunk is not loaded. If adjacent chunks are loaded, they seamlessly exchange gradients.

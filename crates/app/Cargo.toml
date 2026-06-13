@@ -18,3 +18,5 @@ tracing-subscriber = { workspace = true }
 puffin = { workspace = true }
 anyhow = { workspace = true }
 pollster = { workspace = true }
+gpu = { workspace = true }
+diffusion = { workspace = true }

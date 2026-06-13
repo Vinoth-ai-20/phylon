@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 common = { workspace = true }
+diffusion = { workspace = true }
 world = { workspace = true }
 physics = { workspace = true }
 wgpu = { workspace = true }
