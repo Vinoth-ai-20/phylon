@@ -2,7 +2,7 @@
 
 Phylon is a research-grade, high-performance artificial life laboratory built in Rust.
 
-[![CI](https://github.com/Vinoth-ai-20/phylon/actions/workflows/ci.yml)](https://github.com/Vinoth-ai-20/phylon/actions/workflows/ci.yml)
+![CI](https://github.com/Vinoth-ai-20/phylon/actions/workflows/ci.yml/badge.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Rust 1.80+](https://img.shields.io/badge/rust-1.80+-lightgray.svg)](https://www.rust-lang.org)
 

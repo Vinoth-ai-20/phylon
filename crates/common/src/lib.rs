@@ -2,8 +2,8 @@
 //!
 //! Phase 0 implementation of base identifiers, physics units, math, and errors.
 
+pub use glam::{IVec2, Vec2, Vec2Swizzles};
 use std::error::Error;
-pub use glam::{Vec2, Vec2Swizzles, IVec2};
 
 /// Globally unique entity ID — must be unique across processes for future distributed sim
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -14,7 +14,9 @@ pub struct EntityId(pub u64);
 pub struct ChunkId(pub i32, pub i32);
 
 /// Monotonically increasing tick counter
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct Tick(pub u64);
 
 // Simulation Units
@@ -46,7 +48,7 @@ pub type PhylonResult<T> = std::result::Result<T, Box<dyn PhylonError>>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_tick_ordering() {
         assert!(Tick(1) < Tick(2));

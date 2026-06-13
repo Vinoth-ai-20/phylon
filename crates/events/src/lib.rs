@@ -25,11 +25,30 @@ pub enum DeathCause {
 /// The core events of the simulation.
 #[derive(Debug, Clone)]
 pub enum PhylonEvent {
-    OrganismBorn { id: EntityId, tick: Tick },
-    OrganismDied { id: EntityId, cause: DeathCause, tick: Tick },
-    ReproductionEvent { parent: EntityId, child: EntityId, tick: Tick },
-    FieldSpike { chunk: ChunkId, field: FieldType, value: f32, tick: Tick },
-    ExperimentCheckpoint { tick: Tick, label: String },
+    OrganismBorn {
+        id: EntityId,
+        tick: Tick,
+    },
+    OrganismDied {
+        id: EntityId,
+        cause: DeathCause,
+        tick: Tick,
+    },
+    ReproductionEvent {
+        parent: EntityId,
+        child: EntityId,
+        tick: Tick,
+    },
+    FieldSpike {
+        chunk: ChunkId,
+        field: FieldType,
+        value: f32,
+        tick: Tick,
+    },
+    ExperimentCheckpoint {
+        tick: Tick,
+        label: String,
+    },
 }
 
 /// A type-erased event bus that allows publishing and draining strongly-typed events.
@@ -92,10 +111,10 @@ mod tests {
     fn test_event_bus() {
         let mut bus = EventBus::new();
         bus.register::<PhylonEvent>();
-        
-        bus.publish(PhylonEvent::ExperimentCheckpoint { 
-            tick: Tick(1), 
-            label: "Start".to_string() 
+
+        bus.publish(PhylonEvent::ExperimentCheckpoint {
+            tick: Tick(1),
+            label: "Start".to_string(),
         });
 
         let events: Vec<PhylonEvent> = bus.drain();

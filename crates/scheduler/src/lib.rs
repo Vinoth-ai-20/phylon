@@ -84,7 +84,7 @@ impl SimulationScheduler {
         };
         puffin::profile_scope!(phase_name);
         let _phase_span = span!(Level::TRACE, "phase", name = %phase_name).entered();
-        
+
         // TODO(phase-1): dispatch to actual crates based on phase
     }
 }

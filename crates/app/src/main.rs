@@ -4,7 +4,7 @@ use anyhow::Result;
 use phylon_config::PhylonConfig;
 use scheduler::SimulationScheduler;
 use std::path::Path;
-use tracing::{info, error};
+use tracing::{error, info};
 use tracing_subscriber::{fmt, EnvFilter};
 use winit::{
     application::ApplicationHandler,
@@ -45,7 +45,9 @@ impl PhylonApp {
         let queue = self.queue.as_ref().unwrap();
 
         let output = surface.get_current_texture()?;
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
@@ -85,18 +87,20 @@ impl ApplicationHandler for PhylonApp {
         if self.window.is_none() {
             let window_attributes = Window::default_attributes()
                 .with_title("Phylon - Research-Grade Artificial Life Laboratory");
-            
+
             let window = std::sync::Arc::new(event_loop.create_window(window_attributes).unwrap());
             self.window = Some(window.clone());
 
             let surface = self.instance.create_surface(window.clone()).unwrap();
-            
+
             // Sync initialization for setup
-            let adapter = pollster::block_on(self.instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })).expect("Failed to find wgpu adapter");
+            let adapter =
+                pollster::block_on(self.instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: Some(&surface),
+                    force_fallback_adapter: false,
+                }))
+                .expect("Failed to find wgpu adapter");
 
             let (device, queue) = pollster::block_on(adapter.request_device(
                 &wgpu::DeviceDescriptor {
@@ -106,11 +110,14 @@ impl ApplicationHandler for PhylonApp {
                     memory_hints: wgpu::MemoryHints::Performance,
                 },
                 None,
-            )).expect("Failed to create device");
+            ))
+            .expect("Failed to create device");
 
             let size = window.inner_size();
-            let mut surface_config = surface.get_default_config(&adapter, size.width, size.height).unwrap();
-            
+            let mut surface_config = surface
+                .get_default_config(&adapter, size.width, size.height)
+                .unwrap();
+
             if self.config.render.vsync {
                 surface_config.present_mode = wgpu::PresentMode::AutoVsync;
             } else {
@@ -134,47 +141,49 @@ impl ApplicationHandler for PhylonApp {
         };
 
         if window.id() == id {
-                match event {
-                    WindowEvent::CloseRequested => {
-                        event_loop.exit();
-                    }
-                    WindowEvent::Resized(physical_size) => {
-                        if physical_size.width > 0 && physical_size.height > 0 {
-                            if let (Some(surface), Some(device), Some(config)) = 
-                                (&self.surface, &self.device, &mut self.surface_config) {
-                                config.width = physical_size.width;
-                                config.height = physical_size.height;
-                                surface.configure(device, config);
-                            }
-                        }
-                    }
-                    WindowEvent::RedrawRequested => {
-                        // Tick simulation
-                        self.scheduler.tick_loop();
-
-                        // Render
-                        if self.surface.is_some() {
-                            match self.render() {
-                                Ok(_) => {}
-                                Err(wgpu::SurfaceError::Lost) => {
-                                    if let (Some(surface), Some(device), Some(config)) = 
-                                        (&self.surface, &self.device, &self.surface_config) {
-                                        surface.configure(device, config);
-                                    }
-                                }
-                                Err(wgpu::SurfaceError::OutOfMemory) => {
-                                    error!("Out of memory");
-                                    event_loop.exit();
-                                }
-                                Err(e) => error!("Surface error: {:?}", e),
-                            }
-                        }
-                        
-                        // Request next frame continuously
-                        window.request_redraw();
-                    }
-                    _ => (),
+            match event {
+                WindowEvent::CloseRequested => {
+                    event_loop.exit();
                 }
+                WindowEvent::Resized(physical_size) => {
+                    if physical_size.width > 0 && physical_size.height > 0 {
+                        if let (Some(surface), Some(device), Some(config)) =
+                            (&self.surface, &self.device, &mut self.surface_config)
+                        {
+                            config.width = physical_size.width;
+                            config.height = physical_size.height;
+                            surface.configure(device, config);
+                        }
+                    }
+                }
+                WindowEvent::RedrawRequested => {
+                    // Tick simulation
+                    self.scheduler.tick_loop();
+
+                    // Render
+                    if self.surface.is_some() {
+                        match self.render() {
+                            Ok(_) => {}
+                            Err(wgpu::SurfaceError::Lost) => {
+                                if let (Some(surface), Some(device), Some(config)) =
+                                    (&self.surface, &self.device, &self.surface_config)
+                                {
+                                    surface.configure(device, config);
+                                }
+                            }
+                            Err(wgpu::SurfaceError::OutOfMemory) => {
+                                error!("Out of memory");
+                                event_loop.exit();
+                            }
+                            Err(e) => error!("Surface error: {:?}", e),
+                        }
+                    }
+
+                    // Request next frame continuously
+                    window.request_redraw();
+                }
+                _ => (),
+            }
         }
     }
 }

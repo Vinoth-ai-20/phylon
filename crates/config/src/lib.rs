@@ -91,8 +91,8 @@ pub struct PhylonConfig {
 impl PhylonConfig {
     /// Load configuration from a file or fallback to defaults.
     pub fn load(path: Option<&Path>) -> Result<Self, ConfigError> {
-        let mut builder = config::Config::builder()
-            .add_source(config::Config::try_from(&Self::default())?);
+        let mut builder =
+            config::Config::builder().add_source(config::Config::try_from(&Self::default())?);
 
         if let Some(p) = path {
             builder = builder.add_source(config::File::from(p).required(false));
