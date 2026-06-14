@@ -1,7 +1,7 @@
 use common::{IVec2, Vec2};
 use genetics::Genome;
-use hecs::{Entity, World};
-use organisms::{Energy, FoodPellet, Organism};
+use hecs::World;
+use organisms::{Energy, FoodPellet};
 use physics::{Heading, Position, Velocity};
 use spatial::UniformGrid;
 
