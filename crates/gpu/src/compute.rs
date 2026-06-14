@@ -1,5 +1,3 @@
-
-
 pub struct DiffusionPipeline {
     pub pipeline: wgpu::ComputePipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
