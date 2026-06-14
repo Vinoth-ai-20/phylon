@@ -26,9 +26,10 @@ brain = { path = "crates/brain" }
 behavior = { path = "crates/behavior" }
 wgpu = "22.1"
 winit = "0.30"
-egui = "0.28"
-egui-wgpu = "0.28"
-egui_plot = "0.28"
+egui = "0.29.1"
+egui-wgpu = "0.29.1"
+egui-winit = "0.29.1"
+egui_plot = "0.29.0"
 plotters = "0.3"
 hecs = { version = "0.10", features = ["macros"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -49,7 +50,7 @@ ndarray = "0.15"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 puffin = "0.19"
-puffin_egui = "0.28"
+
 criterion = "0.5"
 thiserror = "1.0"
 anyhow = "1.0"

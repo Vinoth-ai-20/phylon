@@ -18,7 +18,7 @@ The Phylon simulation progresses through a fixed-step deterministic tick executi
 
 ## Event Dispatch
 
-Events are not polled; they are published eagerly into the `events` bus via `crossbeam` channels during phase execution (e.g., `DeathEvent` published in Metabolism). At designated synchronization points or in isolated phases (Analytics), the queues are drained and processed.
+Events are not polled; they are published eagerly into the `events` bus via `crossbeam` channels during phase execution (e.g., `DeathEvent` published in Metabolism). At the end of the tick (in the `PostTick` phase), the queue is drained by the `scheduler` to manage entity lifecycles. These events are then persisted in the `world`'s `last_events` buffer so that decoupled systems (like `analytics` or UI components) can observe and process the tick's events non-destructively.
 
 ## GPU Boundaries
 

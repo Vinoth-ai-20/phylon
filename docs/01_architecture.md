@@ -11,7 +11,7 @@ Phylon is a research-grade Artificial Life Laboratory built entirely in Rust. It
    The application layer manages the execution of the simulation. It drives the main event loop, handles the deterministic fixed-timestep updates, loads configurations, and acts as the central hub for the event bus.
 
 3. **Output & I/O (`rendering`, `ui`, `storage`, `network`, `analytics`)**
-   The output layer acts on the state of the simulation. Rendering visualizes the state asynchronously or via interpolation. Storage persists snapshots. Network enables remote observation and control.
+   The output layer acts on the state of the simulation. Rendering visualizes the state asynchronously or via interpolation. The UI provides real-time telemetry overlays and debugging tools. Storage persists snapshots. Network enables remote observation and control. Analytics and telemetry (via `puffin`) process and record simulation performance and demographic data.
 
 ## Data Flow: Tick to Rendered Frame
 
@@ -26,4 +26,4 @@ Phylon is a research-grade Artificial Life Laboratory built entirely in Rust. It
 
 - **Traits & Types**: Domain models use newtype patterns and generic traits.
 - **Channels**: Communication between the compute-heavy simulation (`rayon`) and asynchronous I/O (`tokio`) occurs exclusively via lock-free channels (`crossbeam`).
-- **Events**: Cross-domain simulation actions (e.g., an organism dying, reproducing, or a field spiking) are published to the `events` bus, allowing decoupled systems like `analytics` or `ecology` to react without direct dependencies.
+- **Events**: Cross-domain simulation actions (e.g., an organism dying, reproducing, or a field spiking) are published to the `events` bus. The `scheduler` consumes these during the `PostTick` phase to mutate the ECS, and persists them in the `world` state so decoupled systems like `analytics` or UI layers can react without destructive reads.

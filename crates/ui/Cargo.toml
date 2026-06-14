@@ -4,4 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+egui-winit = { workspace = true }
+egui_plot = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }
+analytics = { path = "../analytics" }
+puffin = { workspace = true }
+world = { workspace = true }
+common = { workspace = true }

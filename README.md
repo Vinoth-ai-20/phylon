@@ -46,7 +46,7 @@ cargo run --release --bin phylon
 
 ## Current Status
 
-Phase 4 (Cognition & Behavior) is complete. The workspace features neural network inference reading multi-channel diffusion fields, complete predator-prey dynamics with varied diets, and strict mass-based metabolic constraints. The `app` binary launches a real-time WGPU debug visualizer running at 60Hz. Phase 5 (UI & Analytics) is slated next.
+Phase 5 (UI & Analytics) is complete. The workspace features real-time telemetry overlays, demographic tracking (including population counts and detailed death statistics by cause) via an `egui` interface, and performance instrumentation using `puffin`. The `app` binary launches a real-time WGPU debug visualizer running at 60Hz overlaid with population analytics. Phase 6 (Persistence & Research Tools) is slated next.
 
 ## Documentation
 

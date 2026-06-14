@@ -29,3 +29,6 @@ data/snapshots/
 #prompt docs
 PHYLON_PROMPT_*.md
 PHYLON_ANTIGRAVITY_KICKOFF.md
+
+#snapshot docs
+snapshot_*.ron

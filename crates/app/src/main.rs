@@ -12,6 +12,7 @@ use scheduler::SimulationScheduler;
 use std::path::Path;
 use tracing::{error, info};
 use tracing_subscriber::{fmt, EnvFilter};
+use ui::EguiContext;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -34,6 +35,8 @@ struct PhylonApp {
     queue: Option<wgpu::Queue>,
     surface_config: Option<wgpu::SurfaceConfiguration>,
     instance: wgpu::Instance,
+    ui: Option<EguiContext>,
+    stats: analytics::SimulationStats,
 }
 
 impl PhylonApp {
@@ -89,6 +92,8 @@ impl PhylonApp {
             queue: None,
             surface_config: None,
             instance: wgpu::Instance::default(),
+            ui: None,
+            stats: analytics::SimulationStats::new(1000),
         }
     }
 
@@ -166,6 +171,21 @@ impl PhylonApp {
             }
         }
 
+        // Render UI
+        if let Some(ui) = &mut self.ui {
+            if let Some(window) = &self.window {
+                ui.render(
+                    device,
+                    queue,
+                    &mut encoder,
+                    &view,
+                    window,
+                    &self.stats,
+                    self.scheduler.current_tick,
+                );
+            }
+        }
+
         queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
@@ -239,6 +259,9 @@ impl ApplicationHandler for PhylonApp {
             self.diffusion_pipeline = Some(diffusion_pipeline);
             self.diffusion_field = Some(diffusion_field);
 
+            let ui = EguiContext::new(&device, surface_config.format, &window);
+            self.ui = Some(ui);
+
             self.surface = Some(surface);
             self.device = Some(device);
             self.queue = Some(queue);
@@ -254,9 +277,22 @@ impl ApplicationHandler for PhylonApp {
         };
 
         if window.id() == id {
+            // Check UI first
+            let mut consumed = false;
+            if let Some(ui) = &mut self.ui {
+                consumed = ui.handle_event(&window, &event);
+            }
+
             match event {
                 WindowEvent::CloseRequested => {
                     event_loop.exit();
+                }
+                WindowEvent::MouseWheel { .. }
+                | WindowEvent::MouseInput { .. }
+                | WindowEvent::CursorMoved { .. } => {
+                    if !consumed {
+                        // TODO: Handle mouse events for simulation
+                    }
                 }
                 WindowEvent::Resized(physical_size) => {
                     if physical_size.width > 0 && physical_size.height > 0 {
@@ -306,6 +342,12 @@ impl ApplicationHandler for PhylonApp {
                             Err(e) => error!("Surface error: {:?}", e),
                         }
                     }
+
+                    // Process analytics
+                    self.stats
+                        .process_events(&self.world.last_events, self.scheduler.current_tick);
+                    self.stats
+                        .update_metrics(&self.world, self.scheduler.current_tick);
 
                     // Request next frame continuously
                     window.request_redraw();

@@ -7,6 +7,10 @@ edition = "2021"
 common = { workspace = true }
 phylon_config = { workspace = true }
 scheduler = { workspace = true }
+brain = { workspace = true }
+behavior = { workspace = true }
+ui = { path = "../ui" }
+analytics = { path = "../analytics" }
 world = { workspace = true }
 physics = { workspace = true }
 rendering = { workspace = true }
@@ -24,5 +28,5 @@ genetics = { workspace = true }
 reproduction = { workspace = true }
 gpu = { workspace = true }
 sensing = { path = "../sensing" }
-brain = { path = "../brain" }
-behavior = { path = "../behavior" }
+
+

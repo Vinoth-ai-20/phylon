@@ -26,7 +26,7 @@ impl Observation {
 
 /// Gathers spatial information and populates the Observation component for all organisms.
 pub fn process_sensing(world: &mut World, grid: &UniformGrid, field: &dyn FieldSampler) {
-    puffin::profile_function!();
+    puffin::profile_scope!("sensing::process_sensing");
 
     // Collect food positions beforehand to satisfy borrow checker
     let mut food_positions = rustc_hash::FxHashMap::default();

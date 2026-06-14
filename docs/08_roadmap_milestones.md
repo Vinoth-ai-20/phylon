@@ -35,14 +35,15 @@ This document defines the core implementation phases, milestones, and acceptance
 
 ## Phase 5: UI & Analytics (v0.5)
 
-*Current Phase*
-
+- **Status**: Complete.
 - **Acceptance Criteria**: `egui` fully integrated for inspecting entities, analyzing populations, and profiling performance.
 - **Key Crates**: `ui`, `analytics`.
 
 ## Phase 6: Persistence & Research Tools (v0.6)
 
-- **Acceptance Criteria**: Complete serialize/deserialize via `bincode`. SQLite DB tracks runs. Replay system functional. God-mode interventions available.
+*Current Phase*
+
+- **Acceptance Criteria**: Complete serialize/deserialize via `bincode` (or `ron`). SQLite DB tracks runs. Replay system functional. God-mode interventions available.
 - **Key Crates**: `storage`, `research`, `plugins`.
 
 ## Phase 7: Network & Multiplayer (v1.0)

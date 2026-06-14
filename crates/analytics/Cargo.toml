@@ -4,4 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-
+events = { workspace = true }
+world = { workspace = true }
+common = { workspace = true }
+genetics = { workspace = true }
+puffin = { workspace = true }

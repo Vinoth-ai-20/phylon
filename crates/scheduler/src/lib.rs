@@ -132,16 +132,16 @@ impl SimulationScheduler {
             let mut deaths = Vec::new();
             let mut births = Vec::new();
 
-            for e in events {
+            for e in &events {
                 match e {
-                    events::PhylonEvent::DeathEvent { id, .. } => deaths.push(id),
+                    events::PhylonEvent::DeathEvent { id, .. } => deaths.push(*id),
                     events::PhylonEvent::BirthEvent {
                         parent: _,
                         genome,
                         initial_energy,
                         position,
                     } => {
-                        births.push((genome, initial_energy, position));
+                        births.push((genome.clone(), *initial_energy, *position));
                     }
                     _ => {}
                 }
@@ -172,6 +172,8 @@ impl SimulationScheduler {
                     brain::Intention::new(),
                 ));
             }
+
+            world.last_events = events;
         }
     }
 }
