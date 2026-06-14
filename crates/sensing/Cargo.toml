@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 common = { workspace = true }
-world = { workspace = true }
 spatial = { workspace = true }
 organisms = { workspace = true }
 physics = { workspace = true }
@@ -13,3 +12,4 @@ genetics = { workspace = true }
 hecs = { workspace = true }
 puffin = { workspace = true }
 rustc-hash = { workspace = true }
+serde = { workspace = true }

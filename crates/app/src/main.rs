@@ -259,6 +259,19 @@ impl ApplicationHandler for PhylonApp {
                     // Tick simulation
                     self.scheduler.tick_loop(&mut self.world);
 
+                    // Save snapshot
+                    if self.scheduler.current_tick.0 > 0
+                        && self.scheduler.current_tick.0
+                            % self.config.research.snapshot_interval_ticks
+                            == 0
+                    {
+                        let path = format!("snapshot_{}.ron", self.scheduler.current_tick.0);
+                        match world::snapshot::save_world(&self.world, &path) {
+                            Ok(_) => info!("Saved snapshot to {}", path),
+                            Err(e) => error!("Failed to save snapshot: {}", e),
+                        }
+                    }
+
                     // Render
                     if self.surface.is_some() {
                         match self.render() {

@@ -5,5 +5,5 @@ edition = "2021"
 
 [dependencies]
 glam = { workspace = true }
-thiserror = { workspace = true }
 serde = { workspace = true }
+thiserror = { workspace = true }

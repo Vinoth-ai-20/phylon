@@ -12,3 +12,4 @@ events = { workspace = true }
 physics = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+serde = { workspace = true }

@@ -8,6 +8,7 @@ common = { workspace = true }
 hecs = { workspace = true }
 organisms = { workspace = true }
 physics = { workspace = true }
+serde = { workspace = true }
 spatial = { workspace = true }
 events = { workspace = true }
 rand = { workspace = true }

@@ -6,6 +6,13 @@ edition = "2021"
 [dependencies]
 common = { workspace = true }
 events = { workspace = true }
+ron = "0.8"
+serde = { workspace = true }
+anyhow = { workspace = true }
+organisms = { workspace = true }
+genetics = { workspace = true }
+sensing = { workspace = true }
+brain = { workspace = true }
 spatial = { workspace = true }
 physics = { workspace = true }
 hecs = { workspace = true }

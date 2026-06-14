@@ -2,6 +2,7 @@ use genetics::Genome;
 use hecs::World;
 use ndarray::{ArrayView1, ArrayView2};
 use sensing::Observation;
+use serde::{Deserialize, Serialize};
 
 pub const INPUT_SIZE: usize = 4;
 pub const HIDDEN_SIZE: usize = 8;
@@ -11,7 +12,7 @@ pub const BRAIN_WEIGHTS_COUNT: usize =
 
 /// Component storing the desired outputs from the brain.
 /// Format: [turn_amount (radians), forward_thrust]
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Intention {
     pub data: [f32; 2],
 }

@@ -5,10 +5,10 @@ edition = "2021"
 
 [dependencies]
 common = { workspace = true }
-world = { workspace = true }
-brain = { path = "../brain" }
+brain = { workspace = true }
 physics = { workspace = true }
 organisms = { workspace = true }
 genetics = { workspace = true }
 hecs = { workspace = true }
 puffin = { workspace = true }
+serde = { workspace = true }

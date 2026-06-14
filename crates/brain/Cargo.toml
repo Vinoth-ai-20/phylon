@@ -5,9 +5,9 @@ edition = "2021"
 
 [dependencies]
 common = { workspace = true }
-world = { workspace = true }
-sensing = { path = "../sensing" }
+sensing = { workspace = true }
 genetics = { workspace = true }
 hecs = { workspace = true }
 ndarray = { workspace = true }
 puffin = { workspace = true }
+serde = { workspace = true }

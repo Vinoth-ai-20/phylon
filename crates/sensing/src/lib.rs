@@ -3,11 +3,12 @@ use genetics::Genome;
 use hecs::World;
 use organisms::{Energy, FoodPellet};
 use physics::{Heading, Position, Velocity};
+use serde::{Deserialize, Serialize};
 use spatial::UniformGrid;
 
 /// Component storing the current sensory observation of an organism.
 /// Data format: [food_distance, food_angle, current_speed, energy_level]
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Observation {
     pub data: [f32; 4],
 }

@@ -10,3 +10,4 @@ hecs = { workspace = true }
 glam = { workspace = true }
 puffin = { workspace = true }
 rustc-hash = { workspace = true }
+serde = { workspace = true }
