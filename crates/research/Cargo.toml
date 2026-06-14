@@ -4,4 +4,24 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+scheduler = { workspace = true }
+analytics = { path = "../analytics" }
+storage = { path = "../storage" }
+phylon_config = { workspace = true }
+world = { workspace = true }
+common = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+physics = { workspace = true }
+genetics = { workspace = true }
+organisms = { workspace = true }
+reproduction = { workspace = true }
+brain = { workspace = true }
+sensing = { workspace = true }
+rand = { workspace = true }
 
+[[bin]]
+name = "phylon-research"
+path = "src/main.rs"

@@ -28,5 +28,5 @@ genetics = { workspace = true }
 reproduction = { workspace = true }
 gpu = { workspace = true }
 sensing = { path = "../sensing" }
-
-
+storage = { path = "../storage" }
+plugins = { path = "../plugins" }

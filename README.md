@@ -46,7 +46,7 @@ cargo run --release --bin phylon
 
 ## Current Status
 
-Phase 5 (UI & Analytics) is complete. The workspace features real-time telemetry overlays, demographic tracking (including population counts and detailed death statistics by cause) via an `egui` interface, and performance instrumentation using `puffin`. The `app` binary launches a real-time WGPU debug visualizer running at 60Hz overlaid with population analytics. Phase 6 (Persistence & Research Tools) is slated next.
+Phase 6 (Persistence & Research Tools) is complete. The workspace features SQLite database integration via `storage` to persist massive simulation telemetry asynchronously, a headless command-line orchestrator (`phylon-research`), and a live-reloading God-Mode API embedded with `rhai` via the `plugins` crate. Phase 7 (Network & Multiplayer) is slated next.
 
 ## Documentation
 

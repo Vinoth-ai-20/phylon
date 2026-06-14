@@ -4,4 +4,18 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-
+world = { workspace = true }
+common = { workspace = true }
+physics = { workspace = true }
+genetics = { workspace = true }
+organisms = { workspace = true }
+sensing = { workspace = true }
+brain = { workspace = true }
+hecs = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+bincode = { workspace = true }
+ron = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

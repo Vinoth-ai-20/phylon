@@ -41,12 +41,14 @@ This document defines the core implementation phases, milestones, and acceptance
 
 ## Phase 6: Persistence & Research Tools (v0.6)
 
-*Current Phase*
+- **Status**: Complete.
 
 - **Acceptance Criteria**: Complete serialize/deserialize via `bincode` (or `ron`). SQLite DB tracks runs. Replay system functional. God-mode interventions available.
 - **Key Crates**: `storage`, `research`, `plugins`.
 
 ## Phase 7: Network & Multiplayer (v1.0)
+
+*Current Phase*
 
 - **Acceptance Criteria**: WebSocket remote control API active. Multiple clients can observe a headless simulation server.
 - **Key Crates**: `network`.

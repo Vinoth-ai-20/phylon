@@ -1,2 +1,2 @@
-// storage crate
-pub fn init() {}
+pub mod db;
+pub mod snapshot;

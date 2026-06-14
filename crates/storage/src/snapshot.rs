@@ -1,9 +1,16 @@
-use crate::PhylonWorld;
-use anyhow::Result;
-
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
+use std::io::Read;
 use std::path::Path;
+use world::PhylonWorld;
+
+pub const SNAPSHOT_VERSION: u32 = 2; // Phase 6 version
+
+#[derive(Serialize, Deserialize)]
+pub struct SnapshotHeader {
+    pub version: u32,
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct WorldSnapshot {
@@ -33,7 +40,7 @@ pub struct FoodSnapshot {
     pub energy: organisms::Energy,
 }
 
-/// Saves the ECS state to a RON file.
+/// Saves the ECS state to a file. Format is chosen by extension (.ron or .bin).
 pub fn save_world(world: &PhylonWorld, path: impl AsRef<Path>) -> Result<()> {
     let mut snapshot = WorldSnapshot {
         organisms: Vec::new(),
@@ -91,16 +98,76 @@ pub fn save_world(world: &PhylonWorld, path: impl AsRef<Path>) -> Result<()> {
         });
     }
 
-    let file = File::create(path)?;
-    ron::ser::to_writer_pretty(file, &snapshot, ron::ser::PrettyConfig::default())?;
+    let header = SnapshotHeader {
+        version: SNAPSHOT_VERSION,
+    };
+
+    let path = path.as_ref();
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("ron");
+
+    let mut file = File::create(path).context("Failed to create snapshot file")?;
+
+    if ext == "bin" {
+        bincode::serialize_into(&mut file, &header)?;
+        bincode::serialize_into(&mut file, &snapshot)?;
+    } else {
+        #[derive(Serialize)]
+        struct CombinedSnapshot<'a> {
+            header: &'a SnapshotHeader,
+            data: &'a WorldSnapshot,
+        }
+        let combined = CombinedSnapshot {
+            header: &header,
+            data: &snapshot,
+        };
+        ron::ser::to_writer_pretty(&mut file, &combined, ron::ser::PrettyConfig::default())?;
+    }
 
     Ok(())
 }
 
-/// Loads the ECS state from a RON file.
+/// Loads the ECS state from a file.
 pub fn load_world(world: &mut PhylonWorld, path: impl AsRef<Path>) -> Result<()> {
-    let file = File::open(path)?;
-    let snapshot: WorldSnapshot = ron::de::from_reader(file)?;
+    let path = path.as_ref();
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("ron");
+
+    let mut file = File::open(path).context("Failed to open snapshot file")?;
+
+    let snapshot: WorldSnapshot;
+
+    if ext == "bin" {
+        let header: SnapshotHeader = bincode::deserialize_from(&mut file)?;
+        if header.version != SNAPSHOT_VERSION {
+            anyhow::bail!(
+                "Incompatible bincode save file: expected version {}, found {}",
+                SNAPSHOT_VERSION,
+                header.version
+            );
+        }
+        snapshot = bincode::deserialize_from(&mut file)?;
+    } else {
+        #[derive(Deserialize)]
+        struct CombinedSnapshot {
+            header: SnapshotHeader,
+            data: WorldSnapshot,
+        }
+        let mut content = String::new();
+        file.read_to_string(&mut content)?;
+
+        if let Ok(combined) = ron::from_str::<CombinedSnapshot>(&content) {
+            if combined.header.version != SNAPSHOT_VERSION {
+                anyhow::bail!(
+                    "Incompatible RON save file: expected version {}, found {}",
+                    SNAPSHOT_VERSION,
+                    combined.header.version
+                );
+            }
+            snapshot = combined.data;
+        } else {
+            // Fallback for v1 legacy snapshots
+            snapshot = ron::from_str::<WorldSnapshot>(&content)?;
+        }
+    }
 
     // Validate genome version
     if let Some(first) = snapshot.organisms.first() {

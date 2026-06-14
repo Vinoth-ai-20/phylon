@@ -1,7 +1,5 @@
 //! World state and ECS integration.
 
-pub mod snapshot;
-
 use events::EventBus;
 use hecs::World;
 use physics::Position;

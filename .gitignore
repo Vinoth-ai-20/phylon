@@ -32,3 +32,9 @@ PHYLON_ANTIGRAVITY_KICKOFF.md
 
 #snapshot docs
 snapshot_*.ron
+*_tick_*.bin
+
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal

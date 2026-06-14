@@ -37,6 +37,10 @@ struct PhylonApp {
     instance: wgpu::Instance,
     ui: Option<EguiContext>,
     stats: analytics::SimulationStats,
+    db_writer: Option<storage::db::DbWriter>,
+    script_manager: plugins::manager::ScriptManager,
+    script_path: String,
+    load_script: bool,
 }
 
 impl PhylonApp {
@@ -79,7 +83,7 @@ impl PhylonApp {
         }
 
         Self {
-            config,
+            config: config.clone(),
             scheduler: SimulationScheduler::new(tick_rate),
             world,
             renderer: None,
@@ -94,6 +98,19 @@ impl PhylonApp {
             instance: wgpu::Instance::default(),
             ui: None,
             stats: analytics::SimulationStats::new(1000),
+            db_writer: Some(storage::db::DbWriter::new(
+                &config.research.database_path,
+                format!(
+                    "run_{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                ),
+            )),
+            script_manager: plugins::manager::ScriptManager::new(),
+            script_path: "data/scripts/god_mode.rhai".to_string(),
+            load_script: false,
         }
     }
 
@@ -182,6 +199,8 @@ impl PhylonApp {
                     window,
                     &self.stats,
                     self.scheduler.current_tick,
+                    &mut self.script_path,
+                    &mut self.load_script,
                 );
             }
         }
@@ -309,6 +328,15 @@ impl ApplicationHandler for PhylonApp {
                     // Tick simulation
                     self.scheduler.tick_loop(&mut self.world);
 
+                    if self.load_script {
+                        self.load_script = false;
+                        if let Err(e) = self.script_manager.load_script(&self.script_path) {
+                            error!("Failed to load script: {}", e);
+                        }
+                    }
+
+                    self.script_manager.run_active_script(&mut self.world);
+
                     // Save snapshot
                     if self.scheduler.current_tick.0 > 0
                         && self
@@ -317,10 +345,10 @@ impl ApplicationHandler for PhylonApp {
                             .0
                             .is_multiple_of(self.config.research.snapshot_interval_ticks)
                     {
-                        let path = format!("snapshot_{}.ron", self.scheduler.current_tick.0);
-                        match world::snapshot::save_world(&self.world, &path) {
-                            Ok(_) => info!("Saved snapshot to {}", path),
-                            Err(e) => error!("Failed to save snapshot: {}", e),
+                        let path = format!("snapshot_{}.bin", self.scheduler.current_tick.0);
+                        match storage::snapshot::save_world(&self.world, &path) {
+                            Ok(_) => info!("Saved binary snapshot to {}", path),
+                            Err(e) => error!("Failed to save binary snapshot: {}", e),
                         }
                     }
 
@@ -348,6 +376,17 @@ impl ApplicationHandler for PhylonApp {
                         .process_events(&self.world.last_events, self.scheduler.current_tick);
                     self.stats
                         .update_metrics(&self.world, self.scheduler.current_tick);
+
+                    if let Some(db) = &self.db_writer {
+                        db.push_metric(storage::db::MetricSnapshot {
+                            tick: self.scheduler.current_tick.0,
+                            population: self.stats.current_population as u32,
+                            births: self.stats.total_births as u32,
+                            deaths_starvation: self.stats.deaths_by_starvation as u32,
+                            deaths_old_age: self.stats.deaths_by_age as u32,
+                            deaths_predation: self.stats.deaths_by_predation as u32,
+                        });
+                    }
 
                     // Request next frame continuously
                     window.request_redraw();

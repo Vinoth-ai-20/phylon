@@ -1,2 +1,2 @@
-// plugins crate
-pub fn init() {}
+pub mod api;
+pub mod manager;

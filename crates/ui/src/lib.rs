@@ -66,6 +66,8 @@ impl EguiContext {
         window: &Window,
         stats: &SimulationStats,
         tick: Tick,
+        script_path: &mut String,
+        load_script: &mut bool,
     ) {
         let raw_input = self.state.take_egui_input(window);
 
@@ -96,6 +98,17 @@ impl EguiContext {
             egui_plot::Plot::new("population_plot")
                 .view_aspect(2.0)
                 .show(ui, |plot_ui| plot_ui.line(line));
+        });
+
+        // Research & Plugins Window
+        egui::Window::new("Research & Plugins").show(&self.context, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Script:");
+                ui.text_edit_singleline(script_path);
+            });
+            if ui.button("Load & Run").clicked() {
+                *load_script = true;
+            }
         });
 
         // Profiler removed due to version incompatibility with egui 0.29

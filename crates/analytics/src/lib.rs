@@ -9,6 +9,7 @@ pub struct SimulationStats {
     pub deaths_by_starvation: u64,
     pub deaths_by_predation: u64,
     pub deaths_by_age: u64,
+    pub total_births: u64,
     pub current_population: usize,
 }
 
@@ -20,6 +21,7 @@ impl SimulationStats {
             deaths_by_starvation: 0,
             deaths_by_predation: 0,
             deaths_by_age: 0,
+            total_births: 0,
             current_population: 0,
         }
     }
@@ -30,8 +32,7 @@ impl SimulationStats {
         for event in events {
             match event {
                 PhylonEvent::OrganismBorn { .. } => {
-                    // Births can be counted here if needed for distinct metrics,
-                    // but total population is accurately sampled in update_metrics.
+                    self.total_births += 1;
                 }
                 PhylonEvent::DeathEvent { reason, .. } => match reason {
                     DeathCause::Starvation => self.deaths_by_starvation += 1,
