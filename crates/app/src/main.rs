@@ -7,7 +7,7 @@ use gpu::compute::DiffusionPipeline;
 use phylon_config::PhylonConfig;
 use physics::{Acceleration, Mass, Position, Radius, Velocity};
 use rand::Rng;
-use rendering::{FieldRenderer, OrganismPass, TrailPass};
+use rendering::{FieldRenderer, OrganismPass, TrailPass, FoodPass};
 use scheduler::SimulationScheduler;
 use std::path::Path;
 use tracing::{error, info};
@@ -26,6 +26,7 @@ struct PhylonApp {
     scheduler: SimulationScheduler,
     world: PhylonWorld,
     renderer: Option<OrganismPass>,
+    food_pass: Option<FoodPass>,
     trail_pass: Option<TrailPass>,
     field_renderer: Option<FieldRenderer>,
     diffusion_pipeline: Option<DiffusionPipeline>,
@@ -88,6 +89,7 @@ impl PhylonApp {
             scheduler: SimulationScheduler::new(tick_rate),
             world,
             renderer: None,
+            food_pass: None,
             trail_pass: None,
             field_renderer: None,
             diffusion_pipeline: None,
@@ -121,6 +123,10 @@ impl PhylonApp {
             if let Some(config) = &self.surface_config {
                 renderer.prepare(device, queue, &mut self.world, config);
             }
+        }
+        
+        if let Some(food_pass) = &mut self.food_pass {
+            food_pass.prepare(device, queue, &mut self.world);
         }
 
         if let Some(field_renderer) = &mut self.field_renderer {
@@ -178,20 +184,23 @@ impl PhylonApp {
             {
                 field_renderer.render(&mut field_pass, field);
             }
+
+            // Render Food Pellets
+            if let (Some(food_pass), Some(renderer)) = (&self.food_pass, &self.renderer) {
+                food_pass.render(&mut field_pass, renderer.camera_bind_group());
+            }
         }
 
         {
-            let mut color_attachments = vec![
-                Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                }),
-            ];
-            
+            let mut color_attachments = vec![Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })];
+
             if let Some(trail) = &self.trail_pass {
                 color_attachments.push(Some(wgpu::RenderPassColorAttachment {
                     view: &trail.trail_view,
@@ -249,7 +258,8 @@ impl ApplicationHandler for PhylonApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
             let window_attributes = Window::default_attributes()
-                .with_title("Phylon - Research-Grade Artificial Life Laboratory");
+                .with_title("Phylon - Research-Grade Artificial Life Laboratory")
+                .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
 
             let window = std::sync::Arc::new(event_loop.create_window(window_attributes).unwrap());
             self.window = Some(window.clone());
@@ -290,6 +300,7 @@ impl ApplicationHandler for PhylonApp {
             surface.configure(&device, &surface_config);
 
             let renderer = OrganismPass::new(&device, &surface_config);
+            let food_pass = FoodPass::new(&device, &surface_config, renderer.camera_bind_group_layout());
             let trail_pass = TrailPass::new(&device, &surface_config);
             let field_renderer = FieldRenderer::new(
                 &device,
@@ -308,6 +319,7 @@ impl ApplicationHandler for PhylonApp {
             );
 
             self.renderer = Some(renderer);
+            self.food_pass = Some(food_pass);
             self.trail_pass = Some(trail_pass);
             self.field_renderer = Some(field_renderer);
             self.diffusion_pipeline = Some(diffusion_pipeline);

@@ -176,6 +176,10 @@ impl OrganismPass {
         &self.camera_buffer
     }
 
+    pub fn camera_bind_group(&self) -> &wgpu::BindGroup {
+        &self.camera_bind_group
+    }
+
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,

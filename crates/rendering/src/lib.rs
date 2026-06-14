@@ -5,9 +5,11 @@ use bytemuck::{Pod, Zeroable};
 pub mod instance_buffer;
 pub mod organism_pass;
 pub mod trail_pass;
+pub mod food_pass;
 
 pub use organism_pass::OrganismPass;
 pub use trail_pass::TrailPass;
+pub use food_pass::FoodPass;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]

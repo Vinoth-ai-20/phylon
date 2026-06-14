@@ -158,7 +158,8 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
         // Elongated, tapered body. Pointed anterior end (facing right, +x)
         // A wedge or teardrop shape
         let p = uv;
-        let scale_y = mix(0.4, 0.1, (p.x + 0.5)); // Taper towards +x
+        let a = clamp((p.x + 1.0) * 0.5, 0.0, 1.0);
+        let scale_y = mix(0.4, 0.1, a); // Taper towards +x
         let base_body = length(vec2<f32>(p.x * 0.8, p.y / scale_y)) - 0.4;
         
         // Jaw / pointed end subtraction
