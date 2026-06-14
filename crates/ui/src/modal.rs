@@ -12,6 +12,9 @@ pub enum UiModal {
         carnivore: bool,
         scavenger: bool,
     },
+    FilterBySpecies {
+        selected: std::collections::HashSet<u32>,
+    },
     AboutPhylon,
     KeyboardShortcuts,
     Preferences,
@@ -131,6 +134,42 @@ pub fn render_modals(ctx: &Context, state: &mut UiState) {
                         });
                     });
             }
+            UiModal::FilterBySpecies { selected } => {
+                Window::new("Select by Species")
+                    .collapsible(false)
+                    .resizable(true)
+                    .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(200.0)
+                            .show(ui, |ui| {
+                                for (species_id, count) in &state.species_list {
+                                    let label =
+                                        format!("Species {}: {} organisms", species_id, count);
+                                    let mut is_selected = selected.contains(species_id);
+                                    if ui.checkbox(&mut is_selected, label).changed() {
+                                        if is_selected {
+                                            selected.insert(*species_id);
+                                        } else {
+                                            selected.remove(species_id);
+                                        }
+                                    }
+                                }
+                                if state.species_list.is_empty() {
+                                    ui.label("No species exist in the simulation yet.");
+                                }
+                            });
+                        ui.horizontal(|ui| {
+                            if ui.button("Select").clicked() {
+                                execute_action = Some("select_species");
+                                close = true;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                close = true;
+                            }
+                        });
+                    });
+            }
             UiModal::AboutPhylon => {
                 let mut is_open = true;
                 Window::new("About Phylon")
@@ -142,6 +181,10 @@ pub fn render_modals(ctx: &Context, state: &mut UiState) {
                         ui.heading("Phylon");
                         ui.label("Research-Grade Artificial Life Laboratory");
                         ui.label("Version 0.1.0");
+                        ui.separator();
+                        ui.label("Powered by Rust, wgpu, and egui.");
+                        ui.label("Created as part of an advanced agentic coding session.");
+                        ui.separator();
                         if ui.button("Close").clicked() {
                             close = true;
                         }
@@ -205,7 +248,28 @@ pub fn render_modals(ctx: &Context, state: &mut UiState) {
                     .resizable(false)
                     .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
                     .show(ctx, |ui| {
-                        ui.label("Preferences coming soon.");
+                        ui.heading("Graphics Settings");
+                        ui.add(
+                            egui::Slider::new(&mut state.trail_decay, 0.0..=1.0)
+                                .text("Trail Decay"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut state.bloom_threshold, 0.0..=5.0)
+                                .text("Bloom Threshold"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut state.bloom_intensity, 0.0..=2.0)
+                                .text("Bloom Intensity"),
+                        );
+
+                        ui.separator();
+                        ui.heading("UI Settings");
+                        if ui
+                            .add(egui::Slider::new(&mut state.ui_scale, 0.5..=2.5).text("UI Scale"))
+                            .changed()
+                        {
+                            ctx.set_pixels_per_point(state.ui_scale);
+                        }
                     });
                 if !is_open {
                     close = true;
@@ -276,6 +340,15 @@ pub fn render_modals(ctx: &Context, state: &mut UiState) {
                     };
                     if let Some(tx) = &state.app_tx {
                         let _ = tx.send(crate::commands::AppCommand::SelectByDiet(filter));
+                    }
+                }
+            }
+            "select_species" => {
+                if let UiModal::FilterBySpecies { selected } = &state.active_modal.as_ref().unwrap()
+                {
+                    let ids = selected.iter().map(|&s| organisms::SpeciesId(s)).collect();
+                    if let Some(tx) = &state.app_tx {
+                        let _ = tx.send(crate::commands::AppCommand::SelectBySpecies(ids));
                     }
                 }
             }

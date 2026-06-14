@@ -43,6 +43,7 @@ pub struct TrailPass {
     pub read_texture: wgpu::Texture,
     pub read_view: wgpu::TextureView,
     pub read_bind_group: wgpu::BindGroup,
+    pub uniforms_buffer: wgpu::Buffer,
 }
 
 impl TrailPass {
@@ -90,6 +91,12 @@ impl TrailPass {
             ..Default::default()
         });
 
+        let uniforms_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Trail Uniforms Buffer"),
+            contents: bytemuck::cast_slice(&[0.97f32, 0.0, 0.0, 0.0]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Trail Bind Group Layout"),
             entries: &[
@@ -109,6 +116,16 @@ impl TrailPass {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -123,6 +140,10 @@ impl TrailPass {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniforms_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -201,6 +222,7 @@ impl TrailPass {
             read_texture,
             read_view,
             read_bind_group,
+            uniforms_buffer,
         }
     }
 
@@ -246,6 +268,10 @@ impl TrailPass {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.uniforms_buffer.as_entire_binding(),
                 },
             ],
         });

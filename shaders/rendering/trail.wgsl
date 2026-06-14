@@ -19,13 +19,22 @@ var trail_texture: texture_2d<f32>;
 @group(0) @binding(1)
 var trail_sampler: sampler;
 
+struct TrailUniforms {
+    decay: f32,
+    _pad1: f32,
+    _pad2: f32,
+    _pad3: f32,
+};
+@group(0) @binding(2)
+var<uniform> uniforms: TrailUniforms;
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample previous frame's trail
     let prev_color = textureSample(trail_texture, trail_sampler, in.uv);
     
     // Decay factor
-    let decay = 0.97;
+    let decay = uniforms.decay;
     
     let new_color = prev_color * decay;
     

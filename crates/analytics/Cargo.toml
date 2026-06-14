@@ -9,3 +9,4 @@ world = { workspace = true }
 common = { workspace = true }
 genetics = { workspace = true }
 puffin = { workspace = true }
+organisms = { workspace = true }

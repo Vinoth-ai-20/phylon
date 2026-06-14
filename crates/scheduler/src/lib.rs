@@ -38,18 +38,9 @@ impl SimulationScheduler {
         }
     }
 
-    /// Advance the simulation by exactly one tick.
-    pub fn tick_loop(&mut self, world: &mut world::PhylonWorld) {
+    /// Advance the simulation by exactly one tick without maintaining real-time rate (fast forward).
+    pub fn tick(&mut self, world: &mut world::PhylonWorld) {
         puffin::profile_function!();
-
-        // Maintain fixed tick rate
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last_tick_end);
-        if elapsed < self.tick_duration {
-            std::thread::sleep(self.tick_duration - elapsed);
-        }
-        self.last_tick_end = Instant::now();
-
         self.current_tick.0 += 1;
         let tick_span = span!(Level::TRACE, "tick", tick = self.current_tick.0);
         let _enter = tick_span.enter();
@@ -65,6 +56,21 @@ impl SimulationScheduler {
         self.run_phase(SystemOrder::Reproduction, world);
         self.run_phase(SystemOrder::PostTick, world);
         self.run_phase(SystemOrder::Analytics, world);
+    }
+
+    /// Advance the simulation by exactly one tick.
+    pub fn tick_loop(&mut self, world: &mut world::PhylonWorld) {
+        puffin::profile_function!();
+
+        // Maintain fixed tick rate
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_tick_end);
+        if elapsed < self.tick_duration {
+            std::thread::sleep(self.tick_duration - elapsed);
+        }
+        self.last_tick_end = Instant::now();
+
+        self.tick(world);
     }
 
     /// Run a specific phase in the system order.

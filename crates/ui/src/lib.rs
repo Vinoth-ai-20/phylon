@@ -51,13 +51,17 @@ impl EguiContext {
         context.set_style(style);
 
         let mut tiles = egui_tiles::Tiles::default();
-        let analytics = tiles.insert_pane(layout::Pane::Analytics);
-        let research = tiles.insert_pane(layout::Pane::Research);
-        let brain = tiles.insert_pane(layout::Pane::BrainInspector);
+        let p_analytics = tiles.insert_pane(layout::Pane::Analytics);
+        let p_research = tiles.insert_pane(layout::Pane::Research);
+        let p_brain = tiles.insert_pane(layout::Pane::BrainInspector);
+        let p_entity = tiles.insert_pane(layout::Pane::EntityInspector);
+        let p_genome = tiles.insert_pane(layout::Pane::GenomeInspector);
+        let p_script = tiles.insert_pane(layout::Pane::ScriptConsole);
+        let p_db = tiles.insert_pane(layout::Pane::DbConsole);
 
-        // Setup initial docking layout
-        let right_tabs = tiles.insert_vertical_tile(vec![analytics, research]);
-        let root = tiles.insert_horizontal_tile(vec![brain, right_tabs]);
+        let bottom_tabs = tiles.insert_tab_tile(vec![p_analytics, p_research, p_script, p_db]);
+        let right_tabs = tiles.insert_tab_tile(vec![p_entity, p_brain, p_genome]);
+        let root = tiles.insert_horizontal_tile(vec![bottom_tabs, right_tabs]);
 
         let tree = egui_tiles::Tree::new("phylon_tree", root, tiles);
 
@@ -115,6 +119,42 @@ impl EguiContext {
         crate::menu::render_menu_bar(&self.context, &mut self.ui_state, stats);
 
         // Render dockable tiles UI
+        let visible_panes = [
+            (layout::Pane::Analytics, self.ui_state.panels.analytics),
+            (layout::Pane::Research, self.ui_state.panels.research),
+            (
+                layout::Pane::BrainInspector,
+                self.ui_state.panels.brain_inspector,
+            ),
+            (
+                layout::Pane::EntityInspector,
+                self.ui_state.panels.entity_inspector,
+            ),
+            (
+                layout::Pane::GenomeInspector,
+                self.ui_state.panels.genome_inspector,
+            ),
+            (
+                layout::Pane::ScriptConsole,
+                self.ui_state.panels.script_console,
+            ),
+            (layout::Pane::DbConsole, self.ui_state.panels.db_console),
+        ];
+
+        let mut tiles_to_update = Vec::new();
+        for (tile_id, tile) in self.tree.tiles.iter() {
+            if let egui_tiles::Tile::Pane(pane) = tile {
+                for (pane_type, visible) in &visible_panes {
+                    if pane == pane_type {
+                        tiles_to_update.push((*tile_id, *visible));
+                    }
+                }
+            }
+        }
+        for (tile_id, visible) in tiles_to_update {
+            self.tree.set_visible(tile_id, visible);
+        }
+
         let mut behavior = layout::TreeBehavior {
             ui_state: &mut self.ui_state,
             stats,

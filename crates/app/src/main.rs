@@ -48,6 +48,10 @@ struct PhylonApp {
     load_script: bool,
     task_rx: Option<std::sync::mpsc::Receiver<ui::state::LoadingTask>>,
     command_rx: Option<std::sync::mpsc::Receiver<crate::commands::AppCommand>>,
+    frame_counter: u64,
+    tracked_entity: Option<common::EntityId>,
+    camera_pos: glam::Vec2,
+    camera_zoom: f32,
 }
 
 impl PhylonApp {
@@ -55,39 +59,7 @@ impl PhylonApp {
         let tick_rate = config.simulation.tick_rate;
         let mut world = PhylonWorld::new(config.simulation.world_chunk_size as f32);
 
-        // Spawn 100 starter organisms
-        let mut rng = rand::thread_rng();
-        let spawn_range = 400.0;
-        for _ in 0..100 {
-            let mut genome = genetics::Genome::default();
-
-            // Initialize random brain weights
-            let num_weights = brain::TOTAL_NEURONS * brain::TOTAL_NEURONS;
-            genome.brain_weights = (0..num_weights).map(|_| rng.gen_range(-1.0..1.0)).collect();
-
-            world.spawn((
-                organisms::Organism,
-                organisms::Age(0),
-                organisms::Energy(100.0),
-                organisms::Health::default(),
-                genome.clone(),
-                reproduction::ReproductionCooldown(0),
-                Position(Vec2::new(
-                    rng.gen_range(-spawn_range..spawn_range),
-                    rng.gen_range(-spawn_range..spawn_range),
-                )),
-                Velocity(Vec2::new(
-                    rng.gen_range(-10.0..10.0),
-                    rng.gen_range(-10.0..10.0),
-                )),
-                Acceleration(Vec2::ZERO),
-                physics::Heading(rng.gen_range(-std::f32::consts::PI..std::f32::consts::PI)),
-                Mass(1.0),
-                Radius(genome.size),
-                sensing::Observation::new(),
-                brain::Intention::new(),
-            ));
-        }
+        Self::spawn_starter_organisms(&mut world);
 
         Self {
             config: config.clone(),
@@ -114,6 +86,10 @@ impl PhylonApp {
             load_script: false,
             task_rx: None,
             command_rx: None,
+            frame_counter: 0,
+            tracked_entity: None,
+            camera_pos: glam::Vec2::ZERO,
+            camera_zoom: 1.0,
         }
     }
 
@@ -128,9 +104,30 @@ impl PhylonApp {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         if let Some(renderer) = &mut self.renderer {
-            if let Some(config) = &self.surface_config {
-                renderer.prepare(device, queue, &mut self.world, config);
+            let mut ui_flags = [0u32; 4];
+            if let Some(ui) = &self.ui {
+                ui_flags[0] = if ui.ui_state.show_species_colors {
+                    1
+                } else {
+                    0
+                };
+                ui_flags[1] = if ui.ui_state.show_grid { 1 } else { 0 };
+                ui_flags[2] = if ui.ui_state.show_sensor_cones { 1 } else { 0 };
+                ui_flags[3] = if ui.ui_state.show_disease_highlight {
+                    1
+                } else {
+                    0
+                };
             }
+            renderer.prepare(
+                device,
+                queue,
+                &mut self.world,
+                self.surface_config.as_ref().unwrap(),
+                self.camera_pos,
+                self.camera_zoom,
+                ui_flags,
+            );
         }
 
         if let Some(food_pass) = &mut self.food_pass {
@@ -146,6 +143,27 @@ impl PhylonApp {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
+
+        if let (Some(ui), Some(trail), Some(post)) = (&self.ui, &self.trail_pass, &self.post_pass) {
+            let trail_uniforms = [ui.ui_state.trail_decay, 0.0, 0.0, 0.0];
+            queue.write_buffer(
+                &trail.uniforms_buffer,
+                0,
+                bytemuck::cast_slice(&trail_uniforms),
+            );
+
+            let post_uniforms = [
+                ui.ui_state.bloom_threshold,
+                ui.ui_state.bloom_intensity,
+                0.0,
+                0.0,
+            ];
+            queue.write_buffer(
+                &post.uniforms_buffer,
+                0,
+                bytemuck::cast_slice(&post_uniforms),
+            );
+        }
 
         // Compute Pass for Diffusion
         if let (Some(pipeline), Some(field)) = (&self.diffusion_pipeline, &mut self.diffusion_field)
@@ -279,6 +297,40 @@ impl PhylonApp {
         output.present();
 
         Ok(())
+    }
+
+    fn spawn_starter_organisms(world: &mut PhylonWorld) {
+        let mut rng = rand::thread_rng();
+        let spawn_range = 400.0;
+        for _ in 0..100 {
+            let mut genome = genetics::Genome::default();
+
+            let num_weights = brain::TOTAL_NEURONS * brain::TOTAL_NEURONS;
+            genome.brain_weights = (0..num_weights).map(|_| rng.gen_range(-1.0..1.0)).collect();
+
+            world.spawn((
+                organisms::Organism,
+                organisms::Age(0),
+                organisms::Energy(100.0),
+                organisms::Health::default(),
+                genome.clone(),
+                reproduction::ReproductionCooldown(0),
+                Position(Vec2::new(
+                    rng.gen_range(-spawn_range..spawn_range),
+                    rng.gen_range(-spawn_range..spawn_range),
+                )),
+                Velocity(Vec2::new(
+                    rng.gen_range(-10.0..10.0),
+                    rng.gen_range(-10.0..10.0),
+                )),
+                Acceleration(Vec2::ZERO),
+                physics::Heading(rng.gen_range(-std::f32::consts::PI..std::f32::consts::PI)),
+                Mass(1.0),
+                Radius(genome.size),
+                sensing::Observation::new(),
+                brain::Intention::new(),
+            ));
+        }
     }
 }
 
@@ -474,31 +526,37 @@ impl ApplicationHandler for PhylonApp {
                                 crate::commands::AppCommand::ResetWorld => {
                                     self.world.ecs.clear();
                                     self.scheduler.current_tick = common::Tick(0);
+                                    Self::spawn_starter_organisms(&mut self.world);
                                     info!("World reset");
                                 }
                                 crate::commands::AppCommand::LoadSnapshot(path) => {
                                     match storage::snapshot::load_world(&mut self.world, &path) {
-                                        Ok(_) => info!("Snapshot loaded from {:?}", path),
+                                        Ok(_) => {
+                                            info!("Snapshot loaded from {:?}", path);
+                                            if let Some(ui) = &mut self.ui {
+                                                ui.ui_state.last_snapshot_path = Some(path.clone());
+                                                ui.ui_state.unsaved_changes = false;
+                                            }
+                                        }
                                         Err(e) => error!("Failed to load snapshot: {}", e),
                                     }
                                 }
                                 crate::commands::AppCommand::SaveSnapshot(path) => {
                                     match storage::snapshot::save_world(&self.world, &path) {
-                                        Ok(_) => info!("Snapshot saved to {:?}", path),
+                                        Ok(_) => {
+                                            info!("Snapshot saved to {:?}", path);
+                                            if let Some(ui) = &mut self.ui {
+                                                ui.ui_state.last_snapshot_path = Some(path.clone());
+                                                ui.ui_state.unsaved_changes = false;
+                                            }
+                                        }
                                         Err(e) => error!("Failed to save snapshot: {}", e),
                                     }
                                 }
-                                crate::commands::AppCommand::StepOneTick => {
-                                    self.scheduler.tick_loop(&mut self.world);
-                                }
-                                crate::commands::AppCommand::ResetCamera => {
-                                    if let Some(ui) = &mut self.ui {
-                                        ui.ui_state.camera = ui::state::CameraState::default();
-                                    }
-                                }
+
                                 crate::commands::AppCommand::TrackEntity(id) => {
                                     info!("Tracking entity {:?}", id);
-                                    // TODO: Implement camera lerping to entity
+                                    self.tracked_entity = Some(id);
                                 }
                                 crate::commands::AppCommand::ToggleFullscreen => {
                                     if let Some(window) = &self.window {
@@ -512,11 +570,58 @@ impl ApplicationHandler for PhylonApp {
                                     }
                                 }
                                 crate::commands::AppCommand::SelectByDiet(filter) => {
-                                    // Dummy
-                                    info!("Filter by diet: {:?}", filter);
+                                    if let Some(ui) = &mut self.ui {
+                                        ui.ui_state.selected_entities.clear();
+                                        for (entity, genome) in
+                                            self.world.ecs.query::<&genetics::Genome>().iter()
+                                        {
+                                            let matches = match genome.diet {
+                                                genetics::Diet::Herbivore => filter.herbivore,
+                                                genetics::Diet::Carnivore => filter.carnivore,
+                                                genetics::Diet::Omnivore => filter.scavenger,
+                                            };
+                                            if matches {
+                                                ui.ui_state.selected_entities.push(
+                                                    common::EntityId(entity.to_bits().into()),
+                                                );
+                                            }
+                                        }
+                                    }
                                 }
                                 crate::commands::AppCommand::SelectBySpecies(ids) => {
-                                    info!("Filter by species: {:?}", ids);
+                                    if let Some(ui) = &mut self.ui {
+                                        ui.ui_state.selected_entities.clear();
+                                        for (entity, species) in
+                                            self.world.ecs.query::<&organisms::SpeciesId>().iter()
+                                        {
+                                            if ids.iter().any(|s| s.0 == species.0) {
+                                                ui.ui_state.selected_entities.push(
+                                                    common::EntityId(entity.to_bits().into()),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                crate::commands::AppCommand::InvertSelection => {
+                                    if let Some(ui) = &mut self.ui {
+                                        let current: std::collections::HashSet<u64> = ui
+                                            .ui_state
+                                            .selected_entities
+                                            .iter()
+                                            .map(|e| e.0)
+                                            .collect();
+                                        ui.ui_state.selected_entities.clear();
+                                        for (entity, _) in
+                                            self.world.ecs.query::<&organisms::Organism>().iter()
+                                        {
+                                            let id: u64 = entity.to_bits().into();
+                                            if !current.contains(&id) {
+                                                ui.ui_state
+                                                    .selected_entities
+                                                    .push(common::EntityId(id));
+                                            }
+                                        }
+                                    }
                                 }
                                 crate::commands::AppCommand::QueryAllEntityIds => {
                                     if let Some(ui) = &mut self.ui {
@@ -531,22 +636,70 @@ impl ApplicationHandler for PhylonApp {
                                     }
                                 }
                                 crate::commands::AppCommand::QuerySpeciesList => {
-                                    info!("Querying species list");
+                                    if let Some(ui) = &mut self.ui {
+                                        let mut species_counts = std::collections::HashMap::new();
+                                        for (_, species) in
+                                            self.world.ecs.query::<&organisms::SpeciesId>().iter()
+                                        {
+                                            *species_counts.entry(species.0).or_insert(0) += 1;
+                                        }
+                                        let mut list: Vec<_> = species_counts.into_iter().collect();
+                                        list.sort_by_key(|(id, _)| *id);
+                                        ui.ui_state.species_list = list;
+                                        ui.ui_state.active_modal =
+                                            Some(ui::modal::UiModal::FilterBySpecies {
+                                                selected: std::collections::HashSet::new(),
+                                            });
+                                    }
                                 }
-                                crate::commands::AppCommand::FocusEntity(id) => {
-                                    info!("Focusing entity {:?}", id);
-                                }
-                                crate::commands::AppCommand::SeekReplayToTick(tick) => {
-                                    info!("Seeking to tick {}", tick);
+
+                                crate::commands::AppCommand::SeekReplayToTick(target_tick) => {
+                                    info!("Seeking to tick {}", target_tick);
+                                    while self.scheduler.current_tick.0 < target_tick {
+                                        self.scheduler.tick(&mut self.world);
+                                    }
                                 }
                                 crate::commands::AppCommand::SeekToPreviousSpeciationEvent => {
                                     info!("Seeking to previous speciation");
+                                    if let Some(db) = &self.db_writer {
+                                        let current = self.scheduler.current_tick.0 as i64;
+                                        if let Ok(target) = db.get_conn().query_row(
+                                            "SELECT tick FROM metrics WHERE population > (SELECT population FROM metrics m2 WHERE m2.tick = metrics.tick - 1) AND tick < ?1 ORDER BY tick DESC LIMIT 1",
+                                            [current],
+                                            |row| row.get::<_, i64>(0),
+                                        ) {
+                                            info!("Found previous speciation event at tick {}", target);
+                                            // Replay/jump is only forward, so if target < current, we can't jump backwards directly without reloading snapshot
+                                            // Since we only implement forward jump right now:
+                                            error!("Cannot seek backwards to {} without snapshot reload", target);
+                                        }
+                                    }
                                 }
                                 crate::commands::AppCommand::SeekToNextSpeciationEvent => {
                                     info!("Seeking to next speciation");
+                                    if let Some(db) = &self.db_writer {
+                                        let current = self.scheduler.current_tick.0 as i64;
+                                        if let Ok(target) = db.get_conn().query_row(
+                                            "SELECT tick FROM metrics WHERE population > (SELECT population FROM metrics m2 WHERE m2.tick = metrics.tick - 1) AND tick > ?1 ORDER BY tick ASC LIMIT 1",
+                                            [current],
+                                            |row| row.get::<_, i64>(0),
+                                        ) {
+                                            info!("Found next speciation event at tick {}", target);
+                                            while self.scheduler.current_tick.0 < target as u64 {
+                                                self.scheduler.tick(&mut self.world);
+                                            }
+                                        }
+                                    }
                                 }
                                 crate::commands::AppCommand::RunExperiment(_exp) => {
                                     info!("Running experiment...");
+                                }
+                                crate::commands::AppCommand::StageExperiment(exp) => {
+                                    if let Some(ui) = &mut self.ui {
+                                        ui.ui_state.active_experiment = Some(exp);
+                                        ui.ui_state.active_modal =
+                                            Some(ui::modal::UiModal::ExperimentReady);
+                                    }
                                 }
                                 crate::commands::AppCommand::StopExperiment => {
                                     info!("Stopping experiment");
@@ -554,6 +707,15 @@ impl ApplicationHandler for PhylonApp {
                                 crate::commands::AppCommand::RunScript(path) => {
                                     self.script_path = path.to_string_lossy().to_string();
                                     self.load_script = true;
+                                    if let Some(ui) = &mut self.ui {
+                                        ui.ui_state.god_mode_action_stack.push(
+                                            ui::state::GodModeAction::ScriptRun {
+                                                script_path: self.script_path.clone(),
+                                                affected_entity_ids: Vec::new(),
+                                            },
+                                        );
+                                        ui.ui_state.panels.script_console = true;
+                                    }
                                 }
                                 crate::commands::AppCommand::RunScriptLine(line) => {
                                     if let Some(ui) = &mut self.ui {
@@ -561,6 +723,12 @@ impl ApplicationHandler for PhylonApp {
                                             .script_console_log
                                             .push_str(&format!("> {}\n", line));
                                         ui.ui_state.script_console_log.push_str("Executed.\n");
+                                        ui.ui_state.god_mode_action_stack.push(
+                                            ui::state::GodModeAction::ScriptRun {
+                                                script_path: line,
+                                                affected_entity_ids: Vec::new(),
+                                            },
+                                        );
                                     }
                                 }
                                 crate::commands::AppCommand::RunDbQuery(_sql) => {
@@ -572,11 +740,54 @@ impl ApplicationHandler for PhylonApp {
                                         ]]));
                                     }
                                 }
+                                crate::commands::AppCommand::ExportLineageTree(path) => {
+                                    #[derive(serde::Serialize)]
+                                    struct Node {
+                                        entity_id: u64,
+                                        generation: u32,
+                                        genome: genetics::Genome,
+                                    }
+                                    let mut nodes = Vec::new();
+                                    for (e, (gen, genome)) in self
+                                        .world
+                                        .ecs
+                                        .query::<(&organisms::Generation, &genetics::Genome)>()
+                                        .iter()
+                                    {
+                                        nodes.push(Node {
+                                            entity_id: e.to_bits().into(),
+                                            generation: gen.0,
+                                            genome: genome.clone(),
+                                        });
+                                    }
+                                    let json = serde_json::to_string_pretty(&nodes)
+                                        .unwrap_or_else(|_| "[]".to_string());
+                                    if let Ok(mut w) = std::fs::File::create(&path) {
+                                        use std::io::Write;
+                                        let _ = write!(w, "{}", json);
+                                        info!("Lineage tree exported to {:?}", path);
+                                    }
+                                }
                                 crate::commands::AppCommand::UndoGodMode(action) => {
                                     info!("Undoing god mode action: {:?}", action);
                                 }
                                 crate::commands::AppCommand::RedoGodMode(action) => {
                                     info!("Redoing god mode action: {:?}", action);
+                                }
+                                crate::commands::AppCommand::StepOneTick => {
+                                    if self
+                                        .ui
+                                        .as_ref()
+                                        .map(|ui| ui.ui_state.is_paused)
+                                        .unwrap_or(false)
+                                    {
+                                        self.scheduler.tick_loop(&mut self.world);
+                                    }
+                                }
+                                crate::commands::AppCommand::ResetCamera => {
+                                    self.tracked_entity = None;
+                                    self.camera_pos = glam::Vec2::ZERO;
+                                    self.camera_zoom = 1.0;
                                 }
                                 crate::commands::AppCommand::Quit => {
                                     event_loop.exit();
@@ -591,8 +802,44 @@ impl ApplicationHandler for PhylonApp {
                         .as_ref()
                         .map(|ui| ui.ui_state.is_paused)
                         .unwrap_or(false);
+
+                    let speed = self
+                        .ui
+                        .as_ref()
+                        .map(|ui| ui.ui_state.simulation_speed)
+                        .unwrap_or(1.0);
+
                     if !is_paused {
-                        self.scheduler.tick_loop(&mut self.world);
+                        let ticks_this_frame = if speed <= 0.25 {
+                            self.frame_counter += 1;
+                            if self.frame_counter.is_multiple_of(4) {
+                                1
+                            } else {
+                                0
+                            }
+                        } else if speed <= 1.0 {
+                            1
+                        } else if speed <= 2.0 {
+                            2
+                        } else if speed <= 5.0 {
+                            5
+                        } else if speed <= 10.0 {
+                            10
+                        } else {
+                            usize::MAX
+                        };
+
+                        if ticks_this_frame == usize::MAX {
+                            let frame_budget = std::time::Duration::from_millis(16);
+                            let start = std::time::Instant::now();
+                            while start.elapsed() < frame_budget {
+                                self.scheduler.tick_loop(&mut self.world);
+                            }
+                        } else {
+                            for _ in 0..ticks_this_frame {
+                                self.scheduler.tick_loop(&mut self.world);
+                            }
+                        }
                     }
 
                     if self.load_script {
@@ -641,6 +888,22 @@ impl ApplicationHandler for PhylonApp {
                     // Process analytics
                     self.stats
                         .process_events(&self.world.last_events, self.scheduler.current_tick);
+
+                    if let Some(id) = self.tracked_entity {
+                        if let Some(e) = hecs::Entity::from_bits(id.0) {
+                            if let Ok(pos) = self.world.ecs.query_one_mut::<&physics::Position>(e) {
+                                // Lerp camera position to entity
+                                let target = glam::Vec2::new(pos.0.x, pos.0.y);
+                                self.camera_pos = self.camera_pos.lerp(target, 0.1);
+                            } else {
+                                // Entity not found (dead?), stop tracking
+                                self.tracked_entity = None;
+                            }
+                        } else {
+                            self.tracked_entity = None;
+                        }
+                    }
+
                     self.stats
                         .update_metrics(&self.world, self.scheduler.current_tick);
 

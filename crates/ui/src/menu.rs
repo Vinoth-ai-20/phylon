@@ -53,8 +53,27 @@ pub fn render_menu_bar(ctx: &Context, state: &mut UiState, stats: &analytics::Si
                 if ui.button("Save Snapshot").clicked() {
                     if let Some(last) = &state.last_snapshot_path {
                         send_cmd(state, AppCommand::SaveSnapshot(last.clone()));
-                        state.unsaved_changes = false;
                     } else {
+                        let app_tx = state.app_tx.clone();
+                        std::thread::spawn(move || {
+                            if let Some(file) = pollster::block_on(
+                                rfd::AsyncFileDialog::new()
+                                    .add_filter("Bincode (fast)", &["bincode"])
+                                    .add_filter("RON (readable)", &["ron"])
+                                    .save_file(),
+                            ) {
+                                let path = file.path().to_path_buf();
+                                if let Some(tx) = &app_tx {
+                                    let _ = tx.send(AppCommand::SaveSnapshot(path));
+                                }
+                            }
+                        });
+                    }
+                    ui.close_menu();
+                }
+                if ui.button("Save Snapshot As...").clicked() {
+                    let app_tx = state.app_tx.clone();
+                    std::thread::spawn(move || {
                         if let Some(file) = pollster::block_on(
                             rfd::AsyncFileDialog::new()
                                 .add_filter("Bincode (fast)", &["bincode"])
@@ -62,37 +81,27 @@ pub fn render_menu_bar(ctx: &Context, state: &mut UiState, stats: &analytics::Si
                                 .save_file(),
                         ) {
                             let path = file.path().to_path_buf();
-                            send_cmd(state, AppCommand::SaveSnapshot(path.clone()));
-                            state.last_snapshot_path = Some(path);
-                            state.unsaved_changes = false;
+                            if let Some(tx) = &app_tx {
+                                let _ = tx.send(AppCommand::SaveSnapshot(path));
+                            }
                         }
-                    }
-                    ui.close_menu();
-                }
-                if ui.button("Save Snapshot As...").clicked() {
-                    if let Some(file) = pollster::block_on(
-                        rfd::AsyncFileDialog::new()
-                            .add_filter("Bincode (fast)", &["bincode"])
-                            .add_filter("RON (readable)", &["ron"])
-                            .save_file(),
-                    ) {
-                        let path = file.path().to_path_buf();
-                        send_cmd(state, AppCommand::SaveSnapshot(path.clone()));
-                        state.last_snapshot_path = Some(path);
-                        state.unsaved_changes = false;
-                    }
+                    });
                     ui.close_menu();
                 }
                 if ui.button("Open Experiment...").clicked() {
-                    if let Some(file) = pollster::block_on(
-                        rfd::AsyncFileDialog::new()
-                            .add_filter("Experiment Config", &["toml"])
-                            .pick_file(),
-                    ) {
-                        let exp = research::Experiment::from_toml(file.path());
-                        state.active_experiment = Some(exp);
-                        state.active_modal = Some(UiModal::ExperimentReady);
-                    }
+                    let app_tx = state.app_tx.clone();
+                    std::thread::spawn(move || {
+                        if let Some(file) = pollster::block_on(
+                            rfd::AsyncFileDialog::new()
+                                .add_filter("Experiment Config", &["toml"])
+                                .pick_file(),
+                        ) {
+                            let exp = research::Experiment::from_toml(file.path());
+                            if let Some(tx) = &app_tx {
+                                let _ = tx.send(AppCommand::StageExperiment(exp));
+                            }
+                        }
+                    });
                     ui.close_menu();
                 }
                 if ui.button("Export CSV...").clicked() {
@@ -103,7 +112,7 @@ pub fn render_menu_bar(ctx: &Context, state: &mut UiState, stats: &analytics::Si
                     ) {
                         let path = file.path().to_path_buf();
                         let task_tx = state.task_tx.clone();
-                        let history = stats.population_history.clone();
+                        let history = stats.history.clone();
                         std::thread::spawn(move || {
                             if let Some(tx) = &task_tx {
                                 let _ = tx.send(LoadingTask {
@@ -116,9 +125,9 @@ pub fn render_menu_bar(ctx: &Context, state: &mut UiState, stats: &analytics::Si
                             }
                             if let Ok(mut w) = std::fs::File::create(path) {
                                 use std::io::Write;
-                                let _ = writeln!(w, "tick,population");
-                                for (tick, pop) in history {
-                                    let _ = writeln!(w, "{},{}", tick, pop);
+                                let _ = writeln!(w, "tick,population,avg_energy,total_food");
+                                for (tick, pop, energy, food) in history {
+                                    let _ = writeln!(w, "{},{},{},{}", tick, pop, energy, food);
                                 }
                             }
                             if let Some(tx) = &task_tx {
@@ -135,42 +144,19 @@ pub fn render_menu_bar(ctx: &Context, state: &mut UiState, stats: &analytics::Si
                     ui.close_menu();
                 }
                 if ui.button("Export Lineage Tree...").clicked() {
-                    if let Some(file) = pollster::block_on(
-                        rfd::AsyncFileDialog::new()
-                            .add_filter("JSON", &["json"])
-                            .save_file(),
-                    ) {
-                        let task_tx = state.task_tx.clone();
-                        let path = file.path().to_path_buf();
-                        std::thread::spawn(move || {
-                            let cancel_flag = Arc::new(AtomicBool::new(false));
-                            if let Some(tx) = &task_tx {
-                                let _ = tx.send(LoadingTask {
-                                    label: "Exporting Lineage Tree".to_string(),
-                                    detail: "Querying database...".to_string(),
-                                    progress: 0.5,
-                                    can_cancel: true,
-                                    cancel_flag: cancel_flag.clone(),
-                                });
+                    let app_tx = state.app_tx.clone();
+                    std::thread::spawn(move || {
+                        if let Some(file) = pollster::block_on(
+                            rfd::AsyncFileDialog::new()
+                                .add_filter("JSON", &["json"])
+                                .save_file(),
+                        ) {
+                            if let Some(tx) = &app_tx {
+                                let _ = tx
+                                    .send(AppCommand::ExportLineageTree(file.path().to_path_buf()));
                             }
-                            if !cancel_flag.load(Ordering::Relaxed) {
-                                // Dummy export JSON since we don't have db connection here
-                                if let Ok(mut w) = std::fs::File::create(path) {
-                                    use std::io::Write;
-                                    let _ = writeln!(w, "[]");
-                                }
-                            }
-                            if let Some(tx) = &task_tx {
-                                let _ = tx.send(LoadingTask {
-                                    label: "Done".to_string(),
-                                    detail: "".to_string(),
-                                    progress: 1.0,
-                                    can_cancel: false,
-                                    cancel_flag: Arc::new(AtomicBool::new(false)),
-                                });
-                            }
-                        });
-                    }
+                        }
+                    });
                     ui.close_menu();
                 }
                 ui.separator();
@@ -269,15 +255,11 @@ pub fn render_menu_bar(ctx: &Context, state: &mut UiState, stats: &analytics::Si
                     ui.close_menu();
                 }
                 if ui.button("Select by Species...").clicked() {
-                    // Opens a modal for species filter
-                    // We don't have this modal implemented yet as per instructions, it just says "MODAL: open UiModal::FilterBySpecies"
-                    // Wait, instruction actually says: "Select by Species... MODAL: open UiModal::FilterBySpecies"
-                    // I will just send a command to query species list.
                     send_cmd(state, AppCommand::QuerySpeciesList);
                     ui.close_menu();
                 }
                 if ui.button("Invert Selection").clicked() {
-                    send_cmd(state, AppCommand::QueryAllEntityIds);
+                    send_cmd(state, AppCommand::InvertSelection);
                     ui.close_menu();
                 }
                 ui.separator();
@@ -290,7 +272,7 @@ pub fn render_menu_bar(ctx: &Context, state: &mut UiState, stats: &analytics::Si
                 {
                     state.panels.entity_inspector = true;
                     if let Some(&first) = state.selected_entities.first() {
-                        send_cmd(state, AppCommand::FocusEntity(first));
+                        send_cmd(state, AppCommand::TrackEntity(first));
                     }
                     ui.close_menu();
                 }

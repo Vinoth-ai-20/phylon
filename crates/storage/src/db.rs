@@ -53,6 +53,10 @@ impl DbWriter {
         Ok(Self { conn })
     }
 
+    pub fn get_conn(&self) -> &rusqlite::Connection {
+        &self.conn
+    }
+
     pub fn write_event(&mut self, event: DbEvent) -> Result<()> {
         match event {
             DbEvent::Metrics {

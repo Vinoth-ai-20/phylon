@@ -3,8 +3,12 @@ use common::EntityId;
 use std::sync::{atomic::AtomicBool, Arc};
 
 #[derive(Clone, Debug)]
-pub struct GodModeAction {
-    pub description: String,
+pub enum GodModeAction {
+    ScriptRun {
+        script_path: String,
+        affected_entity_ids: Vec<EntityId>,
+    },
+    // Adding a generic string variant for Redo/Undo text display if needed, but sticking to prompt
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +61,10 @@ impl Default for PanelVisibility {
 }
 
 pub struct UiState {
+    pub trail_decay: f32,
+    pub bloom_threshold: f32,
+    pub bloom_intensity: f32,
+    pub ui_scale: f32,
     pub simulation_speed: f32,
     pub is_paused: bool,
     pub show_field_overlay: bool,
@@ -79,11 +87,17 @@ pub struct UiState {
     pub active_experiment: Option<research::Experiment>,
     pub script_console_log: String,
     pub db_query_results: Option<Result<Vec<Vec<String>>, String>>,
+    pub db_query_input: String,
+    pub species_list: Vec<(u32, usize)>,
 }
 
 impl Default for UiState {
     fn default() -> Self {
         Self {
+            trail_decay: 0.95,
+            bloom_threshold: 1.0,
+            bloom_intensity: 0.5,
+            ui_scale: 1.0,
             simulation_speed: 1.0,
             is_paused: false,
             show_field_overlay: true,
@@ -106,6 +120,8 @@ impl Default for UiState {
             active_experiment: None,
             script_console_log: String::new(),
             db_query_results: None,
+            db_query_input: String::new(),
+            species_list: Vec::new(),
         }
     }
 }

@@ -26,6 +26,7 @@ pub struct OrganismPass {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct CameraUniform {
     view_proj: [[f32; 4]; 4],
+    ui_flags: [u32; 4], // [show_species, show_grid, show_sensors, show_disease]
 }
 
 impl OrganismPass {
@@ -48,7 +49,7 @@ impl OrganismPass {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -180,12 +181,16 @@ impl OrganismPass {
         &self.camera_bind_group
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         world: &mut world::PhylonWorld,
         config: &wgpu::SurfaceConfiguration,
+        camera_pos: glam::Vec2,
+        camera_zoom: f32,
+        ui_flags: [u32; 4],
     ) {
         puffin::profile_function!();
 
@@ -195,16 +200,19 @@ impl OrganismPass {
         let height = width / aspect_ratio;
 
         let proj = Mat4::orthographic_rh(
-            -width / 2.0,
-            width / 2.0,
-            -height / 2.0,
-            height / 2.0,
+            -width / 2.0 * camera_zoom,
+            width / 2.0 * camera_zoom,
+            -height / 2.0 * camera_zoom,
+            height / 2.0 * camera_zoom,
             -1.0,
             1.0,
         );
+        let view = Mat4::from_translation(glam::Vec3::new(-camera_pos.x, -camera_pos.y, 0.0));
+        let view_proj = proj * view;
 
         let camera_uniform = CameraUniform {
-            view_proj: proj.to_cols_array_2d(),
+            view_proj: view_proj.to_cols_array_2d(),
+            ui_flags,
         };
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&camera_uniform));
 

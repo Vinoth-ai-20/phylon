@@ -34,8 +34,9 @@ pub struct PostPass {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     bind_group_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
+    pub sampler: wgpu::Sampler,
     pub bind_group: wgpu::BindGroup,
+    pub uniforms_buffer: wgpu::Buffer,
 }
 
 impl PostPass {
@@ -72,6 +73,12 @@ impl PostPass {
             ..Default::default()
         });
 
+        let uniforms_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Post Uniforms Buffer"),
+            contents: bytemuck::cast_slice(&[1.0f32, 0.5, 0.0, 0.0]), // threshold, intensity, padding, padding
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Post Bind Group Layout"),
             entries: &[
@@ -91,6 +98,16 @@ impl PostPass {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -105,6 +122,10 @@ impl PostPass {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniforms_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -181,6 +202,7 @@ impl PostPass {
             bind_group_layout,
             sampler,
             bind_group,
+            uniforms_buffer,
         }
     }
 
@@ -242,6 +264,10 @@ impl PostPass {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.uniforms_buffer.as_entire_binding(),
                 },
             ],
         });

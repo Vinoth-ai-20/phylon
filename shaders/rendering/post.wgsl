@@ -19,6 +19,14 @@ var hdr_texture: texture_2d<f32>;
 @group(0) @binding(1)
 var hdr_sampler: sampler;
 
+struct PostUniforms {
+    bloom_threshold: f32,
+    bloom_intensity: f32,
+    _padding: vec2<f32>,
+};
+@group(0) @binding(2)
+var<uniform> uniforms: PostUniforms;
+
 // Simple Gaussian weights for bloom
 fn gaussian_blur(tex: texture_2d<f32>, samp: sampler, uv: vec2<f32>, dir: vec2<f32>) -> vec3<f32> {
     var color = vec3<f32>(0.0);
@@ -36,7 +44,7 @@ fn gaussian_blur(tex: texture_2d<f32>, samp: sampler, uv: vec2<f32>, dir: vec2<f
 // Extract bright parts for bloom
 fn bright_pass(c: vec3<f32>) -> vec3<f32> {
     let brightness = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
-    if (brightness > 1.0) {
+    if (brightness > uniforms.bloom_threshold) {
         return c;
     }
     return vec3<f32>(0.0);
@@ -72,7 +80,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let bloom_color = gaussian_blur(hdr_texture, hdr_sampler, in.uv, vec2<f32>(1.0, 0.0)) * 0.5
                     + gaussian_blur(hdr_texture, hdr_sampler, in.uv, vec2<f32>(0.0, 1.0)) * 0.5;
                     
-    let final_hdr = blurred_color + bright_pass(bloom_color) * 0.5;
+    let final_hdr = blurred_color + bright_pass(bloom_color) * uniforms.bloom_intensity;
 
     // Tonemapping
     let ldr = aces_approx(final_hdr);

@@ -1,5 +1,6 @@
 struct CameraUniform {
     view_proj: mat4x4<f32>,
+    ui_flags: vec4<u32>, // x=species, y=grid, z=sensors, w=disease
 };
 
 @group(0) @binding(0)
@@ -138,6 +139,16 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     // Determine specific visual traits based on diet
     var organism_color = in.color;
     
+    // Override base color with species color if flag is set
+    if (camera.ui_flags.x == 1u) {
+        let seed = in.genome_id;
+        let r = random_val(seed, 0u);
+        let g = random_val(seed, 1u);
+        let b = random_val(seed, 2u);
+        // Bright saturated color
+        organism_color = normalize(vec3<f32>(r, g, b) + vec3<f32>(0.2)) * 0.8;
+    }
+    
     if (in.diet == 0u) { // Herbivore
         // Green-tinted
         organism_color = mix(organism_color, vec3<f32>(0.2, 0.8, 0.2), 0.5);
@@ -221,8 +232,19 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     let edge_shade = smoothstep(0.0, -0.2, inner_dist);
     var final_color = mix(organism_color * 0.5, organism_color, edge_shade);
     
+    // Sensor cones (visualized as a faint arc ahead of the organism)
+    if (camera.ui_flags.z == 1u) {
+        // Simple 45 degree arc facing right (+x)
+        let angle = atan2(uv.y, uv.x);
+        let radius = length(uv);
+        if (radius > 0.4 && radius < 0.9 && abs(angle) < 0.8) {
+            final_color = mix(final_color, vec3<f32>(1.0, 1.0, 1.0), 0.3);
+            alpha = max(alpha, 0.3);
+        }
+    }
+    
     // Infected pulsing dark purple overlay
-    if (in.is_infected == 1u) {
+    if (in.is_infected == 1u && camera.ui_flags.w == 1u) {
         let pulse_intensity = (sin(in.tick_age * 0.2) + 1.0) * 0.5;
         let purple = vec3<f32>(0.4, 0.0, 0.6);
         final_color = mix(final_color, purple, pulse_intensity * 0.6);

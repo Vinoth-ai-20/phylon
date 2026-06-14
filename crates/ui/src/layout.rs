@@ -7,6 +7,8 @@ pub enum Pane {
     BrainInspector,
     EntityInspector,
     GenomeInspector,
+    ScriptConsole,
+    DbConsole,
 }
 
 pub struct TreeBehavior<'a> {
@@ -34,9 +36,9 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
 
                 let points: egui_plot::PlotPoints = self
                     .stats
-                    .population_history
+                    .history
                     .iter()
-                    .map(|(t, p)| [*t, *p])
+                    .map(|(t, p, _, _)| [*t, *p])
                     .collect();
 
                 let line = egui_plot::Line::new(points);
@@ -65,6 +67,39 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
             Pane::GenomeInspector => {
                 ui.label("Genome Inspector (Not Implemented)");
             }
+            Pane::ScriptConsole => {
+                ui.heading("Script Console");
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.label(&self.ui_state.script_console_log);
+                });
+            }
+            Pane::DbConsole => {
+                ui.heading("DB Query Console");
+                ui.text_edit_singleline(&mut self.ui_state.db_query_input);
+                if ui.button("Execute Query").clicked() {
+                    let cmd = crate::commands::AppCommand::RunDbQuery(
+                        self.ui_state.db_query_input.clone(),
+                    );
+                    if let Some(tx) = &self.ui_state.app_tx {
+                        let _ = tx.send(cmd);
+                    }
+                }
+                ui.separator();
+                if let Some(res) = &self.ui_state.db_query_results {
+                    match res {
+                        Ok(rows) => {
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                for row in rows {
+                                    ui.label(row.join(" | "));
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            ui.colored_label(egui::Color32::RED, format!("Error: {}", e));
+                        }
+                    }
+                }
+            }
         }
         UiResponse::None
     }
@@ -76,6 +111,8 @@ impl<'a> Behavior<Pane> for TreeBehavior<'a> {
             Pane::BrainInspector => "Brain Inspector".into(),
             Pane::EntityInspector => "Entity Inspector".into(),
             Pane::GenomeInspector => "Genome Inspector".into(),
+            Pane::ScriptConsole => "Script Console".into(),
+            Pane::DbConsole => "DB Console".into(),
         }
     }
 }

@@ -1,5 +1,6 @@
 struct CameraUniform {
     view_proj: mat4x4<f32>,
+    ui_flags: vec4<u32>, // x=species, y=grid, z=sensors, w=disease
 };
 @group(0) @binding(0) var<uniform> camera: CameraUniform;
 
@@ -56,9 +57,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Pheromone -> soft violet/magenta
     let pheromone_color = vec3<f32>(0.7, 0.2, 0.8) * pheromone;
     
-    let final_color = food_color + toxin_color + pheromone_color;
+    var final_color = food_color + toxin_color + pheromone_color;
+    var alpha = clamp((food + toxin + pheromone) * 0.5, 0.0, 0.8);
     
-    let alpha = clamp((food + toxin + pheromone) * 0.5, 0.0, 0.8);
+    // Grid rendering
+    if (camera.ui_flags.y == 1u) {
+        let grid_thickness = 0.05;
+        let cell_uv = fract(in.uv * vec2<f32>(f32(params.width), f32(params.height)));
+        if (cell_uv.x < grid_thickness || cell_uv.y < grid_thickness) {
+            final_color = mix(final_color, vec3<f32>(1.0, 1.0, 1.0), 0.2);
+            alpha = max(alpha, 0.2);
+        }
+    }
     
     return vec4<f32>(final_color, alpha);
 }

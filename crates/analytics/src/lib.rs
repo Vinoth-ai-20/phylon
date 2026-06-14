@@ -5,7 +5,7 @@ use world::PhylonWorld;
 
 pub struct SimulationStats {
     pub max_history: usize,
-    pub population_history: VecDeque<(f64, f64)>, // (tick, count)
+    pub history: VecDeque<(f64, f64, f64, f64)>, // (tick, population, avg_energy, total_food)
     pub deaths_by_starvation: u64,
     pub deaths_by_predation: u64,
     pub deaths_by_age: u64,
@@ -17,7 +17,7 @@ impl SimulationStats {
     pub fn new(max_history: usize) -> Self {
         Self {
             max_history,
-            population_history: VecDeque::with_capacity(max_history),
+            history: VecDeque::with_capacity(max_history),
             deaths_by_starvation: 0,
             deaths_by_predation: 0,
             deaths_by_age: 0,
@@ -51,11 +51,27 @@ impl SimulationStats {
         // Exact count of all active entities in the world
         self.current_population = world.ecs.len() as usize;
 
-        // Record population every tick
-        self.population_history
-            .push_back((tick.0 as f64, self.current_population as f64));
-        if self.population_history.len() > self.max_history {
-            self.population_history.pop_front();
+        let mut total_energy = 0.0;
+        for (_, energy) in world.ecs.query::<&organisms::Energy>().iter() {
+            total_energy += energy.0 as f64;
+        }
+        let avg_energy = if self.current_population > 0 {
+            total_energy / self.current_population as f64
+        } else {
+            0.0
+        };
+
+        let total_food = world.ecs.query::<&organisms::FoodPellet>().iter().count() as f64;
+
+        self.history.push_back((
+            tick.0 as f64,
+            self.current_population as f64,
+            avg_energy,
+            total_food,
+        ));
+
+        if self.history.len() > self.max_history {
+            self.history.pop_front();
         }
     }
 }
