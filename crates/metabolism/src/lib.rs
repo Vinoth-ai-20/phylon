@@ -16,17 +16,15 @@ pub fn process_metabolism(world: &mut World, events: &EventBus) {
 
     let mut deaths = Vec::new();
 
-    for (entity, (_, energy, health, age, genome, mass, vel)) in world
-        .query_mut::<(
-            &Organism,
-            &mut Energy,
-            &mut Health,
-            &mut Age,
-            &Genome,
-            &Mass,
-            &Velocity,
-        )>()
-    {
+    for (entity, (_, energy, health, age, genome, mass, vel)) in world.query_mut::<(
+        &Organism,
+        &mut Energy,
+        &mut Health,
+        &mut Age,
+        &Genome,
+        &Mass,
+        &Velocity,
+    )>() {
         age.0 += 1;
 
         // Base metabolic cost + kinetic cost

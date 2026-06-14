@@ -11,7 +11,7 @@ pub struct Genome {
     pub color: [f32; 3],
     /// The maximum speed the organism can attain.
     pub max_speed: f32,
-    /// A multiplier applied to the basal metabolic rate. 
+    /// A multiplier applied to the basal metabolic rate.
     /// Higher values consume energy faster.
     pub metabolic_rate: f32,
     /// The radius of the organism.
@@ -40,9 +40,7 @@ impl Genome {
     pub fn mutate<R: Rng + ?Sized>(&self, rng: &mut R, mutation_rate: f32) -> Self {
         let normal = Normal::new(0.0, mutation_rate as f64).unwrap();
 
-        let mutate_val = |val: f32, rng: &mut R| -> f32 {
-            val + normal.sample(rng) as f32
-        };
+        let mutate_val = |val: f32, rng: &mut R| -> f32 { val + normal.sample(rng) as f32 };
 
         Self {
             color: [
@@ -84,7 +82,7 @@ mod tests {
         assert_eq!(child1.max_speed, child2.max_speed);
         assert_eq!(child1.sense_radius, child2.sense_radius);
         assert_eq!(child1.brain_weights, child2.brain_weights);
-        
+
         // Ensure it actually changed from parent
         assert_ne!(genome.brain_weights, child1.brain_weights);
     }

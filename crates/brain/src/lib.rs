@@ -1,12 +1,13 @@
+use genetics::Genome;
 use hecs::World;
 use ndarray::{ArrayView1, ArrayView2};
-use genetics::Genome;
 use sensing::Observation;
 
 pub const INPUT_SIZE: usize = 4;
 pub const HIDDEN_SIZE: usize = 8;
 pub const OUTPUT_SIZE: usize = 2;
-pub const BRAIN_WEIGHTS_COUNT: usize = (INPUT_SIZE * HIDDEN_SIZE) + HIDDEN_SIZE + (HIDDEN_SIZE * OUTPUT_SIZE) + OUTPUT_SIZE;
+pub const BRAIN_WEIGHTS_COUNT: usize =
+    (INPUT_SIZE * HIDDEN_SIZE) + HIDDEN_SIZE + (HIDDEN_SIZE * OUTPUT_SIZE) + OUTPUT_SIZE;
 
 /// Component storing the desired outputs from the brain.
 /// Format: [turn_amount (radians), forward_thrust]
@@ -35,7 +36,7 @@ impl NeuralBrain {
         let w1_len = INPUT_SIZE * HIDDEN_SIZE;
         let w1_slice = &weights[0..w1_len];
         let b1_slice = &weights[w1_len..w1_len + HIDDEN_SIZE];
-        
+
         // Layer 2: Hidden (8) -> Output (2)
         let w2_start = w1_len + HIDDEN_SIZE;
         let w2_len = HIDDEN_SIZE * OUTPUT_SIZE;
@@ -45,7 +46,7 @@ impl NeuralBrain {
         // Construct views
         let w1 = ArrayView2::from_shape((HIDDEN_SIZE, INPUT_SIZE), w1_slice).unwrap();
         let b1 = ArrayView1::from_shape(HIDDEN_SIZE, b1_slice).unwrap();
-        
+
         let w2 = ArrayView2::from_shape((OUTPUT_SIZE, HIDDEN_SIZE), w2_slice).unwrap();
         let b2 = ArrayView1::from_shape(OUTPUT_SIZE, b2_slice).unwrap();
 
@@ -69,7 +70,9 @@ impl NeuralBrain {
 pub fn process_brain(world: &mut World) {
     puffin::profile_function!();
 
-    for (_entity, (genome, obs, intention)) in world.query_mut::<(&Genome, &Observation, &mut Intention)>() {
+    for (_entity, (genome, obs, intention)) in
+        world.query_mut::<(&Genome, &Observation, &mut Intention)>()
+    {
         let result = NeuralBrain::forward(&genome.brain_weights, &obs.data);
         intention.data = result;
     }

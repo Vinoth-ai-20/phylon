@@ -17,15 +17,13 @@ pub struct ReproductionCooldown(pub u32);
 pub fn process_reproduction(world: &mut World, events: &EventBus, rng_seed: u64, tick: u64) {
     let mut rng = ChaCha8Rng::seed_from_u64(rng_seed.wrapping_add(tick));
 
-    for (entity, (_, energy, genome, cooldown, pos)) in world
-        .query_mut::<(
-            &Organism,
-            &mut Energy,
-            &Genome,
-            &mut ReproductionCooldown,
-            &physics::Position,
-        )>()
-    {
+    for (entity, (_, energy, genome, cooldown, pos)) in world.query_mut::<(
+        &Organism,
+        &mut Energy,
+        &Genome,
+        &mut ReproductionCooldown,
+        &physics::Position,
+    )>() {
         if cooldown.0 > 0 {
             cooldown.0 -= 1;
             continue;
@@ -42,10 +40,7 @@ pub fn process_reproduction(world: &mut World, events: &EventBus, rng_seed: u64,
             let child_genome = genome.mutate(&mut rng, 0.1);
 
             // Spawn slightly offset
-            let offset = Vec2::new(
-                rng.gen_range(-5.0..5.0),
-                rng.gen_range(-5.0..5.0),
-            );
+            let offset = Vec2::new(rng.gen_range(-5.0..5.0), rng.gen_range(-5.0..5.0));
 
             events.publish(PhylonEvent::BirthEvent {
                 parent: Some(common::EntityId(entity.to_bits().get())),

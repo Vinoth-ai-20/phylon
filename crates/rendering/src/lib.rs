@@ -243,7 +243,8 @@ impl DebugRenderer {
                 self.instance_capacity = self.instance_count.next_power_of_two();
                 self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("Instance Buffer"),
-                    size: (self.instance_capacity as usize * std::mem::size_of::<EntityInstance>()) as wgpu::BufferAddress,
+                    size: (self.instance_capacity as usize * std::mem::size_of::<EntityInstance>())
+                        as wgpu::BufferAddress,
                     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
@@ -258,8 +259,7 @@ impl DebugRenderer {
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass
-                .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..self.instance_count);
         }
     }
@@ -319,10 +319,22 @@ impl QuadVertex {
 }
 
 const FIELD_VERTICES: &[QuadVertex] = &[
-    QuadVertex { position: [-0.5, -0.5], uv: [0.0, 1.0] },
-    QuadVertex { position: [ 0.5, -0.5], uv: [1.0, 1.0] },
-    QuadVertex { position: [-0.5,  0.5], uv: [0.0, 0.0] },
-    QuadVertex { position: [ 0.5,  0.5], uv: [1.0, 0.0] },
+    QuadVertex {
+        position: [-0.5, -0.5],
+        uv: [0.0, 1.0],
+    },
+    QuadVertex {
+        position: [0.5, -0.5],
+        uv: [1.0, 1.0],
+    },
+    QuadVertex {
+        position: [-0.5, 0.5],
+        uv: [0.0, 0.0],
+    },
+    QuadVertex {
+        position: [0.5, 0.5],
+        uv: [1.0, 0.0],
+    },
 ];
 const FIELD_INDICES: &[u16] = &[0, 1, 2, 2, 1, 3];
 
@@ -336,10 +348,16 @@ pub struct FieldRenderer {
 }
 
 impl FieldRenderer {
-    pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, camera_layout: &wgpu::BindGroupLayout) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+        camera_layout: &wgpu::BindGroupLayout,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Field Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../../shaders/rendering/field_overlay.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../../shaders/rendering/field_overlay.wgsl").into(),
+            ),
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -383,12 +401,13 @@ impl FieldRenderer {
             bind_group_layouts: &[camera_layout], // Wait, the shader uses @group(0) for everything! So we need a combined layout, or we can use our `bind_group_layout` which expects camera to be at binding 0!
             push_constant_ranges: &[],
         });
-        
-        let actual_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Field Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
+
+        let actual_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Field Pipeline Layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Field Render Pipeline"),
@@ -419,7 +438,11 @@ impl FieldRenderer {
                 conservative: false,
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState { count: 1, mask: !0, alpha_to_coverage_enabled: false },
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             multiview: None,
             cache: None,
         });
@@ -459,7 +482,10 @@ impl FieldRenderer {
         field: &diffusion::DiffusionField,
         camera_buffer: &wgpu::Buffer,
     ) {
-        let params = FieldParams { width: field.width, height: field.height };
+        let params = FieldParams {
+            width: field.width,
+            height: field.height,
+        };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
 
         if self.bind_groups_cache.is_none() {
@@ -483,10 +509,7 @@ impl FieldRenderer {
                     ],
                 })
             };
-            self.bind_groups_cache = Some([
-                create_bg(&field.buffer_a),
-                create_bg(&field.buffer_b),
-            ]);
+            self.bind_groups_cache = Some([create_bg(&field.buffer_a), create_bg(&field.buffer_b)]);
         }
     }
 

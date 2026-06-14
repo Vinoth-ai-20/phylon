@@ -99,13 +99,22 @@ impl SimulationScheduler {
         } else if phase == SystemOrder::Metabolism {
             metabolism::process_metabolism(&mut world.ecs, &world.event_bus);
         } else if phase == SystemOrder::Ecology {
-            ecology::spawn_food(&mut world.ecs, phylon_config::PhylonConfig::default().simulation.rng_seed, self.current_tick.0);
+            ecology::spawn_food(
+                &mut world.ecs,
+                phylon_config::PhylonConfig::default().simulation.rng_seed,
+                self.current_tick.0,
+            );
             ecology::process_foraging(&mut world.ecs, &world.spatial_index);
         } else if phase == SystemOrder::Reproduction {
-            reproduction::process_reproduction(&mut world.ecs, &world.event_bus, phylon_config::PhylonConfig::default().simulation.rng_seed, self.current_tick.0);
+            reproduction::process_reproduction(
+                &mut world.ecs,
+                &world.event_bus,
+                phylon_config::PhylonConfig::default().simulation.rng_seed,
+                self.current_tick.0,
+            );
         } else if phase == SystemOrder::PostTick {
             let events = world.event_bus.drain::<events::PhylonEvent>();
-            
+
             // Collect deaths and births
             let mut deaths = Vec::new();
             let mut births = Vec::new();
@@ -113,7 +122,12 @@ impl SimulationScheduler {
             for e in events {
                 match e {
                     events::PhylonEvent::DeathEvent { id, .. } => deaths.push(id),
-                    events::PhylonEvent::BirthEvent { parent: _, genome, initial_energy, position } => {
+                    events::PhylonEvent::BirthEvent {
+                        parent: _,
+                        genome,
+                        initial_energy,
+                        position,
+                    } => {
                         births.push((genome, initial_energy, position));
                     }
                     _ => {}

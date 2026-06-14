@@ -116,11 +116,7 @@ impl DiffusionField {
         }
     }
 
-    pub fn dispatch(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        pipeline: &DiffusionPipeline,
-    ) {
+    pub fn dispatch(&mut self, encoder: &mut wgpu::CommandEncoder, pipeline: &DiffusionPipeline) {
         puffin::profile_function!();
         let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Diffusion Compute Pass"),
@@ -135,12 +131,8 @@ impl DiffusionField {
         }
 
         // Dispatch (width/16, height/16, 1)
-        compute_pass.dispatch_workgroups(
-            (self.width + 15) / 16,
-            (self.height + 15) / 16,
-            1,
-        );
-        
+        compute_pass.dispatch_workgroups((self.width + 15) / 16, (self.height + 15) / 16, 1);
+
         // Swap buffers for next tick
         self.flip = !self.flip;
     }

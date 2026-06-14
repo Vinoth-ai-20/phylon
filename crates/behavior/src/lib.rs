@@ -1,8 +1,8 @@
+use brain::Intention;
 use common::Vec2;
+use genetics::Genome;
 use hecs::World;
 use physics::{Acceleration, Heading};
-use brain::Intention;
-use genetics::Genome;
 
 /// Maps the organism's neural intentions into physical forces and rotations.
 pub fn process_behavior(world: &mut World) {
@@ -22,8 +22,12 @@ pub fn process_behavior(world: &mut World) {
         heading.0 += turn_amount * max_turn;
 
         // Normalize heading just in case
-        while heading.0 > std::f32::consts::PI { heading.0 -= std::f32::consts::TAU; }
-        while heading.0 < -std::f32::consts::PI { heading.0 += std::f32::consts::TAU; }
+        while heading.0 > std::f32::consts::PI {
+            heading.0 -= std::f32::consts::TAU;
+        }
+        while heading.0 < -std::f32::consts::PI {
+            heading.0 += std::f32::consts::TAU;
+        }
 
         // Forward thrust scaled by genome max speed
         // To allow stopping or reversing, we can allow negative thrust, or just bound to [0, 1].

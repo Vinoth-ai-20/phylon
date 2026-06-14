@@ -22,7 +22,7 @@ pub fn spawn_food(world: &mut World, rng_seed: u64, tick: u64) {
         let mut rng = ChaCha8Rng::seed_from_u64(rng_seed.wrapping_add(tick));
         // Spawn a batch of food
         let to_spawn = (max_food - current_food).min(50); // Spawn max 50 per tick
-        
+
         for _ in 0..to_spawn {
             let pos = Vec2::new(rng.gen_range(-500.0..500.0), rng.gen_range(-500.0..500.0));
             world.spawn((
@@ -30,7 +30,7 @@ pub fn spawn_food(world: &mut World, rng_seed: u64, tick: u64) {
                 Position(pos),
                 Energy(10.0),
                 Radius(1.0),
-                // Note: Food pellets don't have velocity or mass right now. 
+                // Note: Food pellets don't have velocity or mass right now.
                 // They are static.
             ));
         }
@@ -48,7 +48,9 @@ pub fn process_foraging(world: &mut World, _grid: &UniformGrid) {
     }
 
     // For each organism, check nearby food
-    for (_org_entity, (_, org_pos, org_radius, org_energy)) in world.query_mut::<(&Organism, &Position, &Radius, &mut Energy)>() {
+    for (_org_entity, (_, org_pos, org_radius, org_energy)) in
+        world.query_mut::<(&Organism, &Position, &Radius, &mut Energy)>()
+    {
         let search_radius = org_radius.0 + 2.0;
         let search_sq = search_radius * search_radius;
 

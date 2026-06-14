@@ -24,12 +24,12 @@ impl ChunkTerrain {
             for x in 0..CHUNK_SIZE {
                 let wx = base_x + x as f32;
                 let wy = base_y + y as f32;
-                
+
                 // Sample noise at low frequency
                 let nx = wx * 0.01;
                 let ny = wy * 0.01;
                 let val = noise.get([nx as f64, ny as f64]) as f32;
-                
+
                 // Map from [-1, 1] to [0, 1]
                 heights.push((val + 1.0) * 0.5);
             }

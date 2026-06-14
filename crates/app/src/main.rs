@@ -2,6 +2,8 @@
 
 use anyhow::Result;
 use common::Vec2;
+use diffusion::DiffusionField;
+use gpu::compute::DiffusionPipeline;
 use phylon_config::PhylonConfig;
 use physics::{Acceleration, Mass, Position, Radius, Velocity};
 use rand::Rng;
@@ -17,8 +19,6 @@ use winit::{
     window::{Window, WindowId},
 };
 use world::PhylonWorld;
-use diffusion::DiffusionField;
-use gpu::compute::DiffusionPipeline;
 
 struct PhylonApp {
     config: PhylonConfig,
@@ -46,12 +46,10 @@ impl PhylonApp {
         let spawn_range = 400.0;
         for _ in 0..100 {
             let mut genome = genetics::Genome::default();
-            
+
             // Initialize random brain weights
             let num_weights = brain::BRAIN_WEIGHTS_COUNT;
-            genome.brain_weights = (0..num_weights)
-                .map(|_| rng.gen_range(-1.0..1.0))
-                .collect();
+            genome.brain_weights = (0..num_weights).map(|_| rng.gen_range(-1.0..1.0)).collect();
 
             world.spawn((
                 organisms::Organism,
@@ -109,7 +107,7 @@ impl PhylonApp {
                 renderer.prepare(device, queue, &mut self.world, config);
             }
         }
-        
+
         if let Some(field_renderer) = &mut self.field_renderer {
             if let (Some(field), Some(renderer)) = (&self.diffusion_field, &self.renderer) {
                 field_renderer.prepare(device, queue, field, renderer.camera_buffer());
@@ -121,7 +119,8 @@ impl PhylonApp {
         });
 
         // Compute Pass for Diffusion
-        if let (Some(pipeline), Some(field)) = (&self.diffusion_pipeline, &mut self.diffusion_field) {
+        if let (Some(pipeline), Some(field)) = (&self.diffusion_pipeline, &mut self.diffusion_field)
+        {
             field.dispatch(&mut encoder, pipeline);
         }
 
@@ -147,7 +146,9 @@ impl PhylonApp {
             });
 
             // Render Field Overlay first (in background)
-            if let (Some(field_renderer), Some(field)) = (&self.field_renderer, &self.diffusion_field) {
+            if let (Some(field_renderer), Some(field)) =
+                (&self.field_renderer, &self.diffusion_field)
+            {
                 field_renderer.render(&mut render_pass, field);
             }
 
@@ -209,10 +210,15 @@ impl ApplicationHandler for PhylonApp {
             surface.configure(&device, &surface_config);
 
             let renderer = DebugRenderer::new(&device, &surface_config);
-            let field_renderer = FieldRenderer::new(&device, &surface_config, renderer.camera_bind_group_layout());
-            
+            let field_renderer = FieldRenderer::new(
+                &device,
+                &surface_config,
+                renderer.camera_bind_group_layout(),
+            );
+
             let diffusion_pipeline = DiffusionPipeline::new(&device);
-            let diffusion_field = DiffusionField::new(&device, &diffusion_pipeline, 256, 256, 0.2, 0.01);
+            let diffusion_field =
+                DiffusionField::new(&device, &diffusion_pipeline, 256, 256, 0.2, 0.01);
 
             self.renderer = Some(renderer);
             self.field_renderer = Some(field_renderer);
