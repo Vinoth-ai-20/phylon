@@ -396,7 +396,7 @@ impl FieldRenderer {
             ],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let _pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Field Pipeline Layout"),
             bind_group_layouts: &[camera_layout], // Wait, the shader uses @group(0) for everything! So we need a combined layout, or we can use our `bind_group_layout` which expects camera to be at binding 0!
             push_constant_ranges: &[],

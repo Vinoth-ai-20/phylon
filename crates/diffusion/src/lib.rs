@@ -35,7 +35,7 @@ impl DiffusionField {
         decay_rate: f32,
     ) -> Self {
         let initial_data = vec![0.0f32; (width * height) as usize];
-        let size = (initial_data.len() * mem::size_of::<f32>()) as wgpu::BufferAddress;
+        let _size = (initial_data.len() * mem::size_of::<f32>()) as wgpu::BufferAddress;
 
         let buffer_a = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Diffusion Buffer A"),

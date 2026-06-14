@@ -1,4 +1,4 @@
-use wgpu::util::DeviceExt;
+
 
 pub struct DiffusionPipeline {
     pub pipeline: wgpu::ComputePipeline,

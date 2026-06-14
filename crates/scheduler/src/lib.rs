@@ -142,7 +142,7 @@ impl SimulationScheduler {
 
             // Process births
             for (genome, energy, pos) in births {
-                let id = world.spawn((
+                let _id = world.spawn((
                     organisms::Organism,
                     organisms::Age(0),
                     organisms::Energy(energy),

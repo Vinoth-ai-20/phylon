@@ -1,6 +1,6 @@
 //! Environment and Terrain generation.
 
-use common::{ChunkId, Vec2};
+use common::ChunkId;
 use noise::{NoiseFn, OpenSimplex};
 
 pub const CHUNK_SIZE: u32 = 256;
