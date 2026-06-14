@@ -86,7 +86,12 @@ impl SimulationScheduler {
         let _phase_span = span!(Level::TRACE, "phase", name = %phase_name).entered();
 
         if phase == SystemOrder::Sensing {
-            sensing::process_sensing(&mut world.ecs, &world.spatial_index);
+            let sampler = world::GridSampler {
+                grid: &world.field_grid,
+                width: 256,
+                height: 256,
+            };
+            sensing::process_sensing(&mut world.ecs, &world.spatial_index, &sampler);
         } else if phase == SystemOrder::Brain {
             brain::process_brain(&mut world.ecs);
         } else if phase == SystemOrder::Behavior {
@@ -104,7 +109,14 @@ impl SimulationScheduler {
                 phylon_config::PhylonConfig::default().simulation.rng_seed,
                 self.current_tick.0,
             );
-            ecology::process_foraging(&mut world.ecs, &world.spatial_index);
+            ecology::process_foraging(
+                &mut world.ecs,
+                &world.spatial_index,
+                &world.event_bus,
+                &world.field_grid,
+                256,
+                256,
+            );
             ecology::process_gas_exchange(&mut world.ecs, &mut world.field_grid, 256, 256);
         } else if phase == SystemOrder::Reproduction {
             reproduction::process_reproduction(

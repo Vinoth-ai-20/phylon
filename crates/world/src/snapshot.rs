@@ -102,6 +102,16 @@ pub fn load_world(world: &mut PhylonWorld, path: impl AsRef<Path>) -> Result<()>
     let file = File::open(path)?;
     let snapshot: WorldSnapshot = ron::de::from_reader(file)?;
 
+    // Validate genome version
+    if let Some(first) = snapshot.organisms.first() {
+        if first.genome.version != 1 {
+            anyhow::bail!(
+                "Incompatible save file: expected genome version 1, found {}",
+                first.genome.version
+            );
+        }
+    }
+
     world.ecs.clear();
 
     for o in snapshot.organisms {

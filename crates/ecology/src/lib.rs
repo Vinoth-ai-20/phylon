@@ -1,6 +1,8 @@
 //! Ecological interactions for Phylon.
 
 use common::Vec2;
+use events::{DeathCause, EventBus, PhylonEvent};
+use genetics::{Diet, Genome};
 use hecs::World;
 use organisms::{Energy, FoodPellet, Organism};
 use physics::{Position, Radius};
@@ -37,39 +39,145 @@ pub fn spawn_food(world: &mut World, rng_seed: u64, tick: u64) {
     }
 }
 
-/// Allows organisms to consume food pellets via spatial proximity.
-pub fn process_foraging(world: &mut World, _grid: &UniformGrid) {
+/// Allows organisms to consume food pellets or hunt prey based on their Diet.
+pub fn process_foraging(
+    world: &mut World,
+    grid: &UniformGrid,
+    events: &EventBus,
+    field_grid: &[[f32; 4]],
+    grid_width: u32,
+    grid_height: u32,
+) {
     puffin::profile_function!();
 
-    // First gather positions and energy of all food pellets
-    let mut foods = Vec::new();
-    for (entity, (_, pos, energy)) in world.query_mut::<(&FoodPellet, &Position, &Energy)>() {
-        foods.push((entity, pos.0, energy.0, false)); // entity, pos, energy, is_eaten
+    // We still collect food states because we need to mutate energy of foragers while checking food.
+    let mut foods = rustc_hash::FxHashMap::default();
+    for (entity, (_, pos, energy)) in world.query::<(&FoodPellet, &Position, &Energy)>().iter() {
+        foods.insert(
+            common::EntityId(entity.to_bits().get()),
+            (entity, pos.0, energy.0, false),
+        );
     }
 
-    // For each organism, check nearby food
-    for (_org_entity, (_, org_pos, org_radius, org_energy)) in
-        world.query_mut::<(&Organism, &Position, &Radius, &mut Energy)>()
+    // Collect prey states for the same reason
+    let mut preys = rustc_hash::FxHashMap::default();
+    for (entity, (_, pos, genome, energy)) in world
+        .query::<(&Organism, &Position, &Genome, &Energy)>()
+        .iter()
     {
-        let search_radius = org_radius.0 + 2.0;
-        let search_sq = search_radius * search_radius;
+        preys.insert(
+            common::EntityId(entity.to_bits().get()),
+            (entity, pos.0, genome.size, energy.0, false),
+        );
+    }
 
-        for food in &mut foods {
-            if !food.3 {
-                let dist_sq = (org_pos.0 - food.1).length_squared();
-                if dist_sq < search_sq {
-                    org_energy.0 += food.2;
-                    food.3 = true; // Mark as eaten
+    let mut deaths = Vec::new();
+    let cell_size = grid.cell_size();
+
+    // 3. Process each foraging organism
+    for (org_entity, (_, pos, genome, radius, energy)) in
+        world.query_mut::<(&Organism, &Position, &Genome, &Radius, &mut Energy)>()
+    {
+        let search_radius = radius.0 + 2.0;
+        let search_sq = search_radius * search_radius;
+        let org_entity_bits = org_entity.to_bits().get();
+
+        let center_cell = grid.pos_to_cell(pos.0);
+        let search_range = (search_radius / cell_size).ceil() as i32;
+
+        match genome.diet {
+            Diet::Herbivore => {
+                for dx in -search_range..=search_range {
+                    for dy in -search_range..=search_range {
+                        let cell = common::IVec2::new(center_cell.x + dx, center_cell.y + dy);
+                        for &neighbor_id in grid.query_cell(cell) {
+                            if let Some(food) = foods.get_mut(&neighbor_id) {
+                                if !food.3 {
+                                    let dist_sq = (pos.0 - food.1).length_squared();
+                                    if dist_sq < search_sq {
+                                        energy.0 += food.2;
+                                        food.3 = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Diet::Carnivore => {
+                let mut ate_this_tick = false;
+                for dx in -search_range..=search_range {
+                    for dy in -search_range..=search_range {
+                        let cell = common::IVec2::new(center_cell.x + dx, center_cell.y + dy);
+                        for &neighbor_id in grid.query_cell(cell) {
+                            if neighbor_id.0 == org_entity_bits || ate_this_tick {
+                                continue;
+                            }
+                            if let Some(prey) = preys.get_mut(&neighbor_id) {
+                                if !prey.4 && prey.2 < 0.85 * genome.size {
+                                    let dist_sq = (pos.0 - prey.1).length_squared();
+                                    if dist_sq < search_sq {
+                                        energy.0 += prey.3;
+                                        prey.4 = true;
+                                        deaths.push(prey.0);
+                                        ate_this_tick = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Diet::Scavenger => {
+                for dx in -search_range..=search_range {
+                    for dy in -search_range..=search_range {
+                        let cell = common::IVec2::new(center_cell.x + dx, center_cell.y + dy);
+                        for &neighbor_id in grid.query_cell(cell) {
+                            if let Some(food) = foods.get_mut(&neighbor_id) {
+                                if !food.3 {
+                                    let dist_sq = (pos.0 - food.1).length_squared();
+                                    if dist_sq < search_sq {
+                                        energy.0 += food.2;
+                                        food.3 = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Passive Carbon absorption
+                let half_w = grid_width as f32 / 2.0;
+                let half_h = grid_height as f32 / 2.0;
+                let gx = (pos.0.x + half_w).floor() as i32;
+                let gy = (pos.0.y + half_h).floor() as i32;
+
+                if gx >= 0 && gx < grid_width as i32 && gy >= 0 && gy < grid_height as i32 {
+                    let idx = (gy as u32 * grid_width + gx as u32) as usize;
+                    let carbon_level = field_grid[idx][1]; // Carbon is index 1
+
+                    // Pellet energy is ~10.0, so this gives fraction of a pellet.
+                    let scavenge_energy = carbon_level * 0.3 * 10.0;
+                    energy.0 += scavenge_energy;
                 }
             }
         }
     }
 
-    // Despawn consumed food
-    for food in foods {
+    // 4. Despawn consumed food
+    for food in foods.into_values() {
         if food.3 {
             let _ = world.despawn(food.0);
         }
+    }
+
+    // 5. Despawn consumed prey and emit events
+    for dead_entity in deaths {
+        let _ = world.despawn(dead_entity);
+        events.publish(PhylonEvent::DeathEvent {
+            id: common::EntityId(dead_entity.to_bits().get()),
+            reason: DeathCause::Predation,
+        });
     }
 }
 

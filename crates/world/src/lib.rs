@@ -60,3 +60,25 @@ impl Default for PhylonWorld {
         Self::new(256.0) // Default chunk size
     }
 }
+
+pub struct GridSampler<'a> {
+    pub grid: &'a [[f32; 4]],
+    pub width: u32,
+    pub height: u32,
+}
+
+impl<'a> sensing::FieldSampler for GridSampler<'a> {
+    fn sample(&self, pos: common::Vec2) -> [f32; 4] {
+        let half_w = self.width as f32 / 2.0;
+        let half_h = self.height as f32 / 2.0;
+        let gx = (pos.x + half_w).floor() as i32;
+        let gy = (pos.y + half_h).floor() as i32;
+        if gx >= 0 && gx < self.width as i32 && gy >= 0 && gy < self.height as i32 {
+            let idx = (gy as u32 * self.width + gx as u32) as usize;
+            if idx < self.grid.len() {
+                return self.grid[idx];
+            }
+        }
+        [0.0; 4]
+    }
+}

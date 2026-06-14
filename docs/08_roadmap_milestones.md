@@ -28,12 +28,14 @@ This document defines the core implementation phases, milestones, and acceptance
 
 ## Phase 4: Cognition & Behavior (v0.4)
 
-*Current Phase*
+- **Status**: Complete.
 
 - **Acceptance Criteria**: `sensing` raycasting working. `brain` forward passes operational via `burn`. Entities react to sensory input to make decisions (`behavior`).
 - **Key Crates**: `sensing`, `brain`, `behavior`, `evolution`.
 
 ## Phase 5: UI & Analytics (v0.5)
+
+*Current Phase*
 
 - **Acceptance Criteria**: `egui` fully integrated for inspecting entities, analyzing populations, and profiling performance.
 - **Key Crates**: `ui`, `analytics`.

@@ -46,7 +46,7 @@ cargo run --release --bin phylon
 
 ## Current Status
 
-Phase 3 (Biology & Ecology) is complete. The workspace features a fixed-tick scheduler, GPU-accelerated field diffusion, deterministic rigid-body physics, and a full biological life-cycle (metabolism, genetics, reproduction, CPU-based foraging). The `app` binary launches a real-time WGPU debug visualizer running at 60Hz. Phase 4 (Cognition & Behavior) is slated next.
+Phase 4 (Cognition & Behavior) is complete. The workspace features neural network inference reading multi-channel diffusion fields, complete predator-prey dynamics with varied diets, and strict mass-based metabolic constraints. The `app` binary launches a real-time WGPU debug visualizer running at 60Hz. Phase 5 (UI & Analytics) is slated next.
 
 ## Documentation
 

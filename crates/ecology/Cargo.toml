@@ -14,3 +14,5 @@ events = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 puffin = { workspace = true }
+genetics = { workspace = true }
+rustc-hash = { workspace = true }

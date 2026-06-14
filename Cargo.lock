@@ -686,12 +686,14 @@ version = "0.1.0"
 dependencies = [
  "common",
  "events",
+ "genetics",
  "hecs",
  "organisms",
  "physics",
  "puffin",
  "rand",
  "rand_chacha",
+ "rustc-hash",
  "serde",
  "spatial",
 ]

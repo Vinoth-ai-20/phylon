@@ -4,9 +4,20 @@ use rand::Rng;
 use rand_distr::{Distribution, Normal};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum Diet {
+    Herbivore,
+    Carnivore,
+    Scavenger,
+}
+
 /// The genetic code of an organism, determining its baseline traits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Genome {
+    /// Version of the genome format, to detect incompatible saves.
+    pub version: u8,
+    /// The diet type of the organism.
+    pub diet: Diet,
     /// R, G, B color values in range [0.0, 1.0].
     pub color: [f32; 3],
     /// The maximum speed the organism can attain.
@@ -25,6 +36,8 @@ pub struct Genome {
 impl Default for Genome {
     fn default() -> Self {
         Self {
+            version: 1,
+            diet: Diet::Herbivore,
             color: [1.0, 1.0, 1.0],
             max_speed: 50.0,
             metabolic_rate: 1.0,
@@ -42,7 +55,19 @@ impl Genome {
 
         let mutate_val = |val: f32, rng: &mut R| -> f32 { val + normal.sample(rng) as f32 };
 
+        let mut new_diet = self.diet;
+        if rng.gen_bool(0.01) {
+            // 1% chance to mutate diet
+            new_diet = match rng.gen_range(0..3) {
+                0 => Diet::Herbivore,
+                1 => Diet::Carnivore,
+                _ => Diet::Scavenger,
+            };
+        }
+
         Self {
+            version: self.version,
+            diet: new_diet,
             color: [
                 (mutate_val(self.color[0], rng)).clamp(0.0, 1.0),
                 (mutate_val(self.color[1], rng)).clamp(0.0, 1.0),

@@ -4,7 +4,7 @@ use ndarray::{ArrayView1, ArrayView2};
 use sensing::Observation;
 use serde::{Deserialize, Serialize};
 
-pub const INPUT_SIZE: usize = 4;
+pub const INPUT_SIZE: usize = 8;
 pub const HIDDEN_SIZE: usize = 8;
 pub const OUTPUT_SIZE: usize = 2;
 pub const BRAIN_WEIGHTS_COUNT: usize =
@@ -28,7 +28,7 @@ pub struct NeuralBrain;
 
 impl NeuralBrain {
     /// Executes a forward pass for a single organism given its genome weights and sensory inputs.
-    pub fn forward(weights: &[f32], obs: &[f32; 4]) -> [f32; 2] {
+    pub fn forward(weights: &[f32], obs: &[f32; 8]) -> [f32; 2] {
         if weights.len() != BRAIN_WEIGHTS_COUNT {
             return [0.0; 2]; // Failsafe if uninitialized or wrong size
         }

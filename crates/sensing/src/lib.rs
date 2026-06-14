@@ -6,21 +6,26 @@ use physics::{Heading, Position, Velocity};
 use serde::{Deserialize, Serialize};
 use spatial::UniformGrid;
 
+/// Interface to sample environmental fields at specific locations.
+pub trait FieldSampler {
+    fn sample(&self, pos: Vec2) -> [f32; 4];
+}
+
 /// Component storing the current sensory observation of an organism.
-/// Data format: [food_distance, food_angle, current_speed, energy_level]
+/// Data format: [food_distance, food_angle, current_speed, energy_level, oxygen, carbon, scent, temp]
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Observation {
-    pub data: [f32; 4],
+    pub data: [f32; 8],
 }
 
 impl Observation {
     pub fn new() -> Self {
-        Self { data: [0.0; 4] }
+        Self { data: [0.0; 8] }
     }
 }
 
 /// Gathers spatial information and populates the Observation component for all organisms.
-pub fn process_sensing(world: &mut World, grid: &UniformGrid) {
+pub fn process_sensing(world: &mut World, grid: &UniformGrid, field: &dyn FieldSampler) {
     puffin::profile_function!();
 
     // Collect food positions beforehand to satisfy borrow checker
@@ -96,10 +101,15 @@ pub fn process_sensing(world: &mut World, grid: &UniformGrid) {
         };
 
         let current_speed = vel.0.length();
+        let field_vals = field.sample(pos.0);
 
         obs.data[0] = food_distance;
         obs.data[1] = food_angle;
         obs.data[2] = current_speed;
         obs.data[3] = energy.0;
+        obs.data[4] = field_vals[0]; // Oxygen
+        obs.data[5] = field_vals[1]; // Carbon
+        obs.data[6] = field_vals[2]; // Scent
+        obs.data[7] = field_vals[3]; // Temp
     }
 }
