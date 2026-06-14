@@ -29,7 +29,7 @@ struct CameraUniform {
 }
 
 impl OrganismPass {
-    pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> Self {
+    pub fn new(device: &wgpu::Device, _config: &wgpu::SurfaceConfiguration) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Organism Shader"),
             source: wgpu::ShaderSource::Wgsl(
@@ -99,7 +99,7 @@ impl OrganismPass {
                 targets: &[
                     // Location 0: Main screen
                     Some(wgpu::ColorTargetState {
-                        format: config.format,
+                        format: wgpu::TextureFormat::Rgba16Float,
                         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                         write_mask: wgpu::ColorWrites::ALL,
                     }),
@@ -210,9 +210,10 @@ impl OrganismPass {
 
         let mut instances = Vec::new();
 
-        for (_id, (pos, heading, energy, health, age, species, genome, disease)) in
+        for (_id, (pos, vel, heading, energy, health, age, species, genome, disease)) in
             world.ecs.query_mut::<(
                 &Position,
+                &physics::Velocity,
                 &Heading,
                 &Energy,
                 &Health,
@@ -232,6 +233,7 @@ impl OrganismPass {
             instances.push(InstanceData {
                 position: pos.0.into(),
                 heading: heading.0,
+                speed: vel.0.length(),
                 size: genome.size,
                 base_color: genome.color,
                 diet: diet_val,
@@ -239,7 +241,8 @@ impl OrganismPass {
                 health: health.0,
                 is_infected,
                 tick_age: age.0 as f32, // Passed directly as f32 for shader
-                genome_id: species.0,
+                species_id: species.0,
+                _pad: [0.0; 2],
             });
         }
 

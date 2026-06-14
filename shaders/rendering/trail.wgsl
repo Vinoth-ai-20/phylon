@@ -25,7 +25,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let prev_color = textureSample(trail_texture, trail_sampler, in.uv);
     
     // Decay factor
-    let decay = 0.99;
+    let decay = 0.97;
     
     let new_color = prev_color * decay;
     

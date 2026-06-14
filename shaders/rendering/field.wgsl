@@ -43,18 +43,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         val = field_data[index];
     }
     
-    // R=Oxygen, G=Carbon, B=Scent, A=Temperature
-    // Let's visualize Oxygen as blue, Carbon as green, Scent as red
-    let oxygen = clamp(val.x, 0.0, 1.0);
-    let carbon = clamp(val.y, 0.0, 1.0);
-    let scent = clamp(val.z, 0.0, 1.0);
-    let temp = clamp(val.w, 0.0, 1.0);
+    let food = clamp(val.x, 0.0, 1.0);
+    let toxin = clamp(val.y, 0.0, 1.0);
+    let pheromone = clamp(val.z, 0.0, 1.0);
     
-    let r = scent + temp * 0.2;
-    let g = carbon + temp * 0.1;
-    let b = oxygen;
+    // Food -> deep bioluminescent blue-green
+    let food_color = vec3<f32>(0.05, 0.8, 0.6) * food;
     
-    let alpha = clamp((oxygen + carbon + scent + temp) * 0.5, 0.0, 0.8);
+    // Toxin -> volumetric amber/orange
+    let toxin_color = vec3<f32>(0.9, 0.5, 0.1) * toxin;
     
-    return vec4<f32>(r, g, b, alpha);
+    // Pheromone -> soft violet/magenta
+    let pheromone_color = vec3<f32>(0.7, 0.2, 0.8) * pheromone;
+    
+    let final_color = food_color + toxin_color + pheromone_color;
+    
+    let alpha = clamp((food + toxin + pheromone) * 0.5, 0.0, 0.8);
+    
+    return vec4<f32>(final_color, alpha);
 }
+

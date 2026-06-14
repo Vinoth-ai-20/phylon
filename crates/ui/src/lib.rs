@@ -8,9 +8,11 @@ use winit::event::WindowEvent;
 use winit::window::Window;
 
 pub mod commands;
+pub mod layout;
 pub mod menu;
 pub mod modal;
 pub mod overlay;
+pub mod panels;
 pub mod state;
 
 use state::UiState;
@@ -20,6 +22,7 @@ pub struct EguiContext {
     pub state: State,
     pub renderer: Renderer,
     pub ui_state: UiState,
+    pub tree: egui_tiles::Tree<layout::Pane>,
 }
 
 impl EguiContext {
@@ -33,11 +36,37 @@ impl EguiContext {
         let state = State::new(context.clone(), id, window, None, None, None);
         let renderer = Renderer::new(device, format, None, 1, false);
 
+        // Dark cinematic theme with cyan/amber accents
+        let mut style = (*context.style()).clone();
+        style.visuals = egui::Visuals::dark();
+        style.visuals.window_fill = egui::Color32::from_rgb(15, 15, 20);
+        style.visuals.panel_fill = egui::Color32::from_rgb(15, 15, 20);
+        style.visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(30, 30, 40);
+        style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(40, 40, 50);
+        style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(60, 60, 70);
+        style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(80, 80, 90);
+        style.visuals.selection.bg_fill = egui::Color32::from_rgb(0, 150, 255); // Cyan accent
+        style.visuals.selection.stroke =
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 255));
+        context.set_style(style);
+
+        let mut tiles = egui_tiles::Tiles::default();
+        let analytics = tiles.insert_pane(layout::Pane::Analytics);
+        let research = tiles.insert_pane(layout::Pane::Research);
+        let brain = tiles.insert_pane(layout::Pane::BrainInspector);
+
+        // Setup initial docking layout
+        let right_tabs = tiles.insert_vertical_tile(vec![analytics, research]);
+        let root = tiles.insert_horizontal_tile(vec![brain, right_tabs]);
+
+        let tree = egui_tiles::Tree::new("phylon_tree", root, tiles);
+
         Self {
             context,
             state,
             renderer,
             ui_state: UiState::default(),
+            tree,
         }
     }
 
@@ -85,45 +114,20 @@ impl EguiContext {
 
         crate::menu::render_menu_bar(&self.context, &mut self.ui_state, stats);
 
-        // Analytics Window
-        if self.ui_state.panels.analytics {
-            egui::Window::new("Analytics").show(&self.context, |ui| {
-                ui.label(format!("Tick: {}", tick.0));
-                ui.label(format!("Population: {}", stats.current_population));
-                ui.separator();
-                ui.label("Deaths by Cause:");
-                ui.label(format!("- Starvation: {}", stats.deaths_by_starvation));
-                ui.label(format!("- Predation: {}", stats.deaths_by_predation));
-                ui.label(format!("- Old Age: {}", stats.deaths_by_age));
+        // Render dockable tiles UI
+        let mut behavior = layout::TreeBehavior {
+            ui_state: &mut self.ui_state,
+            stats,
+            tick,
+            script_path,
+            load_script,
+        };
 
-                ui.separator();
-                ui.label("Population History");
-
-                let points: egui_plot::PlotPoints = stats
-                    .population_history
-                    .iter()
-                    .map(|(t, p)| [*t, *p])
-                    .collect();
-
-                let line = egui_plot::Line::new(points);
-                egui_plot::Plot::new("population_plot")
-                    .view_aspect(2.0)
-                    .show(ui, |plot_ui| plot_ui.line(line));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
+            .show(&self.context, |ui| {
+                self.tree.ui(&mut behavior, ui);
             });
-        }
-
-        // Research & Plugins Window
-        if self.ui_state.panels.research {
-            egui::Window::new("Research & Plugins").show(&self.context, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Script:");
-                    ui.text_edit_singleline(script_path);
-                });
-                if ui.button("Load & Run").clicked() {
-                    *load_script = true;
-                }
-            });
-        }
 
         crate::overlay::render_loading_overlay(&self.context, &mut self.ui_state);
         crate::modal::render_modals(&self.context, &mut self.ui_state);

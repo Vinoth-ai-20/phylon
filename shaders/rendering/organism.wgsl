@@ -9,14 +9,15 @@ struct VertexInput {
     @location(0) position: vec2<f32>,
     @location(1) instance_position: vec2<f32>,
     @location(2) instance_heading: f32,
-    @location(3) instance_size: f32,
-    @location(4) instance_base_color: vec3<f32>,
-    @location(5) instance_diet: u32,
-    @location(6) instance_energy: f32,
-    @location(7) instance_health: f32,
-    @location(8) instance_is_infected: u32,
-    @location(9) instance_tick_age: f32,
-    @location(10) instance_genome_id: u32,
+    @location(3) instance_speed: f32,
+    @location(4) instance_size: f32,
+    @location(5) instance_base_color: vec3<f32>,
+    @location(6) instance_diet: u32,
+    @location(7) instance_energy: f32,
+    @location(8) instance_health: f32,
+    @location(9) instance_is_infected: u32,
+    @location(10) instance_tick_age: f32,
+    @location(11) instance_genome_id: u32,
 };
 
 struct VertexOutput {
@@ -29,6 +30,7 @@ struct VertexOutput {
     @location(5) is_infected: u32,
     @location(6) tick_age: f32,
     @location(7) genome_id: u32,
+    @location(8) speed: f32,
 };
 
 @vertex
@@ -63,6 +65,7 @@ fn vs_main(model: VertexInput) -> VertexOutput {
     out.is_infected = model.instance_is_infected;
     out.tick_age = model.instance_tick_age;
     out.genome_id = model.instance_genome_id;
+    out.speed = model.instance_speed;
     
     return out;
 }
@@ -119,10 +122,10 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     var dist = 100.0;
     
     // Base time/animation speed modified by health and infection
-    // Energy < 0.3 means animation slows
-    var anim_speed = 1.0;
+    // Energy < 0.3 means animation slows, speed increases animation
+    var anim_speed = max(0.5, in.speed * 0.5);
     if (in.energy < 0.3) {
-        anim_speed = 0.3;
+        anim_speed = anim_speed * 0.3;
     }
     
     var time = in.tick_age * 0.05 * anim_speed;

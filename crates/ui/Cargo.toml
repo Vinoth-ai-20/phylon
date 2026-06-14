@@ -8,6 +8,7 @@ egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
 egui_plot = { workspace = true }
+egui_tiles = { workspace = true }
 wgpu = { workspace = true }
 winit = { workspace = true }
 analytics = { path = "../analytics" }
@@ -19,3 +20,5 @@ organisms = { workspace = true }
 research = { path = "../research" }
 open = { workspace = true }
 pollster = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
