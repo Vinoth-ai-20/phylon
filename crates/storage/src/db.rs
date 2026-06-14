@@ -1,92 +1,95 @@
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use std::str::FromStr;
-use std::sync::mpsc;
-use std::thread;
+use rusqlite::{params, Connection, Result};
+use std::path::Path;
 
-#[derive(Debug, Clone)]
-pub struct MetricSnapshot {
-    pub tick: u64,
-    pub population: u32,
-    pub births: u32,
-    pub deaths_starvation: u32,
-    pub deaths_old_age: u32,
-    pub deaths_predation: u32,
+pub enum DbEvent {
+    Metrics {
+        tick: u64,
+        population: u32,
+        avg_energy: f32,
+        total_food: u32,
+    },
+    LineageNode {
+        entity_id: u64,
+        parent_id: Option<u64>,
+        generation: u32,
+        birth_tick: u64,
+        death_tick: Option<u64>,
+    },
+    DeathUpdate {
+        entity_id: u64,
+        death_tick: u64,
+    },
 }
 
 pub struct DbWriter {
-    sender: mpsc::Sender<MetricSnapshot>,
+    conn: Connection,
 }
 
 impl DbWriter {
-    pub fn new(db_path: &str, run_id: String) -> Self {
-        let (tx, rx) = mpsc::channel::<MetricSnapshot>();
-        let path = db_path.to_string();
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let conn = Connection::open(path)?;
 
-        thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("Failed to build Tokio runtime for DB writer");
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS metrics (
+                tick INTEGER PRIMARY KEY,
+                population INTEGER NOT NULL,
+                avg_energy REAL NOT NULL,
+                total_food INTEGER NOT NULL
+            )",
+            [],
+        )?;
 
-            rt.block_on(async move {
-                let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path))
-                    .unwrap_or_else(|_| SqliteConnectOptions::new().filename(&path))
-                    .create_if_missing(true);
-                let pool = SqlitePoolOptions::new()
-                    .connect_with(options).await
-                    .expect("Failed to connect to SQLite DB");
-                // Initialize schema
-                sqlx::query(
-                    "CREATE TABLE IF NOT EXISTS runs (
-                        id TEXT PRIMARY KEY,
-                        start_time DATETIME DEFAULT CURRENT_TIMESTAMP
-                    )"
-                ).execute(&pool).await.expect("Failed to create runs table");
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS lineages (
+                entity_id INTEGER PRIMARY KEY,
+                parent_id INTEGER,
+                generation INTEGER NOT NULL,
+                birth_tick INTEGER NOT NULL,
+                death_tick INTEGER
+            )",
+            [],
+        )?;
 
-                sqlx::query(
-                    "CREATE TABLE IF NOT EXISTS metrics (
-                        run_id TEXT,
-                        tick INTEGER,
-                        population INTEGER,
-                        births INTEGER,
-                        deaths_starvation INTEGER,
-                        deaths_old_age INTEGER,
-                        deaths_predation INTEGER,
-                        FOREIGN KEY(run_id) REFERENCES runs(id)
-                    )"
-                ).execute(&pool).await.expect("Failed to create metrics table");
-
-                // Insert the new run record
-                sqlx::query("INSERT INTO runs (id) VALUES (?)")
-                    .bind(&run_id)
-                    .execute(&pool).await.expect("Failed to insert run record");
-                // Drain the channel
-                while let Ok(metric) = rx.recv() {
-                    let res = sqlx::query(
-                        "INSERT INTO metrics (run_id, tick, population, births, deaths_starvation, deaths_old_age, deaths_predation) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?)"
-                    )
-                    .bind(&run_id)
-                    .bind(metric.tick as i64)
-                    .bind(metric.population)
-                    .bind(metric.births)
-                    .bind(metric.deaths_starvation)
-                    .bind(metric.deaths_old_age)
-                    .bind(metric.deaths_predation)
-                    .execute(&pool).await;
-
-                    if let Err(e) = res {
-                        tracing::error!("Failed to write metric to DB: {}", e);
-                    }}
-
-                tracing::info!("DB writer thread for run {} shutting down", run_id);
-            });
-        });
-
-        Self { sender: tx }
+        Ok(Self { conn })
     }
 
-    pub fn push_metric(&self, metric: MetricSnapshot) {
-        let _ = self.sender.send(metric);
+    pub fn write_event(&mut self, event: DbEvent) -> Result<()> {
+        match event {
+            DbEvent::Metrics {
+                tick,
+                population,
+                avg_energy,
+                total_food,
+            } => {
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO metrics (tick, population, avg_energy, total_food)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![tick as i64, population, avg_energy, total_food],
+                )?;
+            }
+            DbEvent::LineageNode {
+                entity_id,
+                parent_id,
+                generation,
+                birth_tick,
+                death_tick,
+            } => {
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO lineages (entity_id, parent_id, generation, birth_tick, death_tick)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![entity_id as i64, parent_id.map(|p| p as i64), generation, birth_tick as i64, death_tick.map(|d| d as i64)],
+                )?;
+            }
+            DbEvent::DeathUpdate {
+                entity_id,
+                death_tick,
+            } => {
+                self.conn.execute(
+                    "UPDATE lineages SET death_tick = ?1 WHERE entity_id = ?2",
+                    params![death_tick as i64, entity_id as i64],
+                )?;
+            }
+        }
+        Ok(())
     }
 }

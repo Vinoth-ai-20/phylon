@@ -16,6 +16,6 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 bincode = { workspace = true }
 ron = { workspace = true }
-sqlx = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+rusqlite = { version = "0.40.1", features = ["bundled"] }

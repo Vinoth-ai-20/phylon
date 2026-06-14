@@ -15,7 +15,6 @@ physics = { path = "crates/physics" }
 rendering = { path = "crates/rendering" }
 gpu = { path = "crates/gpu" }
 diffusion = { path = "crates/diffusion" }
-environment = { path = "crates/environment" }
 organisms = { path = "crates/organisms" }
 genetics = { path = "crates/genetics" }
 reproduction = { path = "crates/reproduction" }
@@ -30,35 +29,24 @@ egui = "0.29.1"
 egui-wgpu = "0.29.1"
 egui-winit = "0.29.1"
 egui_plot = "0.29.0"
-plotters = "0.3"
 hecs = { version = "0.10", features = ["macros"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 bincode = "1.3"
 ron = "0.8"
 config = "0.14"
 rand = "0.8"
 rand_chacha = "0.3"
-rayon = "1.10"
 rustc-hash = "1.1"
 crossbeam = "0.8"
 tokio = { version = "1.39", features = ["full"] }
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls"] }
 glam = { version = "0.28", features = ["serde"] }
-burn = "0.14"
 ndarray = "0.15"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 puffin = "0.19"
-
-criterion = "0.5"
 thiserror = "1.0"
 anyhow = "1.0"
 rhai = "1.19"
-kira = "0.9"
-cpal = "0.15"
-tokio-tungstenite = "0.23"
-quinn = "0.11"
 pollster = "0.3"
 bytemuck = { version = "1.18", features = ["derive"] }
 noise = "0.9"

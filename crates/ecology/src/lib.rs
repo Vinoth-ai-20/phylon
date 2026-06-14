@@ -1,7 +1,8 @@
 //! Ecological interactions for Phylon.
 
 use common::Vec2;
-use events::{DeathCause, EventBus, PhylonEvent};
+use events::EventBus;
+use events::{DeathCause, PhylonEvent};
 use genetics::{Diet, Genome};
 use hecs::World;
 use organisms::{Energy, FoodPellet, Organism};
@@ -128,7 +129,7 @@ pub fn process_foraging(
                     }
                 }
             }
-            Diet::Scavenger => {
+            Diet::Omnivore => {
                 for dx in -search_range..=search_range {
                     for dy in -search_range..=search_range {
                         let cell = common::IVec2::new(center_cell.x + dx, center_cell.y + dy);
@@ -222,5 +223,56 @@ pub fn process_gas_exchange(
                 energy.0 -= 0.1; // Suffocation penalty
             }
         }
+    }
+}
+
+pub fn process_disease(world: &mut World, grid: &spatial::UniformGrid, rng_seed: u64, tick: u64) {
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(rng_seed.wrapping_add(tick));
+
+    let mut to_cure = Vec::new();
+    let mut to_infect = Vec::new();
+
+    for (entity, (health, disease, pos)) in world.query_mut::<(
+        &mut organisms::Health,
+        &mut organisms::Disease,
+        &physics::Position,
+    )>() {
+        health.0 -= disease.virulence; // Decay health based on virulence
+        if disease.remaining_duration > 0 {
+            disease.remaining_duration -= 1;
+        } else {
+            to_cure.push(entity);
+            continue;
+        }
+
+        // Spread to nearby organisms
+        let center_cell = grid.pos_to_cell(pos.0);
+        let cell_size = grid.cell_size();
+        let search_range = (10.0 / cell_size).ceil() as i32;
+
+        for dx in -search_range..=search_range {
+            for dy in -search_range..=search_range {
+                let cell = common::IVec2::new(center_cell.x + dx, center_cell.y + dy);
+                for &neighbor_id in grid.query_cell(cell) {
+                    let nid = hecs::Entity::from_bits(neighbor_id.0).unwrap();
+                    if nid == entity {
+                        continue;
+                    }
+
+                    use rand::Rng;
+                    if rng.gen_bool((disease.virulence * 0.05).clamp(0.0, 1.0) as f64) {
+                        to_infect.push((nid, disease.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    for entity in to_cure {
+        let _ = world.remove_one::<organisms::Disease>(entity);
+    }
+
+    for (entity, disease) in to_infect {
+        let _ = world.insert_one(entity, disease);
     }
 }

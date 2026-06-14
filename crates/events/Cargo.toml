@@ -7,3 +7,5 @@ edition = "2021"
 common = { workspace = true }
 crossbeam = { workspace = true }
 genetics = { workspace = true }
+organisms = { version = "0.1.0", path = "../organisms" }
+serde = { workspace = true, features = ["derive"] }

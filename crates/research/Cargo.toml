@@ -21,6 +21,8 @@ reproduction = { workspace = true }
 brain = { workspace = true }
 sensing = { workspace = true }
 rand = { workspace = true }
+hecs.workspace = true
+events = { version = "0.1.0", path = "../events" }
 
 [[bin]]
 name = "phylon-research"

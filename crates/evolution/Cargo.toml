@@ -4,4 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+common = { version = "0.1.0", path = "../common" }
+genetics = { version = "0.1.0", path = "../genetics" }
+organisms = { version = "0.1.0", path = "../organisms" }
+rustc-hash.workspace = true
 

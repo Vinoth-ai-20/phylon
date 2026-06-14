@@ -1,53 +1,130 @@
-//! Reproduction logic for Phylon organisms.
-
-use common::Vec2;
-use events::{EventBus, PhylonEvent};
-use genetics::Genome;
+use events::EventBus;
+use events::PhylonEvent;
+use genetics::{Genome, ReproductionMode};
 use hecs::World;
-use organisms::{Energy, Organism};
-use rand::{Rng, SeedableRng};
+use organisms::{Energy, Health};
+use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
+use spatial::UniformGrid;
 
-/// Component indicating an organism cannot reproduce until the cooldown reaches 0.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ReproductionCooldown(pub u32);
 
-/// Processes asexual reproduction.
-/// Iterates over organisms. If Energy > 100.0 and cooldown is 0, split energy, set cooldown, and fire BirthEvent.
-pub fn process_reproduction(world: &mut World, events: &EventBus, rng_seed: u64, tick: u64) {
+pub fn process_reproduction(
+    world: &mut World,
+    grid: &UniformGrid,
+    event_bus: &EventBus,
+    rng_seed: u64,
+    tick: u64,
+) {
     let mut rng = ChaCha8Rng::seed_from_u64(rng_seed.wrapping_add(tick));
 
-    for (entity, (_, energy, genome, cooldown, pos)) in world.query_mut::<(
-        &Organism,
+    let mut to_spawn = Vec::new();
+
+    // Collect all capable of reproducing
+    let mut candidates = Vec::new();
+    for (entity, (energy, health, genome, pos, cooldown)) in world.query_mut::<(
         &mut Energy,
+        &Health,
         &Genome,
-        &mut ReproductionCooldown,
         &physics::Position,
+        &mut ReproductionCooldown,
     )>() {
         if cooldown.0 > 0 {
             cooldown.0 -= 1;
             continue;
         }
 
-        // Hardcoded threshold for now, could be dynamic or based on genome
-        let threshold = 150.0;
-        if energy.0 >= threshold {
-            // Halve energy
-            energy.0 /= 2.0;
-            cooldown.0 = 100; // Cooldown ticks
-
-            // Mutate genome
-            let child_genome = genome.mutate(&mut rng, 0.1);
-
-            // Spawn slightly offset
-            let offset = Vec2::new(rng.gen_range(-5.0..5.0), rng.gen_range(-5.0..5.0));
-
-            events.publish(PhylonEvent::BirthEvent {
-                parent: Some(common::EntityId(entity.to_bits().get())),
-                genome: child_genome,
-                initial_energy: energy.0,
-                position: pos.0 + offset,
-            });
+        // Must have sufficient energy and health
+        if energy.0 >= 100.0 && health.0 > 50.0 {
+            candidates.push((entity, genome.clone(), pos.0, energy.0));
         }
+    }
+
+    use rand::Rng;
+
+    for (entity, genome, pos, _current_energy) in candidates {
+        let is_sexual = match genome.reproduction_mode {
+            ReproductionMode::Asexual => false,
+            ReproductionMode::Sexual => true,
+            ReproductionMode::Facultative { sexual_threshold } => {
+                let local_density = grid.query_cell(grid.pos_to_cell(pos)).count() as f32;
+                // High density -> sexual, low density -> asexual
+                local_density > (sexual_threshold * 10.0)
+            }
+        };
+
+        if is_sexual {
+            let center_cell = grid.pos_to_cell(pos);
+            let mut mate_genome = None;
+            'outer: for dx in -1..=1 {
+                for dy in -1..=1 {
+                    let cell = common::IVec2::new(center_cell.x + dx, center_cell.y + dy);
+                    for &nid in grid.query_cell(cell) {
+                        let neighbor = hecs::Entity::from_bits(nid.0).unwrap();
+                        if neighbor == entity {
+                            continue;
+                        }
+
+                        if let Ok((n_energy, n_cooldown, n_genome)) =
+                            world.query_one_mut::<(&Energy, &ReproductionCooldown, &Genome)>(
+                                neighbor,
+                            )
+                        {
+                            if n_cooldown.0 == 0 && n_energy.0 >= 100.0 {
+                                mate_genome = Some(n_genome.clone());
+                                break 'outer;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(mate) = mate_genome {
+                if let Ok(energy) = world.query_one_mut::<&mut Energy>(entity) {
+                    energy.0 -= 80.0;
+                }
+                if let Ok(cooldown) = world.query_one_mut::<&mut ReproductionCooldown>(entity) {
+                    cooldown.0 = 200;
+                }
+
+                let child_genome = genome.crossover(&mate, &mut rng, 0.05);
+                to_spawn.push((
+                    Some(common::EntityId(entity.to_bits().get())),
+                    child_genome,
+                    pos,
+                    40.0,
+                ));
+            }
+        } else {
+            // Asexual
+            if let Ok(energy) = world.query_one_mut::<&mut Energy>(entity) {
+                energy.0 -= 60.0;
+            }
+            if let Ok(cooldown) = world.query_one_mut::<&mut ReproductionCooldown>(entity) {
+                cooldown.0 = 150;
+            }
+
+            let child_genome = genome.mutate(&mut rng, 0.05);
+            to_spawn.push((
+                Some(common::EntityId(entity.to_bits().get())),
+                child_genome,
+                pos,
+                30.0,
+            ));
+        }
+    }
+
+    for (parent, genome, pos, child_energy) in to_spawn {
+        let jitter_x = (rng.gen::<f32>() - 0.5) * 5.0;
+        let jitter_y = (rng.gen::<f32>() - 0.5) * 5.0;
+        let spawn_pos = common::Vec2::new(pos.x + jitter_x, pos.y + jitter_y);
+
+        event_bus.publish(PhylonEvent::BirthEvent {
+            parent,
+            genome,
+            initial_energy: child_energy,
+            position: spawn_pos,
+        });
     }
 }

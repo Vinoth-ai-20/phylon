@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-common = { workspace = true }
+common = { version = "0.1.0", path = "../common" }
 hecs = { workspace = true }
 organisms = { workspace = true }
 genetics = { workspace = true }
@@ -13,3 +13,7 @@ physics = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 serde = { workspace = true }
+evolution = { version = "0.1.0", path = "../evolution" }
+spatial = { version = "0.1.0", path = "../spatial" }
+glam.workspace = true
+rustc-hash.workspace = true

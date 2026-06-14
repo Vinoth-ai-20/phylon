@@ -20,3 +20,4 @@ hecs = { workspace = true }
 sensing = { path = "../sensing" }
 brain = { path = "../brain" }
 behavior = { path = "../behavior" }
+evolution = { version = "0.1.0", path = "../evolution" }

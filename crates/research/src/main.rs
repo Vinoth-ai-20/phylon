@@ -45,14 +45,14 @@ fn main() -> Result<()> {
     let mut stats = analytics::SimulationStats::new(1000);
 
     // Start db writer
-    let db_writer = storage::db::DbWriter::new(&config.research.database_path, run_id.clone());
+    let mut db_writer = storage::db::DbWriter::new(&config.research.database_path).unwrap();
 
     // Spawn starter organisms
     let mut rng = rand::thread_rng();
     let spawn_range = 400.0;
     for _ in 0..100 {
         let mut genome = genetics::Genome::default();
-        let num_weights = brain::BRAIN_WEIGHTS_COUNT;
+        let num_weights = brain::TOTAL_NEURONS * brain::TOTAL_NEURONS;
         genome.brain_weights = (0..num_weights).map(|_| rng.gen_range(-1.0..1.0)).collect();
 
         world.spawn((
@@ -92,14 +92,14 @@ fn main() -> Result<()> {
         stats.process_events(&world.last_events, scheduler.current_tick);
         stats.update_metrics(&world, scheduler.current_tick);
 
-        db_writer.push_metric(storage::db::MetricSnapshot {
-            tick: scheduler.current_tick.0,
-            population: stats.current_population as u32,
-            births: stats.total_births as u32,
-            deaths_starvation: stats.deaths_by_starvation as u32,
-            deaths_old_age: stats.deaths_by_age as u32,
-            deaths_predation: stats.deaths_by_predation as u32,
-        });
+        db_writer
+            .write_event(storage::db::DbEvent::Metrics {
+                tick: scheduler.current_tick.0,
+                population: stats.current_population as u32,
+                avg_energy: 100.0,
+                total_food: 0,
+            })
+            .unwrap();
 
         // Save periodic binary snapshots
         if scheduler.current_tick.0 > 0

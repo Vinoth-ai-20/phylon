@@ -18,3 +18,4 @@ physics = { workspace = true }
 hecs = { workspace = true }
 glam = { workspace = true }
 puffin = { workspace = true }
+evolution = { version = "0.1.0", path = "../evolution" }

@@ -12,12 +12,14 @@ pub struct PhylonWorld {
     pub event_bus: EventBus,
     pub field_grid: Vec<[f32; 4]>,
     pub last_events: Vec<events::PhylonEvent>,
+    pub species_registry: evolution::SpeciesRegistry,
+    pub grid_width: u32,
+    pub grid_height: u32,
 }
 
 impl PhylonWorld {
     pub fn new(chunk_size: f32) -> Self {
-        let mut event_bus = EventBus::new();
-        event_bus.register::<events::PhylonEvent>();
+        let event_bus = EventBus::new();
 
         Self {
             ecs: World::new(),
@@ -25,6 +27,9 @@ impl PhylonWorld {
             event_bus,
             field_grid: vec![[0.0; 4]; 256 * 256], // 256x256 grid
             last_events: Vec::new(),
+            species_registry: evolution::SpeciesRegistry::new(),
+            grid_width: 256,
+            grid_height: 256,
         }
     }
 

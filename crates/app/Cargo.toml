@@ -30,3 +30,5 @@ gpu = { workspace = true }
 sensing = { path = "../sensing" }
 storage = { path = "../storage" }
 plugins = { path = "../plugins" }
+hecs.workspace = true
+events = { version = "0.1.0", path = "../events" }

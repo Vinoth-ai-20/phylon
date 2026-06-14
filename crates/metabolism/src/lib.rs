@@ -1,6 +1,7 @@
 //! Metabolism logic for Phylon organisms.
 
-use events::{DeathCause, EventBus, PhylonEvent};
+use events::EventBus;
+use events::{DeathCause, PhylonEvent};
 use genetics::Genome;
 use hecs::World;
 use organisms::{Age, Energy, Health, Organism};
@@ -30,7 +31,7 @@ pub fn process_metabolism(world: &mut World, events: &EventBus) {
         // Base metabolic cost + kinetic cost
         let speed_sq = vel.0.length_squared();
         let kinetic_cost = 0.5 * mass.0 * speed_sq * 0.0001; // tiny multiplier
-        let sensory_cost = 0.0005 * genome.sense_radius; // cost for sensing
+        let sensory_cost = 0.0005 * genome.vision_depth; // cost for sensing
         let basal_cost = 0.05 * genome.metabolic_rate * mass.0.powf(1.2) + sensory_cost;
         let total_cost = basal_cost + kinetic_cost;
 
@@ -39,18 +40,18 @@ pub fn process_metabolism(world: &mut World, events: &EventBus) {
         if energy.0 <= 0.0 {
             energy.0 = 0.0;
             // Starving
-            health.current -= 1.0;
+            health.0 -= 1.0;
         } else if energy.0 > 20.0 {
             // Healing
-            health.current = (health.current + 0.1).min(health.max);
+            health.0 = (health.0 + 0.1).min(100.0);
         }
 
         let mut cause = None;
-        if health.current <= 0.0 {
+        if health.0 <= 0.0 {
             cause = Some(DeathCause::Starvation);
         } else if age.0 > 10000 {
             // Hardcoded max age for now
-            cause = Some(DeathCause::OldAge);
+            cause = Some(DeathCause::Age);
         }
 
         if let Some(reason) = cause {

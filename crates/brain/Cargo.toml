@@ -11,3 +11,4 @@ hecs = { workspace = true }
 ndarray = { workspace = true }
 puffin = { workspace = true }
 serde = { workspace = true }
+organisms = { version = "0.1.0", path = "../organisms" }

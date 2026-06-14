@@ -46,7 +46,7 @@ cargo run --release --bin phylon
 
 ## Current Status
 
-Phase 6 (Persistence & Research Tools) is complete. The workspace features SQLite database integration via `storage` to persist massive simulation telemetry asynchronously, a headless command-line orchestrator (`phylon-research`), and a live-reloading God-Mode API embedded with `rhai` via the `plugins` crate. Phase 7 (Network & Multiplayer) is slated next.
+Phase 6 is complete. The workspace features SQLite database integration via `storage` to persist massive simulation telemetry asynchronously, a headless command-line orchestrator (`phylon-research`), and a live-reloading God-Mode API embedded with `rhai` via the `plugins` crate. The biological features include Continuous-Time Recurrent Neural Networks (CTRNN) with Hebbian learning, heritable sexual/asexual/facultative reproduction, multi-sector vision, speciation mechanics, and communicable disease spread. Phase 7 (Network & Multiplayer) is slated next.
 
 ## Documentation
 

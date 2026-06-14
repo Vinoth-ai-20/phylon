@@ -1,115 +1,139 @@
-use common::{IVec2, Vec2};
+use common::EntityId;
 use genetics::Genome;
 use hecs::World;
-use organisms::{Energy, FoodPellet};
+use organisms::{Energy, Health};
 use physics::{Heading, Position, Velocity};
 use serde::{Deserialize, Serialize};
 use spatial::UniformGrid;
 
-/// Interface to sample environmental fields at specific locations.
-pub trait FieldSampler {
-    fn sample(&self, pos: Vec2) -> [f32; 4];
-}
-
-/// Component storing the current sensory observation of an organism.
-/// Data format: [food_distance, food_angle, current_speed, energy_level, oxygen, carbon, scent, temp]
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Observation {
-    pub data: [f32; 8],
+    pub data: [f32; 12],
 }
 
 impl Observation {
     pub fn new() -> Self {
-        Self { data: [0.0; 8] }
+        Self { data: [0.0; 12] }
     }
 }
 
-/// Gathers spatial information and populates the Observation component for all organisms.
-pub fn process_sensing(world: &mut World, grid: &UniformGrid, field: &dyn FieldSampler) {
-    puffin::profile_scope!("sensing::process_sensing");
+pub fn process_sensing(
+    world: &World,
+    grid: &UniformGrid,
+    field_grid: &[[f32; 4]],
+    grid_width: u32,
+    grid_height: u32,
+    foods: &std::collections::HashMap<EntityId, (hecs::Entity, common::Vec2, f32, bool)>,
+) {
+    puffin::profile_function!();
 
-    // Collect food positions beforehand to satisfy borrow checker
-    let mut food_positions = rustc_hash::FxHashMap::default();
-    for (entity, (_, pos)) in world.query::<(&FoodPellet, &Position)>().iter() {
-        food_positions.insert(common::EntityId(entity.to_bits().get()), pos.0);
-    }
-
-    for (entity, (pos, heading, vel, energy, genome, obs)) in world.query_mut::<(
-        &Position,
-        &Heading,
-        &Velocity,
-        &Energy,
-        &Genome,
-        &mut Observation,
-    )>() {
-        let mut nearest_dist_sq = genome.sense_radius * genome.sense_radius;
-        let mut nearest_food_pos: Option<Vec2> = None;
+    for (entity, (pos, heading, _vel, energy, health, genome, obs)) in world
+        .query::<(
+            &Position,
+            &Heading,
+            &Velocity,
+            &Energy,
+            &Health,
+            &Genome,
+            &mut Observation,
+        )>()
+        .into_iter()
+    {
+        obs.data[0] = energy.0 / 200.0;
+        obs.data[1] = health.0 / 100.0;
 
         let center_cell = grid.pos_to_cell(pos.0);
-
-        // Rough estimate of cells to check based on cell size
         let cell_size = grid.cell_size();
-        let search_range = (genome.sense_radius / cell_size).ceil() as i32;
+        let search_range = (genome.vision_depth / cell_size).ceil() as i32;
+
+        let mut closest_food_dist = f32::MAX;
+        let mut closest_food_angle = 0.0;
+
+        let heading_vec = common::Vec2::new(heading.0.cos(), heading.0.sin());
+        let mut sector_left_prey = 0.0;
+        let mut sector_center_prey = 0.0;
+        let mut sector_right_prey = 0.0;
 
         for dx in -search_range..=search_range {
             for dy in -search_range..=search_range {
-                let cell = IVec2::new(center_cell.x + dx, center_cell.y + dy);
-
+                let cell = common::IVec2::new(center_cell.x + dx, center_cell.y + dy);
                 for &neighbor_id in grid.query_cell(cell) {
-                    if neighbor_id.0 == entity.to_bits().get() {
+                    let nid = hecs::Entity::from_bits(neighbor_id.0).unwrap();
+                    if nid == entity {
                         continue;
                     }
 
-                    if let Some(&food_pos) = food_positions.get(&neighbor_id) {
-                        let diff = food_pos - pos.0;
-                        let dist_sq = diff.length_squared();
+                    if let Ok(n_pos) = world.get::<&Position>(nid) {
+                        let to_neighbor = n_pos.0 - pos.0;
+                        let dist = to_neighbor.length();
+                        if dist < genome.vision_depth {
+                            let angle_to_neighbor =
+                                to_neighbor.normalize_or_zero().angle_to(heading_vec);
 
-                        if dist_sq < nearest_dist_sq {
-                            nearest_dist_sq = dist_sq;
-                            nearest_food_pos = Some(food_pos);
+                            if angle_to_neighbor.abs() <= genome.vision_cone_angle / 2.0 {
+                                let sector_width = genome.vision_cone_angle / 3.0;
+                                let val = 1.0 - (dist / genome.vision_depth);
+
+                                if angle_to_neighbor < -sector_width / 2.0 {
+                                    sector_left_prey += val;
+                                } else if angle_to_neighbor > sector_width / 2.0 {
+                                    sector_right_prey += val;
+                                } else {
+                                    sector_center_prey += val;
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Compute observation values
-        let food_distance = if nearest_food_pos.is_some() {
-            nearest_dist_sq.sqrt()
-        } else {
-            genome.sense_radius
-        };
-
-        let food_angle = if let Some(f_pos) = nearest_food_pos {
-            let diff = f_pos - pos.0;
-            let absolute_angle = f32::atan2(diff.y, diff.x);
-
-            // Relative angle: difference between absolute angle and heading
-            let mut rel_angle = absolute_angle - heading.0;
-
-            // Normalize to [-PI, PI]
-            while rel_angle > std::f32::consts::PI {
-                rel_angle -= std::f32::consts::TAU;
+        for (_, food_pos, _, is_consumed) in foods.values() {
+            if *is_consumed {
+                continue;
             }
-            while rel_angle < -std::f32::consts::PI {
-                rel_angle += std::f32::consts::TAU;
+            let to_food = *food_pos - pos.0;
+            let dist = to_food.length();
+            if dist < genome.vision_depth && dist < closest_food_dist {
+                closest_food_dist = dist;
+                closest_food_angle = to_food.normalize_or_zero().angle_to(heading_vec);
             }
+        }
 
-            rel_angle
+        obs.data[2] = if closest_food_dist < f32::MAX {
+            1.0 - (closest_food_dist / genome.vision_depth)
         } else {
-            0.0 // No food seen
+            0.0
         };
+        obs.data[3] = closest_food_angle / std::f32::consts::PI;
 
-        let current_speed = vel.0.length();
-        let field_vals = field.sample(pos.0);
+        obs.data[4] = sector_left_prey.min(1.0);
+        obs.data[5] = sector_center_prey.min(1.0);
+        obs.data[6] = sector_right_prey.min(1.0);
 
-        obs.data[0] = food_distance;
-        obs.data[1] = food_angle;
-        obs.data[2] = current_speed;
-        obs.data[3] = energy.0;
-        obs.data[4] = field_vals[0]; // Oxygen
-        obs.data[5] = field_vals[1]; // Carbon
-        obs.data[6] = field_vals[2]; // Scent
-        obs.data[7] = field_vals[3]; // Temp
+        let half_w = grid_width as f32 / 2.0;
+        let half_h = grid_height as f32 / 2.0;
+        let gx = (pos.0.x + half_w).floor() as i32;
+        let gy = (pos.0.y + half_h).floor() as i32;
+
+        if gx >= 0 && gx < grid_width as i32 && gy >= 0 && gy < grid_height as i32 {
+            let idx = (gy as u32 * grid_width + gx as u32) as usize;
+            let field = &field_grid[idx];
+            obs.data[7] = field[0];
+            obs.data[8] = field[1];
+            obs.data[9] = field[2];
+            obs.data[10] = field[3];
+        } else {
+            obs.data[7] = 0.0;
+            obs.data[8] = 0.0;
+            obs.data[9] = 0.0;
+            obs.data[10] = 0.0;
+        }
+
+        obs.data[11] = 0.0;
     }
+}
+
+pub trait FieldSampler {
+    fn sample(&self, pos: common::Vec2) -> [f32; 4];
 }

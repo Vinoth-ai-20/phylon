@@ -37,7 +37,7 @@ impl SimulationStats {
                 PhylonEvent::DeathEvent { reason, .. } => match reason {
                     DeathCause::Starvation => self.deaths_by_starvation += 1,
                     DeathCause::Predation => self.deaths_by_predation += 1,
-                    DeathCause::OldAge => self.deaths_by_age += 1,
+                    DeathCause::Age => self.deaths_by_age += 1,
                     _ => {}
                 },
                 _ => {}

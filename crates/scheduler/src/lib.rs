@@ -86,12 +86,24 @@ impl SimulationScheduler {
         let _phase_span = span!(Level::TRACE, "phase", name = %phase_name).entered();
 
         if phase == SystemOrder::Sensing {
-            let sampler = world::GridSampler {
-                grid: &world.field_grid,
-                width: 256,
-                height: 256,
-            };
-            sensing::process_sensing(&mut world.ecs, &world.spatial_index, &sampler);
+            let mut foods = std::collections::HashMap::new();
+            for (entity, (pos, _fp)) in world
+                .ecs
+                .query_mut::<(&physics::Position, &organisms::FoodPellet)>()
+            {
+                foods.insert(
+                    common::EntityId(entity.to_bits().get()),
+                    (entity, pos.0, 10.0, false),
+                );
+            }
+            sensing::process_sensing(
+                &world.ecs,
+                &world.spatial_index,
+                &world.field_grid,
+                world.grid_width,
+                world.grid_height,
+                &foods,
+            );
         } else if phase == SystemOrder::Brain {
             brain::process_brain(&mut world.ecs);
         } else if phase == SystemOrder::Behavior {
@@ -103,6 +115,18 @@ impl SimulationScheduler {
             world.update_spatial_index();
         } else if phase == SystemOrder::Metabolism {
             metabolism::process_metabolism(&mut world.ecs, &world.event_bus);
+            ecology::process_gas_exchange(
+                &mut world.ecs,
+                &mut world.field_grid,
+                world.grid_width,
+                world.grid_height,
+            );
+            ecology::process_disease(
+                &mut world.ecs,
+                &world.spatial_index,
+                phylon_config::PhylonConfig::default().simulation.rng_seed,
+                self.current_tick.0,
+            );
         } else if phase == SystemOrder::Ecology {
             ecology::spawn_food(
                 &mut world.ecs,
@@ -117,16 +141,16 @@ impl SimulationScheduler {
                 256,
                 256,
             );
-            ecology::process_gas_exchange(&mut world.ecs, &mut world.field_grid, 256, 256);
         } else if phase == SystemOrder::Reproduction {
             reproduction::process_reproduction(
                 &mut world.ecs,
+                &world.spatial_index,
                 &world.event_bus,
                 phylon_config::PhylonConfig::default().simulation.rng_seed,
                 self.current_tick.0,
             );
         } else if phase == SystemOrder::PostTick {
-            let events = world.event_bus.drain::<events::PhylonEvent>();
+            let mut events = world.event_bus.drain::<events::PhylonEvent>();
 
             // Collect deaths and births
             let mut deaths = Vec::new();
@@ -134,43 +158,72 @@ impl SimulationScheduler {
 
             for e in &events {
                 match e {
-                    events::PhylonEvent::DeathEvent { id, .. } => deaths.push(*id),
+                    events::PhylonEvent::DeathEvent { id, reason } => deaths.push((*id, *reason)),
                     events::PhylonEvent::BirthEvent {
-                        parent: _,
+                        parent,
                         genome,
                         initial_energy,
                         position,
                     } => {
-                        births.push((genome.clone(), *initial_energy, *position));
+                        births.push((*parent, genome.clone(), *initial_energy, *position));
                     }
                     _ => {}
                 }
             }
 
             // Process deaths FIRST
-            for dead_id in deaths {
+            for (dead_id, reason) in deaths {
                 let entity = hecs::Entity::from_bits(dead_id.0).unwrap();
                 let _ = world.ecs.despawn(entity);
+                events.push(events::PhylonEvent::OrganismDied {
+                    id: dead_id,
+                    cause: reason,
+                    tick: self.current_tick.0,
+                });
             }
 
             // Process births
-            for (genome, energy, pos) in births {
-                let _id = world.spawn((
-                    organisms::Organism,
-                    organisms::Age(0),
-                    organisms::Energy(energy),
-                    organisms::Health::default(),
-                    genome.clone(),
-                    physics::Position(pos),
-                    physics::Velocity(common::Vec2::ZERO),
-                    physics::Acceleration(common::Vec2::ZERO),
-                    physics::Heading::default(),
-                    physics::Mass(1.0),
-                    physics::Radius(genome.size),
-                    reproduction::ReproductionCooldown(100),
-                    sensing::Observation::new(),
-                    brain::Intention::new(),
-                ));
+            for (parent_id, genome, energy, pos) in births {
+                let species = world.species_registry.assign_species(&genome, 15.0);
+
+                let mut generation = 0;
+                if let Some(pid) = parent_id {
+                    let parent_entity = hecs::Entity::from_bits(pid.0).unwrap();
+                    if let Ok(parent_gen) = world.ecs.get::<&organisms::Generation>(parent_entity) {
+                        generation = parent_gen.0 + 1;
+                    }
+                }
+
+                let mut builder = hecs::EntityBuilder::new();
+                builder.add(organisms::Organism);
+                builder.add(organisms::Age(0));
+                builder.add(organisms::Generation(generation));
+                builder.add(organisms::Energy(energy));
+                builder.add(organisms::Health::default());
+                builder.add(genome.clone());
+                builder.add(species);
+                builder.add(physics::Position(pos));
+                builder.add(physics::Velocity(common::Vec2::ZERO));
+                builder.add(physics::Acceleration(common::Vec2::ZERO));
+                builder.add(physics::Heading::default());
+                builder.add(physics::Mass(1.0));
+                builder.add(physics::Radius(genome.size));
+                builder.add(reproduction::ReproductionCooldown(100));
+                builder.add(sensing::Observation::new());
+                builder.add(brain::Intention::new());
+                builder.add(brain::BrainState::default());
+                builder.add(brain::LearnedWeights {
+                    data: genome.brain_weights.clone(),
+                });
+
+                let id = world.spawn(builder.build());
+
+                events.push(events::PhylonEvent::OrganismBorn {
+                    id: common::EntityId(id.to_bits().get()),
+                    parent_id,
+                    generation,
+                    tick: self.current_tick.0,
+                });
             }
 
             world.last_events = events;

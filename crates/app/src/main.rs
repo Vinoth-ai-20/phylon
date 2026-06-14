@@ -55,7 +55,7 @@ impl PhylonApp {
             let mut genome = genetics::Genome::default();
 
             // Initialize random brain weights
-            let num_weights = brain::BRAIN_WEIGHTS_COUNT;
+            let num_weights = brain::TOTAL_NEURONS * brain::TOTAL_NEURONS;
             genome.brain_weights = (0..num_weights).map(|_| rng.gen_range(-1.0..1.0)).collect();
 
             world.spawn((
@@ -98,16 +98,7 @@ impl PhylonApp {
             instance: wgpu::Instance::default(),
             ui: None,
             stats: analytics::SimulationStats::new(1000),
-            db_writer: Some(storage::db::DbWriter::new(
-                &config.research.database_path,
-                format!(
-                    "run_{}",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                ),
-            )),
+            db_writer: Some(storage::db::DbWriter::new(&config.research.database_path).unwrap()),
             script_manager: plugins::manager::ScriptManager::new(),
             script_path: "data/scripts/god_mode.rhai".to_string(),
             load_script: false,
@@ -377,14 +368,12 @@ impl ApplicationHandler for PhylonApp {
                     self.stats
                         .update_metrics(&self.world, self.scheduler.current_tick);
 
-                    if let Some(db) = &self.db_writer {
-                        db.push_metric(storage::db::MetricSnapshot {
+                    if let Some(db) = &mut self.db_writer {
+                        let _ = db.write_event(storage::db::DbEvent::Metrics {
                             tick: self.scheduler.current_tick.0,
                             population: self.stats.current_population as u32,
-                            births: self.stats.total_births as u32,
-                            deaths_starvation: self.stats.deaths_by_starvation as u32,
-                            deaths_old_age: self.stats.deaths_by_age as u32,
-                            deaths_predation: self.stats.deaths_by_predation as u32,
+                            avg_energy: 100.0,
+                            total_food: 0,
                         });
                     }
 
