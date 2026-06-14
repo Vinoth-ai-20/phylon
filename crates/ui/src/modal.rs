@@ -15,6 +15,7 @@ pub enum UiModal {
     AboutPhylon,
     KeyboardShortcuts,
     Preferences,
+    ExperimentReady,
 }
 
 pub fn render_modals(ctx: &Context, state: &mut UiState) {
@@ -210,6 +211,28 @@ pub fn render_modals(ctx: &Context, state: &mut UiState) {
                     close = true;
                 }
             }
+            UiModal::ExperimentReady => {
+                Window::new("Experiment Ready")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        if let Some(_exp) = &state.active_experiment {
+                            ui.label("Experiment Configuration Loaded");
+                            // Ideally show name and tick count, but Experiment is a dummy struct here
+                            ui.label("Ready to run experiment?");
+                        }
+                        ui.horizontal(|ui| {
+                            if ui.button("Run").clicked() {
+                                execute_action = Some("run_experiment");
+                                close = true;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                close = true;
+                            }
+                        });
+                    });
+            }
         }
     }
 
@@ -218,8 +241,63 @@ pub fn render_modals(ctx: &Context, state: &mut UiState) {
     }
 
     if let Some(action) = execute_action {
-        // TODO: Map string actions to event bus or state mutations
-        // E.g. trigger quit, jump to tick, etc.
-        let _ = action;
+        match action {
+            "new_sim" => {
+                if let Some(tx) = &state.app_tx {
+                    let _ = tx.send(crate::commands::AppCommand::ResetWorld);
+                }
+                state.unsaved_changes = false;
+            }
+            "quit" => {
+                if let Some(tx) = &state.app_tx {
+                    let _ = tx.send(crate::commands::AppCommand::Quit);
+                }
+            }
+            "jump" => {
+                if let UiModal::JumpToTick { input } = &state.active_modal.as_ref().unwrap() {
+                    if let Ok(tick) = input.parse::<u64>() {
+                        if let Some(tx) = &state.app_tx {
+                            let _ = tx.send(crate::commands::AppCommand::SeekReplayToTick(tick));
+                        }
+                    }
+                }
+            }
+            "select_diet" => {
+                if let UiModal::FilterByDiet {
+                    herbivore,
+                    carnivore,
+                    scavenger,
+                } = &state.active_modal.as_ref().unwrap()
+                {
+                    let filter = crate::commands::DietFilter {
+                        herbivore: *herbivore,
+                        carnivore: *carnivore,
+                        scavenger: *scavenger,
+                    };
+                    if let Some(tx) = &state.app_tx {
+                        let _ = tx.send(crate::commands::AppCommand::SelectByDiet(filter));
+                    }
+                }
+            }
+            "run_experiment" => {
+                if let Some(exp) = &state.active_experiment {
+                    if let Some(tx) = &state.app_tx {
+                        let _ = tx.send(crate::commands::AppCommand::RunExperiment(exp.clone()));
+                    }
+                    if let Some(task_tx) = &state.task_tx {
+                        let _ = task_tx.send(crate::state::LoadingTask {
+                            label: "Running Experiment".to_string(),
+                            detail: "Starting...".to_string(),
+                            progress: 0.0,
+                            can_cancel: true,
+                            cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                                false,
+                            )),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }

@@ -73,6 +73,12 @@ pub struct UiState {
     pub god_mode_redo_stack: Vec<GodModeAction>,
     pub unsaved_changes: bool,
     pub active_loading_task: Option<LoadingTask>,
+    pub app_tx: Option<std::sync::mpsc::Sender<crate::commands::AppCommand>>,
+    pub task_tx: Option<std::sync::mpsc::Sender<LoadingTask>>,
+    pub last_snapshot_path: Option<std::path::PathBuf>,
+    pub active_experiment: Option<research::Experiment>,
+    pub script_console_log: String,
+    pub db_query_results: Option<Result<Vec<Vec<String>>, String>>,
 }
 
 impl Default for UiState {
@@ -94,6 +100,12 @@ impl Default for UiState {
             god_mode_redo_stack: Vec::new(),
             unsaved_changes: false,
             active_loading_task: None,
+            app_tx: None,
+            task_tx: None,
+            last_snapshot_path: None,
+            active_experiment: None,
+            script_console_log: String::new(),
+            db_query_results: None,
         }
     }
 }

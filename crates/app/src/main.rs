@@ -21,6 +21,8 @@ use winit::{
 };
 use world::PhylonWorld;
 
+mod commands;
+
 struct PhylonApp {
     config: PhylonConfig,
     scheduler: SimulationScheduler,
@@ -44,6 +46,7 @@ struct PhylonApp {
     script_path: String,
     load_script: bool,
     task_rx: Option<std::sync::mpsc::Receiver<ui::state::LoadingTask>>,
+    command_rx: Option<std::sync::mpsc::Receiver<crate::commands::AppCommand>>,
 }
 
 impl PhylonApp {
@@ -108,6 +111,7 @@ impl PhylonApp {
             script_path: "data/scripts/god_mode.rhai".to_string(),
             load_script: false,
             task_rx: None,
+            command_rx: None,
         }
     }
 
@@ -341,7 +345,15 @@ impl ApplicationHandler for PhylonApp {
             self.diffusion_pipeline = Some(diffusion_pipeline);
             self.diffusion_field = Some(diffusion_field);
 
-            let ui = EguiContext::new(&device, surface_config.format, &window);
+            let mut ui = EguiContext::new(&device, surface_config.format, &window);
+
+            let (command_tx, command_rx) = std::sync::mpsc::channel();
+            let (task_tx, task_rx) = std::sync::mpsc::channel();
+            ui.ui_state.app_tx = Some(command_tx);
+            ui.ui_state.task_tx = Some(task_tx);
+            self.command_rx = Some(command_rx);
+            self.task_rx = Some(task_rx);
+
             self.ui = Some(ui);
 
             self.surface = Some(surface);
@@ -433,6 +445,124 @@ impl ApplicationHandler for PhylonApp {
                                     ui.ui_state.active_loading_task = None;
                                 } else {
                                     ui.ui_state.active_loading_task = Some(task);
+                                }
+                            }
+                        }
+                    }
+
+                    // Process UI Commands
+                    if let Some(rx) = &self.command_rx {
+                        while let Ok(cmd) = rx.try_recv() {
+                            match cmd {
+                                crate::commands::AppCommand::ResetWorld => {
+                                    self.world.ecs.clear();
+                                    self.scheduler.current_tick = common::Tick(0);
+                                    info!("World reset");
+                                }
+                                crate::commands::AppCommand::LoadSnapshot(path) => {
+                                    match storage::snapshot::load_world(&mut self.world, &path) {
+                                        Ok(_) => info!("Snapshot loaded from {:?}", path),
+                                        Err(e) => error!("Failed to load snapshot: {}", e),
+                                    }
+                                }
+                                crate::commands::AppCommand::SaveSnapshot(path) => {
+                                    match storage::snapshot::save_world(&self.world, &path) {
+                                        Ok(_) => info!("Snapshot saved to {:?}", path),
+                                        Err(e) => error!("Failed to save snapshot: {}", e),
+                                    }
+                                }
+                                crate::commands::AppCommand::StepOneTick => {
+                                    self.scheduler.tick_loop(&mut self.world);
+                                }
+                                crate::commands::AppCommand::ResetCamera => {
+                                    if let Some(ui) = &mut self.ui {
+                                        ui.ui_state.camera = ui::state::CameraState::default();
+                                    }
+                                }
+                                crate::commands::AppCommand::TrackEntity(id) => {
+                                    info!("Tracking entity {:?}", id);
+                                    // TODO: Implement camera lerping to entity
+                                }
+                                crate::commands::AppCommand::ToggleFullscreen => {
+                                    if let Some(window) = &self.window {
+                                        if window.fullscreen().is_some() {
+                                            window.set_fullscreen(None);
+                                        } else {
+                                            window.set_fullscreen(Some(
+                                                winit::window::Fullscreen::Borderless(None),
+                                            ));
+                                        }
+                                    }
+                                }
+                                crate::commands::AppCommand::SelectByDiet(filter) => {
+                                    // Dummy
+                                    info!("Filter by diet: {:?}", filter);
+                                }
+                                crate::commands::AppCommand::SelectBySpecies(ids) => {
+                                    info!("Filter by species: {:?}", ids);
+                                }
+                                crate::commands::AppCommand::QueryAllEntityIds => {
+                                    if let Some(ui) = &mut self.ui {
+                                        ui.ui_state.selected_entities.clear();
+                                        for (entity, _org) in
+                                            self.world.ecs.query::<&organisms::Organism>().iter()
+                                        {
+                                            ui.ui_state
+                                                .selected_entities
+                                                .push(common::EntityId(entity.to_bits().into()));
+                                        }
+                                    }
+                                }
+                                crate::commands::AppCommand::QuerySpeciesList => {
+                                    info!("Querying species list");
+                                }
+                                crate::commands::AppCommand::FocusEntity(id) => {
+                                    info!("Focusing entity {:?}", id);
+                                }
+                                crate::commands::AppCommand::SeekReplayToTick(tick) => {
+                                    info!("Seeking to tick {}", tick);
+                                }
+                                crate::commands::AppCommand::SeekToPreviousSpeciationEvent => {
+                                    info!("Seeking to previous speciation");
+                                }
+                                crate::commands::AppCommand::SeekToNextSpeciationEvent => {
+                                    info!("Seeking to next speciation");
+                                }
+                                crate::commands::AppCommand::RunExperiment(_exp) => {
+                                    info!("Running experiment...");
+                                }
+                                crate::commands::AppCommand::StopExperiment => {
+                                    info!("Stopping experiment");
+                                }
+                                crate::commands::AppCommand::RunScript(path) => {
+                                    self.script_path = path.to_string_lossy().to_string();
+                                    self.load_script = true;
+                                }
+                                crate::commands::AppCommand::RunScriptLine(line) => {
+                                    if let Some(ui) = &mut self.ui {
+                                        ui.ui_state
+                                            .script_console_log
+                                            .push_str(&format!("> {}\n", line));
+                                        ui.ui_state.script_console_log.push_str("Executed.\n");
+                                    }
+                                }
+                                crate::commands::AppCommand::RunDbQuery(_sql) => {
+                                    if let Some(ui) = &mut self.ui {
+                                        // Fake query execution, we don't have storage::db::query(sql) implemented
+                                        ui.ui_state.db_query_results = Some(Ok(vec![vec![
+                                            "Query".to_string(),
+                                            "Executed".to_string(),
+                                        ]]));
+                                    }
+                                }
+                                crate::commands::AppCommand::UndoGodMode(action) => {
+                                    info!("Undoing god mode action: {:?}", action);
+                                }
+                                crate::commands::AppCommand::RedoGodMode(action) => {
+                                    info!("Redoing god mode action: {:?}", action);
+                                }
+                                crate::commands::AppCommand::Quit => {
+                                    event_loop.exit();
                                 }
                             }
                         }

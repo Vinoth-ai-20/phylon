@@ -7,6 +7,7 @@ use wgpu::{CommandEncoder, Device, Queue, TextureFormat, TextureView};
 use winit::event::WindowEvent;
 use winit::window::Window;
 
+pub mod commands;
 pub mod menu;
 pub mod modal;
 pub mod overlay;
@@ -82,7 +83,7 @@ impl EguiContext {
 
         // --- UI Construction ---
 
-        crate::menu::render_menu_bar(&self.context, &mut self.ui_state);
+        crate::menu::render_menu_bar(&self.context, &mut self.ui_state, stats);
 
         // Analytics Window
         if self.ui_state.panels.analytics {

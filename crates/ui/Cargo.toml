@@ -15,3 +15,7 @@ puffin = { workspace = true }
 world = { workspace = true }
 common = { workspace = true }
 rfd = { workspace = true }
+organisms = { workspace = true }
+research = { path = "../research" }
+open = { workspace = true }
+pollster = { workspace = true }

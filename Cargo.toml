@@ -51,6 +51,7 @@ pollster = "0.3"
 bytemuck = { version = "1.18", features = ["derive"] }
 noise = "0.9"
 rfd = "0.14"
+open = "5.1"
 
 [profile.release]
 opt-level = 3
