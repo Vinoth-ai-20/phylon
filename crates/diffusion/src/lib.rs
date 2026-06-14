@@ -131,7 +131,7 @@ impl DiffusionField {
         }
 
         // Dispatch (width/16, height/16, 1)
-        compute_pass.dispatch_workgroups((self.width + 15) / 16, (self.height + 15) / 16, 1);
+        compute_pass.dispatch_workgroups(self.width.div_ceil(16), self.height.div_ceil(16), 1);
 
         // Swap buffers for next tick
         self.flip = !self.flip;

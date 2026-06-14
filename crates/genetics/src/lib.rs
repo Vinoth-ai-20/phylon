@@ -72,8 +72,10 @@ mod tests {
         let mut rng1 = ChaCha8Rng::seed_from_u64(42);
         let mut rng2 = ChaCha8Rng::seed_from_u64(42);
 
-        let mut genome = Genome::default();
-        genome.brain_weights = vec![0.1, 0.2, -0.5];
+        let genome = Genome {
+            brain_weights: vec![0.1, 0.2, -0.5],
+            ..Genome::default()
+        };
 
         let child1 = genome.mutate(&mut rng1, 0.1);
         let child2 = genome.mutate(&mut rng2, 0.1);
