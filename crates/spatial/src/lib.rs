@@ -17,6 +17,11 @@ impl UniformGrid {
         }
     }
 
+    /// Returns the size of each grid cell.
+    pub fn cell_size(&self) -> f32 {
+        self.cell_size
+    }
+
     /// Computes the 2D cell coordinate for a given continuous position.
     #[inline]
     pub fn pos_to_cell(&self, pos: Vec2) -> IVec2 {

@@ -4,4 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-
+common = { workspace = true }
+world = { workspace = true }
+brain = { path = "../brain" }
+physics = { workspace = true }
+organisms = { workspace = true }
+genetics = { workspace = true }
+hecs = { workspace = true }
+puffin = { workspace = true }

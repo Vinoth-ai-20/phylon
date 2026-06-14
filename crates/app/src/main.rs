@@ -45,7 +45,14 @@ impl PhylonApp {
         let mut rng = rand::thread_rng();
         let spawn_range = 400.0;
         for _ in 0..100 {
-            let genome = genetics::Genome::default();
+            let mut genome = genetics::Genome::default();
+            
+            // Initialize random brain weights
+            let num_weights = brain::BRAIN_WEIGHTS_COUNT;
+            genome.brain_weights = (0..num_weights)
+                .map(|_| rng.gen_range(-1.0..1.0))
+                .collect();
+
             world.spawn((
                 organisms::Organism,
                 organisms::Age(0),
@@ -62,8 +69,11 @@ impl PhylonApp {
                     rng.gen_range(-10.0..10.0),
                 )),
                 Acceleration(Vec2::ZERO),
+                physics::Heading(rng.gen_range(-std::f32::consts::PI..std::f32::consts::PI)),
                 Mass(1.0),
                 Radius(genome.size),
+                sensing::Observation::new(),
+                brain::Intention::new(),
             ));
         }
 

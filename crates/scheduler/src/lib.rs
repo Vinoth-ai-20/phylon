@@ -85,7 +85,13 @@ impl SimulationScheduler {
         puffin::profile_scope!(phase_name);
         let _phase_span = span!(Level::TRACE, "phase", name = %phase_name).entered();
 
-        if phase == SystemOrder::Physics {
+        if phase == SystemOrder::Sensing {
+            sensing::process_sensing(&mut world.ecs, &world.spatial_index);
+        } else if phase == SystemOrder::Brain {
+            brain::process_brain(&mut world.ecs);
+        } else if phase == SystemOrder::Behavior {
+            behavior::process_behavior(&mut world.ecs);
+        } else if phase == SystemOrder::Physics {
             let dt = self.tick_duration.as_secs_f32();
             physics::symplectic_euler_integration(&mut world.ecs, dt);
             physics::world_bounds_collision(&mut world.ecs, common::Vec2::new(1000.0, 1000.0));
@@ -130,9 +136,13 @@ impl SimulationScheduler {
                     genome.clone(),
                     physics::Position(pos),
                     physics::Velocity(common::Vec2::ZERO),
+                    physics::Acceleration(common::Vec2::ZERO),
+                    physics::Heading::default(),
                     physics::Mass(1.0),
                     physics::Radius(genome.size),
                     reproduction::ReproductionCooldown(100),
+                    sensing::Observation::new(),
+                    brain::Intention::new(),
                 ));
             }
         }

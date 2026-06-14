@@ -22,6 +22,9 @@ pub struct Mass(pub f32);
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Radius(pub f32);
 
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Heading(pub f32);
+
 // ----------------------------------------------------------------------------
 // Physics Systems
 // ----------------------------------------------------------------------------
@@ -34,6 +37,7 @@ pub fn symplectic_euler_integration(world: &mut World, dt: f32) {
         world.query_mut::<(&mut Position, &mut Velocity, &mut Acceleration)>()
     {
         vel.0 += acc.0 * dt;
+        vel.0 *= 0.95; // Simple linear friction
         pos.0 += vel.0 * dt;
         acc.0 = Vec2::ZERO; // Reset acceleration
     }

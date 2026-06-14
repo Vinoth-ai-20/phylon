@@ -32,7 +32,8 @@ pub fn process_metabolism(world: &mut World, events: &EventBus) {
         // Base metabolic cost + kinetic cost
         let speed_sq = vel.0.length_squared();
         let kinetic_cost = 0.5 * mass.0 * speed_sq * 0.0001; // tiny multiplier
-        let basal_cost = 0.05 * genome.metabolic_rate;
+        let sensory_cost = 0.0005 * genome.sense_radius; // cost for sensing
+        let basal_cost = 0.05 * genome.metabolic_rate + sensory_cost;
         let total_cost = basal_cost + kinetic_cost;
 
         energy.0 -= total_cost;

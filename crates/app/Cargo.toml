@@ -23,3 +23,6 @@ organisms = { workspace = true }
 genetics = { workspace = true }
 reproduction = { workspace = true }
 gpu = { workspace = true }
+sensing = { path = "../sensing" }
+brain = { path = "../brain" }
+behavior = { path = "../behavior" }

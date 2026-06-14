@@ -4,4 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-
+common = { workspace = true }
+world = { workspace = true }
+sensing = { path = "../sensing" }
+genetics = { workspace = true }
+hecs = { workspace = true }
+ndarray = { workspace = true }
+puffin = { workspace = true }

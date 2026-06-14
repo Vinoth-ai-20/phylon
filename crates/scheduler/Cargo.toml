@@ -17,3 +17,6 @@ metabolism = { workspace = true }
 ecology = { workspace = true }
 phylon_config = { workspace = true }
 hecs = { workspace = true }
+sensing = { path = "../sensing" }
+brain = { path = "../brain" }
+behavior = { path = "../behavior" }
