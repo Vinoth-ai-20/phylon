@@ -10,8 +10,9 @@ use wgpu::util::DeviceExt;
 pub struct DiffusionUniforms {
     pub grid_width: u32,
     pub grid_height: u32,
-    pub diffusion_rate: f32,
-    pub decay_rate: f32,
+    pub _padding: [u32; 2],
+    pub diffusion_rate: [f32; 4], // R=Oxygen, G=Carbon, B=Scent, A=Temperature
+    pub decay_rate: [f32; 4],
 }
 
 pub struct DiffusionField {
@@ -20,6 +21,8 @@ pub struct DiffusionField {
     pub uniforms: wgpu::Buffer,
     pub buffer_a: wgpu::Buffer,
     pub buffer_b: wgpu::Buffer,
+    pub staging_buffer: wgpu::Buffer,
+    pub cpu_buffer: Vec<[f32; 4]>,
     pub bind_group_a: wgpu::BindGroup,
     pub bind_group_b: wgpu::BindGroup,
     pub flip: bool,
@@ -31,11 +34,11 @@ impl DiffusionField {
         pipeline: &DiffusionPipeline,
         width: u32,
         height: u32,
-        diffusion_rate: f32,
-        decay_rate: f32,
+        diffusion_rate: [f32; 4],
+        decay_rate: [f32; 4],
     ) -> Self {
-        let initial_data = vec![0.0f32; (width * height) as usize];
-        let _size = (initial_data.len() * mem::size_of::<f32>()) as wgpu::BufferAddress;
+        let initial_data = vec![[0.0f32; 4]; (width * height) as usize];
+        let _size = (initial_data.len() * mem::size_of::<[f32; 4]>()) as wgpu::BufferAddress;
 
         let buffer_a = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Diffusion Buffer A"),
@@ -53,9 +56,17 @@ impl DiffusionField {
                 | wgpu::BufferUsages::COPY_DST,
         });
 
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Diffusion Staging Buffer"),
+            size: _size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let uniforms = DiffusionUniforms {
             grid_width: width,
             grid_height: height,
+            _padding: [0; 2],
             diffusion_rate,
             decay_rate,
         };
@@ -110,6 +121,8 @@ impl DiffusionField {
             uniforms: uniform_buffer,
             buffer_a,
             buffer_b,
+            staging_buffer,
+            cpu_buffer: initial_data,
             bind_group_a,
             bind_group_b,
             flip: false,
@@ -142,6 +155,67 @@ impl DiffusionField {
             &self.buffer_b
         } else {
             &self.buffer_a
+        }
+    }
+
+    /// Downloads the current GPU field state into the CPU buffer.
+    pub fn download(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        puffin::profile_function!();
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Diffusion Download Encoder"),
+        });
+
+        let size =
+            (self.width * self.height * mem::size_of::<[f32; 4]>() as u32) as wgpu::BufferAddress;
+
+        encoder.copy_buffer_to_buffer(self.current_buffer(), 0, &self.staging_buffer, 0, size);
+        queue.submit(Some(encoder.finish()));
+
+        let buffer_slice = self.staging_buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+
+        device.poll(wgpu::Maintain::Wait);
+
+        if rx.recv().unwrap().is_ok() {
+            let data = buffer_slice.get_mapped_range();
+            self.cpu_buffer.copy_from_slice(bytemuck::cast_slice(&data));
+            drop(data);
+            self.staging_buffer.unmap();
+        }
+    }
+
+    /// Uploads the CPU buffer to the current GPU field state.
+    pub fn upload(&mut self, queue: &wgpu::Queue) {
+        puffin::profile_function!();
+        queue.write_buffer(
+            self.current_buffer(),
+            0,
+            bytemuck::cast_slice(&self.cpu_buffer),
+        );
+    }
+
+    pub fn get_cell(&self, x: u32, y: u32) -> [f32; 4] {
+        if x >= self.width || y >= self.height {
+            return [0.0; 4];
+        }
+        self.cpu_buffer[(y * self.width + x) as usize]
+    }
+
+    pub fn set_cell(&mut self, x: u32, y: u32, val: [f32; 4]) {
+        if x < self.width && y < self.height {
+            self.cpu_buffer[(y * self.width + x) as usize] = val;
+        }
+    }
+
+    pub fn add_to_cell(&mut self, x: u32, y: u32, val: [f32; 4]) {
+        if x < self.width && y < self.height {
+            let idx = (y * self.width + x) as usize;
+            for (i, v) in val.iter().enumerate() {
+                self.cpu_buffer[idx][i] += v;
+            }
         }
     }
 }

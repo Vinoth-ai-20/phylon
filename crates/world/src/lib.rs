@@ -12,6 +12,7 @@ pub struct PhylonWorld {
     pub ecs: World,
     pub spatial_index: UniformGrid,
     pub event_bus: EventBus,
+    pub field_grid: Vec<[f32; 4]>,
 }
 
 impl PhylonWorld {
@@ -23,6 +24,7 @@ impl PhylonWorld {
             ecs: World::new(),
             spatial_index: UniformGrid::new(chunk_size),
             event_bus,
+            field_grid: vec![[0.0; 4]; 256 * 256], // 256x256 grid
         }
     }
 

@@ -1,13 +1,14 @@
 struct Uniforms {
     grid_width: u32,
     grid_height: u32,
-    diffusion_rate: f32,
-    decay_rate: f32,
+    _padding: vec2<u32>,
+    diffusion_rate: vec4<f32>,
+    decay_rate: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> params: Uniforms;
-@group(0) @binding(1) var<storage, read> field_in: array<f32>;
-@group(0) @binding(2) var<storage, read_write> field_out: array<f32>;
+@group(0) @binding(1) var<storage, read> field_in: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read_write> field_out: array<vec4<f32>>;
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -35,7 +36,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Discrete Laplacian
     let laplacian = val_l + val_r + val_t + val_b - 4.0 * val_c;
     
-    // Explicit Euler step
+    // Explicit Euler step (component-wise multiplication)
     let next_val = val_c + params.diffusion_rate * laplacian - params.decay_rate * val_c;
     
     field_out[index] = next_val;

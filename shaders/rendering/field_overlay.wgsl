@@ -8,7 +8,7 @@ struct FieldParams {
     height: u32,
 };
 @group(0) @binding(1) var<uniform> params: FieldParams;
-@group(0) @binding(2) var<storage, read> field_data: array<f32>;
+@group(0) @binding(2) var<storage, read> field_data: array<vec4<f32>>;
 
 struct VertexInput {
     @location(0) position: vec2<f32>,
@@ -38,18 +38,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let y = u32(in.uv.y * f32(params.height));
     
     let index = y * params.width + x;
-    var val = 0.0;
+    var val = vec4<f32>(0.0);
     if x < params.width && y < params.height {
         val = field_data[index];
     }
     
-    // Map val to a color: cool blue -> warm red
-    let r = clamp(2.0 * val - 1.0, 0.0, 1.0);
-    let g = 1.0 - abs(2.0 * val - 1.0);
-    let b = clamp(1.0 - 2.0 * val, 0.0, 1.0);
+    // R=Oxygen, G=Carbon, B=Scent, A=Temperature
+    // Let's visualize Oxygen as blue, Carbon as green, Scent as red
+    let oxygen = clamp(val.x, 0.0, 1.0);
+    let carbon = clamp(val.y, 0.0, 1.0);
+    let scent = clamp(val.z, 0.0, 1.0);
+    let temp = clamp(val.w, 0.0, 1.0);
     
-    // Add some base alpha to make it visible, fade out when value is near 0
-    let alpha = clamp(val * 0.8, 0.0, 0.8);
+    let r = scent + temp * 0.2;
+    let g = carbon + temp * 0.1;
+    let b = oxygen;
+    
+    let alpha = clamp((oxygen + carbon + scent + temp) * 0.5, 0.0, 0.8);
     
     return vec4<f32>(r, g, b, alpha);
 }

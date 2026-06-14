@@ -121,7 +121,15 @@ impl PhylonApp {
         // Compute Pass for Diffusion
         if let (Some(pipeline), Some(field)) = (&self.diffusion_pipeline, &mut self.diffusion_field)
         {
+            // Sync CPU changes to GPU
+            field.cpu_buffer.copy_from_slice(&self.world.field_grid);
+            field.upload(queue);
+
             field.dispatch(&mut encoder, pipeline);
+
+            // Sync GPU changes back to CPU
+            field.download(device, queue);
+            self.world.field_grid.copy_from_slice(&field.cpu_buffer);
         }
 
         {
@@ -217,8 +225,14 @@ impl ApplicationHandler for PhylonApp {
             );
 
             let diffusion_pipeline = DiffusionPipeline::new(&device);
-            let diffusion_field =
-                DiffusionField::new(&device, &diffusion_pipeline, 256, 256, 0.2, 0.01);
+            let diffusion_field = DiffusionField::new(
+                &device,
+                &diffusion_pipeline,
+                256,
+                256,
+                [0.2, 0.1, 0.05, 0.3],     // Oxygen, Carbon, Scent, Temp
+                [0.01, 0.01, 0.05, 0.005], // Decay rates
+            );
 
             self.renderer = Some(renderer);
             self.field_renderer = Some(field_renderer);
@@ -261,9 +275,11 @@ impl ApplicationHandler for PhylonApp {
 
                     // Save snapshot
                     if self.scheduler.current_tick.0 > 0
-                        && self.scheduler.current_tick.0
-                            % self.config.research.snapshot_interval_ticks
-                            == 0
+                        && self
+                            .scheduler
+                            .current_tick
+                            .0
+                            .is_multiple_of(self.config.research.snapshot_interval_ticks)
                     {
                         let path = format!("snapshot_{}.ron", self.scheduler.current_tick.0);
                         match world::snapshot::save_world(&self.world, &path) {

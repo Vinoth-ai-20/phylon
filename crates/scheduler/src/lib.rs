@@ -105,6 +105,7 @@ impl SimulationScheduler {
                 self.current_tick.0,
             );
             ecology::process_foraging(&mut world.ecs, &world.spatial_index);
+            ecology::process_gas_exchange(&mut world.ecs, &mut world.field_grid, 256, 256);
         } else if phase == SystemOrder::Reproduction {
             reproduction::process_reproduction(
                 &mut world.ecs,

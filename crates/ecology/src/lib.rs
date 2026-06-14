@@ -72,3 +72,47 @@ pub fn process_foraging(world: &mut World, _grid: &UniformGrid) {
         }
     }
 }
+
+/// Processes gas exchange between organisms and the environment.
+/// Organisms consume Oxygen (channel 0) and emit Carbon (channel 1).
+pub fn process_gas_exchange(
+    world: &mut World,
+    field_grid: &mut [[f32; 4]],
+    grid_width: u32,
+    grid_height: u32,
+) {
+    puffin::profile_function!();
+
+    let half_w = grid_width as f32 / 2.0;
+    let half_h = grid_height as f32 / 2.0;
+
+    for (_entity, (pos, _org, energy)) in world.query_mut::<(&Position, &Organism, &mut Energy)>() {
+        let gx = (pos.0.x + half_w).floor() as i32;
+        let gy = (pos.0.y + half_h).floor() as i32;
+
+        if gx >= 0 && gx < grid_width as i32 && gy >= 0 && gy < grid_height as i32 {
+            let idx = (gy as u32 * grid_width + gx as u32) as usize;
+
+            // Consume Oxygen (index 0)
+            let oxygen_available = field_grid[idx][0];
+            let consume_rate = 0.05;
+            let consumed = oxygen_available.min(consume_rate);
+
+            field_grid[idx][0] -= consumed;
+
+            // Emit Carbon (index 1) based on consumed oxygen and energy usage
+            field_grid[idx][1] += consumed * 0.8;
+
+            // Emit Scent (index 2)
+            field_grid[idx][2] += 0.01;
+
+            // Generate Heat (index 3)
+            field_grid[idx][3] += 0.02;
+
+            // Optional: If no oxygen, reduce energy or health
+            if consumed < 0.01 {
+                energy.0 -= 0.1; // Suffocation penalty
+            }
+        }
+    }
+}
