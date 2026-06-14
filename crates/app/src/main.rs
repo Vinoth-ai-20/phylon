@@ -194,6 +194,8 @@ impl PhylonApp {
             &view
         };
 
+        let scissor_rect = self.ui.as_ref().and_then(|ui| ui.ui_state.viewport_rect);
+
         {
             let mut scene_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Field Render Pass"),
@@ -202,9 +204,9 @@ impl PhylonApp {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.1,
-                            b: 0.12,
+                            r: 0.05,
+                            g: 0.05,
+                            b: 0.07,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -214,6 +216,17 @@ impl PhylonApp {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            if let Some(rect) = scissor_rect {
+                // Ensure rect is within physical bounds and valid
+                let x = rect.min.x.max(0.0) as u32;
+                let y = rect.min.y.max(0.0) as u32;
+                let w = rect.width().max(0.0) as u32;
+                let h = rect.height().max(0.0) as u32;
+                if w > 0 && h > 0 {
+                    scene_pass.set_scissor_rect(x, y, w, h);
+                }
+            }
 
             // Render Field Overlay first (in background)
             if self.ui.as_ref().map(|ui| ui.ui_state.show_field_overlay) != Some(false) {
@@ -239,16 +252,14 @@ impl PhylonApp {
             })];
 
             if let Some(trail) = &self.trail_pass {
-                if self.ui.as_ref().map(|ui| ui.ui_state.show_trails) != Some(false) {
-                    color_attachments.push(Some(wgpu::RenderPassColorAttachment {
-                        view: &trail.trail_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    }));
-                }
+                color_attachments.push(Some(wgpu::RenderPassColorAttachment {
+                    view: &trail.trail_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                }));
             }
 
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -258,6 +269,16 @@ impl PhylonApp {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            if let Some(rect) = scissor_rect {
+                let x = rect.min.x.max(0.0) as u32;
+                let y = rect.min.y.max(0.0) as u32;
+                let w = rect.width().max(0.0) as u32;
+                let h = rect.height().max(0.0) as u32;
+                if w > 0 && h > 0 {
+                    render_pass.set_scissor_rect(x, y, w, h);
+                }
+            }
 
             // Render Entities on top
             if let Some(renderer) = &self.renderer {

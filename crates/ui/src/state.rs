@@ -89,6 +89,8 @@ pub struct UiState {
     pub db_query_results: Option<Result<Vec<Vec<String>>, String>>,
     pub db_query_input: String,
     pub species_list: Vec<(u32, usize)>,
+    pub viewport_rect: Option<egui::Rect>,
+    pub system_logs: Vec<String>,
 }
 
 impl Default for UiState {
@@ -122,6 +124,8 @@ impl Default for UiState {
             db_query_results: None,
             db_query_input: String::new(),
             species_list: Vec::new(),
+            viewport_rect: None,
+            system_logs: Vec::new(),
         }
     }
 }

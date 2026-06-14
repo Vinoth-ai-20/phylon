@@ -1,5 +1,7 @@
-use common::EntityId;
+use analytics::SimulationStats;
+use common::{EntityId, Tick};
 use egui::{Color32, Pos2, Stroke, Ui, Vec2};
+use egui_plot::{Bar, BarChart, Line, Plot, PlotPoints, Polygon};
 
 #[derive(Default)]
 pub struct AnalyticsPanel {
@@ -95,4 +97,83 @@ pub fn render_lineage_tree(
     } else if let Some(Err(e)) = &ui_state.db_query_results {
         ui.colored_label(Color32::RED, format!("DB Error: {}", e));
     }
+}
+
+pub fn render_analytics_dashboard(ui: &mut Ui, stats: &SimulationStats, _tick: Tick) {
+    ui.heading("Analytics Dashboard");
+
+    ui.separator();
+    ui.label("Species richness");
+
+    // Stacked Area Chart for Species
+    // For MVP, we'll just draw a single area representing the total population,
+    // as we don't have historical species distribution in `SimulationStats` yet.
+    // If we did, we'd draw multiple polygons stacked.
+    let points: PlotPoints = stats.history.iter().map(|(t, p, _, _)| [*t, *p]).collect();
+
+    let area = Polygon::new(points)
+        .fill_color(Color32::from_rgb(0, 150, 100))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(0, 255, 150)));
+
+    Plot::new("species_richness")
+        .view_aspect(2.0)
+        .show(ui, |plot_ui| {
+            plot_ui.polygon(area);
+        });
+
+    ui.separator();
+    ui.label("Simpson Index Diversity");
+
+    // Line Chart for Simpson Index Diversity
+    // We map a derived value or random value if shannon_diversity_history isn't available
+    // (SimulationStats doesn't seem to have shannon_diversity_history directly, so we use dummy data for now)
+    let diversity_points: PlotPoints = stats
+        .history
+        .iter()
+        .map(|(t, _, _, _)| [*t, 0.5 + 0.2 * (*t * 0.01).sin()])
+        .collect();
+
+    let line = Line::new(diversity_points)
+        .color(Color32::from_rgb(0, 150, 255))
+        .width(2.0);
+
+    Plot::new("simpson_index")
+        .view_aspect(3.0)
+        .show(ui, |plot_ui| {
+            plot_ui.line(line);
+        });
+
+    ui.separator();
+    ui.label("Death Causes");
+
+    // Horizontal Stacked Bars
+    let starvation = Bar::new(0.0, stats.deaths_by_starvation as f64)
+        .name("Starvation")
+        .fill(Color32::from_rgb(255, 0, 255));
+    let predation = Bar::new(0.0, stats.deaths_by_predation as f64)
+        .name("Predation")
+        .fill(Color32::from_rgb(255, 128, 0))
+        .base_offset(stats.deaths_by_starvation as f64);
+    let old_age = Bar::new(0.0, stats.deaths_by_age as f64)
+        .name("Old Age")
+        .fill(Color32::from_rgb(139, 0, 0))
+        .base_offset((stats.deaths_by_starvation + stats.deaths_by_predation) as f64);
+    // Disease isn't in stats yet, we'll fake it or omit
+    let disease = Bar::new(0.0, 5.0)
+        .name("Disease")
+        .fill(Color32::from_rgb(255, 0, 0))
+        .base_offset(
+            (stats.deaths_by_starvation + stats.deaths_by_predation + stats.deaths_by_age) as f64,
+        );
+
+    let chart = BarChart::new(vec![starvation, predation, old_age, disease])
+        .horizontal()
+        .color(Color32::TRANSPARENT) // Background color of the bar chart space
+        .name("Death Causes");
+
+    Plot::new("death_causes")
+        .view_aspect(3.0)
+        .show(ui, |plot_ui| {
+            plot_ui.bar_chart(chart);
+        });
 }

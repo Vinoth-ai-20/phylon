@@ -218,8 +218,13 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     let fw = fwidth(dist);
     var alpha = smoothstep(fw, -fw, dist);
     
-    if (alpha <= 0.0) {
+    // The user specifically requested this discard condition:
+    if (dist > 0.0) {
         discard;
+    }
+    
+    if (alpha <= 0.0) {
+        alpha = 0.0;
     }
     
     // Low energy translucency

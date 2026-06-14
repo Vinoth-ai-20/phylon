@@ -36,33 +36,31 @@ impl EguiContext {
         let state = State::new(context.clone(), id, window, None, None, None);
         let renderer = Renderer::new(device, format, None, 1, false);
 
-        // Dark cinematic theme with cyan/amber accents
+        // Dark cinematic theme
         let mut style = (*context.style()).clone();
         style.visuals = egui::Visuals::dark();
-        style.visuals.window_fill = egui::Color32::from_rgb(15, 15, 20);
+        style.visuals.window_fill = egui::Color32::from_rgb(20, 20, 28);
         style.visuals.panel_fill = egui::Color32::from_rgb(15, 15, 20);
-        style.visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(30, 30, 40);
-        style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(40, 40, 50);
-        style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(60, 60, 70);
-        style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(80, 80, 90);
-        style.visuals.selection.bg_fill = egui::Color32::from_rgb(0, 150, 255); // Cyan accent
-        style.visuals.selection.stroke =
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 255));
+        style.visuals.override_text_color = Some(egui::Color32::from_rgb(220, 220, 230));
+        style.visuals.window_stroke = egui::Stroke::new(0.5, egui::Color32::from_rgb(50, 50, 70));
+
+        // Ensure panels and windows have header backgrounds as requested
+        // (Panel headers will be handled by Frame in the individual panel rendering)
+
         context.set_style(style);
 
         let mut tiles = egui_tiles::Tiles::default();
-        let p_analytics = tiles.insert_pane(layout::Pane::Analytics);
-        let p_research = tiles.insert_pane(layout::Pane::Research);
-        let p_brain = tiles.insert_pane(layout::Pane::BrainInspector);
-        let p_entity = tiles.insert_pane(layout::Pane::EntityInspector);
-        let p_genome = tiles.insert_pane(layout::Pane::GenomeInspector);
-        let p_script = tiles.insert_pane(layout::Pane::ScriptConsole);
-        let p_db = tiles.insert_pane(layout::Pane::DbConsole);
+        let left_pane = tiles.insert_pane(layout::Pane::Analytics);
+        let centre = tiles.insert_pane(layout::Pane::SimulationViewport);
+        let right_pane = tiles.insert_pane(layout::Pane::BrainAndGenome);
 
-        let bottom_tabs = tiles.insert_tab_tile(vec![p_analytics, p_research, p_script, p_db]);
-        let right_tabs = tiles.insert_tab_tile(vec![p_entity, p_brain, p_genome]);
-        let root = tiles.insert_horizontal_tile(vec![bottom_tabs, right_tabs]);
+        let top_row = tiles.insert_horizontal_tile(vec![left_pane, centre, right_pane]);
 
+        let bottom_left = tiles.insert_pane(layout::Pane::Timeline);
+        let bottom_right = tiles.insert_pane(layout::Pane::SystemLogs);
+        let bottom_row = tiles.insert_horizontal_tile(vec![bottom_left, bottom_right]);
+
+        let root = tiles.insert_vertical_tile(vec![top_row, bottom_row]);
         let tree = egui_tiles::Tree::new("phylon_tree", root, tiles);
 
         Self {
@@ -118,42 +116,9 @@ impl EguiContext {
 
         crate::menu::render_menu_bar(&self.context, &mut self.ui_state, stats);
 
-        // Render dockable tiles UI
-        let visible_panes = [
-            (layout::Pane::Analytics, self.ui_state.panels.analytics),
-            (layout::Pane::Research, self.ui_state.panels.research),
-            (
-                layout::Pane::BrainInspector,
-                self.ui_state.panels.brain_inspector,
-            ),
-            (
-                layout::Pane::EntityInspector,
-                self.ui_state.panels.entity_inspector,
-            ),
-            (
-                layout::Pane::GenomeInspector,
-                self.ui_state.panels.genome_inspector,
-            ),
-            (
-                layout::Pane::ScriptConsole,
-                self.ui_state.panels.script_console,
-            ),
-            (layout::Pane::DbConsole, self.ui_state.panels.db_console),
-        ];
-
-        let mut tiles_to_update = Vec::new();
-        for (tile_id, tile) in self.tree.tiles.iter() {
-            if let egui_tiles::Tile::Pane(pane) = tile {
-                for (pane_type, visible) in &visible_panes {
-                    if pane == pane_type {
-                        tiles_to_update.push((*tile_id, *visible));
-                    }
-                }
-            }
-        }
-        for (tile_id, visible) in tiles_to_update {
-            self.tree.set_visible(tile_id, visible);
-        }
+        // Removed the tile toggling logic for now since we have a fixed layout.
+        // We can re-implement visibility toggling if needed, but the prompt
+        // implies a docked layout with close buttons inside the panes.
 
         let mut behavior = layout::TreeBehavior {
             ui_state: &mut self.ui_state,

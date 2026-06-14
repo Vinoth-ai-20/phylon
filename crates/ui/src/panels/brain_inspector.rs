@@ -4,9 +4,10 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 pub fn render_brain_inspector(ui: &mut Ui, tick: Tick) {
-    ui.heading("Neural Activity Visualization");
+    ui.heading("Brain Inspector");
+    ui.label("Node-graph is the CTRNN");
 
-    let (rect, _response) = ui.allocate_exact_size(Vec2::new(400.0, 400.0), egui::Sense::hover());
+    let (rect, _response) = ui.allocate_exact_size(Vec2::new(280.0, 280.0), egui::Sense::hover());
     let painter = ui.painter_at(rect);
 
     // Dark cinematic background
@@ -15,7 +16,7 @@ pub fn render_brain_inspector(ui: &mut Ui, tick: Tick) {
     // Generate static nodes
     let mut rng = ChaCha8Rng::seed_from_u64(42);
     let mut nodes = Vec::new();
-    let num_nodes = 30;
+    let num_nodes = 20;
 
     for _ in 0..num_nodes {
         let x = rect.min.x + rng.gen_range(20.0..rect.width() - 20.0);
@@ -23,55 +24,81 @@ pub fn render_brain_inspector(ui: &mut Ui, tick: Tick) {
         nodes.push(Pos2::new(x, y));
     }
 
+    // Designate the last node as the neuromodulator output
+    let neuromodulator_idx = num_nodes - 1;
+
     // Generate connections
     let mut edges = Vec::new();
     for i in 0..num_nodes {
-        // Connect to 2 or 3 nearby nodes
-        for _ in 0..3 {
+        for _ in 0..2 {
             let j = rng.gen_range(0..num_nodes);
             if i != j {
-                edges.push((i, j));
+                // weight, is_neuromodulator
+                let weight = rng.gen_range(-1.0..1.0);
+                let is_neuro = j == neuromodulator_idx || rng.gen_bool(0.1);
+                edges.push((i, j, weight, is_neuro));
             }
         }
     }
 
-    // Animation time
     let time = (tick.0 as f32) * 0.05;
 
-    // Draw edges with pulses
-    for &(i, j) in &edges {
+    // Draw edges
+    for &(i, j, weight, is_neuro) in &edges {
         let start = nodes[i];
         let end = nodes[j];
 
-        // Base line
+        let edge_color = if is_neuro {
+            Color32::from_rgb(0, 255, 100) // Green
+        } else if weight > 0.0 {
+            Color32::from_rgb(50, 150, 255) // Blue for positive
+        } else {
+            Color32::from_rgb(255, 50, 150) // Pink/Red for negative
+        };
+
         painter.line_segment(
             [start, end],
-            Stroke::new(1.0, Color32::from_rgba_premultiplied(50, 50, 70, 100)),
+            Stroke::new(1.0, edge_color.linear_multiply(0.5)),
         );
-
-        // Pulse logic
-        let dist = start.distance(end);
-        if dist > 0.0 {
-            // Pseudo-random phase per edge
-            let phase = ((i * j) as f32 * 0.1) % std::f32::consts::TAU;
-            let pulse_pos = (time + phase) % 5.0; // Wraps every 5 seconds
-
-            if (0.0..=1.0).contains(&pulse_pos) {
-                let current_pos = start.lerp(end, pulse_pos);
-                let pulse_color = if (i + j) % 2 == 0 {
-                    Color32::from_rgb(0, 255, 255) // Cyan
-                } else {
-                    Color32::from_rgb(255, 180, 0) // Amber
-                };
-                painter.circle_filled(current_pos, 3.0, pulse_color);
-            }
-        }
     }
 
     // Draw nodes
     for (i, &pos) in nodes.iter().enumerate() {
-        let pulse_intensity = ((time + i as f32 * 0.5).sin() * 0.5 + 0.5) * 200.0;
-        let color = Color32::from_rgb(0, pulse_intensity as u8, 255);
-        painter.circle_filled(pos, 4.0, color);
+        let activation = (time + i as f32 * 0.5).sin() * 0.5 + 0.5;
+        let radius = 2.0 + activation * 4.0;
+
+        let color = if i == neuromodulator_idx {
+            Color32::from_rgb(255, 50, 255) // Magenta/pink highlight
+        } else {
+            Color32::from_rgb(100, 100, 150)
+        };
+
+        painter.circle_filled(pos, radius, color);
+
+        if i == neuromodulator_idx {
+            // Gold ring
+            painter.circle_stroke(pos, radius + 2.0, Stroke::new(1.5, Color32::GOLD));
+        }
     }
+
+    ui.add_space(10.0);
+
+    // Sliders
+    let mut activity_val = 100.0;
+    ui.horizontal(|ui| {
+        ui.label("Activity");
+        ui.add(egui::Slider::new(&mut activity_val, 0.0..=100.0).show_value(true));
+    });
+
+    let mut weight_val = 50.0;
+    ui.horizontal(|ui| {
+        ui.label("Weights");
+        ui.add(egui::Slider::new(&mut weight_val, 0.0..=100.0).text("dopamine"));
+    });
+
+    let mut neuro_val = 75.0;
+    ui.horizontal(|ui| {
+        ui.label("Neuromodulator");
+        ui.add(egui::Slider::new(&mut neuro_val, 0.0..=100.0).text("serotonin"));
+    });
 }
