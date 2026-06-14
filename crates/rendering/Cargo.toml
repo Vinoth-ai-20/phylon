@@ -8,6 +8,8 @@ common = { workspace = true }
 diffusion = { workspace = true }
 world = { workspace = true }
 physics = { workspace = true }
+organisms = { workspace = true }
+genetics = { workspace = true }
 wgpu = { workspace = true }
 glam = { workspace = true }
 bytemuck = { workspace = true }

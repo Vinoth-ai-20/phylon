@@ -7,7 +7,7 @@ use gpu::compute::DiffusionPipeline;
 use phylon_config::PhylonConfig;
 use physics::{Acceleration, Mass, Position, Radius, Velocity};
 use rand::Rng;
-use rendering::{DebugRenderer, FieldRenderer};
+use rendering::{FieldRenderer, OrganismPass, TrailPass};
 use scheduler::SimulationScheduler;
 use std::path::Path;
 use tracing::{error, info};
@@ -25,7 +25,8 @@ struct PhylonApp {
     config: PhylonConfig,
     scheduler: SimulationScheduler,
     world: PhylonWorld,
-    renderer: Option<DebugRenderer>,
+    renderer: Option<OrganismPass>,
+    trail_pass: Option<TrailPass>,
     field_renderer: Option<FieldRenderer>,
     diffusion_pipeline: Option<DiffusionPipeline>,
     diffusion_field: Option<DiffusionField>,
@@ -87,6 +88,7 @@ impl PhylonApp {
             scheduler: SimulationScheduler::new(tick_rate),
             world,
             renderer: None,
+            trail_pass: None,
             field_renderer: None,
             diffusion_pipeline: None,
             diffusion_field: None,
@@ -145,9 +147,13 @@ impl PhylonApp {
             self.world.field_grid.copy_from_slice(&field.cpu_buffer);
         }
 
+        if let Some(trail) = &mut self.trail_pass {
+            trail.render_decay(&mut encoder);
+        }
+
         {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
+            let mut field_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Field Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
@@ -170,13 +176,49 @@ impl PhylonApp {
             if let (Some(field_renderer), Some(field)) =
                 (&self.field_renderer, &self.diffusion_field)
             {
-                field_renderer.render(&mut render_pass, field);
+                field_renderer.render(&mut field_pass, field);
             }
+        }
+
+        {
+            let mut color_attachments = vec![
+                Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                }),
+            ];
+            
+            if let Some(trail) = &self.trail_pass {
+                color_attachments.push(Some(wgpu::RenderPassColorAttachment {
+                    view: &trail.trail_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                }));
+            }
+
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Organism Render Pass"),
+                color_attachments: &color_attachments,
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
 
             // Render Entities on top
             if let Some(renderer) = &self.renderer {
                 renderer.render(&mut render_pass);
             }
+        }
+
+        if let Some(trail) = &mut self.trail_pass {
+            trail.swap_buffers(device);
         }
 
         // Render UI
@@ -247,7 +289,8 @@ impl ApplicationHandler for PhylonApp {
 
             surface.configure(&device, &surface_config);
 
-            let renderer = DebugRenderer::new(&device, &surface_config);
+            let renderer = OrganismPass::new(&device, &surface_config);
+            let trail_pass = TrailPass::new(&device, &surface_config);
             let field_renderer = FieldRenderer::new(
                 &device,
                 &surface_config,
@@ -265,6 +308,7 @@ impl ApplicationHandler for PhylonApp {
             );
 
             self.renderer = Some(renderer);
+            self.trail_pass = Some(trail_pass);
             self.field_renderer = Some(field_renderer);
             self.diffusion_pipeline = Some(diffusion_pipeline);
             self.diffusion_field = Some(diffusion_field);
@@ -312,6 +356,9 @@ impl ApplicationHandler for PhylonApp {
                             config.width = physical_size.width;
                             config.height = physical_size.height;
                             surface.configure(device, config);
+                            if let Some(trail_pass) = &mut self.trail_pass {
+                                *trail_pass = TrailPass::new(device, config);
+                            }
                         }
                     }
                 }
