@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
-use physics::Position;
 use organisms::FoodPellet;
+use physics::Position;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -45,7 +45,11 @@ pub struct FoodPass {
 }
 
 impl FoodPass {
-    pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, camera_layout: &wgpu::BindGroupLayout) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+        camera_layout: &wgpu::BindGroupLayout,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Food Shader"),
             source: wgpu::ShaderSource::Wgsl(
@@ -171,7 +175,11 @@ impl FoodPass {
         }
     }
 
-    pub fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, camera_bind_group: &'a wgpu::BindGroup) {
+    pub fn render<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        camera_bind_group: &'a wgpu::BindGroup,
+    ) {
         if self.instance_count > 0 {
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, camera_bind_group, &[]);

@@ -7,7 +7,7 @@ use gpu::compute::DiffusionPipeline;
 use phylon_config::PhylonConfig;
 use physics::{Acceleration, Mass, Position, Radius, Velocity};
 use rand::Rng;
-use rendering::{FieldRenderer, OrganismPass, TrailPass, FoodPass};
+use rendering::{FieldRenderer, FoodPass, OrganismPass, TrailPass};
 use scheduler::SimulationScheduler;
 use std::path::Path;
 use tracing::{error, info};
@@ -43,6 +43,7 @@ struct PhylonApp {
     script_manager: plugins::manager::ScriptManager,
     script_path: String,
     load_script: bool,
+    task_rx: Option<std::sync::mpsc::Receiver<ui::state::LoadingTask>>,
 }
 
 impl PhylonApp {
@@ -106,6 +107,7 @@ impl PhylonApp {
             script_manager: plugins::manager::ScriptManager::new(),
             script_path: "data/scripts/god_mode.rhai".to_string(),
             load_script: false,
+            task_rx: None,
         }
     }
 
@@ -124,7 +126,7 @@ impl PhylonApp {
                 renderer.prepare(device, queue, &mut self.world, config);
             }
         }
-        
+
         if let Some(food_pass) = &mut self.food_pass {
             food_pass.prepare(device, queue, &mut self.world);
         }
@@ -142,19 +144,23 @@ impl PhylonApp {
         // Compute Pass for Diffusion
         if let (Some(pipeline), Some(field)) = (&self.diffusion_pipeline, &mut self.diffusion_field)
         {
-            // Sync CPU changes to GPU
-            field.cpu_buffer.copy_from_slice(&self.world.field_grid);
-            field.upload(queue);
+            if self.ui.as_ref().map(|ui| ui.ui_state.is_paused) != Some(true) {
+                // Sync CPU changes to GPU
+                field.cpu_buffer.copy_from_slice(&self.world.field_grid);
+                field.upload(queue);
 
-            field.dispatch(&mut encoder, pipeline);
+                field.dispatch(&mut encoder, pipeline);
 
-            // Sync GPU changes back to CPU
-            field.download(device, queue);
-            self.world.field_grid.copy_from_slice(&field.cpu_buffer);
+                // Sync GPU changes back to CPU
+                field.download(device, queue);
+                self.world.field_grid.copy_from_slice(&field.cpu_buffer);
+            }
         }
 
         if let Some(trail) = &mut self.trail_pass {
-            trail.render_decay(&mut encoder);
+            if self.ui.as_ref().map(|ui| ui.ui_state.show_trails) != Some(false) {
+                trail.render_decay(&mut encoder);
+            }
         }
 
         {
@@ -179,10 +185,12 @@ impl PhylonApp {
             });
 
             // Render Field Overlay first (in background)
-            if let (Some(field_renderer), Some(field)) =
-                (&self.field_renderer, &self.diffusion_field)
-            {
-                field_renderer.render(&mut field_pass, field);
+            if self.ui.as_ref().map(|ui| ui.ui_state.show_field_overlay) != Some(false) {
+                if let (Some(field_renderer), Some(field)) =
+                    (&self.field_renderer, &self.diffusion_field)
+                {
+                    field_renderer.render(&mut field_pass, field);
+                }
             }
 
             // Render Food Pellets
@@ -202,14 +210,16 @@ impl PhylonApp {
             })];
 
             if let Some(trail) = &self.trail_pass {
-                color_attachments.push(Some(wgpu::RenderPassColorAttachment {
-                    view: &trail.trail_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                }));
+                if self.ui.as_ref().map(|ui| ui.ui_state.show_trails) != Some(false) {
+                    color_attachments.push(Some(wgpu::RenderPassColorAttachment {
+                        view: &trail.trail_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }));
+                }
             }
 
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -227,7 +237,9 @@ impl PhylonApp {
         }
 
         if let Some(trail) = &mut self.trail_pass {
-            trail.swap_buffers(device);
+            if self.ui.as_ref().map(|ui| ui.ui_state.show_trails) != Some(false) {
+                trail.swap_buffers(device);
+            }
         }
 
         // Render UI
@@ -300,7 +312,11 @@ impl ApplicationHandler for PhylonApp {
             surface.configure(&device, &surface_config);
 
             let renderer = OrganismPass::new(&device, &surface_config);
-            let food_pass = FoodPass::new(&device, &surface_config, renderer.camera_bind_group_layout());
+            let food_pass = FoodPass::new(
+                &device,
+                &surface_config,
+                renderer.camera_bind_group_layout(),
+            );
             let trail_pass = TrailPass::new(&device, &surface_config);
             let field_renderer = FieldRenderer::new(
                 &device,
@@ -343,10 +359,44 @@ impl ApplicationHandler for PhylonApp {
         };
 
         if window.id() == id {
+            // Check global keyboard shortcuts before giving to egui
+            let mut skip_egui = false;
+            if let WindowEvent::KeyboardInput {
+                event: kb_event, ..
+            } = &event
+            {
+                if kb_event.state == winit::event::ElementState::Pressed {
+                    if let Some(ui) = &mut self.ui {
+                        use winit::keyboard::{KeyCode, PhysicalKey};
+                        match kb_event.physical_key {
+                            PhysicalKey::Code(KeyCode::Space) => {
+                                ui.ui_state.is_paused = !ui.ui_state.is_paused;
+                                skip_egui = true;
+                            }
+                            PhysicalKey::Code(KeyCode::F11) => {
+                                let fullscreen = window.fullscreen();
+                                if fullscreen.is_some() {
+                                    window.set_fullscreen(None);
+                                } else {
+                                    window.set_fullscreen(Some(
+                                        winit::window::Fullscreen::Borderless(None),
+                                    ));
+                                }
+                                skip_egui = true;
+                            }
+                            // Add Ctrl shortcuts if needed
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
             // Check UI first
             let mut consumed = false;
-            if let Some(ui) = &mut self.ui {
-                consumed = ui.handle_event(&window, &event);
+            if !skip_egui {
+                if let Some(ui) = &mut self.ui {
+                    consumed = ui.handle_event(&window, &event);
+                }
             }
 
             match event {
@@ -375,8 +425,28 @@ impl ApplicationHandler for PhylonApp {
                     }
                 }
                 WindowEvent::RedrawRequested => {
+                    // Update task progress from background threads
+                    if let Some(rx) = &self.task_rx {
+                        if let Some(ui) = &mut self.ui {
+                            while let Ok(task) = rx.try_recv() {
+                                if task.progress >= 1.0 || task.progress < 0.0 {
+                                    ui.ui_state.active_loading_task = None;
+                                } else {
+                                    ui.ui_state.active_loading_task = Some(task);
+                                }
+                            }
+                        }
+                    }
+
                     // Tick simulation
-                    self.scheduler.tick_loop(&mut self.world);
+                    let is_paused = self
+                        .ui
+                        .as_ref()
+                        .map(|ui| ui.ui_state.is_paused)
+                        .unwrap_or(false);
+                    if !is_paused {
+                        self.scheduler.tick_loop(&mut self.world);
+                    }
 
                     if self.load_script {
                         self.load_script = false;

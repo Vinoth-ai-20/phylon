@@ -7,11 +7,18 @@ use wgpu::{CommandEncoder, Device, Queue, TextureFormat, TextureView};
 use winit::event::WindowEvent;
 use winit::window::Window;
 
+pub mod menu;
+pub mod modal;
+pub mod overlay;
+pub mod state;
+
+use state::UiState;
+
 pub struct EguiContext {
     pub context: Context,
     pub state: State,
     pub renderer: Renderer,
-    pub show_profiler: bool,
+    pub ui_state: UiState,
 }
 
 impl EguiContext {
@@ -29,7 +36,7 @@ impl EguiContext {
             context,
             state,
             renderer,
-            show_profiler: false,
+            ui_state: UiState::default(),
         }
     }
 
@@ -45,7 +52,7 @@ impl EguiContext {
             if kb_event.state == winit::event::ElementState::Pressed
                 && kb_event.physical_key == winit::keyboard::KeyCode::F3
             {
-                self.show_profiler = !self.show_profiler;
+                self.ui_state.panels.profiler = !self.ui_state.panels.profiler;
             }
         }
 
@@ -75,41 +82,50 @@ impl EguiContext {
 
         // --- UI Construction ---
 
+        crate::menu::render_menu_bar(&self.context, &mut self.ui_state);
+
         // Analytics Window
-        egui::Window::new("Analytics").show(&self.context, |ui| {
-            ui.label(format!("Tick: {}", tick.0));
-            ui.label(format!("Population: {}", stats.current_population));
-            ui.separator();
-            ui.label("Deaths by Cause:");
-            ui.label(format!("- Starvation: {}", stats.deaths_by_starvation));
-            ui.label(format!("- Predation: {}", stats.deaths_by_predation));
-            ui.label(format!("- Old Age: {}", stats.deaths_by_age));
+        if self.ui_state.panels.analytics {
+            egui::Window::new("Analytics").show(&self.context, |ui| {
+                ui.label(format!("Tick: {}", tick.0));
+                ui.label(format!("Population: {}", stats.current_population));
+                ui.separator();
+                ui.label("Deaths by Cause:");
+                ui.label(format!("- Starvation: {}", stats.deaths_by_starvation));
+                ui.label(format!("- Predation: {}", stats.deaths_by_predation));
+                ui.label(format!("- Old Age: {}", stats.deaths_by_age));
 
-            ui.separator();
-            ui.label("Population History");
+                ui.separator();
+                ui.label("Population History");
 
-            let points: egui_plot::PlotPoints = stats
-                .population_history
-                .iter()
-                .map(|(t, p)| [*t, *p])
-                .collect();
+                let points: egui_plot::PlotPoints = stats
+                    .population_history
+                    .iter()
+                    .map(|(t, p)| [*t, *p])
+                    .collect();
 
-            let line = egui_plot::Line::new(points);
-            egui_plot::Plot::new("population_plot")
-                .view_aspect(2.0)
-                .show(ui, |plot_ui| plot_ui.line(line));
-        });
+                let line = egui_plot::Line::new(points);
+                egui_plot::Plot::new("population_plot")
+                    .view_aspect(2.0)
+                    .show(ui, |plot_ui| plot_ui.line(line));
+            });
+        }
 
         // Research & Plugins Window
-        egui::Window::new("Research & Plugins").show(&self.context, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Script:");
-                ui.text_edit_singleline(script_path);
+        if self.ui_state.panels.research {
+            egui::Window::new("Research & Plugins").show(&self.context, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Script:");
+                    ui.text_edit_singleline(script_path);
+                });
+                if ui.button("Load & Run").clicked() {
+                    *load_script = true;
+                }
             });
-            if ui.button("Load & Run").clicked() {
-                *load_script = true;
-            }
-        });
+        }
+
+        crate::overlay::render_loading_overlay(&self.context, &mut self.ui_state);
+        crate::modal::render_modals(&self.context, &mut self.ui_state);
 
         // Profiler removed due to version incompatibility with egui 0.29
         // We still support F3 to toggle puffin scope recording logic if desired,

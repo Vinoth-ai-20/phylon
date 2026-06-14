@@ -46,9 +46,21 @@ This document defines the core implementation phases, milestones, and acceptance
 - **Acceptance Criteria**: Complete serialize/deserialize via `bincode` (or `ron`). SQLite DB tracks runs. Replay system functional. God-mode interventions available.
 - **Key Crates**: `storage`, `research`, `plugins`.
 
-## Phase 7: Network & Multiplayer (v1.0)
+## Phase 7: Procedural Visuals & Trails (v0.7)
+
+- **Status**: Complete.
+- **Acceptance Criteria**: Entities are rendered with procedurally generated SDF-based visuals parameterized by genetics. MRT rendering handles decay trails. Food is rendered visually via a distinct pass.
+- **Key Crates**: `rendering`, `shaders`.
+
+## Phase 8: Application Shell (v0.8)
 
 *Current Phase*
+
+- **Status**: Complete.
+- **Acceptance Criteria**: Persistent `egui` TopBottomPanel acts as the primary user navigation. Full state management separates simulation configuration from UI state. Modals and non-blocking asynchronous progress overlays work. Keyboard shortcuts control global behaviors like pausing and full-screen.
+- **Key Crates**: `ui`, `app`.
+
+## Phase 9: Network & Multiplayer (v1.0)
 
 - **Acceptance Criteria**: WebSocket remote control API active. Multiple clients can observe a headless simulation server.
 - **Key Crates**: `network`.
