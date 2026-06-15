@@ -1,267 +1,337 @@
 struct CameraUniform {
     view_proj: mat4x4<f32>,
-    ui_flags: vec4<u32>, // x=species, y=grid, z=sensors, w=disease
-};
-
+    ui_flags: vec4<u32>, // [show_species, show_grid, show_sensors, show_disease]
+}
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
 
-struct VertexInput {
-    @location(0) position: vec2<f32>,
-    @location(1) instance_position: vec2<f32>,
-    @location(2) instance_heading: f32,
-    @location(3) instance_speed: f32,
-    @location(4) instance_size: f32,
-    @location(5) instance_base_color: vec3<f32>,
-    @location(6) instance_diet: u32,
-    @location(7) instance_energy: f32,
-    @location(8) instance_health: f32,
-    @location(9) instance_is_infected: u32,
-    @location(10) instance_tick_age: f32,
-    @location(11) instance_genome_id: u32,
-};
+struct InstanceInput {
+    @location(1) position:   vec2<f32>,
+    @location(2) heading:    f32,
+    @location(3) speed:      f32,
+    @location(4) size:       f32,
+    @location(5) base_color: vec3<f32>,
+    @location(6) diet:       f32,
+    @location(7) energy:     f32,
+    @location(8) health:     f32,
+    @location(9) is_infected: f32,
+    @location(10) tick_age:  f32,
+    @location(11) species_id: f32,
+    @location(12) death_age: f32,
+}
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) color: vec3<f32>,
-    @location(2) diet: u32,
-    @location(3) energy: f32,
-    @location(4) health: f32,
-    @location(5) is_infected: u32,
-    @location(6) tick_age: f32,
-    @location(7) genome_id: u32,
-    @location(8) speed: f32,
-};
+    @location(0) local_uv:    vec2<f32>,  // -1 to +1
+    @location(1) heading:     f32,
+    @location(2) speed:       f32,
+    @location(3) size:        f32,
+    @location(4) base_color:  vec3<f32>,
+    @location(5) diet:        f32,
+    @location(6) energy:      f32,
+    @location(7) health:      f32,
+    @location(8) is_infected: f32,
+    @location(9) tick_age:    f32,
+    @location(10) species_id: f32,
+    @location(11) death_age:  f32,
+}
+
+struct VertexInput {
+    @location(0) position: vec2<f32>,
+}
 
 @vertex
-fn vs_main(model: VertexInput) -> VertexOutput {
+fn vs_main(
+    model: VertexInput,
+    inst: InstanceInput,
+) -> VertexOutput {
     var out: VertexOutput;
+
+    // Use the model position from the vertex buffer. It ranges from -0.5 to 0.5.
+    // We scale it by 2.0 so the corner is -1.0 to +1.0, which matches the required local_uv range.
+    let corner = model.position * 2.0;
     
-    // Scale the quad to give some padding for the SDF rendering
-    // A quad goes from -0.5 to 0.5. Scale it up by 1.5 to leave room for cilia/appendages
-    let scaled_pos = model.position * model.instance_size * 2.0; 
-    
-    // Rotate the quad by heading
-    // heading is 0 facing right? Usually standard math uses right = 0.
-    // The prompt says "anterior end always faces the direction of travel"
-    // Let's assume standard 2D rotation matrix:
-    let cos_theta = cos(model.instance_heading);
-    let sin_theta = sin(model.instance_heading);
-    let rotated_pos = vec2<f32>(
-        scaled_pos.x * cos_theta - scaled_pos.y * sin_theta,
-        scaled_pos.x * sin_theta + scaled_pos.y * cos_theta
+    let angle = inst.heading;
+    let c = cos(angle);
+    let s = sin(angle);
+
+    // Rotate corner by heading
+    let rotated = vec2<f32>(
+        corner.x * c - corner.y * s,
+        corner.x * s + corner.y * c,
     );
-    
-    let world_pos = rotated_pos + model.instance_position;
-    out.clip_position = camera.view_proj * vec4<f32>(world_pos, 0.0, 1.0);
-    
-    // Pass local coordinates (-1 to 1) to fragment shader
-    out.uv = model.position * 2.0; 
-    
-    out.color = model.instance_base_color;
-    out.diet = model.instance_diet;
-    out.energy = model.instance_energy;
-    out.health = model.instance_health;
-    out.is_infected = model.instance_is_infected;
-    out.tick_age = model.instance_tick_age;
-    out.genome_id = model.instance_genome_id;
-    out.speed = model.instance_speed;
-    
+
+    // Scale by size and convert to clip space
+    let world_pos = inst.position + rotated * inst.size * 1.5;
+
+    // Apply camera transform (camera uniform must be bound)
+    out.clip_position = camera.view_proj * vec4(world_pos, 0.0, 1.0);
+
+    // Pass local UV directly — fragment shader uses this for SDF
+    out.local_uv    = corner;
+    out.heading     = inst.heading;
+    out.speed       = inst.speed;
+    out.size        = inst.size;
+    out.base_color  = inst.base_color;
+    out.diet        = inst.diet;
+    out.energy      = inst.energy;
+    out.health      = inst.health;
+    out.is_infected = inst.is_infected;
+    out.tick_age    = inst.tick_age;
+    out.species_id  = inst.species_id;
+    out.death_age   = inst.death_age;
+
     return out;
 }
 
-// Pseudorandom function seeded by genome_id
-fn random_val(seed: u32, offset: u32) -> f32 {
-    let x = (seed ^ offset) * 2654435761u;
-    let y = (x ^ (x >> 16u)) * 2654435761u;
-    let z = (y ^ (y >> 16u));
-    return f32(z) / 4294967295.0;
-}
-
-// 2D Rotation matrix
-fn rotate2d(a: f32) -> mat2x2<f32> {
-    return mat2x2<f32>(cos(a), -sin(a), sin(a), cos(a));
-}
-
-// Basic SDF primitives
-fn sdf_circle(p: vec2<f32>, r: f32) -> f32 {
-    return length(p) - r;
-}
-
-fn sdf_ellipse(p: vec2<f32>, ab: vec2<f32>) -> f32 {
-    let p_abs = abs(p);
-    if (p_abs.x > p_abs.y) {
-        return (length(p_abs / ab) - 1.0) * min(ab.x, ab.y);
-    } else {
-        return (length(p_abs / ab) - 1.0) * min(ab.x, ab.y);
-    }
-}
-
-// A simple capsule/line segment SDF
-fn sdf_capsule(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, r: f32) -> f32 {
+// SHARED UTILITY FUNCTIONS
+fn sd_capsule(p: vec2<f32>, a: vec2<f32>,
+              b: vec2<f32>, r: f32) -> f32 {
     let pa = p - a;
     let ba = b - a;
-    let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    let h  = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
     return length(pa - ba * h) - r;
 }
 
-// Smooth min for blending shapes
-fn smin(a: f32, b: f32, k: f32) -> f32 {
-    let h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-    return mix(b, a, h) - k * h * (1.0 - h);
-}
+// ORGANISM SHAPE DESIGNS
+fn render_herbivore(uv: vec2<f32>, in: VertexOutput) -> vec4<f32> {
+    // Oval body — taller than wide like a real algae cell
+    // Scale uv to make an ellipse: compress X axis
+    let ellipse_uv = uv * vec2(1.3, 1.0);
+    let body_d = length(ellipse_uv) - 0.75;
 
-struct FragmentOutput {
-    @location(0) screen_color: vec4<f32>,
-    @location(1) trail_color: vec4<f32>,
-};
+    if body_d > 0.01 { discard; }
 
-@fragment
-fn fs_main(in: VertexOutput) -> FragmentOutput {
-    let uv = in.uv; // Local coordinates from -1.0 to 1.0
-    var dist = 100.0;
-    
-    // Base time/animation speed modified by health and infection
-    // Energy < 0.3 means animation slows, speed increases animation
-    var anim_speed = max(0.5, in.speed * 0.5);
-    if (in.energy < 0.3) {
-        anim_speed = anim_speed * 0.3;
-    }
-    
-    var time = in.tick_age * 0.05 * anim_speed;
-    
-    // Erratic phase offset if infected
-    if (in.is_infected == 1u) {
-        time = time + sin(in.tick_age * 0.2) * 2.0;
+    // Depth: darken toward centre, brighten toward edge
+    let depth = -body_d / 0.75; // 0 at edge, 1 at centre
+    var color = vec3(0.15, 0.82, 0.18);
+    color *= 0.5 + depth * 0.6;
+
+    // Nucleus: dark reddish oval slightly off-centre
+    let nuc_offset = vec2(
+        (fract(f32(in.species_id) * 0.127) - 0.5) * 0.3,
+        (fract(f32(in.species_id) * 0.311) - 0.5) * 0.3
+    );
+    let nuc_uv = (uv - nuc_offset) * vec2(1.0, 0.7);
+    let nuc_d  = length(nuc_uv) - 0.18;
+    if nuc_d < 0.0 {
+        let t = smoothstep(0.0, -0.1, nuc_d);
+        color = mix(color, vec3(0.25, 0.06, 0.04), t);
     }
 
-    // Determine specific visual traits based on diet
-    var organism_color = in.color;
-    
-    // Override base color with species color if flag is set
-    if (camera.ui_flags.x == 1u) {
-        let seed = in.genome_id;
-        let r = random_val(seed, 0u);
-        let g = random_val(seed, 1u);
-        let b = random_val(seed, 2u);
-        // Bright saturated color
-        organism_color = normalize(vec3<f32>(r, g, b) + vec3<f32>(0.2)) * 0.8;
-    }
-    
-    if (in.diet == 0u) { // Herbivore
-        // Green-tinted
-        organism_color = mix(organism_color, vec3<f32>(0.2, 0.8, 0.2), 0.5);
-        
-        // Soft rounded body: base ellipse
-        let base_body = sdf_ellipse(uv, vec2<f32>(0.5, 0.3));
-        
-        // Cilia-like fringe: undulate perimeter
-        let angle = atan2(uv.y, uv.x);
-        let cilia_wave = sin(angle * 15.0 + time * 5.0) * 0.05;
-        
-        // Breathing pulse
-        let pulse = sin(time * 2.0) * 0.03;
-        
-        dist = base_body - cilia_wave - pulse;
-        
-    } else if (in.diet == 1u) { // Carnivore
-        // Red-tinted
-        organism_color = mix(organism_color, vec3<f32>(0.8, 0.2, 0.2), 0.5);
-        
-        // Elongated, tapered body. Pointed anterior end (facing right, +x)
-        // A wedge or teardrop shape
-        let p = uv;
-        let a = clamp((p.x + 1.0) * 0.5, 0.0, 1.0);
-        let scale_y = mix(0.4, 0.1, a); // Taper towards +x
-        let base_body = length(vec2<f32>(p.x * 0.8, p.y / scale_y)) - 0.4;
-        
-        // Jaw / pointed end subtraction
-        // We can subtract a triangle or circle at the front
-        let jaw_cut = sdf_circle(p - vec2<f32>(0.5, 0.0), 0.15 + sin(time*4.0)*0.03); // Chomping motion
-        
-        dist = max(base_body, -jaw_cut);
-        
-        // Breathing
-        dist = dist - sin(time * 2.5) * 0.02;
-        
-    } else { // Scavenger
-        // Grey/brown-tinted
-        organism_color = mix(organism_color, vec3<f32>(0.5, 0.4, 0.3), 0.6);
-        
-        // Irregular blobby silhouette using genome_id as seed
-        let seed = in.genome_id;
-        let angle = atan2(uv.y, uv.x);
-        
-        // Combine a few sine waves with random offsets for a blobby shape
-        var noise_offset = sin(angle * 3.0 + random_val(seed, 1u)*10.0 + time) * 0.08;
-        noise_offset += sin(angle * 5.0 + random_val(seed, 2u)*10.0 - time*1.2) * 0.06;
-        
-        // Pseudopod protrusions
-        let num_pods = 3.0 + floor(random_val(seed, 3u) * 4.0);
-        let pod_wave = max(0.0, sin(angle * num_pods + time*2.0)) * 0.15;
-        
-        let base_body = length(uv) - 0.3;
-        
-        dist = base_body - noise_offset - pod_wave;
-    }
-    
-    // Death animation (organism shrinks and fades over time)
-    // The prompt says "organism shrinks and fades over 30 ticks before despawn".
-    // We can assume that if health == 0.0, it is dead. But wait, if health is 0, is the entity removed?
-    // The renderer doesn't know "ticks since dead" unless passed.
-    // If the system just decrements energy or health when dead, or we don't have this data perfectly,
-    // we use `health` or `energy`. Actually, the prompt says "health < 0" maybe? Or the ECS handles death animation.
-    // For now, if health < 0.1, maybe start shrinking? No, ECS will remove it. If the ECS handles the 30-tick death, it probably shrinks the `size` property directly or reduces alpha. If alpha is just color.a, we'll use `health` to fade it out if it approaches 0.
-    
-    // Calculate alpha based on SDF distance for smooth antialiasing
-    let fw = fwidth(dist);
-    var alpha = smoothstep(fw, -fw, dist);
-    
-    // The user specifically requested this discard condition:
-    if (dist > 0.0) {
-        discard;
-    }
-    
-    if (alpha <= 0.0) {
-        alpha = 0.0;
-    }
-    
-    // Low energy translucency
-    if (in.energy < 0.3) {
-        alpha = alpha * 0.5;
-    }
-    
-    // Add shading for a more "microscopic" look (darker edges)
-    let inner_dist = dist + 0.15;
-    let edge_shade = smoothstep(0.0, -0.2, inner_dist);
-    var final_color = mix(organism_color * 0.5, organism_color, edge_shade);
-    
-    // Sensor cones (visualized as a faint arc ahead of the organism)
-    if (camera.ui_flags.z == 1u) {
-        // Simple 45 degree arc facing right (+x)
-        let angle = atan2(uv.y, uv.x);
-        let radius = length(uv);
-        if (radius > 0.4 && radius < 0.9 && abs(angle) < 0.8) {
-            final_color = mix(final_color, vec3<f32>(1.0, 1.0, 1.0), 0.3);
-            alpha = max(alpha, 0.3);
+    // Chloroplasts: 3 small darker green blobs
+    for (var i: i32 = 0; i < 3; i++) {
+        let seed = f32(in.species_id + f32(i) * 7.0);
+        let cx = (fract(seed * 0.173) - 0.5) * 0.8;
+        let cy = (fract(seed * 0.431) - 0.5) * 0.9;
+        let cr = 0.06 + fract(seed * 0.251) * 0.07;
+        let cd = length(uv - vec2(cx, cy)) - cr;
+        if cd < 0.0 {
+            let t = smoothstep(0.01, -0.03, cd);
+            color = mix(color, vec3(0.05, 0.38, 0.05), t);
         }
     }
-    
-    // Infected pulsing dark purple overlay
-    if (in.is_infected == 1u && camera.ui_flags.w == 1u) {
-        let pulse_intensity = (sin(in.tick_age * 0.2) + 1.0) * 0.5;
-        let purple = vec3<f32>(0.4, 0.0, 0.6);
-        final_color = mix(final_color, purple, pulse_intensity * 0.6);
+
+    // Membrane rim: bright lime glow at the cell edge
+    let rim = smoothstep(0.08, 0.0, abs(body_d + 0.03));
+    color += rim * vec3(0.4, 1.0, 0.3);
+
+    // Specular highlight: wet look, top-left catch light
+    let spec_pos = uv - vec2(-0.2, 0.25);
+    let spec = exp(-dot(spec_pos, spec_pos) * 18.0);
+    color += spec * vec3(0.9, 1.0, 0.85) * 0.55;
+
+    // Alpha: soft antialiased edge
+    let alpha = smoothstep(0.02, -0.01, body_d);
+
+    // State modifiers
+    let energy_dim = mix(0.45, 1.0,
+                         smoothstep(0.0, 0.3, in.energy));
+    if in.health < 0.3 {
+        let g = dot(color, vec3(0.299, 0.587, 0.114));
+        color = mix(vec3(g), color, in.health / 0.3);
     }
-    
-    // Output
-    var out: FragmentOutput;
-    out.screen_color = vec4<f32>(final_color, alpha);
-    
-    // Trails: write a faint color (10% organism color, 90% transparent) to the persistent trail texture
-    // It says "90% transparent", so alpha = 0.1.
-    out.trail_color = vec4<f32>(organism_color, 0.1 * alpha);
-    
-    return out;
+    if u32(in.is_infected) == 1u {
+        let p = sin(in.tick_age * 0.2) * 0.5 + 0.5;
+        color = mix(color, vec3(0.55, 0.0, 0.75), rim * p);
+    }
+    if in.death_age > 0.0 {
+        let t = clamp(in.death_age / 30.0, 0.0, 1.0);
+        return vec4(color, alpha * energy_dim * (1.0 - t));
+    }
+    return vec4(color, alpha * energy_dim);
+}
+
+fn render_carnivore(uv: vec2<f32>, in: VertexOutput) -> vec4<f32> {
+    // Elongated body: compress X, stretch Y
+    // Head at +Y (top), tail at -Y (bottom)
+    let body_uv = uv * vec2(1.8, 1.0);
+    let body_d  = length(body_uv) - 0.7;
+
+    // Taper the head: make +Y side sharper
+    // Shift the ellipse downward so head is pointier
+    let head_uv = (uv - vec2(0.0, 0.15)) * vec2(2.8, 1.0);
+    let head_d  = length(head_uv) - 0.55;
+    // Smooth union of body and head
+    let k = 0.15;
+    let h = clamp(0.5 + 0.5*(head_d - body_d)/k, 0.0, 1.0);
+    let cell_d = mix(head_d, body_d, h) - k*h*(1.0-h);
+
+    // Two flagella at posterior end (bottom, -Y)
+    let t = in.tick_age * 0.12;
+    let spd = max(in.speed * 0.6, 0.15);
+
+    let f1_tip = vec2(sin(t) * 0.25 * spd, -0.95);
+    let f2_tip = vec2(sin(t + 1.6) * 0.22 * spd, -0.88);
+    let f1_d = sd_capsule(uv, vec2(0.04, -0.65),
+                          f1_tip, 0.022);
+    let f2_d = sd_capsule(uv, vec2(-0.04, -0.65),
+                          f2_tip, 0.018);
+    let flag_d = min(f1_d, f2_d);
+
+    let combined = min(cell_d, flag_d);
+    if combined > 0.01 { discard; }
+
+    let is_flagella = flag_d < cell_d;
+
+    // Flagella color: pale translucent pink-red
+    if is_flagella {
+        let fa = smoothstep(0.015, -0.005, flag_d) * 0.65;
+        return vec4(vec3(0.95, 0.55, 0.55), fa);
+    }
+
+    // Body depth
+    let depth = -cell_d / 0.7;
+    var color = vec3(0.92, 0.12, 0.08);
+    color *= 0.5 + depth * 0.55;
+
+    // Elongated nucleus along body axis
+    let nuc_d = length(
+        (uv - vec2(0.0, 0.1)) * vec2(1.0, 0.5)
+    ) - 0.15;
+    if nuc_d < 0.0 {
+        let t2 = smoothstep(0.0, -0.08, nuc_d);
+        color = mix(color, vec3(0.22, 0.02, 0.02), t2);
+    }
+
+    // Rim and specular
+    let rim = smoothstep(0.07, 0.0, abs(cell_d + 0.03));
+    color += rim * vec3(1.1, 0.35, 0.1);
+    let spec_pos = uv - vec2(-0.15, 0.3);
+    let spec = exp(-dot(spec_pos, spec_pos) * 22.0);
+    color += spec * 0.6;
+
+    let alpha = smoothstep(0.02, -0.01, cell_d);
+    let ed = mix(0.45, 1.0, smoothstep(0.0, 0.3, in.energy));
+    if in.health < 0.3 {
+        let g = dot(color, vec3(0.299, 0.587, 0.114));
+        color = mix(vec3(g), color, in.health / 0.3);
+    }
+    if u32(in.is_infected) == 1u {
+        let p = sin(in.tick_age * 0.2) * 0.5 + 0.5;
+        color = mix(color, vec3(0.55, 0.0, 0.75), rim * p);
+    }
+    if in.death_age > 0.0 {
+        let t3 = clamp(in.death_age / 30.0, 0.0, 1.0);
+        return vec4(color, alpha * ed * (1.0 - t3));
+    }
+    return vec4(color, alpha * ed);
+}
+
+fn render_scavenger(uv: vec2<f32>, in: VertexOutput) -> vec4<f32> {
+    // Irregular blob from 5 offset circles blended together
+    let pulse = 1.0 + sin(in.tick_age * 0.035) * 0.04;
+    var blob_d = length(uv) - 0.55 * pulse; // central core
+
+    for (var i: i32 = 0; i < 5; i++) {
+        let seed = f32(in.species_id + f32(i) * 13.0);
+        let angle = fract(seed * 0.197) * 6.2832;
+        let dist  = 0.18 + fract(seed * 0.374) * 0.18;
+        let r     = 0.18 + fract(seed * 0.512) * 0.14;
+        let cpos  = vec2(cos(angle), sin(angle)) * dist * pulse;
+        let cd    = length(uv - cpos) - r * pulse;
+        // Smooth union
+        let k2 = 0.2;
+        let h2 = clamp(0.5 + 0.5*(cd - blob_d)/k2,
+                       0.0, 1.0);
+        blob_d = mix(cd, blob_d, h2) - k2*h2*(1.0-h2);
+    }
+
+    // Pseudopods: 4 slow extending capsule arms
+    var pseudo_d = 999.0;
+    for (var i: i32 = 0; i < 4; i++) {
+        let seed = f32(in.species_id + f32(i) * 31.0 + 100.0);
+        let base_angle = fract(seed * 0.263) * 6.2832;
+        let extend = sin(in.tick_age * 0.04 +
+                         f32(i) * 1.5708) * 0.5 + 0.5;
+        let tip_r = 0.45 + extend * 0.25;
+        let tip   = vec2(cos(base_angle),
+                         sin(base_angle)) * tip_r;
+        let base  = vec2(cos(base_angle),
+                         sin(base_angle)) * 0.2;
+        pseudo_d = min(pseudo_d,
+            sd_capsule(uv, base, tip,
+                       0.04 + extend * 0.02));
+    }
+
+    let combined = min(blob_d, pseudo_d);
+    if combined > 0.01 { discard; }
+
+    let is_pseudo = pseudo_d < blob_d && pseudo_d < 0.0;
+    if is_pseudo {
+        let pa = smoothstep(0.02, -0.01, pseudo_d) * 0.6;
+        return vec4(vec3(0.15, 0.72, 0.98), pa);
+    }
+
+    let depth = -blob_d / 0.55;
+    var color = vec3(0.08, 0.65, 0.95);
+    color *= 0.5 + depth * 0.55;
+
+    // Internal granules
+    for (var i: i32 = 0; i < 4; i++) {
+        let seed = f32(in.species_id + f32(i) * 17.0 + 200.0);
+        let gp   = vec2(fract(seed * 0.193) - 0.5,
+                        fract(seed * 0.417) - 0.5) * 0.7;
+        let gd   = length(uv - gp) - 0.04;
+        if gd < 0.0 {
+            color = mix(color, vec3(0.02, 0.12, 0.28),
+                        smoothstep(0.01, -0.01, gd));
+        }
+    }
+
+    let rim = smoothstep(0.07, 0.0, abs(blob_d + 0.03));
+    color += rim * vec3(0.3, 0.9, 1.3);
+    let sp  = uv - vec2(-0.2, 0.2);
+    color  += exp(-dot(sp, sp) * 20.0) * 0.5;
+
+    let alpha = smoothstep(0.02, -0.01, combined);
+    let ed = mix(0.4, 1.0, smoothstep(0.0, 0.3, in.energy));
+    if in.health < 0.3 {
+        let g = dot(color, vec3(0.299, 0.587, 0.114));
+        color = mix(vec3(g), color, in.health / 0.3);
+    }
+    if u32(in.is_infected) == 1u {
+        let p = sin(in.tick_age * 0.2) * 0.5 + 0.5;
+        color = mix(color, vec3(0.55, 0.0, 0.75), rim * p);
+    }
+    if in.death_age > 0.0 {
+        let t = clamp(in.death_age / 30.0, 0.0, 1.0);
+        return vec4(color, alpha * ed * (1.0 - t));
+    }
+    return vec4(color, alpha * ed);
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    switch u32(in.diet + 0.1) {
+        case 0u: { return render_herbivore(in.local_uv, in); }
+        case 1u: { return render_carnivore(in.local_uv, in); }
+        case 2u: { return render_scavenger(in.local_uv, in); }
+        default: {
+            // Magenta circle = diet field not set in ECS
+            let d = length(in.local_uv) - 0.8;
+            if d > 0.0 { discard; }
+            return vec4(1.0, 0.0, 1.0, 1.0);
+        }
+    }
 }

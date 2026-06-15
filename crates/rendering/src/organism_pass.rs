@@ -191,11 +191,13 @@ impl OrganismPass {
         camera_pos: glam::Vec2,
         camera_zoom: f32,
         ui_flags: [u32; 4],
+        viewport_size: Option<[f32; 2]>,
     ) {
         puffin::profile_function!();
 
         // Update Camera
-        let aspect_ratio = config.width as f32 / config.height as f32;
+        let [vp_w, vp_h] = viewport_size.unwrap_or([config.width as f32, config.height as f32]);
+        let aspect_ratio = vp_w / vp_h.max(1.0);
         let width = 1000.0;
         let height = width / aspect_ratio;
 
@@ -231,14 +233,14 @@ impl OrganismPass {
                 Option<&Disease>,
             )>()
         {
-            let is_infected = if disease.is_some() { 1 } else { 0 };
+            let is_infected = if disease.is_some() { 1.0 } else { 0.0 };
             let diet_val = match genome.diet {
-                Diet::Herbivore => 0,
-                Diet::Carnivore => 1,
-                Diet::Omnivore => 2, // Map Omnivore to Scavenger visual
+                Diet::Herbivore => 0.0,
+                Diet::Carnivore => 1.0,
+                Diet::Omnivore => 2.0, // Map Omnivore to Scavenger visual
             };
 
-            instances.push(InstanceData {
+            let inst = InstanceData {
                 position: pos.0.into(),
                 heading: heading.0,
                 speed: vel.0.length(),
@@ -249,9 +251,19 @@ impl OrganismPass {
                 health: health.0,
                 is_infected,
                 tick_age: age.0 as f32, // Passed directly as f32 for shader
-                species_id: species.0,
-                _pad: [0.0; 2],
-            });
+                species_id: species.0 as f32,
+                death_age: 0.0,
+                _pad: 0.0,
+            };
+
+            debug_assert!(
+                inst.diet <= 2.0,
+                "Diet field not set for entity (diet is {})",
+                inst.diet
+            );
+            debug_assert!(inst.size > 0.0, "Size field is zero for entity");
+
+            instances.push(inst);
         }
 
         // Sort by size ascending, so larger organisms are drawn last (on top)

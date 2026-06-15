@@ -13,16 +13,93 @@ pub enum GodModeAction {
 
 #[derive(Clone, Debug)]
 pub struct CameraState {
-    pub zoom: f32,
-    pub offset: [f32; 2],
+    pub position: [f32; 2],        // current world space centre
+    pub zoom_level: f32,           // current zoom level (1.0 = default)
+    pub target_position: [f32; 2], // for smooth interpolation
+    pub target_zoom: f32,          // for smooth interpolation
+    pub min_zoom: f32,             // 0.05
+    pub max_zoom: f32,             // 50.0
 }
 
 impl Default for CameraState {
     fn default() -> Self {
         Self {
-            zoom: 1.0,
-            offset: [0.0, 0.0],
+            position: [0.0, 0.0],
+            zoom_level: 1.0,
+            target_position: [0.0, 0.0],
+            target_zoom: 1.0,
+            min_zoom: 0.05,
+            max_zoom: 50.0,
         }
+    }
+}
+
+impl CameraState {
+    pub fn zoom_toward(&mut self, cursor_screen: [f32; 2], factor: f32, viewport: egui::Rect) {
+        let world_before = self.screen_to_world(cursor_screen, viewport);
+
+        self.target_zoom = (self.target_zoom * factor).clamp(self.min_zoom, self.max_zoom);
+
+        // We calculate target position adjust assuming target_zoom was applied instantly
+        // To keep the world point exactly under cursor, we must shift target_position.
+        // It's a bit tricky to mix lerp with zoom_toward perfectly without drifting,
+        // but approximating it:
+
+        // world_after if we just changed zoom:
+        let vw = viewport.width();
+        let vh = viewport.height();
+        let ndc_x = (cursor_screen[0] - viewport.min.x) / vw * 2.0 - 1.0;
+        let ndc_y = (cursor_screen[1] - viewport.min.y) / vh * 2.0 - 1.0;
+        let world_after = [
+            self.target_position[0] + ndc_x / self.target_zoom * vw * 0.5,
+            self.target_position[1] - ndc_y / self.target_zoom * vh * 0.5,
+        ];
+
+        self.target_position[0] += world_before[0] - world_after[0];
+        self.target_position[1] += world_before[1] - world_after[1];
+        self.clamp_bounds();
+    }
+
+    pub fn pan(&mut self, drag_delta_screen: [f32; 2]) {
+        self.target_position[0] -= drag_delta_screen[0] / self.zoom_level;
+        self.target_position[1] += drag_delta_screen[1] / self.zoom_level;
+        self.clamp_bounds();
+    }
+
+    pub fn clamp_bounds(&mut self) {
+        // Assume world bounds are around -5000.0 to 5000.0
+        let limit = 5000.0;
+        self.target_position[0] = self.target_position[0].clamp(-limit, limit);
+        self.target_position[1] = self.target_position[1].clamp(-limit, limit);
+    }
+
+    pub fn update(&mut self, dt: f32) {
+        let lerp_factor = (dt * 15.0).clamp(0.0, 1.0);
+        self.position[0] += (self.target_position[0] - self.position[0]) * lerp_factor;
+        self.position[1] += (self.target_position[1] - self.position[1]) * lerp_factor;
+        self.zoom_level += (self.target_zoom - self.zoom_level) * lerp_factor;
+    }
+
+    pub fn screen_to_world(&self, screen: [f32; 2], viewport: egui::Rect) -> [f32; 2] {
+        let vw = viewport.width();
+        let vh = viewport.height();
+        let ndc_x = (screen[0] - viewport.min.x) / vw * 2.0 - 1.0;
+        let ndc_y = (screen[1] - viewport.min.y) / vh * 2.0 - 1.0;
+        [
+            self.position[0] + ndc_x / self.zoom_level * vw * 0.5,
+            self.position[1] - ndc_y / self.zoom_level * vh * 0.5,
+        ]
+    }
+
+    pub fn world_to_screen(&self, world: [f32; 2], viewport: egui::Rect) -> [f32; 2] {
+        let vw = viewport.width();
+        let vh = viewport.height();
+        let ndc_x = (world[0] - self.position[0]) * self.zoom_level / (vw * 0.5);
+        let ndc_y = (self.position[1] - world[1]) * self.zoom_level / (vh * 0.5);
+        [
+            (ndc_x + 1.0) * 0.5 * vw + viewport.min.x,
+            (ndc_y + 1.0) * 0.5 * vh + viewport.min.y,
+        ]
     }
 }
 
@@ -90,6 +167,7 @@ pub struct UiState {
     pub db_query_input: String,
     pub species_list: Vec<(u32, usize)>,
     pub viewport_rect: Option<egui::Rect>,
+    pub last_mouse_pos: Option<[f32; 2]>,
     pub system_logs: Vec<String>,
 }
 
@@ -97,7 +175,7 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             trail_decay: 0.95,
-            bloom_threshold: 1.0,
+            bloom_threshold: 1.2,
             bloom_intensity: 0.5,
             ui_scale: 1.0,
             simulation_speed: 1.0,
@@ -125,6 +203,7 @@ impl Default for UiState {
             db_query_input: String::new(),
             species_list: Vec::new(),
             viewport_rect: None,
+            last_mouse_pos: None,
             system_logs: Vec::new(),
         }
     }

@@ -103,44 +103,44 @@ pub fn render_analytics_dashboard(ui: &mut Ui, stats: &SimulationStats, _tick: T
     ui.heading("Analytics Dashboard");
 
     ui.separator();
-    ui.label("Species richness");
+    ui.label("Total Population");
 
-    // Stacked Area Chart for Species
-    // For MVP, we'll just draw a single area representing the total population,
-    // as we don't have historical species distribution in `SimulationStats` yet.
-    // If we did, we'd draw multiple polygons stacked.
     let points: PlotPoints = stats.history.iter().map(|(t, p, _, _)| [*t, *p]).collect();
 
     let area = Polygon::new(points)
         .fill_color(Color32::from_rgb(0, 150, 100))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(0, 255, 150)));
+        .stroke(Stroke::new(1.0, Color32::from_rgb(0, 255, 150)))
+        .name("Population");
 
-    Plot::new("species_richness")
+    Plot::new("population_plot")
         .view_aspect(2.0)
         .show(ui, |plot_ui| {
             plot_ui.polygon(area);
         });
 
     ui.separator();
-    ui.label("Simpson Index Diversity");
+    ui.label("Ecosystem Resources");
 
-    // Line Chart for Simpson Index Diversity
-    // We map a derived value or random value if shannon_diversity_history isn't available
-    // (SimulationStats doesn't seem to have shannon_diversity_history directly, so we use dummy data for now)
-    let diversity_points: PlotPoints = stats
-        .history
-        .iter()
-        .map(|(t, _, _, _)| [*t, 0.5 + 0.2 * (*t * 0.01).sin()])
-        .collect();
+    let energy_points: PlotPoints = stats.history.iter().map(|(t, _, e, _)| [*t, *e]).collect();
 
-    let line = Line::new(diversity_points)
+    let food_points: PlotPoints = stats.history.iter().map(|(t, _, _, f)| [*t, *f]).collect();
+
+    let energy_line = Line::new(energy_points)
         .color(Color32::from_rgb(0, 150, 255))
-        .width(2.0);
+        .width(2.0)
+        .name("Avg Energy");
 
-    Plot::new("simpson_index")
+    let food_line = Line::new(food_points)
+        .color(Color32::from_rgb(200, 200, 50))
+        .width(2.0)
+        .name("Total Food");
+
+    Plot::new("resources_plot")
         .view_aspect(3.0)
+        .legend(egui_plot::Legend::default())
         .show(ui, |plot_ui| {
-            plot_ui.line(line);
+            plot_ui.line(energy_line);
+            plot_ui.line(food_line);
         });
 
     ui.separator();
@@ -158,15 +158,8 @@ pub fn render_analytics_dashboard(ui: &mut Ui, stats: &SimulationStats, _tick: T
         .name("Old Age")
         .fill(Color32::from_rgb(139, 0, 0))
         .base_offset((stats.deaths_by_starvation + stats.deaths_by_predation) as f64);
-    // Disease isn't in stats yet, we'll fake it or omit
-    let disease = Bar::new(0.0, 5.0)
-        .name("Disease")
-        .fill(Color32::from_rgb(255, 0, 0))
-        .base_offset(
-            (stats.deaths_by_starvation + stats.deaths_by_predation + stats.deaths_by_age) as f64,
-        );
 
-    let chart = BarChart::new(vec![starvation, predation, old_age, disease])
+    let chart = BarChart::new(vec![starvation, predation, old_age])
         .horizontal()
         .color(Color32::TRANSPARENT) // Background color of the bar chart space
         .name("Death Causes");

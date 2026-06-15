@@ -3,7 +3,12 @@ use egui::{Color32, Pos2, Stroke, Ui, Vec2};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-pub fn render_brain_inspector(ui: &mut Ui, tick: Tick) {
+pub fn render_brain_inspector(
+    ui: &mut Ui,
+    tick: Tick,
+    _selected: &[common::EntityId],
+    _world: &mut world::PhylonWorld,
+) {
     ui.heading("Brain Inspector");
     ui.label("Node-graph is the CTRNN");
 

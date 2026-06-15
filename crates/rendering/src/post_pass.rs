@@ -206,7 +206,13 @@ impl PostPass {
         }
     }
 
-    pub fn render(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+    pub fn render(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        scissor_rect: Option<(u32, u32, u32, u32)>,
+        viewport_rect: Option<(f32, f32, f32, f32)>,
+    ) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Post Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -221,6 +227,13 @@ impl PostPass {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
+
+        if let Some((x, y, w, h)) = viewport_rect {
+            pass.set_viewport(x, y, w, h, 0.0, 1.0);
+        }
+        if let Some((x, y, w, h)) = scissor_rect {
+            pass.set_scissor_rect(x, y, w, h);
+        }
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);

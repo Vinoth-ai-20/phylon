@@ -8,17 +8,18 @@ pub struct InstanceData {
     pub speed: f32,
     pub size: f32,
     pub base_color: [f32; 3],
-    pub diet: u32,        // 0=Herbivore, 1=Carnivore, 2=Scavenger
+    pub diet: f32,        // 0=Herbivore, 1=Carnivore, 2=Scavenger
     pub energy: f32,      // 0.0–1.0 normalised
     pub health: f32,      // 0.0–1.0 normalised
-    pub is_infected: u32, // 0 or 1
+    pub is_infected: f32, // 0.0 or 1.0
     pub tick_age: f32,    // Age(u64) cast to f32, raw tick count
-    pub species_id: u32,  // SpeciesId(u32) as procedural seed
-    pub _pad: [f32; 2],   // align to 16 bytes
+    pub species_id: f32,  // SpeciesId(u32) as procedural seed
+    pub death_age: f32,   // 0.0 if alive, ticks since death
+    pub _pad: f32,        // align to 16 bytes
 }
 
 impl InstanceData {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 11] = [
+    const ATTRIBUTES: [wgpu::VertexAttribute; 12] = [
         wgpu::VertexAttribute {
             offset: 0,
             shader_location: 1,
@@ -47,7 +48,7 @@ impl InstanceData {
         wgpu::VertexAttribute {
             offset: 32,
             shader_location: 6,
-            format: wgpu::VertexFormat::Uint32,
+            format: wgpu::VertexFormat::Float32,
         },
         wgpu::VertexAttribute {
             offset: 36,
@@ -62,7 +63,7 @@ impl InstanceData {
         wgpu::VertexAttribute {
             offset: 44,
             shader_location: 9,
-            format: wgpu::VertexFormat::Uint32,
+            format: wgpu::VertexFormat::Float32,
         },
         wgpu::VertexAttribute {
             offset: 48,
@@ -72,7 +73,12 @@ impl InstanceData {
         wgpu::VertexAttribute {
             offset: 52,
             shader_location: 11,
-            format: wgpu::VertexFormat::Uint32,
+            format: wgpu::VertexFormat::Float32,
+        },
+        wgpu::VertexAttribute {
+            offset: 56,
+            shader_location: 12,
+            format: wgpu::VertexFormat::Float32,
         },
     ];
 

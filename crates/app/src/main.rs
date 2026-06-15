@@ -50,8 +50,6 @@ struct PhylonApp {
     command_rx: Option<std::sync::mpsc::Receiver<crate::commands::AppCommand>>,
     frame_counter: u64,
     tracked_entity: Option<common::EntityId>,
-    camera_pos: glam::Vec2,
-    camera_zoom: f32,
 }
 
 impl PhylonApp {
@@ -88,8 +86,6 @@ impl PhylonApp {
             command_rx: None,
             frame_counter: 0,
             tracked_entity: None,
-            camera_pos: glam::Vec2::ZERO,
-            camera_zoom: 1.0,
         }
     }
 
@@ -97,6 +93,7 @@ impl PhylonApp {
         let surface = self.surface.as_ref().unwrap();
         let device = self.device.as_ref().unwrap();
         let queue = self.queue.as_ref().unwrap();
+        let config = self.surface_config.as_ref().unwrap();
 
         let output = surface.get_current_texture()?;
         let view = output
@@ -119,25 +116,41 @@ impl PhylonApp {
                     0
                 };
             }
+            let (camera_pos, camera_zoom, vp_size) = if let Some(ui) = &self.ui {
+                let vp = ui.ui_state.viewport_rect;
+                let vp_size = vp.map(|r| [r.width(), r.height()]);
+                (
+                    glam::vec2(
+                        ui.ui_state.camera.position[0],
+                        ui.ui_state.camera.position[1],
+                    ),
+                    ui.ui_state.camera.zoom_level,
+                    vp_size,
+                )
+            } else {
+                (glam::Vec2::ZERO, 1.0, None)
+            };
+
             renderer.prepare(
                 device,
                 queue,
                 &mut self.world,
-                self.surface_config.as_ref().unwrap(),
-                self.camera_pos,
-                self.camera_zoom,
+                config,
+                camera_pos,
+                camera_zoom,
                 ui_flags,
+                vp_size,
             );
+
+            if let Some(field_pass) = &mut self.field_pass {
+                if let Some(field) = &self.diffusion_field {
+                    field_pass.prepare(device, queue, field, renderer.camera_buffer());
+                }
+            }
         }
 
         if let Some(food_pass) = &mut self.food_pass {
             food_pass.prepare(device, queue, &mut self.world);
-        }
-
-        if let Some(field_pass) = &mut self.field_pass {
-            if let (Some(field), Some(renderer)) = (&self.diffusion_field, &self.renderer) {
-                field_pass.prepare(device, queue, field, renderer.camera_buffer());
-            }
         }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -204,9 +217,9 @@ impl PhylonApp {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.05,
-                            g: 0.05,
-                            b: 0.07,
+                            r: 0.078,
+                            g: 0.078,
+                            b: 0.086,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -218,13 +231,37 @@ impl PhylonApp {
             });
 
             if let Some(rect) = scissor_rect {
-                // Ensure rect is within physical bounds and valid
-                let x = rect.min.x.max(0.0) as u32;
-                let y = rect.min.y.max(0.0) as u32;
-                let w = rect.width().max(0.0) as u32;
-                let h = rect.height().max(0.0) as u32;
-                if w > 0 && h > 0 {
-                    scene_pass.set_scissor_rect(x, y, w, h);
+                let scale = self
+                    .window
+                    .as_ref()
+                    .map(|w| w.scale_factor() as f32)
+                    .unwrap_or(1.0);
+
+                // set viewport
+                scene_pass.set_viewport(
+                    rect.min.x * scale,
+                    rect.min.y * scale,
+                    rect.width() * scale,
+                    rect.height() * scale,
+                    0.0,
+                    1.0,
+                );
+
+                // set scissor
+                let x = (rect.min.x * scale) as u32;
+                let y = (rect.min.y * scale) as u32;
+                let width = (rect.width() * scale) as u32;
+                let height = (rect.height() * scale) as u32;
+
+                let surface_width = config.width;
+                let surface_height = config.height;
+                let x = x.min(surface_width.saturating_sub(1));
+                let y = y.min(surface_height.saturating_sub(1));
+                let width = width.min(surface_width - x);
+                let height = height.min(surface_height - y);
+
+                if width > 0 && height > 0 {
+                    scene_pass.set_scissor_rect(x, y, width, height);
                 }
             }
 
@@ -271,12 +308,37 @@ impl PhylonApp {
             });
 
             if let Some(rect) = scissor_rect {
-                let x = rect.min.x.max(0.0) as u32;
-                let y = rect.min.y.max(0.0) as u32;
-                let w = rect.width().max(0.0) as u32;
-                let h = rect.height().max(0.0) as u32;
-                if w > 0 && h > 0 {
-                    render_pass.set_scissor_rect(x, y, w, h);
+                let scale = self
+                    .window
+                    .as_ref()
+                    .map(|w| w.scale_factor() as f32)
+                    .unwrap_or(1.0);
+
+                // set viewport
+                render_pass.set_viewport(
+                    rect.min.x * scale,
+                    rect.min.y * scale,
+                    rect.width() * scale,
+                    rect.height() * scale,
+                    0.0,
+                    1.0,
+                );
+
+                // set scissor
+                let x = (rect.min.x * scale) as u32;
+                let y = (rect.min.y * scale) as u32;
+                let width = (rect.width() * scale) as u32;
+                let height = (rect.height() * scale) as u32;
+
+                let surface_width = config.width;
+                let surface_height = config.height;
+                let x = x.min(surface_width.saturating_sub(1));
+                let y = y.min(surface_height.saturating_sub(1));
+                let width = width.min(surface_width - x);
+                let height = height.min(surface_height - y);
+
+                if width > 0 && height > 0 {
+                    render_pass.set_scissor_rect(x, y, width, height);
                 }
             }
 
@@ -294,7 +356,37 @@ impl PhylonApp {
 
         // Apply Post-Processing to Surface View
         if let Some(post_pass) = &self.post_pass {
-            post_pass.render(&mut encoder, &view);
+            let mut scissor = None;
+            let mut viewport = None;
+            if let Some(rect) = scissor_rect {
+                let scale = self
+                    .window
+                    .as_ref()
+                    .map(|w| w.scale_factor() as f32)
+                    .unwrap_or(1.0);
+                let x = (rect.min.x * scale) as u32;
+                let y = (rect.min.y * scale) as u32;
+                let width = (rect.width() * scale) as u32;
+                let height = (rect.height() * scale) as u32;
+
+                let surface_width = config.width;
+                let surface_height = config.height;
+                let x = x.min(surface_width.saturating_sub(1));
+                let y = y.min(surface_height.saturating_sub(1));
+                let width = width.min(surface_width - x);
+                let height = height.min(surface_height - y);
+
+                if width > 0 && height > 0 {
+                    scissor = Some((x, y, width, height));
+                    viewport = Some((
+                        rect.min.x * scale,
+                        rect.min.y * scale,
+                        rect.width() * scale,
+                        rect.height() * scale,
+                    ));
+                }
+            }
+            post_pass.render(&mut encoder, &view, scissor, viewport);
         }
 
         // Render UI
@@ -310,6 +402,7 @@ impl PhylonApp {
                     self.scheduler.current_tick,
                     &mut self.script_path,
                     &mut self.load_script,
+                    &mut self.world,
                 );
             }
         }
@@ -324,7 +417,15 @@ impl PhylonApp {
         let mut rng = rand::thread_rng();
         let spawn_range = 400.0;
         for _ in 0..100 {
-            let mut genome = genetics::Genome::default();
+            let diet = match rng.gen_range(0..3) {
+                0 => genetics::Diet::Herbivore,
+                1 => genetics::Diet::Carnivore,
+                _ => genetics::Diet::Omnivore,
+            };
+            let mut genome = genetics::Genome {
+                diet,
+                ..Default::default()
+            };
 
             let num_weights = brain::TOTAL_NEURONS * brain::TOTAL_NEURONS;
             genome.brain_weights = (0..num_weights).map(|_| rng.gen_range(-1.0..1.0)).collect();
@@ -483,6 +584,30 @@ impl ApplicationHandler for PhylonApp {
                                 }
                                 skip_egui = true;
                             }
+                            PhysicalKey::Code(KeyCode::Equal)
+                            | PhysicalKey::Code(KeyCode::NumpadAdd) => {
+                                ui.ui_state.camera.zoom_level =
+                                    (ui.ui_state.camera.zoom_level * 1.1).clamp(
+                                        ui.ui_state.camera.min_zoom,
+                                        ui.ui_state.camera.max_zoom,
+                                    );
+                                skip_egui = true;
+                            }
+                            PhysicalKey::Code(KeyCode::Minus)
+                            | PhysicalKey::Code(KeyCode::NumpadSubtract) => {
+                                ui.ui_state.camera.zoom_level =
+                                    (ui.ui_state.camera.zoom_level * 0.9).clamp(
+                                        ui.ui_state.camera.min_zoom,
+                                        ui.ui_state.camera.max_zoom,
+                                    );
+                                skip_egui = true;
+                            }
+                            PhysicalKey::Code(KeyCode::Digit0)
+                            | PhysicalKey::Code(KeyCode::Numpad0) => {
+                                ui.ui_state.camera.position = [0.0, 0.0];
+                                ui.ui_state.camera.zoom_level = 1.0;
+                                skip_egui = true;
+                            }
                             // Add Ctrl shortcuts if needed
                             _ => {}
                         }
@@ -502,11 +627,17 @@ impl ApplicationHandler for PhylonApp {
                 WindowEvent::CloseRequested => {
                     event_loop.exit();
                 }
-                WindowEvent::MouseWheel { .. }
-                | WindowEvent::MouseInput { .. }
-                | WindowEvent::CursorMoved { .. } => {
+                WindowEvent::MouseWheel { delta: _, .. } => {
+                    // TODO: handle zoom
+                }
+                WindowEvent::CursorMoved { position, .. } => {
+                    if let Some(ui) = &mut self.ui {
+                        ui.ui_state.last_mouse_pos = Some([position.x as f32, position.y as f32]);
+                    }
+                }
+                WindowEvent::MouseInput { .. } => {
                     if !consumed {
-                        // TODO: Handle mouse events for simulation
+                        // TODO: Handle mouse click events for simulation
                     }
                 }
                 WindowEvent::Resized(physical_size) => {
@@ -805,10 +936,114 @@ impl ApplicationHandler for PhylonApp {
                                         self.scheduler.tick_loop(&mut self.world);
                                     }
                                 }
+                                crate::commands::AppCommand::ZoomIn => {
+                                    if let Some(ui) = &mut self.ui {
+                                        if let Some(vp) = ui.ui_state.viewport_rect {
+                                            let center = [vp.center().x, vp.center().y];
+                                            ui.ui_state.camera.zoom_toward(center, 1.1, vp);
+                                        }
+                                    }
+                                }
+                                crate::commands::AppCommand::ZoomOut => {
+                                    if let Some(ui) = &mut self.ui {
+                                        if let Some(vp) = ui.ui_state.viewport_rect {
+                                            let center = [vp.center().x, vp.center().y];
+                                            ui.ui_state.camera.zoom_toward(center, 0.9, vp);
+                                        }
+                                    }
+                                }
+                                crate::commands::AppCommand::WheelZoom {
+                                    mouse_position,
+                                    delta,
+                                } => {
+                                    if let Some(ui) = &mut self.ui {
+                                        if let Some(vp) = ui.ui_state.viewport_rect {
+                                            let factor = 1.0 + delta * 0.01;
+                                            ui.ui_state.camera.zoom_toward(
+                                                mouse_position,
+                                                factor,
+                                                vp,
+                                            );
+                                        }
+                                    }
+                                }
+                                crate::commands::AppCommand::PanCamera(delta) => {
+                                    if let Some(ui) = &mut self.ui {
+                                        ui.ui_state.camera.pan(delta);
+                                        self.tracked_entity = None; // Stop tracking on manual pan
+                                    }
+                                }
+                                crate::commands::AppCommand::ClickWorld(pos) => {
+                                    if let Some(ui) = &mut self.ui {
+                                        if let Some(vp) = ui.ui_state.viewport_rect {
+                                            let world_pos =
+                                                ui.ui_state.camera.screen_to_world(pos, vp);
+                                            // zoom-aware threshold: say 10 pixels screen distance max
+                                            let threshold_world_sq =
+                                                (10.0 / ui.ui_state.camera.zoom_level).powi(2);
+
+                                            let mut closest = None;
+                                            let mut min_dist_sq = f32::MAX;
+                                            for (entity, p) in
+                                                self.world.ecs.query::<&physics::Position>().iter()
+                                            {
+                                                let dist_sq = (p.0.x - world_pos[0]).powi(2)
+                                                    + (p.0.y - world_pos[1]).powi(2);
+                                                if dist_sq < min_dist_sq
+                                                    && dist_sq < threshold_world_sq
+                                                {
+                                                    min_dist_sq = dist_sq;
+                                                    closest = Some(entity);
+                                                }
+                                            }
+
+                                            ui.ui_state.selected_entities.clear();
+                                            if let Some(e) = closest {
+                                                ui.ui_state
+                                                    .selected_entities
+                                                    .push(common::EntityId(e.to_bits().into()));
+                                            }
+                                        }
+                                    }
+                                }
+                                crate::commands::AppCommand::DoubleClickWorld(pos) => {
+                                    if let Some(ui) = &mut self.ui {
+                                        if let Some(vp) = ui.ui_state.viewport_rect {
+                                            let world_pos =
+                                                ui.ui_state.camera.screen_to_world(pos, vp);
+                                            let threshold_world_sq =
+                                                (15.0 / ui.ui_state.camera.zoom_level).powi(2);
+
+                                            let mut closest = None;
+                                            let mut min_dist_sq = f32::MAX;
+                                            for (entity, p) in
+                                                self.world.ecs.query::<&physics::Position>().iter()
+                                            {
+                                                let dist_sq = (p.0.x - world_pos[0]).powi(2)
+                                                    + (p.0.y - world_pos[1]).powi(2);
+                                                if dist_sq < min_dist_sq
+                                                    && dist_sq < threshold_world_sq
+                                                {
+                                                    min_dist_sq = dist_sq;
+                                                    closest = Some(entity);
+                                                }
+                                            }
+
+                                            if let Some(e) = closest {
+                                                let id = common::EntityId(e.to_bits().into());
+                                                ui.ui_state.selected_entities.clear();
+                                                ui.ui_state.selected_entities.push(id);
+                                                self.tracked_entity = Some(id);
+                                            }
+                                        }
+                                    }
+                                }
                                 crate::commands::AppCommand::ResetCamera => {
                                     self.tracked_entity = None;
-                                    self.camera_pos = glam::Vec2::ZERO;
-                                    self.camera_zoom = 1.0;
+                                    if let Some(ui) = &mut self.ui {
+                                        ui.ui_state.camera.target_position = [0.0, 0.0];
+                                        ui.ui_state.camera.target_zoom = 1.0;
+                                    }
                                 }
                                 crate::commands::AppCommand::Quit => {
                                     event_loop.exit();
@@ -913,9 +1148,9 @@ impl ApplicationHandler for PhylonApp {
                     if let Some(id) = self.tracked_entity {
                         if let Some(e) = hecs::Entity::from_bits(id.0) {
                             if let Ok(pos) = self.world.ecs.query_one_mut::<&physics::Position>(e) {
-                                // Lerp camera position to entity
-                                let target = glam::Vec2::new(pos.0.x, pos.0.y);
-                                self.camera_pos = self.camera_pos.lerp(target, 0.1);
+                                if let Some(ui) = &mut self.ui {
+                                    ui.ui_state.camera.target_position = [pos.0.x, pos.0.y];
+                                }
                             } else {
                                 // Entity not found (dead?), stop tracking
                                 self.tracked_entity = None;
@@ -923,6 +1158,11 @@ impl ApplicationHandler for PhylonApp {
                         } else {
                             self.tracked_entity = None;
                         }
+                    }
+
+                    if let Some(ui) = &mut self.ui {
+                        // Normally use real dt, assuming 60hz for now
+                        ui.ui_state.camera.update(1.0 / 60.0);
                     }
 
                     self.stats

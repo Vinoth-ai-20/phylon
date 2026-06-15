@@ -22,3 +22,6 @@ open = { workspace = true }
 pollster = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+hecs = { workspace = true }
+genetics = { workspace = true }
+physics = { workspace = true }
