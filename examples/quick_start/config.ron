@@ -1,0 +1,14 @@
+(
+    physics: (
+        friction: 0.95,
+        max_velocity: 10.0,
+    ),
+    mutation: (
+        rate: 0.01,
+        magnitude: 0.05,
+    ),
+    energy: (
+        starting_energy: 100.0,
+        metabolism_rate: 0.1,
+    )
+)

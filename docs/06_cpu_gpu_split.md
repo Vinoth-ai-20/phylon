@@ -3,6 +3,10 @@
 The guiding principle of Phylon is: **CPU is authoritative; GPU is an accelerator.**
 The GPU maintains zero canonical state; it only holds transient data during tick calculations.
 
+## Solving the Thread Divergence Problem
+
+A common issue in massive GPU ecosystem simulations is thread divergence caused by complex biological conditional logic (e.g., branching behavior trees, heterogeneous species interactions). Phylon explicitly avoids this by keeping highly divergent logic on the CPU. The GPU is strictly utilized for operations that map perfectly to SIMT (Single Instruction, Multiple Threads) execution: uniform grid diffusion and matrix multiplications.
+
 ## Subsystem Split
 
 | Subsystem | Execution Layer | Justification |
@@ -25,6 +29,6 @@ The GPU maintains zero canonical state; it only holds transient data during tick
 
 **Readbacks (GPU -> CPU):**
 
-- After `Sensing` and `Brain` inference, output buffers containing action intents (floats) are mapped back to the CPU via `wgpu::Buffer::map_async`. The scheduler yields the current thread (or blocks synchronously, given the fixed tick architecture) until the readback completes.
-- Field gradients at organism locations are read back sparsely.
+- After `Sensing` and `Brain` inference, output buffers containing action intents (floats) are mapped back to the CPU via `wgpu::Buffer::map_async`. To maximize throughput and avoid CPU stalls, these readbacks are **pipelined**. The CPU processes logic using the buffer from tick `N-1` while the GPU computes tick `N`.
+- Field gradients at organism locations are read back sparsely via the pipelined staging buffers.
 - Massive field data is *never* read back entirely unless requested by a save state or heavy analytics snapshot. The CPU only reads what it needs to execute the next behavioral logic step.

@@ -25,3 +25,4 @@ rand_chacha = { workspace = true }
 hecs = { workspace = true }
 genetics = { workspace = true }
 physics = { workspace = true }
+egui-phosphor = "0.7.0"

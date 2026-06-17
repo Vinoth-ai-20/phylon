@@ -217,9 +217,9 @@ impl PhylonApp {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.078,
-                            g: 0.078,
-                            b: 0.086,
+                            r: 0.02745,
+                            g: 0.02745,
+                            b: 0.2196,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -422,10 +422,7 @@ impl PhylonApp {
                 1 => genetics::Diet::Carnivore,
                 _ => genetics::Diet::Omnivore,
             };
-            let mut genome = genetics::Genome {
-                diet,
-                ..Default::default()
-            };
+            let mut genome = genetics::Genome::default_for_diet(diet);
 
             let num_weights = brain::TOTAL_NEURONS * brain::TOTAL_NEURONS;
             genome.brain_weights = (0..num_weights).map(|_| rng.gen_range(-1.0..1.0)).collect();
@@ -573,6 +570,63 @@ impl ApplicationHandler for PhylonApp {
                                 ui.ui_state.is_paused = !ui.ui_state.is_paused;
                                 skip_egui = true;
                             }
+                            PhysicalKey::Code(KeyCode::Period) => {
+                                if let Some(tx) = &ui.ui_state.app_tx {
+                                    let _ = tx.send(crate::commands::AppCommand::StepOneTick);
+                                }
+                                skip_egui = true;
+                            }
+                            PhysicalKey::Code(KeyCode::Digit1) => {
+                                ui.ui_state.simulation_speed = 1.0;
+                                skip_egui = true;
+                            }
+                            PhysicalKey::Code(KeyCode::Digit2) => {
+                                ui.ui_state.simulation_speed = 2.0;
+                                skip_egui = true;
+                            }
+                            PhysicalKey::Code(KeyCode::Digit3) => {
+                                ui.ui_state.simulation_speed = 5.0;
+                                skip_egui = true;
+                            }
+                            PhysicalKey::Code(KeyCode::Digit4) => {
+                                ui.ui_state.simulation_speed = 10.0;
+                                skip_egui = true;
+                            }
+                            PhysicalKey::Code(KeyCode::KeyF) => {
+                                if let Some(&first) = ui.ui_state.selected_entities.first() {
+                                    if let Some(tx) = &ui.ui_state.app_tx {
+                                        let _ = tx
+                                            .send(crate::commands::AppCommand::TrackEntity(first));
+                                    }
+                                }
+                                skip_egui = true;
+                            }
+                            PhysicalKey::Code(KeyCode::Home) => {
+                                if let Some(tx) = &ui.ui_state.app_tx {
+                                    let _ = tx.send(crate::commands::AppCommand::ResetCamera);
+                                }
+                                skip_egui = true;
+                            }
+                            PhysicalKey::Code(KeyCode::ArrowUp)
+                            | PhysicalKey::Code(KeyCode::KeyW) => {
+                                ui.ui_state.camera.pan([0.0, 50.0]); // Pan Up
+                                skip_egui = true;
+                            }
+                            PhysicalKey::Code(KeyCode::ArrowDown)
+                            | PhysicalKey::Code(KeyCode::KeyS) => {
+                                ui.ui_state.camera.pan([0.0, -50.0]); // Pan Down
+                                skip_egui = true;
+                            }
+                            PhysicalKey::Code(KeyCode::ArrowLeft)
+                            | PhysicalKey::Code(KeyCode::KeyA) => {
+                                ui.ui_state.camera.pan([-50.0, 0.0]); // Pan Left
+                                skip_egui = true;
+                            }
+                            PhysicalKey::Code(KeyCode::ArrowRight)
+                            | PhysicalKey::Code(KeyCode::KeyD) => {
+                                ui.ui_state.camera.pan([50.0, 0.0]); // Pan Right
+                                skip_egui = true;
+                            }
                             PhysicalKey::Code(KeyCode::F11) => {
                                 let fullscreen = window.fullscreen();
                                 if fullscreen.is_some() {
@@ -586,20 +640,20 @@ impl ApplicationHandler for PhylonApp {
                             }
                             PhysicalKey::Code(KeyCode::Equal)
                             | PhysicalKey::Code(KeyCode::NumpadAdd) => {
-                                ui.ui_state.camera.zoom_level =
-                                    (ui.ui_state.camera.zoom_level * 1.1).clamp(
-                                        ui.ui_state.camera.min_zoom,
-                                        ui.ui_state.camera.max_zoom,
-                                    );
+                                if let Some(vp) = ui.ui_state.viewport_rect {
+                                    let center = [vp.center().x, vp.center().y];
+                                    ui.ui_state.camera.zoom_toward(center, -1.0, vp);
+                                    // Delta -1.0 to increase scale
+                                }
                                 skip_egui = true;
                             }
                             PhysicalKey::Code(KeyCode::Minus)
                             | PhysicalKey::Code(KeyCode::NumpadSubtract) => {
-                                ui.ui_state.camera.zoom_level =
-                                    (ui.ui_state.camera.zoom_level * 0.9).clamp(
-                                        ui.ui_state.camera.min_zoom,
-                                        ui.ui_state.camera.max_zoom,
-                                    );
+                                if let Some(vp) = ui.ui_state.viewport_rect {
+                                    let center = [vp.center().x, vp.center().y];
+                                    ui.ui_state.camera.zoom_toward(center, 1.0, vp);
+                                    // Delta 1.0 to decrease scale
+                                }
                                 skip_egui = true;
                             }
                             PhysicalKey::Code(KeyCode::Digit0)
@@ -940,7 +994,7 @@ impl ApplicationHandler for PhylonApp {
                                     if let Some(ui) = &mut self.ui {
                                         if let Some(vp) = ui.ui_state.viewport_rect {
                                             let center = [vp.center().x, vp.center().y];
-                                            ui.ui_state.camera.zoom_toward(center, 1.1, vp);
+                                            ui.ui_state.camera.zoom_toward(center, -1.0, vp);
                                         }
                                     }
                                 }
@@ -948,7 +1002,7 @@ impl ApplicationHandler for PhylonApp {
                                     if let Some(ui) = &mut self.ui {
                                         if let Some(vp) = ui.ui_state.viewport_rect {
                                             let center = [vp.center().x, vp.center().y];
-                                            ui.ui_state.camera.zoom_toward(center, 0.9, vp);
+                                            ui.ui_state.camera.zoom_toward(center, 1.0, vp);
                                         }
                                     }
                                 }
@@ -958,10 +1012,11 @@ impl ApplicationHandler for PhylonApp {
                                 } => {
                                     if let Some(ui) = &mut self.ui {
                                         if let Some(vp) = ui.ui_state.viewport_rect {
-                                            let factor = 1.0 + delta * 0.01;
+                                            // Convert mouse wheel delta to zoom steps (delta usually +/- 1.0)
+                                            let steps = if delta > 0.0 { -1.0 } else { 1.0 };
                                             ui.ui_state.camera.zoom_toward(
                                                 mouse_position,
-                                                factor,
+                                                steps,
                                                 vp,
                                             );
                                         }
@@ -1040,8 +1095,31 @@ impl ApplicationHandler for PhylonApp {
                                 }
                                 crate::commands::AppCommand::ResetCamera => {
                                     self.tracked_entity = None;
+
+                                    // Calculate center of mass of organisms
+                                    let mut sum_x = 0.0;
+                                    let mut sum_y = 0.0;
+                                    let mut count = 0;
+                                    for (_, pos) in self
+                                        .world
+                                        .ecs
+                                        .query::<&physics::Position>()
+                                        .with::<&organisms::Organism>()
+                                        .iter()
+                                    {
+                                        sum_x += pos.0.x;
+                                        sum_y += pos.0.y;
+                                        count += 1;
+                                    }
+
+                                    let target_pos = if count > 0 {
+                                        [sum_x / count as f32, sum_y / count as f32]
+                                    } else {
+                                        [0.0, 0.0]
+                                    };
+
                                     if let Some(ui) = &mut self.ui {
-                                        ui.ui_state.camera.target_position = [0.0, 0.0];
+                                        ui.ui_state.camera.target_position = target_pos;
                                         ui.ui_state.camera.target_zoom = 1.0;
                                     }
                                 }

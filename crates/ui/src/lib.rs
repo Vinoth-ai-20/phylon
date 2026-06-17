@@ -8,12 +8,16 @@ use winit::event::WindowEvent;
 use winit::window::Window;
 
 pub mod commands;
+pub mod components;
 pub mod layout;
 pub mod menu;
 pub mod modal;
 pub mod overlay;
+pub mod overlays;
 pub mod panels;
 pub mod state;
+pub mod theme;
+pub mod zones;
 
 use state::UiState;
 
@@ -32,21 +36,15 @@ impl EguiContext {
         // Optional: configure puffin to only record if we want, but usually it records globally.
         puffin::set_scopes_on(true);
 
+        // Setup Fonts for Phosphor Icons
+        let mut fonts = egui::FontDefinitions::default();
+        egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+        context.set_fonts(fonts);
+
         let state = State::new(context.clone(), id, window, None, None, None);
         let renderer = Renderer::new(device, format, None, 1, false);
 
-        // Dark cinematic theme
-        let mut style = (*context.style()).clone();
-        style.visuals = egui::Visuals::dark();
-        style.visuals.window_fill = egui::Color32::from_rgb(20, 20, 28);
-        style.visuals.panel_fill = egui::Color32::from_rgb(15, 15, 20);
-        style.visuals.override_text_color = Some(egui::Color32::from_rgb(220, 220, 230));
-        style.visuals.window_stroke = egui::Stroke::new(0.5, egui::Color32::from_rgb(50, 50, 70));
-
-        // Ensure panels and windows have header backgrounds as requested
-        // (Panel headers will be handled by Frame in the individual panel rendering)
-
-        context.set_style(style);
+        crate::theme::apply_style(&context);
 
         Self {
             context,
@@ -60,15 +58,45 @@ impl EguiContext {
     pub fn handle_event(&mut self, window: &Window, event: &WindowEvent) -> bool {
         let response = self.state.on_window_event(window, event);
 
-        // Toggle profiler on F3
         if let WindowEvent::KeyboardInput {
             event: kb_event, ..
         } = event
         {
-            if kb_event.state == winit::event::ElementState::Pressed
-                && kb_event.physical_key == winit::keyboard::KeyCode::F3
-            {
-                self.ui_state.panels.profiler = !self.ui_state.panels.profiler;
+            if kb_event.state == winit::event::ElementState::Pressed && !response.consumed {
+                match kb_event.physical_key {
+                    winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::F3) => {
+                        self.ui_state.panels.profiler = !self.ui_state.panels.profiler;
+                    }
+                    winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Space) => {
+                        self.ui_state.is_paused = !self.ui_state.is_paused;
+                    }
+                    winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyS) => {
+                        if let Some(tx) = &self.ui_state.app_tx {
+                            let _ = tx.send(crate::commands::AppCommand::StepOneTick);
+                        }
+                    }
+                    winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyF) => {
+                        let modifiers = self.state.egui_ctx().input(|i| i.modifiers);
+                        if modifiers.ctrl || modifiers.command {
+                            self.ui_state.is_search_active = true;
+                        } else if !self.ui_state.selected_entities.is_empty() {
+                            // Focus logic
+                        }
+                    }
+                    winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Tab) => {
+                        let currently_collapsed =
+                            self.ui_state.is_left_collapsed && self.ui_state.is_right_collapsed;
+                        self.ui_state.is_left_collapsed = !currently_collapsed;
+                        self.ui_state.is_right_collapsed = !currently_collapsed;
+                    }
+                    winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyM) => {
+                        self.ui_state.show_field_overlay = !self.ui_state.show_field_overlay;
+                    }
+                    winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyC) => {
+                        self.ui_state.selected_entities.clear();
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -99,7 +127,7 @@ impl EguiContext {
 
         // --- UI Construction ---
 
-        crate::menu::render_menu_bar(&self.context, &mut self.ui_state, stats);
+        crate::zones::system_bar::render_system_bar(&self.context, &mut self.ui_state, stats, tick);
 
         crate::layout::render_dashboard(
             &self.context,

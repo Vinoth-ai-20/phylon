@@ -35,10 +35,22 @@ impl Default for CameraState {
 }
 
 impl CameraState {
-    pub fn zoom_toward(&mut self, cursor_screen: [f32; 2], factor: f32, viewport: egui::Rect) {
+    pub fn zoom_toward(&mut self, cursor_screen: [f32; 2], delta: f32, viewport: egui::Rect) {
         let world_before = self.screen_to_world(cursor_screen, viewport);
 
-        self.target_zoom = (self.target_zoom * factor).clamp(self.min_zoom, self.max_zoom);
+        let step = if self.target_zoom < 1.0 {
+            0.05
+        } else if self.target_zoom < 5.0 {
+            0.25
+        } else if self.target_zoom < 20.0 {
+            1.0
+        } else {
+            2.0
+        };
+
+        // If zooming out, use the step of the target to prevent skipping ranges oddly,
+        // but simply using current target_zoom is fine.
+        self.target_zoom = (self.target_zoom + delta * step).clamp(self.min_zoom, self.max_zoom);
 
         // We calculate target position adjust assuming target_zoom was applied instantly
         // To keep the world point exactly under cursor, we must shift target_position.
@@ -151,6 +163,13 @@ pub struct UiState {
     pub show_sensor_cones: bool,
     pub show_disease_highlight: bool,
     pub panels: PanelVisibility,
+    pub active_left_tab: usize,
+    pub is_left_collapsed: bool,
+    pub active_right_tab: usize,
+    pub is_right_collapsed: bool,
+    pub active_context_menu: Option<(egui::Pos2, Option<common::EntityId>)>,
+    pub is_search_active: bool,
+    pub search_query: String,
     pub selected_entities: Vec<EntityId>,
     pub camera: CameraState,
     pub active_modal: Option<UiModal>,
@@ -187,6 +206,13 @@ impl Default for UiState {
             show_sensor_cones: false,
             show_disease_highlight: true,
             panels: PanelVisibility::default(),
+            active_left_tab: 0,
+            is_left_collapsed: false,
+            active_right_tab: 0,
+            is_right_collapsed: false,
+            active_context_menu: None,
+            is_search_active: false,
+            search_query: String::new(),
             selected_entities: Vec::new(),
             camera: CameraState::default(),
             active_modal: None,

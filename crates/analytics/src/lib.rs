@@ -48,8 +48,8 @@ impl SimulationStats {
     pub fn update_metrics(&mut self, world: &PhylonWorld, tick: Tick) {
         puffin::profile_scope!("analytics::update_metrics");
 
-        // Exact count of all active entities in the world
-        self.current_population = world.ecs.len() as usize;
+        // Exact count of all living organisms
+        self.current_population = world.ecs.query::<&organisms::Organism>().iter().count();
 
         let mut total_energy = 0.0;
         for (_, energy) in world.ecs.query::<&organisms::Energy>().iter() {

@@ -240,6 +240,22 @@ impl OrganismPass {
                 Diet::Omnivore => 2.0, // Map Omnivore to Scavenger visual
             };
 
+            let g = &genome.hox_genes;
+            let hox_genes_a = (g[0] as u32)
+                | ((g[1] as u32) << 8)
+                | ((g[2] as u32) << 16)
+                | ((g[3] as u32) << 24);
+            let hox_genes_b = (g[4] as u32)
+                | ((g[5] as u32) << 8)
+                | ((g[6] as u32) << 16)
+                | ((genome.hox_count as u32) << 24);
+
+            let mut hox_appends = [0u32; 7];
+            for (i, append) in hox_appends.iter_mut().enumerate() {
+                *append = (genome.hox_appendages[i] as u32)
+                    | ((genome.hox_appendage_count[i] as u32) << 8);
+            }
+
             let inst = InstanceData {
                 position: pos.0.into(),
                 heading: heading.0,
@@ -253,7 +269,11 @@ impl OrganismPass {
                 tick_age: age.0 as f32, // Passed directly as f32 for shader
                 species_id: species.0 as f32,
                 death_age: 0.0,
-                _pad: 0.0,
+                hox_genes_a,
+                hox_genes_b,
+                hox_sizes: genome.hox_size_factors,
+                hox_appends,
+                _pad: [0.0; 2],
             };
 
             debug_assert!(

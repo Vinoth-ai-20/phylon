@@ -6,34 +6,39 @@ struct CameraUniform {
 var<uniform> camera: CameraUniform;
 
 struct InstanceInput {
-    @location(1) position:   vec2<f32>,
-    @location(2) heading:    f32,
-    @location(3) speed:      f32,
-    @location(4) size:       f32,
-    @location(5) base_color: vec3<f32>,
-    @location(6) diet:       f32,
-    @location(7) energy:     f32,
-    @location(8) health:     f32,
-    @location(9) is_infected: f32,
-    @location(10) tick_age:  f32,
-    @location(11) species_id: f32,
-    @location(12) death_age: f32,
+    @location(1) pos_head_spd: vec4<f32>,
+    @location(2) size_color: vec4<f32>,
+    @location(3) states_0: vec4<f32>,
+    @location(4) states_1: vec3<f32>,
+    @location(5) hox_genes: vec2<u32>,
+    @location(6) hox_sizes_0: vec4<f32>,
+    @location(7) hox_sizes_1: vec3<f32>,
+    @location(8) hox_appends_0: vec4<u32>,
+    @location(9) hox_appends_1: vec3<u32>,
 }
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) local_uv:    vec2<f32>,  // -1 to +1
+    @location(0) local_uv:    vec2<f32>,
     @location(1) heading:     f32,
     @location(2) speed:       f32,
     @location(3) size:        f32,
     @location(4) base_color:  vec3<f32>,
-    @location(5) diet:        f32,
+    @location(5) diet:        u32,
     @location(6) energy:      f32,
     @location(7) health:      f32,
-    @location(8) is_infected: f32,
+    @location(8) is_infected: u32,
     @location(9) tick_age:    f32,
-    @location(10) species_id: f32,
+    @location(10) species_id: u32,
     @location(11) death_age:  f32,
+    
+    // Pass HOX data to fragment
+    @location(12) hox_genes_a: u32,
+    @location(13) hox_genes_b: u32,
+    @location(14) hox_sizes_0: vec4<f32>,
+    @location(15) hox_sizes_1: vec3<f32>,
+    @location(16) hox_appends_0: vec4<u32>,
+    @location(17) hox_appends_1: vec3<u32>,
 }
 
 struct VertexInput {
@@ -47,39 +52,40 @@ fn vs_main(
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    // Use the model position from the vertex buffer. It ranges from -0.5 to 0.5.
-    // We scale it by 2.0 so the corner is -1.0 to +1.0, which matches the required local_uv range.
     let corner = model.position * 2.0;
     
-    let angle = inst.heading;
+    let angle = inst.pos_head_spd.z;
     let c = cos(angle);
     let s = sin(angle);
 
-    // Rotate corner by heading
     let rotated = vec2<f32>(
         corner.x * c - corner.y * s,
         corner.x * s + corner.y * c,
     );
 
-    // Scale by size and convert to clip space
-    let world_pos = inst.position + rotated * inst.size * 1.5;
+    out.size        = inst.size_color.x;
+    let world_pos = inst.pos_head_spd.xy + rotated * out.size * 1.5;
 
-    // Apply camera transform (camera uniform must be bound)
     out.clip_position = camera.view_proj * vec4(world_pos, 0.0, 1.0);
 
-    // Pass local UV directly — fragment shader uses this for SDF
     out.local_uv    = corner;
-    out.heading     = inst.heading;
-    out.speed       = inst.speed;
-    out.size        = inst.size;
-    out.base_color  = inst.base_color;
-    out.diet        = inst.diet;
-    out.energy      = inst.energy;
-    out.health      = inst.health;
-    out.is_infected = inst.is_infected;
-    out.tick_age    = inst.tick_age;
-    out.species_id  = inst.species_id;
-    out.death_age   = inst.death_age;
+    out.heading     = inst.pos_head_spd.z;
+    out.speed       = inst.pos_head_spd.w;
+    out.base_color  = inst.size_color.yzw;
+    out.diet        = u32(inst.states_0.x + 0.1);
+    out.energy      = inst.states_0.y;
+    out.health      = inst.states_0.z;
+    out.is_infected = u32(inst.states_0.w);
+    out.tick_age    = inst.states_1.x;
+    out.species_id  = u32(inst.states_1.y);
+    out.death_age   = inst.states_1.z;
+
+    out.hox_genes_a = inst.hox_genes.x;
+    out.hox_genes_b = inst.hox_genes.y;
+    out.hox_sizes_0 = inst.hox_sizes_0;
+    out.hox_sizes_1 = inst.hox_sizes_1;
+    out.hox_appends_0 = inst.hox_appends_0;
+    out.hox_appends_1 = inst.hox_appends_1;
 
     return out;
 }
@@ -93,245 +99,423 @@ fn sd_capsule(p: vec2<f32>, a: vec2<f32>,
     return length(pa - ba * h) - r;
 }
 
-// ORGANISM SHAPE DESIGNS
-fn render_herbivore(uv: vec2<f32>, in: VertexOutput) -> vec4<f32> {
-    // Oval body — taller than wide like a real algae cell
-    // Scale uv to make an ellipse: compress X axis
-    let ellipse_uv = uv * vec2(1.3, 1.0);
-    let body_d = length(ellipse_uv) - 0.75;
+fn smin(a: f32, b: f32, k: f32) -> f32 {
+    let h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+    return mix(b, a, h) - k * h * (1.0 - h);
+}
 
-    if body_d > 0.01 { discard; }
+struct HoxPlan {
+    seg_types:   array<u32, 7>,
+    seg_sizes:   array<f32, 7>,
+    app_types:   array<u32, 7>,
+    app_counts:  array<u32, 7>,
+    seg_count:   u32,
+}
 
-    // Depth: darken toward centre, brighten toward edge
-    let depth = -body_d / 0.75; // 0 at edge, 1 at centre
-    var color = vec3(0.15, 0.82, 0.18);
-    color *= 0.5 + depth * 0.6;
+fn unpack_hox(in: VertexOutput) -> HoxPlan {
+    var plan: HoxPlan;
 
-    // Nucleus: dark reddish oval slightly off-centre
-    let nuc_offset = vec2(
-        (fract(f32(in.species_id) * 0.127) - 0.5) * 0.3,
-        (fract(f32(in.species_id) * 0.311) - 0.5) * 0.3
+    plan.seg_types[0] = (in.hox_genes_a)       & 0xFFu;
+    plan.seg_types[1] = (in.hox_genes_a >> 8)  & 0xFFu;
+    plan.seg_types[2] = (in.hox_genes_a >> 16) & 0xFFu;
+    plan.seg_types[3] = (in.hox_genes_a >> 24) & 0xFFu;
+    plan.seg_types[4] = (in.hox_genes_b)       & 0xFFu;
+    plan.seg_types[5] = (in.hox_genes_b >> 8)  & 0xFFu;
+    plan.seg_types[6] = (in.hox_genes_b >> 16) & 0xFFu;
+    plan.seg_count    = (in.hox_genes_b >> 24) & 0xFFu;
+
+    plan.seg_sizes[0] = in.hox_sizes_0.x;
+    plan.seg_sizes[1] = in.hox_sizes_0.y;
+    plan.seg_sizes[2] = in.hox_sizes_0.z;
+    plan.seg_sizes[3] = in.hox_sizes_0.w;
+    plan.seg_sizes[4] = in.hox_sizes_1.x;
+    plan.seg_sizes[5] = in.hox_sizes_1.y;
+    plan.seg_sizes[6] = in.hox_sizes_1.z;
+
+    var appends = array<u32, 7>(
+        in.hox_appends_0.x, in.hox_appends_0.y, in.hox_appends_0.z, in.hox_appends_0.w,
+        in.hox_appends_1.x, in.hox_appends_1.y, in.hox_appends_1.z
     );
-    let nuc_uv = (uv - nuc_offset) * vec2(1.0, 0.7);
-    let nuc_d  = length(nuc_uv) - 0.18;
-    if nuc_d < 0.0 {
-        let t = smoothstep(0.0, -0.1, nuc_d);
-        color = mix(color, vec3(0.25, 0.06, 0.04), t);
+
+    for (var i: i32 = 0; i < 7; i++) {
+        plan.app_types[i]  = appends[i] & 0xFFu;
+        plan.app_counts[i] = (appends[i] >> 8) & 0xFFu;
     }
 
-    // Chloroplasts: 3 small darker green blobs
-    for (var i: i32 = 0; i < 3; i++) {
-        let seed = f32(in.species_id + f32(i) * 7.0);
-        let cx = (fract(seed * 0.173) - 0.5) * 0.8;
-        let cy = (fract(seed * 0.431) - 0.5) * 0.9;
-        let cr = 0.06 + fract(seed * 0.251) * 0.07;
-        let cd = length(uv - vec2(cx, cy)) - cr;
-        if cd < 0.0 {
-            let t = smoothstep(0.01, -0.03, cd);
-            color = mix(color, vec3(0.05, 0.38, 0.05), t);
+    return plan;
+}
+
+// Type 0: SMOOTH — simple rounded blob
+fn seg_smooth(p: vec2<f32>, centre: vec2<f32>,
+              r: f32) -> f32 {
+    return length(p - centre) - r;
+}
+
+// Type 1: TAPERED — cone narrowing toward tail (-Y)
+fn seg_tapered(p: vec2<f32>, centre: vec2<f32>,
+               r: f32) -> f32 {
+    let lp = p - centre;
+    let taper = r * (0.9 - lp.y * 0.6);
+    return length(lp * vec2(1.0, 0.6)) - max(taper, 0.05);
+}
+
+// Type 2: BULGE — wider, energy storage segment
+fn seg_bulge(p: vec2<f32>, centre: vec2<f32>,
+             r: f32) -> f32 {
+    return length(p - centre) - r * 1.35;
+}
+
+// Type 3: ARMOURED — flattened disc
+fn seg_armoured(p: vec2<f32>, centre: vec2<f32>,
+                r: f32) -> f32 {
+    let lp = p - centre;
+    return length(lp * vec2(1.0, 2.2)) - r;
+}
+
+// Type 4: NECK — narrow connector
+fn seg_neck(p: vec2<f32>, centre: vec2<f32>,
+            r: f32) -> f32 {
+    return length(p - centre) - r * 0.35;
+}
+
+// Type 5: HEAD — anterior cap with sensory pit
+fn seg_head(p: vec2<f32>, centre: vec2<f32>,
+            r: f32) -> f32 {
+    let dome = length(p - centre) - r;
+    let pit = length(p - (centre + vec2(0.0, r * 0.7)))
+              - r * 0.22;
+    return max(dome, -pit - 0.02);
+}
+
+// Type 6: TAIL — streamlined posterior terminus
+fn seg_tail(p: vec2<f32>, centre: vec2<f32>,
+            r: f32) -> f32 {
+    let lp = p - centre;
+    let d = length(lp * vec2(1.0, 0.5)) - r * 0.7;
+    let point = length(lp - vec2(0.0, -r * 0.4)) - r * 0.3;
+    return smin(d, point, 0.08);
+}
+
+// Type 0: NONE
+fn app_none(p: vec2<f32>, anchor: vec2<f32>,
+            side: f32, t: f32, speed: f32) -> f32 {
+    return 999.0;
+}
+
+// Type 1: CILIA — short oscillating hair
+fn app_cilia(p: vec2<f32>, anchor: vec2<f32>,
+             side: f32, t: f32, speed: f32) -> f32 {
+    let wave = sin(t * 0.25 + anchor.y * 8.0) * 0.06;
+    let tip = anchor + vec2(side * (0.12 + wave), 0.0);
+    return sd_capsule(p, anchor, tip, 0.012);
+}
+
+// Type 2: FLAGELLUM — long whipping tail appendage
+fn app_flagellum(p: vec2<f32>, anchor: vec2<f32>,
+                 side: f32, t: f32, speed: f32) -> f32 {
+    let wave1 = sin(t * 0.15) * 0.15;
+    let wave2 = sin(t * 0.15 + 1.2) * 0.12;
+    let mid = anchor + vec2(side * wave1, -0.2);
+    let tip = anchor + vec2(side * wave2, -0.42);
+    let d1 = sd_capsule(p, anchor, mid, 0.018);
+    let d2 = sd_capsule(p, mid, tip, 0.012);
+    return min(d1, d2);
+}
+
+// Type 3: PSEUDOPOD — extending amoeba arm
+fn app_pseudopod(p: vec2<f32>, anchor: vec2<f32>,
+                 side: f32, t: f32, speed: f32) -> f32 {
+    let extend = sin(t * 0.05 + anchor.y * 3.0)
+                 * 0.5 + 0.5;
+    let tip = anchor + vec2(
+        side * (0.1 + extend * 0.15),
+        extend * 0.12
+    );
+    return sd_capsule(p, anchor, tip,
+                      0.04 + extend * 0.015);
+}
+
+// Type 4: FIN — rigid flat stabiliser
+fn app_fin(p: vec2<f32>, anchor: vec2<f32>,
+           side: f32, t: f32, speed: f32) -> f32 {
+    let tip = anchor + vec2(side * 0.22, 0.08);
+    return sd_capsule(p, anchor, tip, 0.018);
+}
+
+// Type 5: SPINE — sharp defensive protrusion
+fn app_spine(p: vec2<f32>, anchor: vec2<f32>,
+             side: f32, t: f32, speed: f32) -> f32 {
+    let tip = anchor + vec2(side * 0.18, 0.05);
+    return sd_capsule(p, anchor, tip, 0.008);
+}
+
+// Type 6: JAW — anterior grasping appendage
+fn app_jaw(p: vec2<f32>, anchor: vec2<f32>,
+           side: f32, t: f32, speed: f32) -> f32 {
+    let open = speed * 0.3;
+    let tip = anchor + vec2(
+        side * (0.14 + open * 0.08),
+        0.1 + open * 0.05
+    );
+    return sd_capsule(p, anchor, tip, 0.022);
+}
+
+struct BodyResult {
+    sdf:         f32,   // distance to organism surface
+    seg_index:   i32,   // which segment this pixel is in
+    seg_type:    u32,   // type of that segment
+    is_appendage: bool, // true if pixel is an appendage
+    app_type:    u32,   // appendage type if is_appendage
+    depth:       f32,   // 0=surface, 1=deepest interior
+}
+
+fn build_hox_body(uv: vec2<f32>, plan: HoxPlan,
+                  tick_age: f32, speed: f32) -> BodyResult
+{
+    var p = plan;
+    var result: BodyResult;
+    result.sdf       = 999.0;
+    result.seg_index = -1;
+    result.seg_type  = 0u;
+    result.is_appendage = false;
+    result.app_type  = 0u;
+    result.depth     = 0.0;
+
+    let n = i32(p.seg_count);
+
+    let total_height = 1.7;
+    let seg_height   = total_height / f32(n);
+
+    var body_sdf  = 999.0;
+    var app_sdf   = 999.0;
+    var best_seg  = -1;
+    var best_type = 0u;
+    var best_app  = 0u;
+
+    for (var i: i32 = 0; i < 7; i++) {
+        if i >= n { break; }
+
+        let seg_y = 0.85 - (f32(i) + 0.5) * seg_height;
+        let centre = vec2(0.0, seg_y);
+        let r = p.seg_sizes[i] * seg_height * 0.6;
+
+        var seg_d = 999.0;
+        switch p.seg_types[i] {
+            case 0u: { seg_d = seg_smooth(uv, centre, r); }
+            case 1u: { seg_d = seg_tapered(uv, centre, r); }
+            case 2u: { seg_d = seg_bulge(uv, centre, r); }
+            case 3u: { seg_d = seg_armoured(uv, centre, r); }
+            case 4u: { seg_d = seg_neck(uv, centre, r); }
+            case 5u: { seg_d = seg_head(uv, centre, r); }
+            case 6u: { seg_d = seg_tail(uv, centre, r); }
+            default: { seg_d = seg_smooth(uv, centre, r); }
+        }
+
+        let k = 0.12;
+        let h = clamp(0.5 + 0.5*(seg_d - body_sdf)/k,
+                      0.0, 1.0);
+        let merged = mix(seg_d, body_sdf, h)
+                     - k * h * (1.0 - h);
+
+        if merged < body_sdf {
+            best_seg  = i;
+            best_type = p.seg_types[i];
+        }
+        body_sdf = merged;
+
+        let app_count = i32(p.app_counts[i]);
+        let app_type  = p.app_types[i];
+        if app_type == 0u || app_count == 0 { continue; }
+
+        for (var a: i32 = 0; a < 4; a++) {
+            if a >= app_count { break; }
+            let side = select(-1.0, 1.0, (a % 2) == 0);
+            let v_off = (f32(a / 2) - 0.25) * seg_height * 0.4;
+            let anchor = vec2(
+                side * r * 0.9,
+                seg_y + v_off
+            );
+
+            var ad = 999.0;
+            switch app_type {
+                case 1u: { ad = app_cilia(uv, anchor,
+                               side, tick_age, speed); }
+                case 2u: { ad = app_flagellum(uv, anchor,
+                               side, tick_age, speed); }
+                case 3u: { ad = app_pseudopod(uv, anchor,
+                               side, tick_age, speed); }
+                case 4u: { ad = app_fin(uv, anchor,
+                               side, tick_age, speed); }
+                case 5u: { ad = app_spine(uv, anchor,
+                               side, tick_age, speed); }
+                case 6u: { ad = app_jaw(uv, anchor,
+                               side, tick_age, speed); }
+                default: {}
+            }
+
+            if ad < app_sdf {
+                app_sdf  = ad;
+                best_app = app_type;
+            }
         }
     }
 
-    // Membrane rim: bright lime glow at the cell edge
-    let rim = smoothstep(0.08, 0.0, abs(body_d + 0.03));
-    color += rim * vec3(0.4, 1.0, 0.3);
-
-    // Specular highlight: wet look, top-left catch light
-    let spec_pos = uv - vec2(-0.2, 0.25);
-    let spec = exp(-dot(spec_pos, spec_pos) * 18.0);
-    color += spec * vec3(0.9, 1.0, 0.85) * 0.55;
-
-    // Alpha: soft antialiased edge
-    let alpha = smoothstep(0.02, -0.01, body_d);
-
-    // State modifiers
-    let energy_dim = mix(0.45, 1.0,
-                         smoothstep(0.0, 0.3, in.energy));
-    if in.health < 0.3 {
-        let g = dot(color, vec3(0.299, 0.587, 0.114));
-        color = mix(vec3(g), color, in.health / 0.3);
-    }
-    if u32(in.is_infected) == 1u {
-        let p = sin(in.tick_age * 0.2) * 0.5 + 0.5;
-        color = mix(color, vec3(0.55, 0.0, 0.75), rim * p);
-    }
-    if in.death_age > 0.0 {
-        let t = clamp(in.death_age / 30.0, 0.0, 1.0);
-        return vec4(color, alpha * energy_dim * (1.0 - t));
-    }
-    return vec4(color, alpha * energy_dim);
+    result.sdf       = min(body_sdf, app_sdf);
+    result.seg_index = best_seg;
+    result.seg_type  = best_type;
+    result.depth     = clamp(-body_sdf / 0.4, 0.0, 1.0);
+    result.is_appendage = app_sdf < body_sdf
+                          && app_sdf < 0.0;
+    result.app_type  = best_app;
+    return result;
 }
 
-fn render_carnivore(uv: vec2<f32>, in: VertexOutput) -> vec4<f32> {
-    // Elongated body: compress X, stretch Y
-    // Head at +Y (top), tail at -Y (bottom)
-    let body_uv = uv * vec2(1.8, 1.0);
-    let body_d  = length(body_uv) - 0.7;
+fn hox_segment_color(
+    base_color: vec3<f32>,
+    seg_type:   u32,
+    depth:      f32,
+    diet:       u32
+) -> vec3<f32> {
+    var color = base_color;
 
-    // Taper the head: make +Y side sharper
-    // Shift the ellipse downward so head is pointier
-    let head_uv = (uv - vec2(0.0, 0.15)) * vec2(2.8, 1.0);
-    let head_d  = length(head_uv) - 0.55;
-    // Smooth union of body and head
-    let k = 0.15;
-    let h = clamp(0.5 + 0.5*(head_d - body_d)/k, 0.0, 1.0);
-    let cell_d = mix(head_d, body_d, h) - k*h*(1.0-h);
-
-    // Two flagella at posterior end (bottom, -Y)
-    let t = in.tick_age * 0.12;
-    let spd = max(in.speed * 0.6, 0.15);
-
-    let f1_tip = vec2(sin(t) * 0.25 * spd, -0.95);
-    let f2_tip = vec2(sin(t + 1.6) * 0.22 * spd, -0.88);
-    let f1_d = sd_capsule(uv, vec2(0.04, -0.65),
-                          f1_tip, 0.022);
-    let f2_d = sd_capsule(uv, vec2(-0.04, -0.65),
-                          f2_tip, 0.018);
-    let flag_d = min(f1_d, f2_d);
-
-    let combined = min(cell_d, flag_d);
-    if combined > 0.01 { discard; }
-
-    let is_flagella = flag_d < cell_d;
-
-    // Flagella color: pale translucent pink-red
-    if is_flagella {
-        let fa = smoothstep(0.015, -0.005, flag_d) * 0.65;
-        return vec4(vec3(0.95, 0.55, 0.55), fa);
-    }
-
-    // Body depth
-    let depth = -cell_d / 0.7;
-    var color = vec3(0.92, 0.12, 0.08);
-    color *= 0.5 + depth * 0.55;
-
-    // Elongated nucleus along body axis
-    let nuc_d = length(
-        (uv - vec2(0.0, 0.1)) * vec2(1.0, 0.5)
-    ) - 0.15;
-    if nuc_d < 0.0 {
-        let t2 = smoothstep(0.0, -0.08, nuc_d);
-        color = mix(color, vec3(0.22, 0.02, 0.02), t2);
-    }
-
-    // Rim and specular
-    let rim = smoothstep(0.07, 0.0, abs(cell_d + 0.03));
-    color += rim * vec3(1.1, 0.35, 0.1);
-    let spec_pos = uv - vec2(-0.15, 0.3);
-    let spec = exp(-dot(spec_pos, spec_pos) * 22.0);
-    color += spec * 0.6;
-
-    let alpha = smoothstep(0.02, -0.01, cell_d);
-    let ed = mix(0.45, 1.0, smoothstep(0.0, 0.3, in.energy));
-    if in.health < 0.3 {
-        let g = dot(color, vec3(0.299, 0.587, 0.114));
-        color = mix(vec3(g), color, in.health / 0.3);
-    }
-    if u32(in.is_infected) == 1u {
-        let p = sin(in.tick_age * 0.2) * 0.5 + 0.5;
-        color = mix(color, vec3(0.55, 0.0, 0.75), rim * p);
-    }
-    if in.death_age > 0.0 {
-        let t3 = clamp(in.death_age / 30.0, 0.0, 1.0);
-        return vec4(color, alpha * ed * (1.0 - t3));
-    }
-    return vec4(color, alpha * ed);
-}
-
-fn render_scavenger(uv: vec2<f32>, in: VertexOutput) -> vec4<f32> {
-    // Irregular blob from 5 offset circles blended together
-    let pulse = 1.0 + sin(in.tick_age * 0.035) * 0.04;
-    var blob_d = length(uv) - 0.55 * pulse; // central core
-
-    for (var i: i32 = 0; i < 5; i++) {
-        let seed = f32(in.species_id + f32(i) * 13.0);
-        let angle = fract(seed * 0.197) * 6.2832;
-        let dist  = 0.18 + fract(seed * 0.374) * 0.18;
-        let r     = 0.18 + fract(seed * 0.512) * 0.14;
-        let cpos  = vec2(cos(angle), sin(angle)) * dist * pulse;
-        let cd    = length(uv - cpos) - r * pulse;
-        // Smooth union
-        let k2 = 0.2;
-        let h2 = clamp(0.5 + 0.5*(cd - blob_d)/k2,
-                       0.0, 1.0);
-        blob_d = mix(cd, blob_d, h2) - k2*h2*(1.0-h2);
-    }
-
-    // Pseudopods: 4 slow extending capsule arms
-    var pseudo_d = 999.0;
-    for (var i: i32 = 0; i < 4; i++) {
-        let seed = f32(in.species_id + f32(i) * 31.0 + 100.0);
-        let base_angle = fract(seed * 0.263) * 6.2832;
-        let extend = sin(in.tick_age * 0.04 +
-                         f32(i) * 1.5708) * 0.5 + 0.5;
-        let tip_r = 0.45 + extend * 0.25;
-        let tip   = vec2(cos(base_angle),
-                         sin(base_angle)) * tip_r;
-        let base  = vec2(cos(base_angle),
-                         sin(base_angle)) * 0.2;
-        pseudo_d = min(pseudo_d,
-            sd_capsule(uv, base, tip,
-                       0.04 + extend * 0.02));
-    }
-
-    let combined = min(blob_d, pseudo_d);
-    if combined > 0.01 { discard; }
-
-    let is_pseudo = pseudo_d < blob_d && pseudo_d < 0.0;
-    if is_pseudo {
-        let pa = smoothstep(0.02, -0.01, pseudo_d) * 0.6;
-        return vec4(vec3(0.15, 0.72, 0.98), pa);
-    }
-
-    let depth = -blob_d / 0.55;
-    var color = vec3(0.08, 0.65, 0.95);
-    color *= 0.5 + depth * 0.55;
-
-    // Internal granules
-    for (var i: i32 = 0; i < 4; i++) {
-        let seed = f32(in.species_id + f32(i) * 17.0 + 200.0);
-        let gp   = vec2(fract(seed * 0.193) - 0.5,
-                        fract(seed * 0.417) - 0.5) * 0.7;
-        let gd   = length(uv - gp) - 0.04;
-        if gd < 0.0 {
-            color = mix(color, vec3(0.02, 0.12, 0.28),
-                        smoothstep(0.01, -0.01, gd));
+    switch seg_type {
+        case 0u: { // SMOOTH
+            color = base_color;
         }
+        case 1u: { // TAPERED
+            color = base_color * 0.85;
+        }
+        case 2u: { // BULGE
+            color = mix(base_color,
+                        base_color * 1.3 +
+                        vec3(0.05, 0.1, 0.0),
+                        0.4);
+        }
+        case 3u: { // ARMOURED
+            let grey = dot(base_color,
+                          vec3(0.299, 0.587, 0.114));
+            color = mix(base_color, vec3(grey), 0.5);
+            color *= 0.9;
+        }
+        case 4u: { // NECK
+            color = base_color * 0.65;
+        }
+        case 5u: { // HEAD
+            color = mix(base_color,
+                        base_color + vec3(0.1, 0.1, 0.15),
+                        0.5);
+        }
+        case 6u: { // TAIL
+            color = base_color * 0.75;
+        }
+        default: { color = base_color; }
     }
 
-    let rim = smoothstep(0.07, 0.0, abs(blob_d + 0.03));
-    color += rim * vec3(0.3, 0.9, 1.3);
-    let sp  = uv - vec2(-0.2, 0.2);
-    color  += exp(-dot(sp, sp) * 20.0) * 0.5;
+    color *= 0.45 + depth * 0.6;
+    return color;
+}
 
-    let alpha = smoothstep(0.02, -0.01, combined);
-    let ed = mix(0.4, 1.0, smoothstep(0.0, 0.3, in.energy));
-    if in.health < 0.3 {
-        let g = dot(color, vec3(0.299, 0.587, 0.114));
-        color = mix(vec3(g), color, in.health / 0.3);
+fn hox_appendage_color(
+    base_color: vec3<f32>,
+    app_type:   u32
+) -> vec4<f32> {
+    switch app_type {
+        case 1u: { // CILIA
+            return vec4(base_color * 1.2, 0.55);
+        }
+        case 2u: { // FLAGELLUM
+            return vec4(base_color * 0.9, 0.45);
+        }
+        case 3u: { // PSEUDOPOD
+            return vec4(base_color * 1.1, 0.60);
+        }
+        case 4u: { // FIN
+            return vec4(base_color * 0.8, 0.70);
+        }
+        case 5u: { // SPINE
+            return vec4(base_color * 1.4 +
+                        vec3(0.2, 0.2, 0.2), 0.85);
+        }
+        case 6u: { // JAW
+            let c = base_color * 0.5 + vec3(0.1, 0.0, 0.0);
+            return vec4(c, 0.90);
+        }
+        default: { return vec4(base_color, 0.5); }
     }
-    if u32(in.is_infected) == 1u {
-        let p = sin(in.tick_age * 0.2) * 0.5 + 0.5;
-        color = mix(color, vec3(0.55, 0.0, 0.75), rim * p);
+}
+
+fn diet_base_color(diet: u32, species_id: u32) -> vec3<f32> {
+    let variation = (f32(species_id % 64u) / 64.0 - 0.5) * 0.15;
+    switch diet {
+        case 0u: { // Herbivore
+            return vec3(0.15 + variation, 0.88, 0.12 - variation);
+        }
+        case 1u: { // Carnivore
+            return vec3(0.92, 0.10 + variation, 0.08 - variation * 0.5);
+        }
+        case 2u: { // Scavenger
+            return vec3(0.08 - variation * 0.5, 0.65 + variation, 0.95);
+        }
+        default: { return vec3(0.7, 0.7, 0.7); }
     }
-    if in.death_age > 0.0 {
-        let t = clamp(in.death_age / 30.0, 0.0, 1.0);
-        return vec4(color, alpha * ed * (1.0 - t));
-    }
-    return vec4(color, alpha * ed);
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    switch u32(in.diet + 0.1) {
-        case 0u: { return render_herbivore(in.local_uv, in); }
-        case 1u: { return render_carnivore(in.local_uv, in); }
-        case 2u: { return render_scavenger(in.local_uv, in); }
-        default: {
-            // Magenta circle = diet field not set in ECS
-            let d = length(in.local_uv) - 0.8;
-            if d > 0.0 { discard; }
-            return vec4(1.0, 0.0, 1.0, 1.0);
+    let plan   = unpack_hox(in);
+    let base   = diet_base_color(in.diet, in.species_id);
+    let body   = build_hox_body(in.local_uv, plan,
+                                in.tick_age, in.speed);
+
+    if body.sdf > 0.02 { discard; }
+
+    var color: vec3<f32>;
+    var alpha:  f32;
+
+    if body.is_appendage {
+        let ac = hox_appendage_color(base, body.app_type);
+        color  = ac.rgb;
+        alpha  = ac.a * smoothstep(0.015, -0.005, body.sdf);
+    } else {
+        color = hox_segment_color(base, body.seg_type,
+                                  body.depth, in.diet);
+        alpha = smoothstep(0.02, -0.01, body.sdf);
+    }
+
+    let rim = smoothstep(0.06, 0.0, abs(body.sdf + 0.03));
+    color += rim * (base * 0.6 + vec3(0.3, 0.3, 0.4));
+
+    if body.seg_type == 5u {
+        let nuc_d = length(
+            (in.local_uv - vec2(0.0, 0.7)) *
+            vec2(1.0, 0.6)
+        ) - 0.1;
+        if nuc_d < 0.0 {
+            let t = smoothstep(0.0, -0.05, nuc_d);
+            color = mix(color, base * 0.2, t);
         }
     }
+
+    let sp = in.local_uv - vec2(-0.2, 0.3);
+    color += exp(-dot(sp, sp) * 16.0) * 0.45;
+
+    let energy_dim = mix(0.4, 1.0,
+                         smoothstep(0.0, 0.3, in.energy));
+
+    if in.health < 0.3 {
+        let g = dot(color, vec3(0.299, 0.587, 0.114));
+        color = mix(vec3(g), color, in.health / 0.3);
+    }
+
+    if in.is_infected == 1u {
+        let p = sin(in.tick_age * 0.2) * 0.5 + 0.5;
+        color = mix(color, vec3(0.5, 0.0, 0.75), rim * p);
+    }
+
+    if in.death_age > 0.0 {
+        let t = clamp(in.death_age / 30.0, 0.0, 1.0);
+        return vec4(color, alpha * energy_dim * (1.0 - t));
+    }
+
+    return vec4(color, alpha * energy_dim);
 }

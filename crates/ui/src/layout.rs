@@ -7,86 +7,18 @@ pub fn render_dashboard(
     script_path: &mut String,
     load_script: &mut bool,
 ) {
-    if ui_state.panels.analytics {
-        egui::SidePanel::left("analytics_panel")
-            .frame(
-                egui::Frame::side_top_panel(&ctx.style()).fill(egui::Color32::from_rgb(12, 14, 20)),
-            )
-            .resizable(true)
-            .default_width(350.0)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    crate::panels::analytics::render_analytics_dashboard(ui, stats, tick);
-                });
-            });
-    }
+    crate::zones::left_panel::render_left_panel(ctx, ui_state, world, stats, tick);
+    crate::zones::right_panel::render_right_panel(
+        ctx,
+        ui_state,
+        world,
+        tick,
+        script_path,
+        load_script,
+    );
 
-    if ui_state.panels.entity_inspector
-        || ui_state.panels.genome_inspector
-        || ui_state.panels.brain_inspector
-        || ui_state.panels.research
-    {
-        egui::SidePanel::right("inspector_panel")
-            .frame(
-                egui::Frame::side_top_panel(&ctx.style()).fill(egui::Color32::from_rgb(12, 14, 20)),
-            )
-            .resizable(true)
-            .default_width(350.0)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    if ui_state.panels.entity_inspector {
-                        crate::panels::entity_inspector::render_entity_inspector(
-                            ui,
-                            &ui_state.selected_entities,
-                            world,
-                        );
-                        ui.separator();
-                    }
-                    if ui_state.panels.brain_inspector {
-                        crate::panels::brain_inspector::render_brain_inspector(
-                            ui,
-                            tick,
-                            &ui_state.selected_entities,
-                            world,
-                        );
-                        ui.separator();
-                    }
-                    if ui_state.panels.genome_inspector {
-                        crate::panels::genome_inspector::render_genome_inspector(
-                            ui,
-                            &ui_state.selected_entities,
-                            world,
-                        );
-                        ui.separator();
-                    }
-                    if ui_state.panels.research {
-                        crate::panels::research::render_research(ui, script_path, load_script);
-                    }
-                });
-            });
-    }
-
-    egui::TopBottomPanel::bottom("bottom_panel")
-        .frame(egui::Frame::side_top_panel(&ctx.style()).fill(egui::Color32::from_rgb(12, 14, 20)))
-        .resizable(true)
-        .default_height(150.0)
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(ui.available_width() * 0.5);
-                    crate::panels::timeline::render_timeline(
-                        ui,
-                        tick,
-                        &mut ui_state.simulation_speed,
-                        &mut ui_state.is_paused,
-                    );
-                });
-                ui.separator();
-                ui.vertical(|ui| {
-                    crate::panels::system_logs::render_system_logs(ui, &ui_state.system_logs);
-                });
-            });
-        });
+    crate::zones::status_bar::render_status_bar(ctx, ui_state, stats, tick);
+    crate::zones::control_bar::render_control_bar(ctx, ui_state, tick);
 
     egui::CentralPanel::default()
         .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
@@ -126,6 +58,11 @@ pub fn render_dashboard(
                         ]));
                     }
                 }
+            } else if response.secondary_clicked() {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    ui_state.active_context_menu =
+                        Some((pos, ui_state.selected_entities.first().copied()));
+                }
             }
 
             // Mouse wheel zoom over the canvas
@@ -144,38 +81,12 @@ pub fn render_dashboard(
         });
 
     if let Some(viewport_rect) = ui_state.viewport_rect {
-        egui::Area::new(egui::Id::new("zoom_controls"))
-            .fixed_pos(egui::pos2(
-                viewport_rect.max.x - 110.0,
-                viewport_rect.max.y - 44.0,
-            ))
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let frame = egui::Frame::none()
-                        .fill(egui::Color32::from_rgba_unmultiplied(12, 14, 20, 200))
-                        .rounding(egui::Rounding::same(4.0))
-                        .inner_margin(egui::Margin::same(4.0));
-
-                    frame.show(ui, |ui| {
-                        if ui.button("−").clicked() {
-                            if let Some(tx) = &ui_state.app_tx {
-                                let _ = tx.send(crate::commands::AppCommand::ZoomOut);
-                            }
-                        }
-                        ui.label(format!("{:.0}%", ui_state.camera.zoom_level * 100.0));
-                        if ui.button("+").clicked() {
-                            if let Some(tx) = &ui_state.app_tx {
-                                let _ = tx.send(crate::commands::AppCommand::ZoomIn);
-                            }
-                        }
-                        if ui.button("⌂").clicked() {
-                            if let Some(tx) = &ui_state.app_tx {
-                                let _ = tx.send(crate::commands::AppCommand::ResetCamera);
-                            }
-                        }
-                    });
-                });
-            });
+        crate::overlays::camera_controls::render_camera_controls(ctx, ui_state, viewport_rect);
+        crate::overlays::camera_controls::render_view_mode_selector(ctx, ui_state, viewport_rect);
+        crate::overlays::camera_controls::render_selection_chip(ctx, ui_state, viewport_rect);
+        crate::overlays::camera_controls::render_async_progress(ctx, ui_state, viewport_rect);
+        crate::overlays::search_bar::render_search_bar(ctx, ui_state, viewport_rect);
     }
+
+    crate::overlays::context_menu::render_context_menu(ctx, ui_state);
 }
