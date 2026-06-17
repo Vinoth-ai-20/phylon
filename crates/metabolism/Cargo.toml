@@ -2,12 +2,9 @@
 name = "metabolism"
 version = "0.1.0"
 edition = "2021"
+description = "Energy management, ageing, respiration, starvation, and hunger systems."
 
 [dependencies]
-common = { workspace = true }
-hecs = { workspace = true }
-organisms = { workspace = true }
-physics = { workspace = true }
-genetics = { workspace = true }
-events = { workspace = true }
-puffin = { workspace = true }
+common    = { workspace = true }
+world     = { workspace = true }
+thiserror = { workspace = true }

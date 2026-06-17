@@ -2,6 +2,16 @@
 name = "benchmarks"
 version = "0.1.0"
 edition = "2021"
+description = "criterion benchmark harness for Phylon subsystems."
 
 [dependencies]
+common    = { workspace = true }
+config    = { workspace = true }
+scheduler = { workspace = true }
 
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "scheduler_throughput"
+harness = false

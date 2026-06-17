@@ -1,66 +1,131 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/*"
+    "crates/common",
+    "crates/config",
+    "crates/events",
+    "crates/scheduler",
+    "crates/world",
+    "crates/spatial",
+    "crates/physics",
+    "crates/diffusion",
+    "crates/organisms",
+    "crates/genetics",
+    "crates/evolution",
+    "crates/reproduction",
+    "crates/behavior",
+    "crates/metabolism",
+    "crates/sensing",
+    "crates/brain",
+    "crates/learning",
+    "crates/environment",
+    "crates/ecology",
+    "crates/gpu",
+    "crates/rendering",
+    "crates/ui",
+    "crates/analytics",
+    "crates/storage",
+    "crates/research",
+    "crates/network",
+    "crates/plugins",
+    "crates/tests",
+    "crates/benchmarks",
+    "crates/app",
 ]
 
 [workspace.dependencies]
-common = { path = "crates/common" }
-phylon_config = { path = "crates/config" }
-events = { path = "crates/events" }
-scheduler = { path = "crates/scheduler" }
-world = { path = "crates/world" }
-spatial = { path = "crates/spatial" }
-physics = { path = "crates/physics" }
-rendering = { path = "crates/rendering" }
-gpu = { path = "crates/gpu" }
-diffusion = { path = "crates/diffusion" }
-organisms = { path = "crates/organisms" }
-genetics = { path = "crates/genetics" }
+# --- Internal crates ---
+common      = { path = "crates/common" }
+config      = { path = "crates/config" }
+events      = { path = "crates/events" }
+scheduler   = { path = "crates/scheduler" }
+world       = { path = "crates/world" }
+spatial     = { path = "crates/spatial" }
+physics     = { path = "crates/physics" }
+diffusion   = { path = "crates/diffusion" }
+organisms   = { path = "crates/organisms" }
+genetics    = { path = "crates/genetics" }
+evolution   = { path = "crates/evolution" }
 reproduction = { path = "crates/reproduction" }
-metabolism = { path = "crates/metabolism" }
-ecology = { path = "crates/ecology" }
-sensing = { path = "crates/sensing" }
-brain = { path = "crates/brain" }
-behavior = { path = "crates/behavior" }
-wgpu = "22.1"
-winit = "0.30"
-egui = "0.29.1"
-egui-wgpu = "0.29.1"
-egui-winit = "0.29.1"
-egui_plot = "0.29.0"
-egui_tiles = "0.10.0"
-hecs = { version = "0.10", features = ["macros"] }
-serde = { version = "1.0", features = ["derive"] }
-bincode = "1.3"
-ron = "0.8"
-config = "0.14"
-rand = "0.8"
-rand_chacha = "0.3"
-rustc-hash = "1.1"
-crossbeam = "0.8"
-tokio = { version = "1.39", features = ["full"] }
-glam = { version = "0.28", features = ["serde"] }
-ndarray = "0.15"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-puffin = "0.19"
-thiserror = "1.0"
-anyhow = "1.0"
-rhai = "1.19"
-pollster = "0.3"
-bytemuck = { version = "1.18", features = ["derive"] }
-noise = "0.9"
-rfd = "0.14"
-open = "5.1"
+behavior    = { path = "crates/behavior" }
+metabolism  = { path = "crates/metabolism" }
+sensing     = { path = "crates/sensing" }
+brain       = { path = "crates/brain" }
+learning    = { path = "crates/learning" }
+environment = { path = "crates/environment" }
+ecology     = { path = "crates/ecology" }
+gpu         = { path = "crates/gpu" }
+rendering   = { path = "crates/rendering" }
+ui          = { path = "crates/ui" }
+analytics   = { path = "crates/analytics" }
+storage     = { path = "crates/storage" }
+research    = { path = "crates/research" }
+network     = { path = "crates/network" }
+plugins     = { path = "crates/plugins" }
 
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-debug = false
-panic = "abort"
+# --- Math ---
+glam        = { version = "0.29", features = ["serde"] }
+
+# --- Serialization ---
+serde       = { version = "1", features = ["derive"] }
+serde_json  = { version = "1" }
+bincode     = { version = "1" }
+ron         = { version = "0.8" }
+
+# --- Error handling ---
+thiserror   = { version = "2" }
+anyhow      = { version = "1" }
+
+# --- Randomness ---
+rand        = { version = "0.8" }
+rand_chacha = { version = "0.3" }
+
+# --- Concurrency ---
+rayon       = { version = "1" }
+crossbeam   = { version = "0.8" }
+tokio       = { version = "1", features = ["full"] }
+
+# --- GPU / Windowing ---
+wgpu        = { version = "22" }
+winit       = { version = "0.30" }
+
+# --- GUI ---
+egui        = { version = "0.28" }
+egui-wgpu   = { version = "0.28" }
+egui_plot   = { version = "0.28" }
+
+# --- Logging / Profiling ---
+tracing             = { version = "0.1" }
+tracing-subscriber  = { version = "0.3", features = ["env-filter", "fmt"] }
+puffin              = { version = "0.19" }
+
+# --- Persistence ---
+sqlx        = { version = "0.8", features = ["sqlite", "runtime-tokio", "macros"] }
+
+# --- ML ---
+burn        = { version = "0.15", features = ["wgpu"] }
+
+# --- Scripting ---
+rhai        = { version = "1" }
+
+# --- Network ---
+tokio-tungstenite = { version = "0.24" }
+
+# --- Benchmarks ---
+criterion   = { version = "0.5", features = ["html_reports"] }
+
+# --- Config loading ---
+config-crate = { package = "config", version = "0.14" }
 
 [profile.dev]
 opt-level = 1
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.bench]
+inherits = "release"
 debug = true

@@ -2,10 +2,11 @@
 name = "genetics"
 version = "0.1.0"
 edition = "2021"
+description = "Genome representation, mutation operators, crossover, and epigenetics."
 
 [dependencies]
-common = { workspace = true }
-serde = { workspace = true }
-rand = { workspace = true }
+common    = { workspace = true }
+serde     = { workspace = true }
+rand      = { workspace = true }
 rand_chacha = { workspace = true }
-rand_distr = "0.4"
+thiserror = { workspace = true }

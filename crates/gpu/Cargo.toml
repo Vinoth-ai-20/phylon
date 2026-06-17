@@ -2,9 +2,9 @@
 name = "gpu"
 version = "0.1.0"
 edition = "2021"
+description = "wgpu device and queue management, compute pipeline registry, and staging buffer pool."
 
 [dependencies]
-wgpu = { workspace = true }
-bytemuck = { workspace = true }
-puffin = { workspace = true }
-common = { workspace = true }
+common    = { workspace = true }
+wgpu      = { workspace = true }
+thiserror = { workspace = true }

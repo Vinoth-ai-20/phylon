@@ -2,27 +2,9 @@
 name = "ui"
 version = "0.1.0"
 edition = "2021"
+description = "egui-based research interface: inspector panels, analytics, controls, and charts."
 
 [dependencies]
-egui = { workspace = true }
-egui-wgpu = { workspace = true }
-egui-winit = { workspace = true }
-egui_plot = { workspace = true }
-egui_tiles = { workspace = true }
-wgpu = { workspace = true }
-winit = { workspace = true }
-analytics = { path = "../analytics" }
-puffin = { workspace = true }
-world = { workspace = true }
-common = { workspace = true }
-rfd = { workspace = true }
-organisms = { workspace = true }
-research = { path = "../research" }
-open = { workspace = true }
-pollster = { workspace = true }
-rand = { workspace = true }
-rand_chacha = { workspace = true }
-hecs = { workspace = true }
-genetics = { workspace = true }
-physics = { workspace = true }
-egui-phosphor = "0.7.0"
+common    = { workspace = true }
+events    = { workspace = true }
+thiserror = { workspace = true }

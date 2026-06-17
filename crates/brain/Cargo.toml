@@ -2,13 +2,9 @@
 name = "brain"
 version = "0.1.0"
 edition = "2021"
+description = "Neural substrate: NEAT topology, CTRNN, Hebbian plasticity, neuromodulators."
 
 [dependencies]
-common = { workspace = true }
-sensing = { workspace = true }
-genetics = { workspace = true }
-hecs = { workspace = true }
-ndarray = { workspace = true }
-puffin = { workspace = true }
-serde = { workspace = true }
-organisms = { version = "0.1.0", path = "../organisms" }
+common    = { workspace = true }
+serde     = { workspace = true }
+thiserror = { workspace = true }

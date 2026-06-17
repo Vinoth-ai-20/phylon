@@ -1,6 +1,0 @@
-(
-    center: (5000.0, 5000.0),
-    zoom_level: 1.0,
-    min_zoom: 0.05,
-    max_zoom: 50.0,
-)

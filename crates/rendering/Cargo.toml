@@ -2,16 +2,11 @@
 name = "rendering"
 version = "0.1.0"
 edition = "2021"
+description = "wgpu render pipeline, scene graph, debug renderer, and visual overlays."
 
 [dependencies]
-common = { workspace = true }
-diffusion = { workspace = true }
-world = { workspace = true }
-physics = { workspace = true }
-organisms = { workspace = true }
-genetics = { workspace = true }
-wgpu = { workspace = true }
-glam = { workspace = true }
-bytemuck = { workspace = true }
-puffin = { workspace = true }
-hecs = { workspace = true }
+common    = { workspace = true }
+world     = { workspace = true }
+gpu       = { workspace = true }
+wgpu      = { workspace = true }
+thiserror = { workspace = true }

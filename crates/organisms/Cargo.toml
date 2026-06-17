@@ -2,8 +2,11 @@
 name = "organisms"
 version = "0.1.0"
 edition = "2021"
+description = "Organism archetype definitions, ECS component bundles, diet types, and lifecycle."
 
 [dependencies]
-common = { workspace = true }
-hecs = { workspace = true }
-serde = { workspace = true }
+common    = { workspace = true }
+world     = { workspace = true }
+genetics  = { workspace = true }
+serde     = { workspace = true }
+thiserror = { workspace = true }

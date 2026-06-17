@@ -2,22 +2,11 @@
 name = "scheduler"
 version = "0.1.0"
 edition = "2021"
+description = "Fixed-tick deterministic scheduler and system ordering for Phylon."
 
 [dependencies]
-common = { workspace = true }
-events = { workspace = true }
-world = { workspace = true }
-physics = { workspace = true }
-tracing = { workspace = true }
-puffin = { workspace = true }
-organisms = { workspace = true }
-genetics = { workspace = true }
-reproduction = { workspace = true }
-metabolism = { workspace = true }
-ecology = { workspace = true }
-phylon_config = { workspace = true }
-hecs = { workspace = true }
-sensing = { path = "../sensing" }
-brain = { path = "../brain" }
-behavior = { path = "../behavior" }
-evolution = { version = "0.1.0", path = "../evolution" }
+common    = { workspace = true }
+events    = { workspace = true }
+config    = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }

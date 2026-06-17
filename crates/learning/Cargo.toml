@@ -2,6 +2,8 @@
 name = "learning"
 version = "0.1.0"
 edition = "2021"
+description = "RL interfaces, observation/action space definitions, policy API. Implements in Phase 11."
 
 [dependencies]
-
+common    = { workspace = true }
+thiserror = { workspace = true }

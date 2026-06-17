@@ -1,11 +1,11 @@
 [package]
-name = "phylon_config"
+name = "config"
 version = "0.1.0"
 edition = "2021"
+description = "Configuration loading and experiment manifest for Phylon."
 
 [dependencies]
-common = { workspace = true }
-ron = { workspace = true }
-serde = { workspace = true }
-config = { workspace = true }
+common    = { workspace = true }
+serde     = { workspace = true }
+ron       = { workspace = true }
 thiserror = { workspace = true }

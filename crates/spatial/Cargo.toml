@@ -2,8 +2,8 @@
 name = "spatial"
 version = "0.1.0"
 edition = "2021"
+description = "Spatial indexing structures for Phylon: uniform grid, quadtree, spatial hash."
 
 [dependencies]
-common = { workspace = true }
-rustc-hash = { workspace = true }
-glam = { workspace = true }
+common    = { workspace = true }
+thiserror = { workspace = true }

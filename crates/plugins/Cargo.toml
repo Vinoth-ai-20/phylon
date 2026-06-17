@@ -2,14 +2,8 @@
 name = "plugins"
 version = "0.1.0"
 edition = "2021"
+description = "rhai scripting engine, plugin loader, and simulation API bindings."
 
 [dependencies]
-rhai = { workspace = true }
-notify = "6.1"
-world = { workspace = true }
-common = { workspace = true }
-physics = { workspace = true }
-organisms = { workspace = true }
-anyhow = { workspace = true }
-tracing = { workspace = true }
-crossbeam = { workspace = true }
+common    = { workspace = true }
+thiserror = { workspace = true }

@@ -1,77 +1,73 @@
-use common::Tick;
-use events::{DeathCause, PhylonEvent};
-use std::collections::VecDeque;
-use world::PhylonWorld;
+//! # Phylon Analytics
+//!
+//! Metrics collection, population history, diversity indices, spatial
+//! heatmaps, lineage tracking, and research report generation.
+//!
+//! The analytics crate is a pure consumer of the event bus — it never
+//! mutates simulation state. It accumulates time-series data and exposes
+//! query APIs for the UI and research crates.
+//!
+//! ## Phase 0 scope
+//!
+//! Metric type declarations. Implementation: Phase 9.
 
-pub struct SimulationStats {
-    pub max_history: usize,
-    pub history: VecDeque<(f64, f64, f64, f64)>, // (tick, population, avg_energy, total_food)
-    pub deaths_by_starvation: u64,
-    pub deaths_by_predation: u64,
-    pub deaths_by_age: u64,
-    pub total_births: u64,
-    pub current_population: usize,
+#![warn(missing_docs)]
+#![warn(clippy::all)]
+
+use common::Tick;
+use serde::{Deserialize, Serialize};
+
+/// A single population count sample.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PopulationSample {
+    /// The tick at which this sample was recorded.
+    pub tick: Tick,
+    /// Total organism count across all species.
+    pub total: u64,
 }
 
-impl SimulationStats {
-    pub fn new(max_history: usize) -> Self {
+/// Placeholder for the analytics accumulator.
+///
+/// TODO(phase-9): Implement full metrics collection, diversity indices,
+/// SQLite persistence, and export APIs.
+pub struct AnalyticsAccumulator {
+    samples: Vec<PopulationSample>,
+}
+
+impl AnalyticsAccumulator {
+    /// Creates a new empty accumulator.
+    pub fn new() -> Self {
         Self {
-            max_history,
-            history: VecDeque::with_capacity(max_history),
-            deaths_by_starvation: 0,
-            deaths_by_predation: 0,
-            deaths_by_age: 0,
-            total_births: 0,
-            current_population: 0,
+            samples: Vec::new(),
         }
     }
 
-    pub fn process_events(&mut self, events: &[PhylonEvent], _tick: Tick) {
-        puffin::profile_scope!("analytics::process_events");
-
-        for event in events {
-            match event {
-                PhylonEvent::OrganismBorn { .. } => {
-                    self.total_births += 1;
-                }
-                PhylonEvent::DeathEvent { reason, .. } => match reason {
-                    DeathCause::Starvation => self.deaths_by_starvation += 1,
-                    DeathCause::Predation => self.deaths_by_predation += 1,
-                    DeathCause::Age => self.deaths_by_age += 1,
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
+    /// Records a population sample.
+    pub fn record_population(&mut self, tick: Tick, total: u64) {
+        self.samples.push(PopulationSample { tick, total });
     }
 
-    pub fn update_metrics(&mut self, world: &PhylonWorld, tick: Tick) {
-        puffin::profile_scope!("analytics::update_metrics");
+    /// Returns the number of recorded samples.
+    pub fn sample_count(&self) -> usize {
+        self.samples.len()
+    }
+}
 
-        // Exact count of all living organisms
-        self.current_population = world.ecs.query::<&organisms::Organism>().iter().count();
+impl Default for AnalyticsAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-        let mut total_energy = 0.0;
-        for (_, energy) in world.ecs.query::<&organisms::Energy>().iter() {
-            total_energy += energy.0 as f64;
-        }
-        let avg_energy = if self.current_population > 0 {
-            total_energy / self.current_population as f64
-        } else {
-            0.0
-        };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        let total_food = world.ecs.query::<&organisms::FoodPellet>().iter().count() as f64;
-
-        self.history.push_back((
-            tick.0 as f64,
-            self.current_population as f64,
-            avg_energy,
-            total_food,
-        ));
-
-        if self.history.len() > self.max_history {
-            self.history.pop_front();
-        }
+    #[test]
+    fn accumulator_records_samples() {
+        let mut acc = AnalyticsAccumulator::new();
+        acc.record_population(Tick(0), 100);
+        acc.record_population(Tick(60), 105);
+        assert_eq!(acc.sample_count(), 2);
     }
 }

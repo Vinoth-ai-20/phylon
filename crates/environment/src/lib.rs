@@ -1,48 +1,72 @@
-//! Environment and Terrain generation.
+//! # Phylon Environment
+//!
+//! Terrain heightmaps, biomes, climate zones, weather systems, and seasonal
+//! cycles. The environment crate manages all non-biological world state that
+//! modulates organism survival conditions.
+//!
+//! ## Phase 0 scope
+//!
+//! Biome and climate type enumerations. Implementation: Phase 4.
 
-use common::ChunkId;
-use noise::{NoiseFn, OpenSimplex};
+#![warn(missing_docs)]
+#![warn(clippy::all)]
 
-pub const CHUNK_SIZE: u32 = 256;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
-pub struct ChunkTerrain {
-    pub id: ChunkId,
-    pub heights: Vec<f32>,
+/// Biome classification for a world chunk.
+///
+/// Biomes determine baseline temperature, humidity, sunlight intensity,
+/// and soil composition for the chunks assigned to them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Biome {
+    /// Tropical rainforest — high humidity, high sunlight, dense canopy.
+    TropicalRainforest,
+    /// Temperate forest — moderate conditions, seasonal variation.
+    TemperateForest,
+    /// Desert — low humidity, extreme temperature range, sparse nutrients.
+    Desert,
+    /// Tundra — cold, short growing seasons, permafrost.
+    Tundra,
+    /// Grassland / savanna — high sunlight, moderate water availability.
+    Grassland,
+    /// Freshwater lake or river.
+    Freshwater,
+    /// Shallow marine / coastal zone.
+    CoastalMarine,
+    /// Deep ocean.
+    DeepOcean,
+    /// Volcanic / hydrothermal zone.
+    Hydrothermal,
 }
 
-impl ChunkTerrain {
-    pub fn generate(id: ChunkId, seed: u32) -> Self {
-        puffin::profile_function!();
-        let noise = OpenSimplex::new(seed);
-        let mut heights = Vec::with_capacity((CHUNK_SIZE * CHUNK_SIZE) as usize);
+/// Climate zone classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClimateZone {
+    /// Tropical belt — year-round warmth.
+    Tropical,
+    /// Subtropical — warm with dry seasons.
+    Subtropical,
+    /// Temperate — four distinct seasons.
+    Temperate,
+    /// Boreal / subarctic — long cold winters.
+    Boreal,
+    /// Polar — year-round cold, minimal sunlight.
+    Polar,
+}
 
-        let base_x = id.0 as f32 * CHUNK_SIZE as f32;
-        let base_y = id.1 as f32 * CHUNK_SIZE as f32;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        for y in 0..CHUNK_SIZE {
-            for x in 0..CHUNK_SIZE {
-                let wx = base_x + x as f32;
-                let wy = base_y + y as f32;
-
-                // Sample noise at low frequency
-                let nx = wx * 0.01;
-                let ny = wy * 0.01;
-                let val = noise.get([nx as f64, ny as f64]) as f32;
-
-                // Map from [-1, 1] to [0, 1]
-                heights.push((val + 1.0) * 0.5);
-            }
-        }
-
-        Self { id, heights }
+    #[test]
+    fn biome_is_copy() {
+        let b = Biome::Desert;
+        let _b2 = b;
     }
 
-    /// Gets the height at a specific local coordinate [0, CHUNK_SIZE).
-    pub fn get_height(&self, local_x: u32, local_y: u32) -> f32 {
-        if local_x >= CHUNK_SIZE || local_y >= CHUNK_SIZE {
-            return 0.0;
-        }
-        self.heights[(local_y * CHUNK_SIZE + local_x) as usize]
+    #[test]
+    fn climate_zone_is_copy() {
+        let cz = ClimateZone::Temperate;
+        let _cz2 = cz;
     }
 }

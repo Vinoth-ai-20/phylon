@@ -2,18 +2,11 @@
 name = "reproduction"
 version = "0.1.0"
 edition = "2021"
+description = "Reproduction strategies, birth events, offspring dispersal, and malformed offspring handling."
 
 [dependencies]
-common = { version = "0.1.0", path = "../common" }
-hecs = { workspace = true }
-organisms = { workspace = true }
-genetics = { workspace = true }
-events = { workspace = true }
-physics = { workspace = true }
-rand = { workspace = true }
-rand_chacha = { workspace = true }
-serde = { workspace = true }
-evolution = { version = "0.1.0", path = "../evolution" }
-spatial = { version = "0.1.0", path = "../spatial" }
-glam.workspace = true
-rustc-hash.workspace = true
+common    = { workspace = true }
+world     = { workspace = true }
+genetics  = { workspace = true }
+events    = { workspace = true }
+thiserror = { workspace = true }

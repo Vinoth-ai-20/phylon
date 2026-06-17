@@ -1,68 +1,56 @@
-//! Metabolism logic for Phylon organisms.
+//! # Phylon Metabolism
+//!
+//! Energy management, ageing, aerobic/anaerobic respiration, starvation
+//! cascade, and hunger drive systems.
+//!
+//! ## Phase 0 scope
+//!
+//! Type declarations and constants. Implementation: Phase 3.
 
-use events::EventBus;
-use events::{DeathCause, PhylonEvent};
-use genetics::Genome;
-use hecs::World;
-use organisms::{Age, Energy, Health, Organism};
-use physics::{Mass, Velocity};
+#![warn(missing_docs)]
+#![warn(clippy::all)]
 
-/// Processes metabolism for all organisms.
-/// Drains energy based on basal metabolic rate, velocity, and mass.
-/// Increases age.
-/// Drains health if energy is 0.
-/// Fires DeathEvent if health reaches 0 or max age is exceeded.
-pub fn process_metabolism(world: &mut World, events: &EventBus) {
-    puffin::profile_function!();
+use common::SimEnergy;
 
-    let mut deaths = Vec::new();
+/// The base energy cost of simply existing for one tick.
+///
+/// TODO(phase-3): Load from `SimulationConfig` instead of using a constant.
+pub const BASE_METABOLIC_COST: SimEnergy = SimEnergy(0.01);
 
-    for (entity, (_, energy, health, age, genome, mass, vel)) in world.query_mut::<(
-        &Organism,
-        &mut Energy,
-        &mut Health,
-        &mut Age,
-        &Genome,
-        &Mass,
-        &Velocity,
-    )>() {
-        age.0 += 1;
+/// Respiration mode of an organism.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RespirationMode {
+    /// Standard aerobic respiration — requires oxygen field availability.
+    Aerobic,
+    /// Anaerobic fallback — less efficient but functions without oxygen.
+    Anaerobic,
+}
 
-        // Base metabolic cost + kinetic cost
-        let speed_sq = vel.0.length_squared();
-        let kinetic_cost = 0.5 * mass.0 * speed_sq * 0.0001; // tiny multiplier
-        let sensory_cost = 0.0005 * genome.vision_depth; // cost for sensing
-        let basal_cost = 0.05 * genome.metabolic_rate * mass.0.powf(1.2) + sensory_cost;
-        let total_cost = basal_cost + kinetic_cost;
+/// Placeholder for the metabolism system.
+///
+/// TODO(phase-3): Implement per-organism energy tick, hunger calculation,
+/// and starvation event emission.
+pub struct MetabolismSystem;
 
-        energy.0 -= total_cost;
-
-        if energy.0 <= 0.0 {
-            energy.0 = 0.0;
-            // Starving
-            health.0 -= 1.0;
-        } else if energy.0 > 20.0 {
-            // Healing
-            health.0 = (health.0 + 0.1).min(100.0);
-        }
-
-        let mut cause = None;
-        if health.0 <= 0.0 {
-            cause = Some(DeathCause::Starvation);
-        } else if age.0 > 10000 {
-            // Hardcoded max age for now
-            cause = Some(DeathCause::Age);
-        }
-
-        if let Some(reason) = cause {
-            deaths.push((entity, reason));
-        }
+impl MetabolismSystem {
+    /// Creates a new metabolism system.
+    pub fn new() -> Self {
+        Self
     }
+}
 
-    for (entity, reason) in deaths {
-        events.publish(PhylonEvent::DeathEvent {
-            id: common::EntityId(entity.to_bits().get()),
-            reason,
-        });
+impl Default for MetabolismSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metabolic_cost_is_positive() {
+        assert!(BASE_METABOLIC_COST.0 > 0.0);
     }
 }

@@ -2,10 +2,10 @@
 name = "events"
 version = "0.1.0"
 edition = "2021"
+description = "Typed event bus for cross-crate simulation event dispatch in Phylon."
 
 [dependencies]
-common = { workspace = true }
+common    = { workspace = true }
+serde     = { workspace = true }
+thiserror = { workspace = true }
 crossbeam = { workspace = true }
-genetics = { workspace = true }
-organisms = { version = "0.1.0", path = "../organisms" }
-serde = { workspace = true, features = ["derive"] }

@@ -2,6 +2,8 @@
 name = "network"
 version = "0.1.0"
 edition = "2021"
+description = "Remote control WebSocket server and collaboration session management."
 
 [dependencies]
-
+common    = { workspace = true }
+thiserror = { workspace = true }

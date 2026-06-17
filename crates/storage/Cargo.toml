@@ -2,20 +2,11 @@
 name = "storage"
 version = "0.1.0"
 edition = "2021"
+description = "Save/load, snapshots, replay capture and playback, dataset export, and SQLite persistence."
 
 [dependencies]
-world = { workspace = true }
-common = { workspace = true }
-physics = { workspace = true }
-genetics = { workspace = true }
-organisms = { workspace = true }
-sensing = { workspace = true }
-brain = { workspace = true }
-hecs = { workspace = true }
-anyhow = { workspace = true }
-serde = { workspace = true }
-bincode = { workspace = true }
-ron = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
-rusqlite = { version = "0.40.1", features = ["bundled"] }
+common    = { workspace = true }
+world     = { workspace = true }
+serde     = { workspace = true }
+bincode   = { workspace = true }
+thiserror = { workspace = true }

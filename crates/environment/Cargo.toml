@@ -2,9 +2,11 @@
 name = "environment"
 version = "0.1.0"
 edition = "2021"
+description = "Terrain, biomes, climate, weather, seasons, and gas cycle management."
 
 [dependencies]
-common = { workspace = true }
-glam = { workspace = true }
-noise = { workspace = true }
-puffin = { workspace = true }
+common    = { workspace = true }
+world     = { workspace = true }
+spatial   = { workspace = true }
+serde     = { workspace = true }
+thiserror = { workspace = true }

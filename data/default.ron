@@ -1,20 +1,28 @@
-(
-    simulation: (
+// Phylon default configuration — RON format
+// Edit this file to customise your experiment.
+// All fields are optional; omitted fields fall back to compile-time defaults.
+PhylonConfig(
+    simulation: SimulationConfig(
         tick_rate: 60,
-        rng_seed: 42,
+        rng_seed: 16045690984833335998,  // 0xDEAD_BEEF_CAFE_BABE
         world_chunk_size: 256,
         toroidal_world: false,
         max_active_chunks: 512,
-        target_organism_count: 100000,
-        diffusion_step_size: 0.1,
-        physics_integrator: "SymplecticEuler",
+        target_organism_count: 1000,
+        diffusion_step_size: 1.0,
+        physics_integrator: SymplecticEuler,
     ),
-    render: (
+    render: RenderConfig(
+        window_width: 1280,
+        window_height: 720,
+        window_title: "Phylon",
         vsync: true,
-        draw_debug_overlays: false,
+        overlay_opacity: 0.5,
     ),
-    research: (
-        snapshot_interval_ticks: 3600,
-        database_path: "phylon_research.db",
-    )
+    research: ResearchConfig(
+        experiment_id: "default",
+        autosave_interval_ticks: 3600,
+        headless: false,
+        max_ticks: 0,
+    ),
 )

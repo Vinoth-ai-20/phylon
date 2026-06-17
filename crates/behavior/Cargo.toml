@@ -2,13 +2,9 @@
 name = "behavior"
 version = "0.1.0"
 edition = "2021"
+description = "Movement, action selection, locomotion, and motor output systems."
 
 [dependencies]
-common = { workspace = true }
-brain = { workspace = true }
-physics = { workspace = true }
-organisms = { workspace = true }
-genetics = { workspace = true }
-hecs = { workspace = true }
-puffin = { workspace = true }
-serde = { workspace = true }
+common    = { workspace = true }
+world     = { workspace = true }
+thiserror = { workspace = true }

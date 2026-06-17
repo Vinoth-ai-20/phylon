@@ -12,7 +12,16 @@ Phylon operates on an abstract set of dimensionless simulation units. Real-world
 ## Physics Integrator
 
 **Chosen Integrator**: Symplectic Euler.
-*Justification*: Symplectic Euler perfectly preserves energy in oscillatory systems (like spring-based colonies or soft-body approximations) and is much cheaper than Runge-Kutta. For a simulation aiming for 100,000 agents with structural tissue links, the stability and computational cheapness of Symplectic Euler vastly outperform standard explicit Euler.
+*Justification*: Symplectic Euler perfectly preserves energy in oscillatory systems. Because Phylon organisms are modeled as **Dynamic Graphs** rather than rigid monolithic bodies, they rely entirely on particle-spring constraints (elasticity, reflection, tension, and repulsion) acting on discrete nodes (cells/particles). The stability and computational cheapness of Symplectic Euler vastly outperform standard explicit Euler when processing tens of millions of structural tissue links across 100,000+ organisms.
+
+## Node-Edge Constraint Physics
+
+Phylon explicitly rejects top-down rigid body dynamics for biology. Movement and structure emerge from:
+
+- **Tension & Elasticity**: Edges between nodes act as structural springs that attempt to maintain rest lengths.
+- **Repulsion**: Nodes that are not structurally bound exert strong short-range repulsion to simulate collision and volume.
+- **Motor Nodes**: Behavior components don't apply an abstract "move organism" force; instead, specific nodes act as muscles, contracting or expanding spring edges to create locomotion.
+This physically grounded approach naturally yields fluid-like behavior, realistic soft-body collisions, and modular body plans.
 
 ## Field Diffusion PDE
 

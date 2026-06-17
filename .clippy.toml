@@ -1,1 +1,7 @@
+# Clippy configuration for Phylon
+# All lints are enforced via CI with -D warnings.
+# This file exists to document any project-level overrides.
 
+# Increase the cognitive complexity threshold slightly to allow moderately complex
+# simulation systems without requiring artificial decomposition.
+cognitive-complexity-threshold = 30

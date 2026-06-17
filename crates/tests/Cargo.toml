@@ -2,6 +2,10 @@
 name = "tests"
 version = "0.1.0"
 edition = "2021"
+description = "Integration test workspace member for full cross-crate test scenarios."
 
 [dependencies]
-
+common    = { workspace = true }
+config    = { workspace = true }
+events    = { workspace = true }
+scheduler = { workspace = true }

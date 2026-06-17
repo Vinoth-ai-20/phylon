@@ -2,17 +2,10 @@
 name = "ecology"
 version = "0.1.0"
 edition = "2021"
+description = "Food chain, predation, disease spread, fungi networks, and decomposition."
 
 [dependencies]
-common = { workspace = true }
-hecs = { workspace = true }
-organisms = { workspace = true }
-physics = { workspace = true }
-serde = { workspace = true }
-spatial = { workspace = true }
-events = { workspace = true }
-rand = { workspace = true }
-rand_chacha = { workspace = true }
-puffin = { workspace = true }
-genetics = { workspace = true }
-rustc-hash = { workspace = true }
+common    = { workspace = true }
+world     = { workspace = true }
+events    = { workspace = true }
+thiserror = { workspace = true }

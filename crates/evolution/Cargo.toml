@@ -2,10 +2,10 @@
 name = "evolution"
 version = "0.1.0"
 edition = "2021"
+description = "Selection, speciation, lineage tracking, fitness, and hybridization."
 
 [dependencies]
-common = { version = "0.1.0", path = "../common" }
-genetics = { version = "0.1.0", path = "../genetics" }
-organisms = { version = "0.1.0", path = "../organisms" }
-rustc-hash.workspace = true
-
+common    = { workspace = true }
+genetics  = { workspace = true }
+world     = { workspace = true }
+thiserror = { workspace = true }

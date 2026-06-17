@@ -1,81 +1,106 @@
-//! The fixed-tick deterministic execution scheduler for Phylon.
+//! # Phylon Scheduler
+//!
+//! The fixed-tick deterministic scheduler that drives all simulation updates.
+//!
+//! The scheduler owns the canonical [`Tick`] counter and is responsible for
+//! advancing it, invoking registered systems in a deterministic [`SystemOrder`],
+//! maintaining the configured tick rate, and measuring per-tick wall-clock time
+//! for profiling.
+//!
+//! ## Design principles
+//!
+//! - **Determinism**: Systems execute in a fixed, canonical order defined by
+//!   [`SystemOrder`]. This ordering is recorded in `docs/04_simulation_model.md`
+//!   and must not change between runs for experiment reproducibility.
+//!
+//! - **Fixed timestep**: The scheduler tracks the accumulated real-time delta
+//!   and fires simulation ticks at a fixed `1 / tick_rate` interval. Any excess
+//!   wall-clock time is carried forward as an accumulator, preventing ticks
+//!   from drifting due to processing jitter.
+//!
+//! - **No blocking I/O**: The scheduler runs on the main rayon thread pool.
+//!   It must never perform blocking I/O directly — that is the responsibility
+//!   of the `storage` and `network` crates via tokio channels.
+//!
+//! ## Phase 0 scope
+//!
+//! In Phase 0 the scheduler operates as a bare tick counter with timing.
+//! System dispatch callbacks are registered as boxed closures. In Phase 1+
+//! this will be upgraded to `bevy_ecs`-style system graphs.
+
+#![warn(missing_docs)]
+#![warn(clippy::all)]
+
+use std::time::{Duration, Instant};
+
+use thiserror::Error;
+use tracing::{debug, instrument, span, warn, Level};
 
 use common::Tick;
-use std::time::{Duration, Instant};
-use tracing::{span, Level};
+use config::PhylonConfig;
+use events::EventBus;
 
-/// The canonical order of systems executing within a single tick.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+// ────────────────────────────────────────────────────────────────────────────
+// SystemOrder
+// ────────────────────────────────────────────────────────────────────────────
+
+/// The canonical execution order of all simulation subsystems within one tick.
+///
+/// This enum defines the **only** permitted ordering for system execution.
+/// Any deviation requires an architecture decision and a corresponding update
+/// to `docs/04_simulation_model.md`.
+///
+/// Systems registered with a later variant run after all systems with an
+/// earlier variant. Systems registered with the same variant may run in any
+/// relative order (rayon parallel) — they must not depend on each other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SystemOrder {
-    PrePhysics,
-    Physics,
-    Diffusion,
-    Sensing,
-    Brain,
-    Behavior,
-    Metabolism,
-    Ecology,
-    Reproduction,
-    PostTick,
-    Analytics,
+    /// Spatial index updates, broad-phase collision preparation.
+    PrePhysics = 0,
+    /// Force integration, collision response, constraint solving.
+    Physics = 1,
+    /// Diffusion field update step (one sub-step per tick).
+    Diffusion = 2,
+    /// Sensory field sampling for all organisms.
+    Sensing = 3,
+    /// Neural network forward pass.
+    Brain = 4,
+    /// Action selection and locomotion output.
+    Behavior = 5,
+    /// Energy consumption, hunger, ageing.
+    Metabolism = 6,
+    /// Food web interactions, predation, decomposition.
+    Ecology = 7,
+    /// Reproduction checks and offspring spawning.
+    Reproduction = 8,
+    /// Event drain, world state finalization, analytics snapshot.
+    PostTick = 9,
+    /// Metric recording (runs after `PostTick` so it sees the finalized state).
+    Analytics = 10,
 }
 
-/// The main orchestrator for tick advancement.
-pub struct SimulationScheduler {
-    pub current_tick: Tick,
-    pub tick_rate: u32,
-    tick_duration: Duration,
-    last_tick_end: Instant,
+impl SystemOrder {
+    /// Returns all system order variants in their canonical execution order.
+    pub fn all_ordered() -> &'static [SystemOrder] {
+        &[
+            SystemOrder::PrePhysics,
+            SystemOrder::Physics,
+            SystemOrder::Diffusion,
+            SystemOrder::Sensing,
+            SystemOrder::Brain,
+            SystemOrder::Behavior,
+            SystemOrder::Metabolism,
+            SystemOrder::Ecology,
+            SystemOrder::Reproduction,
+            SystemOrder::PostTick,
+            SystemOrder::Analytics,
+        ]
+    }
 }
 
-impl SimulationScheduler {
-    pub fn new(tick_rate: u32) -> Self {
-        Self {
-            current_tick: Tick(0),
-            tick_rate,
-            tick_duration: Duration::from_secs_f64(1.0 / tick_rate as f64),
-            last_tick_end: Instant::now(),
-        }
-    }
-
-    /// Advance the simulation by exactly one tick without maintaining real-time rate (fast forward).
-    pub fn tick(&mut self, world: &mut world::PhylonWorld) {
-        puffin::profile_function!();
-        self.current_tick.0 += 1;
-        let tick_span = span!(Level::TRACE, "tick", tick = self.current_tick.0);
-        let _enter = tick_span.enter();
-
-        self.run_phase(SystemOrder::PrePhysics, world);
-        self.run_phase(SystemOrder::Physics, world);
-        self.run_phase(SystemOrder::Diffusion, world);
-        self.run_phase(SystemOrder::Sensing, world);
-        self.run_phase(SystemOrder::Brain, world);
-        self.run_phase(SystemOrder::Behavior, world);
-        self.run_phase(SystemOrder::Metabolism, world);
-        self.run_phase(SystemOrder::Ecology, world);
-        self.run_phase(SystemOrder::Reproduction, world);
-        self.run_phase(SystemOrder::PostTick, world);
-        self.run_phase(SystemOrder::Analytics, world);
-    }
-
-    /// Advance the simulation by exactly one tick.
-    pub fn tick_loop(&mut self, world: &mut world::PhylonWorld) {
-        puffin::profile_function!();
-
-        // Maintain fixed tick rate
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last_tick_end);
-        if elapsed < self.tick_duration {
-            std::thread::sleep(self.tick_duration - elapsed);
-        }
-        self.last_tick_end = Instant::now();
-
-        self.tick(world);
-    }
-
-    /// Run a specific phase in the system order.
-    fn run_phase(&self, phase: SystemOrder, world: &mut world::PhylonWorld) {
-        let phase_name = match phase {
+impl std::fmt::Display for SystemOrder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
             SystemOrder::PrePhysics => "PrePhysics",
             SystemOrder::Physics => "Physics",
             SystemOrder::Diffusion => "Diffusion",
@@ -88,165 +113,311 @@ impl SimulationScheduler {
             SystemOrder::PostTick => "PostTick",
             SystemOrder::Analytics => "Analytics",
         };
-        puffin::profile_scope!(phase_name);
-        let _phase_span = span!(Level::TRACE, "phase", name = %phase_name).entered();
-
-        if phase == SystemOrder::Sensing {
-            let mut foods = std::collections::HashMap::new();
-            for (entity, (pos, _fp)) in world
-                .ecs
-                .query_mut::<(&physics::Position, &organisms::FoodPellet)>()
-            {
-                foods.insert(
-                    common::EntityId(entity.to_bits().get()),
-                    (entity, pos.0, 10.0, false),
-                );
-            }
-            sensing::process_sensing(
-                &world.ecs,
-                &world.spatial_index,
-                &world.field_grid,
-                world.grid_width,
-                world.grid_height,
-                &foods,
-            );
-        } else if phase == SystemOrder::Brain {
-            brain::process_brain(&mut world.ecs);
-        } else if phase == SystemOrder::Behavior {
-            behavior::process_behavior(&mut world.ecs);
-        } else if phase == SystemOrder::Physics {
-            let dt = self.tick_duration.as_secs_f32();
-            physics::symplectic_euler_integration(&mut world.ecs, dt);
-            physics::world_bounds_collision(&mut world.ecs, common::Vec2::new(1000.0, 1000.0));
-            world.update_spatial_index();
-        } else if phase == SystemOrder::Metabolism {
-            metabolism::process_metabolism(&mut world.ecs, &world.event_bus);
-            ecology::process_gas_exchange(
-                &mut world.ecs,
-                &mut world.field_grid,
-                world.grid_width,
-                world.grid_height,
-            );
-            ecology::process_disease(
-                &mut world.ecs,
-                &world.spatial_index,
-                phylon_config::PhylonConfig::default().simulation.rng_seed,
-                self.current_tick.0,
-            );
-        } else if phase == SystemOrder::Ecology {
-            ecology::spawn_food(
-                &mut world.ecs,
-                phylon_config::PhylonConfig::default().simulation.rng_seed,
-                self.current_tick.0,
-            );
-            ecology::process_foraging(
-                &mut world.ecs,
-                &world.spatial_index,
-                &world.event_bus,
-                &world.field_grid,
-                256,
-                256,
-            );
-        } else if phase == SystemOrder::Reproduction {
-            reproduction::process_reproduction(
-                &mut world.ecs,
-                &world.spatial_index,
-                &world.event_bus,
-                phylon_config::PhylonConfig::default().simulation.rng_seed,
-                self.current_tick.0,
-            );
-        } else if phase == SystemOrder::PostTick {
-            let mut events = world.event_bus.drain::<events::PhylonEvent>();
-
-            // Collect deaths and births
-            let mut deaths = Vec::new();
-            let mut births = Vec::new();
-
-            for e in &events {
-                match e {
-                    events::PhylonEvent::DeathEvent { id, reason } => deaths.push((*id, *reason)),
-                    events::PhylonEvent::BirthEvent {
-                        parent,
-                        genome,
-                        initial_energy,
-                        position,
-                    } => {
-                        births.push((*parent, genome.clone(), *initial_energy, *position));
-                    }
-                    _ => {}
-                }
-            }
-
-            // Process deaths FIRST
-            for (dead_id, reason) in deaths {
-                let entity = hecs::Entity::from_bits(dead_id.0).unwrap();
-                let _ = world.ecs.despawn(entity);
-                events.push(events::PhylonEvent::OrganismDied {
-                    id: dead_id,
-                    cause: reason,
-                    tick: self.current_tick.0,
-                });
-            }
-
-            // Process births
-            for (parent_id, genome, energy, pos) in births {
-                let species = world.species_registry.assign_species(&genome, 15.0);
-
-                let mut generation = 0;
-                if let Some(pid) = parent_id {
-                    let parent_entity = hecs::Entity::from_bits(pid.0).unwrap();
-                    if let Ok(parent_gen) = world.ecs.get::<&organisms::Generation>(parent_entity) {
-                        generation = parent_gen.0 + 1;
-                    }
-                }
-
-                let mut builder = hecs::EntityBuilder::new();
-                builder.add(organisms::Organism);
-                builder.add(organisms::Age(0));
-                builder.add(organisms::Generation(generation));
-                builder.add(organisms::Energy(energy));
-                builder.add(organisms::Health::default());
-                builder.add(genome.clone());
-                builder.add(species);
-                builder.add(physics::Position(pos));
-                builder.add(physics::Velocity(common::Vec2::ZERO));
-                builder.add(physics::Acceleration(common::Vec2::ZERO));
-                builder.add(physics::Heading::default());
-                builder.add(physics::Mass(1.0));
-                builder.add(physics::Radius(genome.size));
-                builder.add(reproduction::ReproductionCooldown(100));
-                builder.add(sensing::Observation::new());
-                builder.add(brain::Intention::new());
-                builder.add(brain::BrainState::default());
-                builder.add(brain::LearnedWeights {
-                    data: genome.brain_weights.clone(),
-                });
-
-                let id = world.spawn(builder.build());
-
-                events.push(events::PhylonEvent::OrganismBorn {
-                    id: common::EntityId(id.to_bits().get()),
-                    parent_id,
-                    generation,
-                    tick: self.current_tick.0,
-                });
-            }
-
-            world.last_events = events;
-        }
+        write!(f, "{name}")
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Scheduler error
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Errors produced by the scheduler.
+#[derive(Debug, Error)]
+pub enum SchedulerError {
+    /// A registered system callback returned an error during execution.
+    #[error("system '{phase}' at tick {tick} returned an error: {message}")]
+    SystemError {
+        /// The phase in which the error occurred.
+        phase: SystemOrder,
+        /// The tick at which the error occurred.
+        tick: Tick,
+        /// Human-readable error description.
+        message: String,
+    },
+}
+
+impl common::PhylonError for SchedulerError {}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Per-tick statistics
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Wall-clock timing statistics for a single simulation tick.
+///
+/// Recorded by the scheduler and made available to the `analytics` crate
+/// and the `puffin` profiler integration.
+#[derive(Debug, Clone)]
+pub struct TickStats {
+    /// The tick this measurement covers.
+    pub tick: Tick,
+    /// Total wall-clock time spent processing this tick.
+    pub total_duration: Duration,
+    /// Wall-clock time spent in each phase (parallel to [`SystemOrder::all_ordered`]).
+    pub phase_durations: Vec<(SystemOrder, Duration)>,
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// SimulationScheduler
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Type alias for a registered system callback.
+///
+/// In Phase 0, systems are registered as boxed closures. The closure receives:
+/// - The current [`Tick`] value.
+/// - A shared reference to the [`EventBus`] so systems can publish events.
+///
+/// The return value is `Ok(())` on success or a string error message. The
+/// scheduler converts the string into a [`SchedulerError::SystemError`].
+///
+/// This API will be replaced by `bevy_ecs` system scheduling in Phase 1.
+pub type SystemFn = Box<dyn FnMut(Tick, &EventBus) -> Result<(), String> + Send>;
+
+/// The fixed-tick deterministic scheduler.
+///
+/// Owns the canonical [`Tick`] counter, the [`EventBus`], and the list of
+/// registered system callbacks. Drives the simulation forward by advancing the
+/// tick counter and invoking all registered systems in [`SystemOrder`].
+pub struct SimulationScheduler {
+    /// The current tick (starts at zero, incremented by [`advance`]).
+    current_tick: Tick,
+
+    /// The fixed duration of one simulation tick (derived from `tick_rate`).
+    tick_duration: Duration,
+
+    /// Wall-clock time accumulated since the last tick completed.
+    /// Used to implement a fixed-timestep accumulator.
+    accumulator: Duration,
+
+    /// Timestamp of the last call to [`advance`] (for accumulator updates).
+    last_advance: Instant,
+
+    /// The event bus shared between all systems.
+    event_bus: EventBus,
+
+    /// Registered system callbacks, sorted by [`SystemOrder`].
+    systems: Vec<(SystemOrder, SystemFn)>,
+
+    /// Statistics for the most recently completed tick.
+    last_tick_stats: Option<TickStats>,
+}
+
+impl SimulationScheduler {
+    /// Creates a new scheduler from a loaded configuration.
+    ///
+    /// The scheduler starts at [`Tick::ZERO`] with an empty accumulator.
+    /// Systems must be registered via [`register`] before calling [`advance`].
+    pub fn new(config: &PhylonConfig) -> Self {
+        let tick_duration = config.tick_duration();
+        let event_bus = EventBus::new(4096);
+        Self {
+            current_tick: Tick::ZERO,
+            tick_duration,
+            accumulator: Duration::ZERO,
+            last_advance: Instant::now(),
+            event_bus,
+            systems: Vec::new(),
+            last_tick_stats: None,
+        }
+    }
+
+    /// Registers a system callback at the given execution phase.
+    ///
+    /// Systems at the same [`SystemOrder`] are invoked in registration order.
+    /// This is deterministic as long as registration order is deterministic
+    /// (i.e., it always happens in the same sequence at startup).
+    pub fn register(&mut self, order: SystemOrder, system: SystemFn) {
+        // Insert in sorted position to maintain ordering invariant.
+        let pos = self.systems.partition_point(|(o, _)| *o <= order);
+        self.systems.insert(pos, (order, system));
+    }
+
+    /// Returns the current simulation tick.
+    #[inline]
+    pub fn current_tick(&self) -> Tick {
+        self.current_tick
+    }
+
+    /// Returns a shared reference to the event bus.
+    #[inline]
+    pub fn event_bus(&self) -> &EventBus {
+        &self.event_bus
+    }
+
+    /// Returns timing statistics from the most recently completed tick,
+    /// or `None` if no tick has completed yet.
+    #[inline]
+    pub fn last_tick_stats(&self) -> Option<&TickStats> {
+        self.last_tick_stats.as_ref()
+    }
+
+    /// Updates the internal accumulator and fires simulation ticks.
+    ///
+    /// Call this once per frame from the `winit` event loop. The scheduler
+    /// will fire **zero or more** simulation ticks depending on how much
+    /// real time has elapsed since the last call. Returns timing stats for
+    /// every tick that fired during this call.
+    ///
+    /// Ticks are capped at `max_ticks_per_frame` to prevent a "spiral of
+    /// death" when rendering is slow.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`SchedulerError`] encountered during system
+    /// execution. Subsequent ticks in the same frame are **not** executed
+    /// after an error — the simulation must be considered dirty.
+    #[instrument(skip(self), fields(tick = self.current_tick.0))]
+    pub fn advance(&mut self, max_ticks_per_frame: u32) -> Result<Vec<TickStats>, SchedulerError> {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_advance);
+        self.last_advance = now;
+        self.accumulator += elapsed;
+
+        let mut stats_this_frame = Vec::new();
+        let mut ticks_fired = 0u32;
+
+        while self.accumulator >= self.tick_duration && ticks_fired < max_ticks_per_frame {
+            self.accumulator -= self.tick_duration;
+            let stats = self.run_tick()?;
+            stats_this_frame.push(stats);
+            ticks_fired += 1;
+        }
+
+        if ticks_fired == max_ticks_per_frame && self.accumulator >= self.tick_duration {
+            warn!(
+                tick = self.current_tick.0,
+                "Simulation is running behind: accumulator = {:?}, capping at {} ticks/frame",
+                self.accumulator,
+                max_ticks_per_frame
+            );
+        }
+
+        Ok(stats_this_frame)
+    }
+
+    /// Executes a single simulation tick, invoking all registered systems
+    /// in canonical [`SystemOrder`] and recording per-phase timings.
+    fn run_tick(&mut self) -> Result<TickStats, SchedulerError> {
+        let tick = self.current_tick;
+        let tick_start = Instant::now();
+
+        let _span = span!(Level::DEBUG, "tick", tick = tick.0).entered();
+        debug!("tick start");
+
+        let mut phase_durations = Vec::with_capacity(self.systems.len());
+
+        for (order, system) in &mut self.systems {
+            let phase_start = Instant::now();
+            let _phase_span = span!(Level::DEBUG, "phase", phase = %order).entered();
+
+            system(tick, &self.event_bus).map_err(|message| SchedulerError::SystemError {
+                phase: *order,
+                tick,
+                message,
+            })?;
+
+            phase_durations.push((*order, phase_start.elapsed()));
+        }
+
+        // Advance the tick counter after all systems have run.
+        self.current_tick = tick.next();
+
+        let total_duration = tick_start.elapsed();
+        debug!(
+            tick = tick.0,
+            total_ms = total_duration.as_secs_f32() * 1000.0,
+            "tick complete"
+        );
+
+        let stats = TickStats {
+            tick,
+            total_duration,
+            phase_durations,
+        };
+        self.last_tick_stats = Some(stats.clone());
+        Ok(stats)
+    }
+
+    /// Advances the scheduler by exactly one tick, regardless of wall-clock time.
+    ///
+    /// This is a deterministic step function intended for headless research
+    /// mode and tests where real-time pacing is not desired.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SchedulerError`] if any system fails during the tick.
+    pub fn step(&mut self) -> Result<TickStats, SchedulerError> {
+        self.run_tick()
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Tests
+// ────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn make_scheduler() -> SimulationScheduler {
+        SimulationScheduler::new(&config::PhylonConfig::default())
+    }
+
     #[test]
-    fn test_tick_advancement() {
-        let mut scheduler = SimulationScheduler::new(60);
-        let mut world = world::PhylonWorld::default();
-        assert_eq!(scheduler.current_tick, Tick(0));
-        scheduler.tick_loop(&mut world);
-        assert_eq!(scheduler.current_tick, Tick(1));
+    fn scheduler_starts_at_zero() {
+        let sched = make_scheduler();
+        assert_eq!(sched.current_tick(), Tick::ZERO);
+    }
+
+    #[test]
+    fn step_advances_tick() {
+        let mut sched = make_scheduler();
+        sched.step().expect("step should succeed");
+        assert_eq!(sched.current_tick(), Tick(1));
+    }
+
+    #[test]
+    fn system_order_is_sorted() {
+        let all = SystemOrder::all_ordered();
+        let mut prev = all[0];
+        for &next in &all[1..] {
+            assert!(prev < next, "{prev} must come before {next}");
+            prev = next;
+        }
+    }
+
+    #[test]
+    fn register_and_execute_system() {
+        let mut sched = make_scheduler();
+        let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let called_clone = called.clone();
+        sched.register(
+            SystemOrder::PostTick,
+            Box::new(move |_tick, _bus| {
+                called_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                Ok(())
+            }),
+        );
+        sched.step().expect("step should succeed");
+        assert!(called.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn failing_system_returns_error() {
+        let mut sched = make_scheduler();
+        sched.register(
+            SystemOrder::Physics,
+            Box::new(|_tick, _bus| Err("deliberate test error".into())),
+        );
+        let result = sched.step();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn tick_stats_recorded() {
+        let mut sched = make_scheduler();
+        assert!(sched.last_tick_stats().is_none());
+        sched.step().expect("step should succeed");
+        assert!(sched.last_tick_stats().is_some());
+        assert_eq!(sched.last_tick_stats().unwrap().tick, Tick(0));
     }
 }

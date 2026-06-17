@@ -5,10 +5,6 @@
 **/*.rs.bk
 *.pdb
 
-# OS files
-.DS_Store
-Thumbs.db
-
 # IDE
 .vscode/settings.json
 .idea/
@@ -18,24 +14,6 @@ Thumbs.db
 .env
 .env.local
 
-# Profiling output
-*.puffin
-*.perf
-
-# Large data exports (keep configs, ignore generated datasets)
-data/exports/
-data/snapshots/
-
 #prompt docs
 PHYLON_PROMPT_*.md
 PHYLON_ANTIGRAVITY_KICKOFF.md
-
-#snapshot docs
-snapshot_*.ron
-*_tick_*.bin
-snapshot_*.bin
-
-# SQLite database files
-*.db
-*.db-shm
-*.db-wal

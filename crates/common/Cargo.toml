@@ -2,8 +2,9 @@
 name = "common"
 version = "0.1.0"
 edition = "2021"
+description = "Shared types, entity IDs, math newtypes, and error base traits for Phylon."
 
 [dependencies]
-glam = { workspace = true }
+glam  = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }

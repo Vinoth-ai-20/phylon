@@ -1,118 +1,83 @@
-use genetics::Genome;
-use hecs::World;
-use organisms::{Energy, Health};
-use sensing::Observation;
+//! # Phylon Brain
+//!
+//! Neural substrate for organisms: NEAT topology evolution, CTRNN dynamics,
+//! Hebbian plasticity, and neuromodulator channels.
+//!
+//! The brain crate defines the data structures and evaluation interfaces for
+//! neural networks. It is deliberately independent of `burn` in Phase 0 to
+//! keep compilation fast. GPU-accelerated inference via `burn` is added in
+//! Phase 6.
+//!
+//! ## Phase 0 scope
+//!
+//! BrainId and NeuralActivation placeholder types. Implementation: Phase 6.
+
+#![warn(missing_docs)]
+#![warn(clippy::all)]
+
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-pub struct Intention {
-    pub target_velocity: common::Vec2,
+/// A unique identifier for a neural brain instance.
+///
+/// Distinct from [`common::EntityId`] because brains persist in the lineage
+/// record for cross-generation comparison studies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BrainId(pub u64);
+
+/// Activation function types available to neural nodes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActivationFn {
+    /// Standard sigmoid: `1 / (1 + exp(-x))`.
+    Sigmoid,
+    /// Hyperbolic tangent.
+    Tanh,
+    /// Rectified linear unit: `max(0, x)`.
+    ReLU,
+    /// Leaky ReLU with slope 0.01 for negative inputs.
+    LeakyReLU,
+    /// Sinusoidal activation (useful for rhythmic/oscillatory behaviours).
+    Sine,
+    /// Step function: `0` if `x < 0`, else `1`.
+    Step,
 }
 
-impl Intention {
-    pub fn new() -> Self {
+/// Placeholder for a neural brain.
+///
+/// TODO(phase-6): Implement full NEAT topology, CTRNN dynamics, and
+/// Hebbian plasticity.
+#[allow(dead_code)]
+pub struct Brain {
+    /// Unique identifier for this brain.
+    id: BrainId,
+    /// Number of input nodes (set by the genome's sensor configuration).
+    input_count: usize,
+    /// Number of output nodes (one per motor action dimension).
+    output_count: usize,
+}
+
+impl Brain {
+    /// Creates a minimal placeholder brain.
+    pub fn placeholder(id: BrainId, input_count: usize, output_count: usize) -> Self {
         Self {
-            target_velocity: common::Vec2::ZERO,
+            id,
+            input_count,
+            output_count,
         }
     }
 }
 
-pub const INPUT_SIZE: usize = 12;
-pub const HIDDEN_SIZE: usize = 8;
-pub const OUTPUT_SIZE: usize = 3; // dx, dy, neuromodulator
-pub const TOTAL_NEURONS: usize = INPUT_SIZE + HIDDEN_SIZE + OUTPUT_SIZE;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BrainState {
-    pub potentials: [f32; TOTAL_NEURONS],
-}
-
-impl Default for BrainState {
-    fn default() -> Self {
-        Self {
-            potentials: [0.0; TOTAL_NEURONS],
-        }
+    #[test]
+    fn brain_id_equality() {
+        assert_eq!(BrainId(1), BrainId(1));
     }
-}
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LearnedWeights {
-    pub data: Vec<f32>,
-}
-
-pub fn process_brain(world: &mut World) {
-    puffin::profile_function!();
-
-    let dt = 1.0;
-    let tau = 2.0;
-
-    for (_entity, (obs, genome, state, learned_weights, intention, energy, health)) in world
-        .query_mut::<(
-            &Observation,
-            &Genome,
-            &mut BrainState,
-            &mut LearnedWeights,
-            &mut Intention,
-            &Energy,
-            &Health,
-        )>()
-    {
-        if energy.0 <= 0.0 || health.0 <= 0.0 {
-            intention.target_velocity = common::Vec2::ZERO;
-            continue;
-        }
-
-        if learned_weights.data.is_empty() {
-            learned_weights.data = genome.brain_weights.clone();
-        }
-
-        let num_weights = TOTAL_NEURONS * TOTAL_NEURONS;
-        if learned_weights.data.len() < num_weights {
-            learned_weights.data.resize(num_weights, 0.0);
-        }
-
-        // Set inputs
-        for i in 0..INPUT_SIZE {
-            state.potentials[i] = obs.data[i];
-        }
-
-        let mut next_potentials = state.potentials;
-
-        #[allow(clippy::needless_range_loop)]
-        for i in INPUT_SIZE..TOTAL_NEURONS {
-            let mut excitation = 0.0;
-            for j in 0..TOTAL_NEURONS {
-                let weight = learned_weights.data[j * TOTAL_NEURONS + i];
-                let output_j = (1.0 / (1.0 + (-state.potentials[j]).exp())) - 0.5; // tanh-like
-                excitation += weight * output_j;
-            }
-            let dy = (-state.potentials[i] + excitation) / tau;
-            next_potentials[i] += dy * dt;
-        }
-
-        state.potentials = next_potentials;
-
-        let out_start = INPUT_SIZE + HIDDEN_SIZE;
-        let out_x = (1.0 / (1.0 + (-state.potentials[out_start]).exp())) * 2.0 - 1.0;
-        let out_y = (1.0 / (1.0 + (-state.potentials[out_start + 1]).exp())) * 2.0 - 1.0;
-        let neuromodulator = 1.0 / (1.0 + (-state.potentials[out_start + 2]).exp());
-
-        intention.target_velocity =
-            common::Vec2::new(out_x * genome.max_speed, out_y * genome.max_speed);
-
-        // Hebbian Update
-        if neuromodulator > 0.1 {
-            let learning_rate = 0.01 * neuromodulator;
-            for i in INPUT_SIZE..TOTAL_NEURONS {
-                let output_i = (1.0 / (1.0 + (-state.potentials[i]).exp())) - 0.5;
-                for j in 0..TOTAL_NEURONS {
-                    let output_j = (1.0 / (1.0 + (-state.potentials[j]).exp())) - 0.5;
-                    let idx = j * TOTAL_NEURONS + i;
-                    let delta_w = learning_rate * output_i * output_j;
-                    learned_weights.data[idx] = (learned_weights.data[idx] + delta_w)
-                        .clamp(-genome.max_weight, genome.max_weight);
-                }
-            }
-        }
+    #[test]
+    fn activation_fn_is_copy() {
+        let a = ActivationFn::Sigmoid;
+        let _a2 = a;
     }
 }
