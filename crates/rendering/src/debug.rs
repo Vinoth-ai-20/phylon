@@ -10,11 +10,13 @@ pub struct DebugInstance {
     pub color: [f32; 4],
     /// Radius
     pub radius: f32,
+    /// Segment type for SDF clamping
+    pub segment_type: u32,
 }
 
 impl DebugInstance {
-    const ATTRIBS: [wgpu::VertexAttribute; 3] =
-        wgpu::vertex_attr_array![1 => Float32x2, 2 => Float32x4, 3 => Float32];
+    const ATTRIBS: [wgpu::VertexAttribute; 4] =
+        wgpu::vertex_attr_array![1 => Float32x2, 2 => Float32x4, 3 => Float32, 4 => Uint32];
 
     fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -157,7 +159,7 @@ impl DebugRenderer {
                     view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: wgpu::StoreOp::Store,
                     },
                 })],

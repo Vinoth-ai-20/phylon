@@ -8,3 +8,5 @@ description = "Neural substrate: NEAT topology, CTRNN, Hebbian plasticity, neuro
 common    = { workspace = true }
 serde     = { workspace = true }
 thiserror = { workspace = true }
+bytemuck  = { workspace = true }
+bevy_ecs  = { workspace = true }

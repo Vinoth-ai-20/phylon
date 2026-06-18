@@ -111,8 +111,8 @@ pub fn reproduction_system(
 
             // Distance check (collision radius approx 50.0)
             if p1.distance(*p2) < 50.0 {
-                // Compatibility check: exact segments match
-                if g1.segments == g2.segments {
+                // Compatibility check: roughly same node count
+                if g1.nodes.len() == g2.nodes.len() {
                     if current_population + pending_births >= config.max_organisms {
                         break;
                     }

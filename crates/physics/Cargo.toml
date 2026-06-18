@@ -11,3 +11,4 @@ spatial   = { workspace = true }
 thiserror = { workspace = true }
 bevy_ecs  = { workspace = true }
 glam       = { workspace = true }
+serde      = { workspace = true }

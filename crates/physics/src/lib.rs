@@ -50,18 +50,34 @@ pub struct ParticleNode {
     pub force: Vec2,
     /// Mass of this node in simulation mass units.
     pub mass: f32,
+    /// Segment type (0=Head, 1=Torso, 2=Muscle, 3=Tail, 4=Fin)
+    pub segment_type: u32,
 }
 
 impl ParticleNode {
-    /// Creates a new particle node at `position` with `mass` and zero velocity.
-    pub fn new(position: Vec2, mass: f32) -> Self {
+    /// Creates a new node at the given position.
+    pub fn new(position: Vec2, mass: f32, segment_type: u32) -> Self {
         Self {
             position,
             velocity: Vec2::ZERO,
             force: Vec2::ZERO,
             mass,
+            segment_type,
         }
     }
+}
+
+/// The physical behavior of a constraint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ConstraintType {
+    /// Elastic muscle: actuates and acts like a damped spring.
+    Elastic,
+    /// Rigid bone: position-based dynamics enforce exact distance.
+    Rigid,
+    /// Passive tissue: acts as a standard soft spring.
+    Passive,
+    /// Rotational hinge/motor: dynamically alters target angle or flaps.
+    Rotational,
 }
 
 /// A spring connecting two nodes.
@@ -71,6 +87,8 @@ pub struct Spring {
     pub node_a: bevy_ecs::entity::Entity,
     /// The second node entity.
     pub node_b: bevy_ecs::entity::Entity,
+    /// The type of constraint (Muscle, Bone, Fat).
+    pub constraint_type: ConstraintType,
     /// Current rest length of the spring (modified by muscle actuation).
     pub rest_length: f32,
     /// Base rest length (the original genome-encoded length).
@@ -85,6 +103,8 @@ pub struct Spring {
     pub actuation_phase: f32,
     /// Ratio of extension beyond rest_length before the spring breaks (e.g. 2.0 = breaks at 2x rest_length).
     pub breaking_strain: f32,
+    /// Indicates if this segment is a lateral fin (1) or not (0), used for anisotropic drag.
+    pub is_fin: u32,
 }
 
 /// Resource holding the fixed timestep physics configuration.
@@ -174,10 +194,11 @@ mod tests {
 
     #[test]
     fn particle_node_initial_state() {
-        let node = ParticleNode::new(Vec2::new(1.0, 2.0), 3.0);
+        let node = ParticleNode::new(Vec2::new(1.0, 2.0), 3.0, 1);
         assert_eq!(node.position, Vec2::new(1.0, 2.0));
         assert_eq!(node.velocity, Vec2::ZERO);
         assert_eq!(node.force, Vec2::ZERO);
         assert_eq!(node.mass, 3.0);
+        assert_eq!(node.segment_type, 1);
     }
 }

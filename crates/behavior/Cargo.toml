@@ -8,3 +8,7 @@ description = "Movement, action selection, locomotion, and motor output systems.
 common    = { workspace = true }
 world     = { workspace = true }
 thiserror = { workspace = true }
+bevy_ecs  = { workspace = true }
+sensing   = { path = "../sensing" }
+brain     = { path = "../brain" }
+physics   = { path = "../physics" }

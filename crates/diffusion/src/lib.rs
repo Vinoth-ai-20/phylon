@@ -51,6 +51,25 @@ impl Default for CpuFieldState {
     }
 }
 
+impl CpuFieldState {
+    /// Samples the field at a given world position.
+    pub fn sample(&self, pos: Vec2) -> f32 {
+        let gx = (pos.x / 10.0) + (self.width as f32 / 2.0);
+        let gy = (pos.y / 10.0) + (self.height as f32 / 2.0);
+
+        let ix = gx.floor() as i32;
+        let iy = gy.floor() as i32;
+
+        if ix >= 0 && ix < self.width as i32 && iy >= 0 && iy < self.height as i32 {
+            let idx = (iy * self.width as i32 + ix) as usize;
+            if idx < self.data.len() {
+                return self.data[idx];
+            }
+        }
+        0.0
+    }
+}
+
 /// A spatial emitter that adds a quantity to the field per tick.
 #[derive(Component, Clone, Debug)]
 pub struct Emitter {

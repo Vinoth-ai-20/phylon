@@ -47,13 +47,41 @@ pub enum SegmentType {
     Muscle,
     /// Loose rear segment (low stiffness).
     Tail,
+    /// Lateral proto-limb or fin for branched swimmers.
+    Fin,
 }
 
-/// The genome of an organism.
+/// A node in the Compositional Pattern Producing Network (CPPN).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CppnNode {
+    /// Activation function for this node.
+    pub activation: brain::ActivationFn,
+    /// Bias weight.
+    pub bias: f32,
+    /// Layer index (0 for inputs, 1 for hidden, 2 for outputs, etc) to ensure feedforward topological sort.
+    pub layer: usize,
+}
+
+/// A directed connection (synapse) in the CPPN.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CppnConnection {
+    /// Source node index.
+    pub source: usize,
+    /// Target node index.
+    pub target: usize,
+    /// Connection weight.
+    pub weight: f32,
+    /// Whether this connection is active.
+    pub enabled: bool,
+    /// Innovation number (for NEAT crossover).
+    pub innovation: usize,
+}
+
+/// The genome of an organism, represented as a CPPN.
 ///
-/// Holds a sequence of morphological segments that dictate the structural
-/// composition of the organism during the procedural growth phase.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The CPPN is evaluated over spatial coordinates during procedural growth
+/// to dictate morphology (Segment types, Symmetries) and wire synaptic weights.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Genome {
     /// Unique identifier for this genome sequence.
     pub id: GenomeId,
@@ -61,85 +89,99 @@ pub struct Genome {
     pub origin: EntityId,
     /// Ploidy level (haploid or diploid).
     pub ploidy: Ploidy,
-    /// Morphological sequence of segments.
-    pub segments: Vec<SegmentType>,
+    /// CPPN Nodes.
+    pub nodes: Vec<CppnNode>,
+    /// CPPN Connections.
+    pub connections: Vec<CppnConnection>,
 }
 
 impl Genome {
-    /// Creates a new genome with the given segment sequence.
-    pub fn new(id: GenomeId, origin: EntityId, segments: Vec<SegmentType>) -> Self {
+    /// Creates a minimal genome (e.g. just inputs wired to outputs).
+    pub fn new_minimal(id: GenomeId, origin: EntityId) -> Self {
         Self {
             id,
             origin,
             ploidy: Ploidy::Haploid,
-            segments,
+            nodes: Vec::new(),
+            connections: Vec::new(),
         }
     }
 
-    /// Performs a uniform crossover with another genome.
-    pub fn crossover<R: rand::Rng>(&self, other: &Genome, new_id: GenomeId, rng: &mut R) -> Self {
-        let max_len = self.segments.len().max(other.segments.len());
-        let mut child_segments = Vec::with_capacity(max_len);
-
-        for i in 0..max_len {
-            let has_self = i < self.segments.len();
-            let has_other = i < other.segments.len();
-
-            let segment = if has_self && has_other {
-                if rng.gen_bool(0.5) {
-                    self.segments[i]
-                } else {
-                    other.segments[i]
-                }
-            } else if has_self {
-                self.segments[i]
-            } else {
-                other.segments[i]
-            };
-
-            child_segments.push(segment);
+    /// Evaluates the CPPN for a given set of inputs.
+    pub fn evaluate(&self, inputs: &[f32]) -> Vec<f32> {
+        // A simple feedforward evaluation. We assume nodes are sorted by layer!
+        if self.nodes.is_empty() {
+            return Vec::new();
         }
 
+        let mut values = vec![0.0; self.nodes.len()];
+
+        // Feed inputs
+        for (i, &val) in inputs.iter().enumerate() {
+            if i < values.len() {
+                values[i] = val;
+            }
+        }
+
+        // We assume nodes are topologically sorted by layer index.
+        for target_idx in 0..self.nodes.len() {
+            let mut sum = self.nodes[target_idx].bias;
+            for conn in &self.connections {
+                if conn.enabled && conn.target == target_idx {
+                    sum += values[conn.source] * conn.weight;
+                }
+            }
+
+            // Apply activation
+            values[target_idx] = match self.nodes[target_idx].activation {
+                brain::ActivationFn::Sigmoid => 1.0 / (1.0 + (-sum).exp()),
+                brain::ActivationFn::Tanh => sum.tanh(),
+                brain::ActivationFn::ReLU => sum.max(0.0),
+                brain::ActivationFn::LeakyReLU => {
+                    if sum > 0.0 {
+                        sum
+                    } else {
+                        0.01 * sum
+                    }
+                }
+                brain::ActivationFn::Sine => sum.sin(),
+                brain::ActivationFn::Gaussian => (-sum * sum).exp(),
+                brain::ActivationFn::Abs => sum.abs(),
+                brain::ActivationFn::Linear => sum,
+                brain::ActivationFn::Step => {
+                    if sum > 0.0 {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+            };
+        }
+
+        values
+    }
+
+    /// Performs a simple crossover with another genome.
+    pub fn crossover<R: rand::Rng>(&self, _other: &Genome, new_id: GenomeId, _rng: &mut R) -> Self {
+        // TODO(phase-5): Full NEAT crossover based on historical innovation numbers.
+        // For Phase 4, we just clone self (asexual drift).
         Self {
             id: new_id,
             origin: self.origin, // Caller must update
             ploidy: self.ploidy,
-            segments: child_segments,
+            nodes: self.nodes.clone(),
+            connections: self.connections.clone(),
         }
     }
 
     /// Mutates the genome in place.
     pub fn mutate<R: rand::Rng>(&mut self, mutation_rate: f32, rng: &mut R) {
-        if self.segments.is_empty() {
-            return;
-        }
-
-        let mut i = 0;
-        while i < self.segments.len() {
-            if rng.gen::<f32>() < mutation_rate {
-                let r = rng.gen::<f32>();
-                if r < 0.6 {
-                    // Modification
-                    let types = [
-                        SegmentType::Head,
-                        SegmentType::Torso,
-                        SegmentType::Muscle,
-                        SegmentType::Tail,
-                    ];
-                    self.segments[i] = types[rng.gen_range(0..4)];
-                    i += 1;
-                } else if r < 0.8 && self.segments.len() < 20 {
-                    // Duplication
-                    self.segments.insert(i + 1, self.segments[i]);
-                    i += 2;
-                } else if self.segments.len() > 1 {
-                    // Deletion
-                    self.segments.remove(i);
-                } else {
-                    i += 1;
+        // TODO(phase-5): Add/Remove nodes and connections, perturb weights.
+        if rng.gen::<f32>() < mutation_rate {
+            for conn in &mut self.connections {
+                if rng.gen::<f32>() < 0.1 {
+                    conn.weight += rng.gen_range(-0.5..0.5);
                 }
-            } else {
-                i += 1;
             }
         }
     }
@@ -150,14 +192,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_genome_has_correct_segments() {
-        let g = Genome::new(
-            GenomeId(1),
-            EntityId(0),
-            vec![SegmentType::Head, SegmentType::Tail],
-        );
-        assert_eq!(g.segments.len(), 2);
-        assert_eq!(g.segments[0], SegmentType::Head);
+    fn new_genome_is_empty() {
+        let g = Genome::new_minimal(GenomeId(1), EntityId(0));
+        assert_eq!(g.nodes.len(), 0);
+        assert_eq!(g.connections.len(), 0);
     }
 
     #[test]

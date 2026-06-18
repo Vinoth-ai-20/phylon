@@ -63,8 +63,8 @@ struct PhylonApp {
     /// Must be declared before `window` so it drops first!
     gpu: Option<GpuSurface>,
 
-    /// Compute pipeline for soft-body muscles.
-    muscle_compute: Option<gpu::muscle::MuscleComputePipeline>,
+    /// Compute pipeline for physics (forces, integration, PBD).
+    physics_compute: Option<gpu::physics_pipeline::PhysicsComputePipeline>,
 
     /// Compute pipeline for the diffusion field.
     diffusion_compute: Option<gpu::diffusion_pipeline::DiffusionComputePipeline>,
@@ -134,17 +134,7 @@ impl PhylonApp {
             .insert_resource(bevy_ecs::event::Events::<reproduction::BirthRequest>::default());
 
         // Spawn test soft body
-        let genome = genetics::Genome::new(
-            genetics::GenomeId(1),
-            common::EntityId(0),
-            vec![
-                genetics::SegmentType::Head,
-                genetics::SegmentType::Torso,
-                genetics::SegmentType::Muscle,
-                genetics::SegmentType::Muscle,
-                genetics::SegmentType::Tail,
-            ],
-        );
+        let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
         organisms::spawn_organism(&mut world.ecs, &genome, common::Vec2::new(0.0, 0.0));
 
         // Spawn a static food/nutrient emitter at the center
@@ -159,7 +149,7 @@ impl PhylonApp {
             scheduler,
             world,
             gpu: None,
-            muscle_compute: None,
+            physics_compute: None,
             diffusion_compute: None,
             debug_renderer: None,
             field_renderer: None,
@@ -231,7 +221,7 @@ impl PhylonApp {
 
         let debug_renderer = rendering::DebugRenderer::new(&device, surface_format);
         let field_renderer = rendering::FieldRenderer::new(&device, surface_format);
-        let muscle_compute = gpu::muscle::MuscleComputePipeline::new(&device);
+        let physics_compute = gpu::physics_pipeline::PhysicsComputePipeline::new(&device);
         let diffusion_compute =
             gpu::diffusion_pipeline::DiffusionComputePipeline::new(&device, 256, 256);
 
@@ -243,7 +233,7 @@ impl PhylonApp {
         });
         self.debug_renderer = Some(debug_renderer);
         self.field_renderer = Some(field_renderer);
-        self.muscle_compute = Some(muscle_compute);
+        self.physics_compute = Some(physics_compute);
         self.diffusion_compute = Some(diffusion_compute);
         self.window = Some(window);
 
@@ -267,7 +257,7 @@ impl PhylonApp {
         let Some(gpu) = self.gpu.as_ref() else {
             return Ok(());
         };
-        let Some(muscle_compute) = self.muscle_compute.as_ref() else {
+        let Some(physics_compute) = self.physics_compute.as_ref() else {
             return Ok(());
         };
         let Some(debug_renderer) = self.debug_renderer.as_ref() else {
@@ -277,54 +267,89 @@ impl PhylonApp {
         // Advance time
         self.total_sim_time += 0.016; // Fixed step for now
 
-        // 1. Gather springs
-        let mut query_springs = self
+        // 1. Run Biology Systems (Sensing, Brain, Behavior)
+        use bevy_ecs::system::RunSystemOnce;
+        self.world.ecs.run_system_once(organisms::growth_system);
+        self.world.ecs.run_system_once(sensing::sensing_system);
+        self.world.ecs.run_system_once(behavior::behavior_system);
+
+        // 2. Gather Nodes and build Entity -> Index map
+        let mut entity_to_index = std::collections::HashMap::new();
+        let mut gpu_nodes = Vec::new();
+        let mut node_entities = Vec::new();
+
+        let mut query_nodes = self
             .world
             .ecs
-            .query::<(bevy_ecs::entity::Entity, &physics::Spring)>();
+            .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
+        for (entity, node) in query_nodes.iter(&self.world.ecs) {
+            entity_to_index.insert(entity, gpu_nodes.len() as u32);
+            gpu_nodes.push(gpu::physics_pipeline::GpuParticleNode {
+                position: [node.position.x, node.position.y],
+                velocity: [node.velocity.x, node.velocity.y],
+                force: [node.force.x, node.force.y],
+                mass: node.mass,
+                _padding: 0,
+            });
+            node_entities.push(entity);
+        }
+
+        // 3. Gather Springs
+        let mut query_springs = self.world.ecs.query::<&physics::Spring>();
         let mut gpu_springs = Vec::new();
-        let mut spring_entities = Vec::new();
-        for (entity, spring) in query_springs.iter(&self.world.ecs) {
-            gpu_springs.push(gpu::muscle::GpuSpring {
-                node_a: spring.node_a.to_bits() as u32,
-                node_b: spring.node_b.to_bits() as u32,
+        for spring in query_springs.iter(&self.world.ecs) {
+            let Some(&idx_a) = entity_to_index.get(&spring.node_a) else {
+                continue;
+            };
+            let Some(&idx_b) = entity_to_index.get(&spring.node_b) else {
+                continue;
+            };
+
+            let constraint_type = match spring.constraint_type {
+                physics::ConstraintType::Elastic => 0,
+                physics::ConstraintType::Rigid => 1,
+                physics::ConstraintType::Passive => 2,
+                physics::ConstraintType::Rotational => 3,
+            };
+
+            gpu_springs.push(gpu::physics_pipeline::GpuPhysicsSpring {
+                node_a: idx_a,
+                node_b: idx_b,
+                constraint_type,
                 rest_length: spring.rest_length,
                 base_length: spring.base_length,
                 stiffness: spring.stiffness,
                 damping: spring.damping,
                 actuation_amplitude: spring.actuation_amplitude,
                 actuation_phase: spring.actuation_phase,
+                breaking_strain: spring.breaking_strain,
+                is_fin: spring.is_fin,
+                _padding_2: 0,
             });
-            spring_entities.push(entity);
         }
 
-        // 2. Compute and readback
-        let updated_springs = muscle_compute.compute_and_readback(
-            &gpu.device,
-            &gpu.queue,
-            &gpu_springs,
-            self.total_sim_time,
-        );
+        // 4. Compute GPU Physics
+        let updated_nodes =
+            physics_compute.compute_step(&gpu.device, &gpu.queue, &gpu_nodes, &gpu_springs, 0.016);
 
-        // 3. Update ECS Springs
-        for (i, entity) in spring_entities.iter().enumerate() {
-            if let Some(mut spring) = self.world.ecs.get_mut::<physics::Spring>(*entity) {
-                spring.rest_length = updated_springs[i].rest_length;
+        // 5. Update ECS Nodes
+        for (i, entity) in node_entities.iter().enumerate() {
+            if let Some(mut node) = self.world.ecs.get_mut::<physics::ParticleNode>(*entity) {
+                node.position.x = updated_nodes[i].position[0];
+                node.position.y = updated_nodes[i].position[1];
+                node.velocity.x = updated_nodes[i].velocity[0];
+                node.velocity.y = updated_nodes[i].velocity[1];
+                // Clear forces for next tick
+                node.force = common::Vec2::new(0.0, 0.0);
             }
         }
 
-        // 4. Run Physics and Biology Systems
-        use bevy_ecs::system::RunSystemOnce;
-        self.world.ecs.run_system_once(physics::spring_force_system);
-        self.world
-            .ecs
-            .run_system_once(physics::physics_integration_system);
+        // 6. Run remaining biological systems
         self.world.ecs.run_system_once(ecology::food_spawner_system);
         self.world.ecs.run_system_once(ecology::foraging_system);
         self.world
             .ecs
             .run_system_once(metabolism::metabolism_system);
-        self.world.ecs.run_system_once(organisms::growth_system);
         self.world
             .ecs
             .run_system_once(reproduction::reproduction_system);
@@ -402,6 +427,7 @@ impl PhylonApp {
                 position: [node.position.x, node.position.y],
                 color: [0.2, 0.8, 0.4, 1.0], // Green
                 radius: 4.0,                 // Fixed radius for nodes
+                segment_type: node.segment_type,
             });
         }
 
@@ -412,6 +438,7 @@ impl PhylonApp {
                 position: [food.position.x, food.position.y],
                 color: [1.0, 0.8, 0.0, 1.0], // Gold/Yellow
                 radius: 2.5,                 // Smaller radius for food
+                segment_type: 0,             // arbitrary for food
             });
         }
 

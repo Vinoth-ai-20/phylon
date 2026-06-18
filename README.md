@@ -17,7 +17,7 @@ The simulation state is strictly partitioned between a CPU-authoritative logic l
 The engine is engineered to maintain a strict 60 Hz tick rate under the following load parameters:
 
 | Metric | Target |
-|--------|--------|
+| -------- | -------- |
 | Active Organisms | 100,000 |
 | Spatial Chunk Resolution | 256x256 units |
 | Max Active Chunks | 512 |
@@ -46,7 +46,7 @@ cargo run --release --bin phylon
 
 ## Current Status
 
-Phase 3.5 is complete. The workspace features a decentralized, GPU-accelerated ecosystem. The simulation core uses `bevy_ecs` and a fixed-timestep `hecs` inspired model for topological soft-body physics. In recent phases (1.5, 2.5, 3.5), we implemented procedural organism growth (topological plasticity), a double-buffered wgpu staging ring for closed-loop chemical diffusion readbacks, and collision-based sexual reproduction with genetic drift. The application is now preparing for Phase 4 (Actuation, Cognition & Behavior) to integrate Continuous-Time Recurrent Neural Networks (CTRNNs).
+Phase 4.5 is complete. The workspace features a decentralized, GPU-accelerated ecosystem. The simulation core uses `bevy_ecs` and a fixed-timestep `hecs` inspired model for topological soft-body physics. In recent phases we implemented procedural organism growth (topological plasticity via CPPNs), a double-buffered wgpu staging ring for closed-loop chemical diffusion readbacks, and collision-based sexual reproduction with genetic drift. Most recently, Phase 4 introduced Continuous-Time Recurrent Neural Networks (CTRNNs) for brain evaluation and an advanced GPU compute shader for Position-Based Dynamics (PBD) physics. Phase 4.5 added heritable learned gaits. The application is now preparing for Phase 5 (UI & Analytics) to integrate an `egui` frontend.
 
 ## Documentation
 

@@ -114,6 +114,7 @@ name = "app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "behavior",
  "bevy_ecs",
  "common",
  "config",
@@ -129,6 +130,7 @@ dependencies = [
  "rendering",
  "reproduction",
  "scheduler",
+ "sensing",
  "tracing",
  "tracing-subscriber",
  "wgpu",
@@ -205,7 +207,11 @@ checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
 name = "behavior"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
+ "brain",
  "common",
+ "physics",
+ "sensing",
  "thiserror 2.0.18",
  "world",
 ]
@@ -393,6 +399,8 @@ dependencies = [
 name = "brain"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
+ "bytemuck",
  "common",
  "serde",
  "thiserror 2.0.18",
@@ -1007,6 +1015,7 @@ dependencies = [
 name = "genetics"
 version = "0.1.0"
 dependencies = [
+ "brain",
  "common",
  "rand",
  "rand_chacha",
@@ -1866,13 +1875,16 @@ dependencies = [
 name = "organisms"
 version = "0.1.0"
 dependencies = [
+ "behavior",
  "bevy_ecs",
+ "brain",
  "common",
  "ecology",
  "genetics",
  "metabolism",
  "physics",
  "reproduction",
+ "sensing",
  "serde",
  "thiserror 2.0.18",
  "world",
@@ -1945,6 +1957,7 @@ dependencies = [
  "bevy_ecs",
  "common",
  "glam",
+ "serde",
  "spatial",
  "thiserror 2.0.18",
  "world",
@@ -2401,7 +2414,11 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 name = "sensing"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "common",
+ "diffusion",
+ "metabolism",
+ "physics",
  "spatial",
  "thiserror 2.0.18",
  "world",

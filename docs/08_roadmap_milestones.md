@@ -15,9 +15,9 @@
 | 2.5 | v0.25 | Closed-Loop Fields | ✅ Complete |
 | 3 | v0.3 | Hox Genetics & Passive Ecology | ✅ Complete |
 | 3.5 | v0.35 | Sexual Recombination & Drift | ✅ Complete |
-| 4 | v0.4 | Actuation, Cognition & Behavior | 🔧 In Progress |
-| 4.5 | v0.45 | Learned Gaits | 💭 Speculative |
-| 5 | v0.5 | UI & Analytics | 📋 Planned |
+| 4 | v0.4 | Actuation, Cognition & Behavior | ✅ Complete |
+| 4.5 | v0.45 | Learned Gaits | ✅ Complete |
+| 5 | v0.5 | UI & Analytics | 🔧 In Progress |
 | 6 | v0.6 | Persistence & Speciation Tools | 📋 Planned |
 | 7 | v0.7 | Procedural Visuals & Trails | 📋 Planned |
 | 8 | v0.8 | Application Shell | 📋 Planned |
@@ -54,9 +54,9 @@ Runtime-mutable graph topology — budding new nodes (growth) and severing edges
 Double-buffered staging-belt readback so the CPU can sample gradients without stalling the GPU. Adds diurnal/seasonal modulation of diffusion constants.
 **Crates**: `diffusion`, `gpu`
 
-## Phase 3 — Hox Genetics & Passive Ecology (v0.3) 📋
+## Phase 3 — CPPN/HyperNEAT Morphology & Passive Ecology (v0.3) ✅
 
-Procedural growth via Hox sequence (Zygote → Head/Torso/Muscle/Tail) with mechanical differentiation. Passive collision-eating. Asexual cloning only. Hard population caps to prevent OOM.
+Procedural growth via CPPN dictating spatial morphology, symmetry, and segment types. The Genome encodes a CPPN which maps spatial coordinates to node and synapse weights. Passive collision-eating. Asexual cloning only. Hard population caps to prevent OOM.
 **Crates**: `organisms`, `genetics`, `reproduction`, `metabolism`, `ecology`
 
 ### Phase 3.5 — Sexual Recombination & Drift (v0.35) 💭
@@ -64,17 +64,17 @@ Procedural growth via Hox sequence (Zygote → Head/Torso/Muscle/Tail) with mech
 Crossover between parent Hox sequences plus segment duplication/deletion events. Spatially isolated populations drift genetically — visible proto-speciation before Phase 6's formal clustering exists.
 **Crates**: `genetics`, `reproduction`, `ecology`
 
-## Phase 4 — Actuation, Cognition & Behavior (v0.4) 📋
+## Phase 4 — Actuation, Cognition & Behavior (v0.4) ✅
 
-Raycasting `sensing` with delayed async GPU readback. `brain` forward passes via `burn`. Compute-shader muscle actuation (sine-wave rest-length modulation). Transition from passive eating to active foraging.
-**Crates**: `sensing`, `brain`, `behavior`, `actuation`, `evolution`
+The compiled CTRNN brain from the CPPN drives muscle actuation. Updated physics constraint types (`Elastic`, `Rigid`, `Passive`, `Rotational` hinge/motors) and long-range Central Nervous System (CNS) routing for vertebrate morphologies. Support for complex branched morphologies (`Branching` proto-limbs/fins from CPPN) and anisotropic hydrodynamic drag for swimming. Raycasting `sensing` with delayed async GPU readback. Transition from passive eating to active foraging.
+**Crates**: `sensing`, `brain`, `behavior`, `physics`, `actuation`, `evolution`
 
-### Phase 4.5 — Learned Gaits (v0.45) 💭
+### Phase 4.5 — Learned Gaits (v0.45) ✅
 
 Brain output drives phase/amplitude/frequency of muscle actuation directly — gait becomes a heritable trait instead of a hardcoded sine wave.
 **Crates**: `brain`, `actuation`, `evolution`
 
-## Phase 5 — UI & Analytics (v0.5) 📋
+## Phase 5 — UI & Analytics (v0.5) 🔧
 
 Full `egui` integration: decentralized entity-graph inspection, population analytics, Hox sequence viewer, compute-shader profiling.
 **Crates**: `ui`, `analytics`
@@ -86,7 +86,7 @@ Serialize/deserialize via `bincode`/`ron`. SQLite run-tracking. Functional repla
 
 ## Phase 7 — Procedural Visuals & Trails (v0.7) 📋
 
-Instanced quads upgraded to SDF-based shaders parameterized by Hox genetics + segment type. MRT handles decay and pheromone trail rendering.
+Dual-Mode Rendering pipeline (Structural vs. SDF/Metaball Skin). Mode A renders explicit physics primitives, while Mode B uses a 2D distance field in the fragment shader to render fluid-like outer skin (future-proofing for 3D raymarching). Clamped SDF radii strictly to SegmentType to prevent runaway scaling, with sharpened isosurface thresholds to eliminate blurry halos. Explicit RTT framebuffer clears per-frame prevent temporal accumulation. MRT handles decay and pheromone trails.
 **Crates**: `rendering`, `shaders`
 
 ## Phase 8 — Application Shell (v0.8) 📋

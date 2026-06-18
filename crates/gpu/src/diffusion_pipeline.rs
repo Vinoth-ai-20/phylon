@@ -280,7 +280,6 @@ impl DiffusionComputePipeline {
     ) {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-
         // Create buffer for emitters and update bind groups if needed
         // For simplicity, we create a new buffer every frame if there are emitters
         // In a real engine, we'd reuse this buffer

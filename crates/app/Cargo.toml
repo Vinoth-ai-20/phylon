@@ -15,7 +15,9 @@ config    = { workspace = true }
 events    = { workspace = true }
 scheduler = { workspace = true }
 world     = { workspace = true }
-physics   = { workspace = true }
+physics    = { workspace = true }
+sensing    = { path = "../sensing" }
+behavior   = { path = "../behavior" }
 rendering = { workspace = true }
 gpu       = { workspace = true }
 genetics  = { workspace = true }

@@ -15,3 +15,6 @@ metabolism   = { workspace = true }
 ecology      = { workspace = true }
 reproduction = { workspace = true }
 physics   = { workspace = true }
+brain     = { path = "../brain" }
+behavior  = { path = "../behavior" }
+sensing   = { path = "../sensing" }
