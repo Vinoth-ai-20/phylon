@@ -35,25 +35,15 @@ pub enum RenderError {
 
 impl common::PhylonError for RenderError {}
 
-/// Placeholder for the renderer.
-///
-/// TODO(phase-1): Implement debug renderer with wgpu clear + entity dot pass.
-/// TODO(phase-7): Implement full wgpu render pipeline.
-pub struct Renderer;
+/// Debug rendering module.
+pub mod debug;
+pub use debug::{DebugInstance, DebugRenderer};
 
-impl Renderer {
-    /// Creates a placeholder renderer.
-    pub fn placeholder() -> Self {
-        Self
-    }
-}
+/// Field overlay rendering module.
+pub mod field;
+pub use field::FieldRenderer;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn renderer_placeholder_creates() {
-        let _r = Renderer::placeholder();
-    }
+    // Tests for DebugRenderer will go here
 }

@@ -8,3 +8,4 @@ description = "wgpu device and queue management, compute pipeline registry, and 
 common    = { workspace = true }
 wgpu      = { workspace = true }
 thiserror = { workspace = true }
+bytemuck  = { workspace = true }

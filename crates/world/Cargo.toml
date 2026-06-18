@@ -10,3 +10,4 @@ events    = { workspace = true }
 spatial   = { workspace = true }
 serde     = { workspace = true }
 thiserror = { workspace = true }
+bevy_ecs  = { workspace = true }

@@ -10,3 +10,5 @@ world     = { workspace = true }
 genetics  = { workspace = true }
 serde     = { workspace = true }
 thiserror = { workspace = true }
+bevy_ecs  = { workspace = true }
+physics   = { workspace = true }

@@ -9,3 +9,4 @@ common    = { workspace = true }
 world     = { workspace = true }
 spatial   = { workspace = true }
 thiserror = { workspace = true }
+bevy_ecs  = { workspace = true }

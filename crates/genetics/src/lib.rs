@@ -36,12 +36,23 @@ pub enum Ploidy {
     Diploid,
 }
 
-/// The raw genome of an organism.
+/// Represents a distinct morphological segment in the procedural soft-body growth phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SegmentType {
+    /// Front sensory segment.
+    Head,
+    /// Structural central segment (high stiffness).
+    Torso,
+    /// Actuated segment that dynamically changes rest length (GPU computed).
+    Muscle,
+    /// Loose rear segment (low stiffness).
+    Tail,
+}
+
+/// The genome of an organism.
 ///
-/// Stored as a byte vector in base-4 encoding (2 bits per base).
-/// Each locus corresponds to a parameter defined by the HOX mapping table.
-///
-/// TODO(phase-5): Implement full genome encoding, HOX map, and mutation operators.
+/// Holds a sequence of morphological segments that dictate the structural
+/// composition of the organism during the procedural growth phase.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Genome {
     /// Unique identifier for this genome sequence.
@@ -50,20 +61,18 @@ pub struct Genome {
     pub origin: EntityId,
     /// Ploidy level (haploid or diploid).
     pub ploidy: Ploidy,
-    /// Raw genome data in base-4 encoding (2 bits per locus).
-    pub data: Vec<u8>,
+    /// Morphological sequence of segments.
+    pub segments: Vec<SegmentType>,
 }
 
 impl Genome {
-    /// Creates a minimal placeholder genome with all-zero data.
-    ///
-    /// TODO(phase-5): Replace with proper genome seeding from RNG.
-    pub fn placeholder(id: GenomeId, origin: EntityId, length_bytes: usize) -> Self {
+    /// Creates a new genome with the given segment sequence.
+    pub fn new(id: GenomeId, origin: EntityId, segments: Vec<SegmentType>) -> Self {
         Self {
             id,
             origin,
             ploidy: Ploidy::Haploid,
-            data: vec![0u8; length_bytes],
+            segments,
         }
     }
 }
@@ -73,9 +82,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn placeholder_genome_has_correct_length() {
-        let g = Genome::placeholder(GenomeId(1), EntityId(0), 64);
-        assert_eq!(g.data.len(), 64);
+    fn new_genome_has_correct_segments() {
+        let g = Genome::new(
+            GenomeId(1),
+            EntityId(0),
+            vec![SegmentType::Head, SegmentType::Tail],
+        );
+        assert_eq!(g.segments.len(), 2);
+        assert_eq!(g.segments[0], SegmentType::Head);
     }
 
     #[test]

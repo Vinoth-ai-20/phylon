@@ -38,20 +38,27 @@ pub enum WorldError {
 
 impl common::PhylonError for WorldError {}
 
-/// Placeholder for the world state.
-///
-/// TODO(phase-1): Replace with full ECS-backed world state, entity registry,
-/// and chunk manager.
+/// The core ECS-backed world state.
 pub struct World {
+    /// The underlying bevy_ecs world.
+    pub ecs: bevy_ecs::world::World,
     /// The total number of entities ever created (used for ID generation).
-    #[allow(dead_code)]
-    entity_counter: u64,
+    pub entity_counter: u64,
 }
 
 impl World {
     /// Creates a new, empty world.
     pub fn new() -> Self {
-        Self { entity_counter: 0 }
+        Self {
+            ecs: bevy_ecs::world::World::new(),
+            entity_counter: 0,
+        }
+    }
+
+    /// Spawns an empty bevy_ecs entity and returns its Bevy Entity ID.
+    pub fn spawn_empty(&mut self) -> bevy_ecs::entity::Entity {
+        self.entity_counter += 1;
+        self.ecs.spawn_empty().id()
     }
 }
 
@@ -69,5 +76,6 @@ mod tests {
     fn world_creates_empty() {
         let world = World::new();
         assert_eq!(world.entity_counter, 0);
+        assert_eq!(world.ecs.entities().len(), 0);
     }
 }

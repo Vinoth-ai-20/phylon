@@ -15,6 +15,12 @@
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 
+/// Muscle compute pipeline module.
+pub mod muscle;
+
+/// Diffusion compute pipeline module.
+pub mod diffusion_pipeline;
+
 /// Errors from GPU resource management.
 #[derive(Debug, thiserror::Error)]
 pub enum GpuError {

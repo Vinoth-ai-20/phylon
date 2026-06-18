@@ -10,3 +10,5 @@ world     = { workspace = true }
 gpu       = { workspace = true }
 wgpu      = { workspace = true }
 thiserror = { workspace = true }
+bytemuck  = { workspace = true }
+glam       = { workspace = true }

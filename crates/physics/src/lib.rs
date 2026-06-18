@@ -26,6 +26,7 @@
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 
+use bevy_ecs::prelude::{Component, Query, Res};
 use common::Vec2;
 
 /// Errors produced by the physics subsystem.
@@ -39,9 +40,7 @@ pub enum PhysicsError {
 impl common::PhylonError for PhysicsError {}
 
 /// A single point mass in the particle-spring network.
-///
-/// TODO(phase-2): Add full constraint solve and integrator.
-#[allow(dead_code)]
+#[derive(Component, Debug, Clone, Default)]
 pub struct ParticleNode {
     /// Current position in simulation space.
     pub position: Vec2,
@@ -61,6 +60,94 @@ impl ParticleNode {
             velocity: Vec2::ZERO,
             force: Vec2::ZERO,
             mass,
+        }
+    }
+}
+
+/// A spring connecting two nodes.
+#[derive(Component, Debug, Clone)]
+pub struct Spring {
+    /// The first node entity.
+    pub node_a: bevy_ecs::entity::Entity,
+    /// The second node entity.
+    pub node_b: bevy_ecs::entity::Entity,
+    /// Current rest length of the spring (modified by muscle actuation).
+    pub rest_length: f32,
+    /// Base rest length (the original genome-encoded length).
+    pub base_length: f32,
+    /// Spring stiffness (k).
+    pub stiffness: f32,
+    /// Damping coefficient to prevent infinite oscillation.
+    pub damping: f32,
+    /// Amplitude of actuation (0.0 if not a muscle).
+    pub actuation_amplitude: f32,
+    /// Phase offset for actuation.
+    pub actuation_phase: f32,
+}
+
+/// Resource holding the fixed timestep physics configuration.
+#[derive(bevy_ecs::prelude::Resource, Debug, Clone)]
+pub struct PhysicsConfig {
+    /// Time step delta t for integration.
+    pub dt: f32,
+}
+
+/// Computes the spring forces between nodes and adds them to `ParticleNode.force`.
+pub fn spring_force_system(
+    mut queries: bevy_ecs::system::ParamSet<(Query<&Spring>, Query<&mut ParticleNode>)>,
+) {
+    // Collect all spring forces to apply
+    // Because we can't simultaneously query the same component mutably from different queries easily,
+    // we compute all forces first, then apply them.
+    let mut forces_to_apply = Vec::new();
+
+    let mut spring_clones = Vec::new();
+    for spring in queries.p0().iter() {
+        spring_clones.push(spring.clone());
+    }
+
+    let nodes = queries.p1();
+    for spring in spring_clones {
+        if let (Ok(node_a), Ok(node_b)) = (nodes.get(spring.node_a), nodes.get(spring.node_b)) {
+            let diff = node_b.position - node_a.position;
+            let dist = diff.length();
+            if dist > 0.0001 {
+                let dir = diff / dist;
+                let rel_vel = node_b.velocity - node_a.velocity;
+                let spring_force = (dist - spring.rest_length) * spring.stiffness;
+                let damping_force = rel_vel.dot(dir) * spring.damping;
+
+                let total_force = dir * (spring_force + damping_force);
+                forces_to_apply.push((spring.node_a, total_force));
+                forces_to_apply.push((spring.node_b, -total_force));
+            }
+        }
+    }
+
+    // Apply forces
+    let mut nodes = queries.p1();
+    for (entity, force) in forces_to_apply {
+        if let Ok(mut node) = nodes.get_mut(entity) {
+            node.force += force;
+        }
+    }
+}
+
+/// Integrates positions and velocities using Symplectic Euler.
+pub fn physics_integration_system(config: Res<PhysicsConfig>, mut query: Query<&mut ParticleNode>) {
+    let dt = config.dt;
+    for mut node in query.iter_mut() {
+        if node.mass > 0.0 {
+            let acceleration = node.force / node.mass;
+            // Symplectic Euler: update velocity first, then position.
+            node.velocity += acceleration * dt;
+            let dv = node.velocity * dt;
+            node.position += dv;
+            // Reset forces for next tick
+            node.force = Vec2::ZERO;
+
+            // Add a slight global damping to prevent chaotic explosion
+            node.velocity *= 0.99;
         }
     }
 }

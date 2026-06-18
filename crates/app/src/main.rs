@@ -53,29 +53,83 @@ struct PhylonApp {
     sim_config: PhylonConfig,
 
     /// The scheduler that drives all simulation ticks.
+    #[allow(dead_code)]
     scheduler: SimulationScheduler,
+
+    /// The core ECS world.
+    world: world::World,
 
     /// GPU surface resources (created after window is ready).
     /// Must be declared before `window` so it drops first!
     gpu: Option<GpuSurface>,
 
+    /// Compute pipeline for soft-body muscles.
+    muscle_compute: Option<gpu::muscle::MuscleComputePipeline>,
+
+    /// Compute pipeline for the diffusion field.
+    diffusion_compute: Option<gpu::diffusion_pipeline::DiffusionComputePipeline>,
+
+    /// Debug renderer for entities.
+    debug_renderer: Option<rendering::DebugRenderer>,
+
+    /// Renderer for the diffusion field.
+    field_renderer: Option<rendering::FieldRenderer>,
+
     /// The main window (created on `Resumed`).
     window: Option<Arc<Window>>,
 
     /// Maximum number of simulation ticks fired per frame.
+    #[allow(dead_code)]
     max_ticks_per_frame: u32,
+
+    /// Total simulation time in seconds.
+    total_sim_time: f32,
 }
 
 impl PhylonApp {
     /// Creates a new application state from a loaded config.
     fn new(sim_config: PhylonConfig) -> Self {
         let scheduler = SimulationScheduler::new(&sim_config);
+
+        let mut world = world::World::new();
+
+        // Add resources
+        world.ecs.insert_resource(physics::PhysicsConfig { dt: 0.016 }); // 60hz tick
+        world.ecs.insert_resource(diffusion::DiffusionConfig::default());
+
+        // Spawn test soft body
+        let genome = genetics::Genome::new(
+            genetics::GenomeId(1),
+            common::EntityId(0),
+            vec![
+                genetics::SegmentType::Head,
+                genetics::SegmentType::Torso,
+                genetics::SegmentType::Muscle,
+                genetics::SegmentType::Muscle,
+                genetics::SegmentType::Tail,
+            ],
+        );
+        organisms::spawn_organism(&mut world.ecs, &genome, common::Vec2::new(0.0, 0.0));
+
+        // Spawn a static food/nutrient emitter at the center
+        world.ecs.spawn(diffusion::Emitter {
+            position: common::Vec2::new(0.0, 0.0), // World center
+            value: 50.0,
+            radius: 20.0, // World radius
+        });
+
         Self {
             sim_config,
             scheduler,
+            world,
             gpu: None,
+            muscle_compute: None,
+            diffusion_compute: None,
+            debug_renderer: None,
+            field_renderer: None,
             window: None,
             max_ticks_per_frame: 4,
+            total_sim_time: 0.0,
         }
     }
 
@@ -105,7 +159,7 @@ impl PhylonApp {
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("PhylonDevice"),
-                required_features: wgpu::Features::empty(),
+                required_features: wgpu::Features::FLOAT32_FILTERABLE,
                 required_limits: wgpu::Limits::default(),
                 memory_hints: wgpu::MemoryHints::default(),
             },
@@ -139,12 +193,21 @@ impl PhylonApp {
         };
         surface.configure(&device, &surface_config);
 
+        let debug_renderer = rendering::DebugRenderer::new(&device, surface_format);
+        let field_renderer = rendering::FieldRenderer::new(&device, surface_format);
+        let muscle_compute = gpu::muscle::MuscleComputePipeline::new(&device);
+        let diffusion_compute = gpu::diffusion_pipeline::DiffusionComputePipeline::new(&device, 256, 256);
+
         self.gpu = Some(GpuSurface {
             surface,
             device,
             queue,
             config: surface_config,
         });
+        self.debug_renderer = Some(debug_renderer);
+        self.field_renderer = Some(field_renderer);
+        self.muscle_compute = Some(muscle_compute);
+        self.diffusion_compute = Some(diffusion_compute);
         self.window = Some(window);
 
         info!("GPU surface initialised ({surface_format:?}, {present_mode:?})");
@@ -164,27 +227,120 @@ impl PhylonApp {
 
     /// Advances the simulation and renders one frame.
     fn render(&mut self) -> Result<()> {
-        // Advance simulation ticks (accumulator-based fixed timestep).
-        if let Err(e) = self.scheduler.advance(self.max_ticks_per_frame) {
-            error!("Scheduler error: {e}");
-        }
-
         let Some(gpu) = self.gpu.as_ref() else {
             return Ok(());
         };
+        let Some(muscle_compute) = self.muscle_compute.as_ref() else {
+            return Ok(());
+        };
+        let Some(debug_renderer) = self.debug_renderer.as_ref() else {
+            return Ok(());
+        };
 
+        // Advance time
+        self.total_sim_time += 0.016; // Fixed step for now
+
+        // 1. Gather springs
+        let mut query_springs = self
+            .world
+            .ecs
+            .query::<(bevy_ecs::entity::Entity, &physics::Spring)>();
+        let mut gpu_springs = Vec::new();
+        let mut spring_entities = Vec::new();
+        for (entity, spring) in query_springs.iter(&self.world.ecs) {
+            gpu_springs.push(gpu::muscle::GpuSpring {
+                node_a: spring.node_a.to_bits() as u32,
+                node_b: spring.node_b.to_bits() as u32,
+                rest_length: spring.rest_length,
+                base_length: spring.base_length,
+                stiffness: spring.stiffness,
+                damping: spring.damping,
+                actuation_amplitude: spring.actuation_amplitude,
+                actuation_phase: spring.actuation_phase,
+            });
+            spring_entities.push(entity);
+        }
+
+        // 2. Compute and readback
+        let updated_springs = muscle_compute.compute_and_readback(
+            &gpu.device,
+            &gpu.queue,
+            &gpu_springs,
+            self.total_sim_time,
+        );
+
+        // 3. Update ECS Springs
+        for (i, entity) in spring_entities.iter().enumerate() {
+            if let Some(mut spring) = self.world.ecs.get_mut::<physics::Spring>(*entity) {
+                spring.rest_length = updated_springs[i].rest_length;
+            }
+        }
+
+        // 4. Run Physics Systems
+        use bevy_ecs::system::RunSystemOnce;
+        self.world.ecs.run_system_once(physics::spring_force_system);
+        self.world.ecs.run_system_once(physics::physics_integration_system);
+
+        let Some(diffusion_compute) = self.diffusion_compute.as_mut() else {
+            return Ok(());
+        };
+        let Some(field_renderer) = self.field_renderer.as_ref() else {
+            return Ok(());
+        };
+
+        // 5. Gather diffusion emitters and run compute
+        let diffusion_config = self.world.ecs.resource::<diffusion::DiffusionConfig>().clone();
+        let mut query_emitters = self.world.ecs.query::<&diffusion::Emitter>();
+        let mut gpu_emitters = Vec::new();
+        
+        let screen_w = gpu.config.width as f32;
+        let screen_h = gpu.config.height as f32;
+
+        for emitter in query_emitters.iter(&self.world.ecs) {
+            // Map world space to 256x256 grid space
+            let grid_x = (emitter.position.x / (screen_w * 0.5)) * 128.0 + 128.0;
+            let grid_y = (-emitter.position.y / (screen_h * 0.5)) * 128.0 + 128.0;
+            let grid_radius = (emitter.radius / (screen_w * 0.5)) * 128.0;
+
+            gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
+                grid_pos: [grid_x, grid_y],
+                value: emitter.value,
+                grid_radius,
+            });
+        }
+
+        diffusion_compute.step(
+            &gpu.device,
+            &gpu.queue,
+            gpu::diffusion_pipeline::DiffusionUniforms {
+                diffusion_rate: diffusion_config.diffusion_rate,
+                decay_rate: diffusion_config.decay_rate,
+                dt: 0.016, // fixed timestep
+                emitter_count: gpu_emitters.len() as u32,
+            },
+            &gpu_emitters,
+        );
+
+        // 6. Gather rendering instances
+        let mut query_nodes = self.world.ecs.query::<&physics::ParticleNode>();
+        let mut instances = Vec::new();
+        for node in query_nodes.iter(&self.world.ecs) {
+            instances.push(rendering::DebugInstance {
+                position: [node.position.x, node.position.y],
+                color: [0.2, 0.8, 0.4, 1.0], // Green
+                radius: 4.0,                 // Fixed radius for nodes
+            });
+        }
+
+        // Prepare render frame
         let output = match gpu.surface.get_current_texture() {
             Ok(tex) => tex,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 gpu.surface.configure(&gpu.device, &gpu.config);
                 return Ok(());
             }
-            Err(wgpu::SurfaceError::Timeout) => {
-                return Ok(());
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!("surface error: {e}"));
-            }
+            Err(wgpu::SurfaceError::Timeout) => return Ok(()),
+            Err(e) => return Err(anyhow::anyhow!("surface error: {e}")),
         };
 
         let view = output
@@ -197,31 +353,25 @@ impl PhylonApp {
                 label: Some("Frame"),
             });
 
-        // Phase 0: clear to a deep navy background — a visual marker that the
-        // window is alive and the GPU surface is functional.
-        {
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("ClearPass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.012,
-                            g: 0.024,
-                            b: 0.055,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-        }
+        // Render the continuous diffusion field as the background (clearing the screen)
+        field_renderer.render(
+            &gpu.device,
+            &mut encoder,
+            &view,
+            diffusion_compute.current_texture_view(),
+        );
 
         gpu.queue.submit(std::iter::once(encoder.finish()));
+
+        // Render debug quads over the field background
+        debug_renderer.render(
+            &gpu.device,
+            &gpu.queue,
+            &view,
+            &instances,
+            [gpu.config.width as f32, gpu.config.height as f32],
+        );
+
         output.present();
 
         Ok(())

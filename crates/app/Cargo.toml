@@ -14,6 +14,16 @@ common    = { workspace = true }
 config    = { workspace = true }
 events    = { workspace = true }
 scheduler = { workspace = true }
+world     = { workspace = true }
+physics   = { workspace = true }
+rendering = { workspace = true }
+gpu       = { workspace = true }
+genetics  = { workspace = true }
+organisms = { workspace = true }
+diffusion = { workspace = true }
+
+# ECS
+bevy_ecs  = { workspace = true }
 
 # Windowing & GPU
 winit = { workspace = true }

@@ -90,3 +90,110 @@ mod tests {
         assert_eq!(types.len(), 8);
     }
 }
+
+/// Spawns an organism as a clustered graph of `Node` and `Spring` entities
+/// based on its genome.
+pub fn spawn_organism(
+    world: &mut bevy_ecs::world::World,
+    genome: &genetics::Genome,
+    start_pos: Vec2,
+) {
+    use genetics::SegmentType;
+    use physics::{ParticleNode, Spring};
+
+    let mut current_pos = start_pos;
+    let mut prev_nodes: Vec<bevy_ecs::entity::Entity> = Vec::new();
+
+    let segment_length = 20.0;
+    let vertical_spread = 10.0;
+
+    for (i, segment) in genome.segments.iter().enumerate() {
+        let stiffness = match segment {
+            SegmentType::Head => 10.0,
+            SegmentType::Torso => 15.0, // High stiffness
+            SegmentType::Muscle => 8.0,
+            SegmentType::Tail => 2.0, // Low stiffness
+        };
+
+        let actuation_amplitude = match segment {
+            SegmentType::Muscle => 5.0,
+            _ => 0.0,
+        };
+
+        let actuation_phase = i as f32 * std::f32::consts::PI / 4.0;
+
+        // Spawn 2 nodes for this segment (top and bottom)
+        let n1_pos = current_pos + Vec2::new(0.0, vertical_spread);
+        let n2_pos = current_pos + Vec2::new(0.0, -vertical_spread);
+
+        let n1 = world.spawn(ParticleNode::new(n1_pos, 1.0)).id();
+        let n2 = world.spawn(ParticleNode::new(n2_pos, 1.0)).id();
+
+        // Connect the two nodes with a vertical spring
+        world.spawn(Spring {
+            node_a: n1,
+            node_b: n2,
+            rest_length: vertical_spread * 2.0,
+            base_length: vertical_spread * 2.0,
+            stiffness,
+            damping: 0.5,
+            actuation_amplitude: 0.0, // vertical spring doesn't actuate for now
+            actuation_phase: 0.0,
+        });
+
+        // Connect to previous segment nodes
+        if prev_nodes.len() == 2 {
+            let p1 = prev_nodes[0];
+            let p2 = prev_nodes[1];
+
+            // Horizontal springs
+            world.spawn(Spring {
+                node_a: p1,
+                node_b: n1,
+                rest_length: segment_length,
+                base_length: segment_length,
+                stiffness,
+                damping: 0.5,
+                actuation_amplitude,
+                actuation_phase,
+            });
+            world.spawn(Spring {
+                node_a: p2,
+                node_b: n2,
+                rest_length: segment_length,
+                base_length: segment_length,
+                stiffness,
+                damping: 0.5,
+                actuation_amplitude,
+                actuation_phase,
+            });
+
+            // Cross springs for structural stability
+            let cross_length =
+                (segment_length * segment_length + (vertical_spread * 2.0).powi(2)).sqrt();
+            world.spawn(Spring {
+                node_a: p1,
+                node_b: n2,
+                rest_length: cross_length,
+                base_length: cross_length,
+                stiffness,
+                damping: 0.5,
+                actuation_amplitude,
+                actuation_phase,
+            });
+            world.spawn(Spring {
+                node_a: p2,
+                node_b: n1,
+                rest_length: cross_length,
+                base_length: cross_length,
+                stiffness,
+                damping: 0.5,
+                actuation_amplitude,
+                actuation_phase,
+            });
+        }
+
+        prev_nodes = vec![n1, n2];
+        current_pos.x -= segment_length; // Grow backwards
+    }
+}
