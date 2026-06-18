@@ -83,6 +83,8 @@ pub struct Spring {
     pub actuation_amplitude: f32,
     /// Phase offset for actuation.
     pub actuation_phase: f32,
+    /// Ratio of extension beyond rest_length before the spring breaks (e.g. 2.0 = breaks at 2x rest_length).
+    pub breaking_strain: f32,
 }
 
 /// Resource holding the fixed timestep physics configuration.
@@ -93,24 +95,34 @@ pub struct PhysicsConfig {
 }
 
 /// Computes the spring forces between nodes and adds them to `ParticleNode.force`.
+#[allow(clippy::type_complexity)]
 pub fn spring_force_system(
-    mut queries: bevy_ecs::system::ParamSet<(Query<&Spring>, Query<&mut ParticleNode>)>,
+    mut commands: bevy_ecs::prelude::Commands,
+    mut queries: bevy_ecs::system::ParamSet<(
+        Query<(bevy_ecs::prelude::Entity, &Spring)>,
+        Query<&mut ParticleNode>,
+    )>,
 ) {
-    // Collect all spring forces to apply
-    // Because we can't simultaneously query the same component mutably from different queries easily,
-    // we compute all forces first, then apply them.
     let mut forces_to_apply = Vec::new();
+    let mut springs_to_break = Vec::new();
 
     let mut spring_clones = Vec::new();
-    for spring in queries.p0().iter() {
-        spring_clones.push(spring.clone());
+    for (entity, spring) in queries.p0().iter() {
+        spring_clones.push((entity, spring.clone()));
     }
 
     let nodes = queries.p1();
-    for spring in spring_clones {
+    for (entity, spring) in spring_clones {
         if let (Ok(node_a), Ok(node_b)) = (nodes.get(spring.node_a), nodes.get(spring.node_b)) {
             let diff = node_b.position - node_a.position;
             let dist = diff.length();
+
+            // Check breaking strain
+            if dist > spring.base_length * spring.breaking_strain {
+                springs_to_break.push(entity);
+                continue;
+            }
+
             if dist > 0.0001 {
                 let dir = diff / dist;
                 let rel_vel = node_b.velocity - node_a.velocity;
@@ -122,6 +134,10 @@ pub fn spring_force_system(
                 forces_to_apply.push((spring.node_b, -total_force));
             }
         }
+    }
+
+    for entity in springs_to_break {
+        commands.entity(entity).despawn();
     }
 
     // Apply forces

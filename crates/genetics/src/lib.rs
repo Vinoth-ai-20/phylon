@@ -75,6 +75,74 @@ impl Genome {
             segments,
         }
     }
+
+    /// Performs a uniform crossover with another genome.
+    pub fn crossover<R: rand::Rng>(&self, other: &Genome, new_id: GenomeId, rng: &mut R) -> Self {
+        let max_len = self.segments.len().max(other.segments.len());
+        let mut child_segments = Vec::with_capacity(max_len);
+
+        for i in 0..max_len {
+            let has_self = i < self.segments.len();
+            let has_other = i < other.segments.len();
+
+            let segment = if has_self && has_other {
+                if rng.gen_bool(0.5) {
+                    self.segments[i]
+                } else {
+                    other.segments[i]
+                }
+            } else if has_self {
+                self.segments[i]
+            } else {
+                other.segments[i]
+            };
+
+            child_segments.push(segment);
+        }
+
+        Self {
+            id: new_id,
+            origin: self.origin, // Caller must update
+            ploidy: self.ploidy,
+            segments: child_segments,
+        }
+    }
+
+    /// Mutates the genome in place.
+    pub fn mutate<R: rand::Rng>(&mut self, mutation_rate: f32, rng: &mut R) {
+        if self.segments.is_empty() {
+            return;
+        }
+
+        let mut i = 0;
+        while i < self.segments.len() {
+            if rng.gen::<f32>() < mutation_rate {
+                let r = rng.gen::<f32>();
+                if r < 0.6 {
+                    // Modification
+                    let types = [
+                        SegmentType::Head,
+                        SegmentType::Torso,
+                        SegmentType::Muscle,
+                        SegmentType::Tail,
+                    ];
+                    self.segments[i] = types[rng.gen_range(0..4)];
+                    i += 1;
+                } else if r < 0.8 && self.segments.len() < 20 {
+                    // Duplication
+                    self.segments.insert(i + 1, self.segments[i]);
+                    i += 2;
+                } else if self.segments.len() > 1 {
+                    // Deletion
+                    self.segments.remove(i);
+                } else {
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

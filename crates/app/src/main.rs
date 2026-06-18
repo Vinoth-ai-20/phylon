@@ -125,6 +125,9 @@ impl PhylonApp {
         world
             .ecs
             .insert_resource(diffusion::DiffusionConfig::default());
+        world
+            .ecs
+            .insert_resource(diffusion::CpuFieldState::default());
         world.ecs.insert_resource(ecology::EcologyConfig::default());
         world
             .ecs
@@ -321,6 +324,7 @@ impl PhylonApp {
         self.world
             .ecs
             .run_system_once(metabolism::metabolism_system);
+        self.world.ecs.run_system_once(organisms::growth_system);
         self.world
             .ecs
             .run_system_once(reproduction::reproduction_system);
@@ -341,11 +345,17 @@ impl PhylonApp {
         };
 
         // 5. Gather diffusion emitters and run compute
-        let diffusion_config = self
-            .world
-            .ecs
-            .resource::<diffusion::DiffusionConfig>()
-            .clone();
+        let (diff_rate, dec_rate) = {
+            let mut diffusion_config = self.world.ecs.resource_mut::<diffusion::DiffusionConfig>();
+
+            // Diurnal modulation
+            diffusion_config.global_time += 0.016;
+            // Oscillate decay rate between 0.5x and 1.5x of base
+            let diurnal_mod = 1.0 + 0.5 * (diffusion_config.global_time * 0.1).sin();
+            diffusion_config.decay_rate = diffusion_config.base_decay_rate * diurnal_mod;
+
+            (diffusion_config.diffusion_rate, diffusion_config.decay_rate)
+        };
         let mut query_emitters = self.world.ecs.query::<&diffusion::Emitter>();
         let mut gpu_emitters = Vec::new();
 
@@ -369,13 +379,18 @@ impl PhylonApp {
             &gpu.device,
             &gpu.queue,
             gpu::diffusion_pipeline::DiffusionUniforms {
-                diffusion_rate: diffusion_config.diffusion_rate,
-                decay_rate: diffusion_config.decay_rate,
+                diffusion_rate: diff_rate,
+                decay_rate: dec_rate,
                 dt: 0.016, // fixed timestep
                 emitter_count: gpu_emitters.len() as u32,
             },
             &gpu_emitters,
         );
+
+        if let Some(field_data) = diffusion_compute.try_read_field() {
+            let mut cpu_field = self.world.ecs.resource_mut::<diffusion::CpuFieldState>();
+            cpu_field.data = field_data;
+        }
 
         // 6. Gather rendering instances
         let mut instances = Vec::new();

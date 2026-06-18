@@ -2272,6 +2272,7 @@ dependencies = [
  "genetics",
  "metabolism",
  "physics",
+ "rand",
  "thiserror 2.0.18",
  "world",
 ]

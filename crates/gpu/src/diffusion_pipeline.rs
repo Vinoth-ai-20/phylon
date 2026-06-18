@@ -48,6 +48,12 @@ pub struct DiffusionComputePipeline {
     pub read_a: bool,
     width: u32,
     height: u32,
+
+    staging_buffers: [wgpu::Buffer; 2],
+    has_been_mapped: [bool; 2],
+    frame_index: usize,
+    ready_tx: std::sync::mpsc::Sender<usize>,
+    ready_rx: std::sync::mpsc::Receiver<usize>,
 }
 
 impl DiffusionComputePipeline {
@@ -134,7 +140,9 @@ impl DiffusionComputePipeline {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::R32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         };
 
@@ -214,6 +222,24 @@ impl DiffusionComputePipeline {
             ],
         });
 
+        let staging_buffer_size = (width * height * 4) as wgpu::BufferAddress;
+        let staging_buffers = [
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("DiffusionStagingBuffer0"),
+                size: staging_buffer_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("DiffusionStagingBuffer1"),
+                size: staging_buffer_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+        ];
+
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+
         Self {
             pipeline,
             bind_group_layout,
@@ -227,6 +253,11 @@ impl DiffusionComputePipeline {
             read_a: true,
             width,
             height,
+            staging_buffers,
+            has_been_mapped: [false, false],
+            frame_index: 0,
+            ready_tx,
+            ready_rx,
         }
     }
 
@@ -249,61 +280,78 @@ impl DiffusionComputePipeline {
     ) {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        // Create emitter buffer for this frame
-        let emitter_buffer = if emitters.is_empty() {
-            let dummy = [GpuEmitter {
-                grid_pos: [0.0, 0.0],
-                value: 0.0,
-                grid_radius: 0.0,
-            }];
+
+        // Create buffer for emitters and update bind groups if needed
+        // For simplicity, we create a new buffer every frame if there are emitters
+        // In a real engine, we'd reuse this buffer
+        let emitter_buffer = if !emitters.is_empty() {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("EmitterBuffer"),
-                contents: bytemuck::cast_slice(&dummy),
-                usage: wgpu::BufferUsages::STORAGE,
+                label: Some("DiffusionEmittersBuffer"),
+                contents: bytemuck::cast_slice(emitters),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             })
         } else {
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("EmitterBuffer"),
-                contents: bytemuck::cast_slice(emitters),
-                usage: wgpu::BufferUsages::STORAGE,
+            // Dummy buffer if no emitters
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("DummyEmittersBuffer"),
+                size: 16, // Must be > 0
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             })
         };
 
-        // Recreate the active bind group so we can attach the dynamic emitter buffer.
-        // We only need to recreate the one we're about to use.
-        let active_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ActiveDiffusionBindGroup"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(if self.read_a {
-                        &self.view_a
-                    } else {
-                        &self.view_b
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(if self.read_a {
-                        &self.view_b
-                    } else {
-                        &self.view_a
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: emitter_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        // Recreate the active bind group with the current emitter buffer
+        // Note: we'd normally just update it once, but since emitters can change every frame:
+        let active_bind_group = if self.read_a {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("DiffusionBindGroupA_Dynamic"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.view_a),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&self.view_b),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: emitter_buffer.as_entire_binding(),
+                    },
+                ],
+            })
+        } else {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("DiffusionBindGroupB_Dynamic"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.view_b),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&self.view_a),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: emitter_buffer.as_entire_binding(),
+                    },
+                ],
+            })
+        };
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("DiffusionEncoder"),
+            label: Some("DiffusionComputeEncoder"),
         });
 
         {
@@ -319,9 +367,77 @@ impl DiffusionComputePipeline {
             cpass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
         }
 
+        // The compute pass wrote to the "other" texture (view_b if read_a, view_a if !read_a)
+        let output_texture = if self.read_a {
+            &self.texture_b
+        } else {
+            &self.texture_a
+        };
+
+        // Prepare the staging buffer
+        let buf_idx = self.frame_index % 2;
+        if self.has_been_mapped[buf_idx] {
+            self.staging_buffers[buf_idx].unmap();
+        }
+
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                texture: output_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &self.staging_buffers[buf_idx],
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(self.width * 4),
+                    rows_per_image: Some(self.height),
+                },
+            },
+            wgpu::Extent3d {
+                width: self.width,
+                height: self.height,
+                depth_or_array_layers: 1,
+            },
+        );
+
         queue.submit(Some(encoder.finish()));
+
+        // Start mapping the buffer we just copied into
+        self.has_been_mapped[buf_idx] = true;
+        let tx = self.ready_tx.clone();
+        let slice = self.staging_buffers[buf_idx].slice(..);
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            if result.is_ok() {
+                let _ = tx.send(buf_idx);
+            }
+        });
 
         // Swap ping-pong direction
         self.read_a = !self.read_a;
+        self.frame_index += 1;
+    }
+
+    /// Tries to read the latest available field state from the GPU.
+    pub fn try_read_field(&self) -> Option<Vec<f32>> {
+        // Drain the channel to get the latest mapped buffer
+        let mut latest_idx = None;
+        while let Ok(idx) = self.ready_rx.try_recv() {
+            latest_idx = Some(idx);
+        }
+
+        if let Some(idx) = latest_idx {
+            let slice = self.staging_buffers[idx].slice(..);
+            let data = slice.get_mapped_range();
+            let floats: &[f32] = bytemuck::cast_slice(&data);
+            let vec = floats.to_vec();
+            drop(data);
+            // We DO NOT unmap here. We leave it mapped. It will be unmapped at the top of step()
+            // when it's this buffer's turn to be written to again.
+            Some(vec)
+        } else {
+            None
+        }
     }
 }
