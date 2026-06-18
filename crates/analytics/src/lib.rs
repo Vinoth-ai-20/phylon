@@ -6,10 +6,6 @@
 //! The analytics crate is a pure consumer of the event bus — it never
 //! mutates simulation state. It accumulates time-series data and exposes
 //! query APIs for the UI and research crates.
-//!
-//! ## Phase 0 scope
-//!
-//! Metric type declarations. Implementation: Phase 9.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -27,9 +23,6 @@ pub struct PopulationSample {
 }
 
 /// Placeholder for the analytics accumulator.
-///
-/// TODO(phase-9): Implement full metrics collection, diversity indices,
-/// SQLite persistence, and export APIs.
 pub struct AnalyticsAccumulator {
     samples: Vec<PopulationSample>,
 }
@@ -59,6 +52,66 @@ impl Default for AnalyticsAccumulator {
     }
 }
 
+/// Maximum number of time-series samples to keep in the ring buffers.
+const METRICS_RING_CAPACITY: usize = 512;
+
+/// Live simulation metrics resource, held in the ECS world and updated each frame.
+///
+/// Data is stored as `[sim_time, value]` pairs suitable for direct use with
+/// `egui_plot::PlotPoints`.
+#[derive(bevy_ecs::prelude::Resource, Debug, Clone)]
+pub struct MetricsState {
+    /// Ring buffer of `[sim_time_s, entity_count]` points for the population plot.
+    pub population_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer of `[sim_time_s, fps]` points for the FPS plot.
+    pub fps_history: std::collections::VecDeque<[f64; 2]>,
+    /// Accumulated simulation time in seconds.
+    pub sim_time: f64,
+    /// Smoothed FPS estimate (exponential moving average).
+    pub smoothed_fps: f64,
+}
+
+impl MetricsState {
+    /// Creates a new, empty `MetricsState`.
+    pub fn new() -> Self {
+        Self {
+            population_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            fps_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            sim_time: 0.0,
+            smoothed_fps: 60.0,
+        }
+    }
+
+    /// Records one simulation frame with the current entity count and frame delta time.
+    ///
+    /// `dt` is in seconds (typically 0.016 for 60 Hz).
+    pub fn record_frame(&mut self, entity_count: usize, dt: f64) {
+        self.sim_time += dt;
+
+        // Exponential moving average for FPS (α = 0.05)
+        let raw_fps = if dt > 0.0 { 1.0 / dt } else { 60.0 };
+        self.smoothed_fps = self.smoothed_fps * 0.95 + raw_fps * 0.05;
+
+        if self.population_history.len() >= METRICS_RING_CAPACITY {
+            self.population_history.pop_front();
+        }
+        self.population_history
+            .push_back([self.sim_time, entity_count as f64]);
+
+        if self.fps_history.len() >= METRICS_RING_CAPACITY {
+            self.fps_history.pop_front();
+        }
+        self.fps_history
+            .push_back([self.sim_time, self.smoothed_fps]);
+    }
+}
+
+impl Default for MetricsState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,5 +122,15 @@ mod tests {
         acc.record_population(Tick(0), 100);
         acc.record_population(Tick(60), 105);
         assert_eq!(acc.sample_count(), 2);
+    }
+
+    #[test]
+    fn metrics_state_ring_buffer_caps_at_max() {
+        let mut m = MetricsState::new();
+        for _ in 0..(METRICS_RING_CAPACITY + 10) {
+            m.record_frame(42, 0.016);
+        }
+        assert_eq!(m.population_history.len(), METRICS_RING_CAPACITY);
+        assert_eq!(m.fps_history.len(), METRICS_RING_CAPACITY);
     }
 }

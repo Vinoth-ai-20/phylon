@@ -43,6 +43,10 @@ pub use debug::{DebugInstance, DebugRenderer};
 pub mod field;
 pub use field::FieldRenderer;
 
+/// SDF skin rendering module (capsule-SDF organic skin).
+pub mod sdf_skin;
+pub use sdf_skin::{SdfBoneInstance, SdfSkinRenderer};
+
 #[cfg(test)]
 mod tests {
     // Tests for DebugRenderer will go here

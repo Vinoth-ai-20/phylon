@@ -69,14 +69,42 @@ struct PhylonApp {
     /// Compute pipeline for the diffusion field.
     diffusion_compute: Option<gpu::diffusion_pipeline::DiffusionComputePipeline>,
 
-    /// Debug renderer for entities.
+    /// Debug renderer for entities (grey quads / circles).
     debug_renderer: Option<rendering::DebugRenderer>,
+
+    /// SDF organic skin renderer (accumulate-then-threshold).
+    sdf_skin_renderer: Option<rendering::SdfSkinRenderer>,
 
     /// Renderer for the diffusion field.
     field_renderer: Option<rendering::FieldRenderer>,
 
     /// The main window (created on `Resumed`).
     window: Option<Arc<Window>>,
+
+    /// Egui winit integration state
+    egui_state: Option<egui_winit::State>,
+
+    /// Egui wgpu renderer
+    egui_renderer: Option<egui_wgpu::Renderer>,
+
+    /// Camera2D position
+    camera_pos: common::Vec2,
+    /// Camera2D zoom (scale)
+    camera_zoom: f32,
+
+    /// Currently selected entity for inspection
+    selected_entity: Option<bevy_ecs::entity::Entity>,
+
+    /// Is the user currently dragging the camera?
+    is_dragging: bool,
+    /// Screen position where the last left-button press occurred.
+    /// Used to distinguish a click (small delta) from a drag (large delta).
+    click_start_pos: Option<common::Vec2>,
+    /// Last recorded mouse position (physical pixels)
+    last_mouse_pos: common::Vec2,
+
+    /// When `true`, render raw physics quads; when `false`, render SDF skin.
+    debug_structural: bool,
 
     /// Maximum number of simulation ticks fired per frame.
     #[allow(dead_code)]
@@ -132,10 +160,11 @@ impl PhylonApp {
         world
             .ecs
             .insert_resource(bevy_ecs::event::Events::<reproduction::BirthRequest>::default());
+        world.ecs.insert_resource(analytics::MetricsState::new());
 
-        // Spawn test soft body
-        let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
-        organisms::spawn_organism(&mut world.ecs, &genome, common::Vec2::new(0.0, 0.0));
+        // Spawn the deterministic proto-fish for physics/rendering validation.
+        // CPPN-driven organisms are still spawned via spawn_organism() during reproduction.
+        organisms::spawn_proto_fish(&mut world.ecs, common::Vec2::new(0.0, 0.0));
 
         // Spawn a static food/nutrient emitter at the center
         world.ecs.spawn(diffusion::Emitter {
@@ -152,8 +181,18 @@ impl PhylonApp {
             physics_compute: None,
             diffusion_compute: None,
             debug_renderer: None,
+            sdf_skin_renderer: None,
             field_renderer: None,
             window: None,
+            egui_state: None,
+            egui_renderer: None,
+            camera_pos: common::Vec2::new(0.0, 0.0),
+            camera_zoom: 1.0,
+            selected_entity: None,
+            is_dragging: false,
+            click_start_pos: None,
+            last_mouse_pos: common::Vec2::new(0.0, 0.0),
+            debug_structural: false,
             max_ticks_per_frame: 4,
             total_sim_time: 0.0,
         }
@@ -182,10 +221,15 @@ impl PhylonApp {
         }))
         .context("no suitable GPU adapter found")?;
 
+        let mut required_features = wgpu::Features::FLOAT32_FILTERABLE;
+        if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            required_features |= wgpu::Features::TIMESTAMP_QUERY;
+        }
+
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("PhylonDevice"),
-                required_features: wgpu::Features::FLOAT32_FILTERABLE,
+                required_features,
                 required_limits: wgpu::Limits::default(),
                 memory_hints: wgpu::MemoryHints::default(),
             },
@@ -220,10 +264,27 @@ impl PhylonApp {
         surface.configure(&device, &surface_config);
 
         let debug_renderer = rendering::DebugRenderer::new(&device, surface_format);
+        let sdf_skin_renderer = rendering::SdfSkinRenderer::new(
+            &device,
+            surface_format,
+            size.width.max(1),
+            size.height.max(1),
+        );
         let field_renderer = rendering::FieldRenderer::new(&device, surface_format);
         let physics_compute = gpu::physics_pipeline::PhysicsComputePipeline::new(&device);
         let diffusion_compute =
             gpu::diffusion_pipeline::DiffusionComputePipeline::new(&device, 256, 256);
+
+        let egui_context = egui::Context::default();
+        let egui_state = egui_winit::State::new(
+            egui_context,
+            egui::ViewportId::ROOT,
+            &window,
+            Some(window.scale_factor() as f32),
+            None,
+            None,
+        );
+        let egui_renderer = egui_wgpu::Renderer::new(&device, surface_format, None, 1, false);
 
         self.gpu = Some(GpuSurface {
             surface,
@@ -232,9 +293,12 @@ impl PhylonApp {
             config: surface_config,
         });
         self.debug_renderer = Some(debug_renderer);
+        self.sdf_skin_renderer = Some(sdf_skin_renderer);
         self.field_renderer = Some(field_renderer);
         self.physics_compute = Some(physics_compute);
         self.diffusion_compute = Some(diffusion_compute);
+        self.egui_state = Some(egui_state);
+        self.egui_renderer = Some(egui_renderer);
         self.window = Some(window);
 
         info!("GPU surface initialised ({surface_format:?}, {present_mode:?})");
@@ -250,6 +314,51 @@ impl PhylonApp {
         gpu.config.width = new_size.width;
         gpu.config.height = new_size.height;
         gpu.surface.configure(&gpu.device, &gpu.config);
+        if let Some(sdf) = self.sdf_skin_renderer.as_mut() {
+            sdf.resize(&gpu.device, new_size.width, new_size.height);
+        }
+    }
+
+    /// Converts a physical-pixel screen coordinate to world space and finds the
+    /// nearest `ParticleNode` within a pick radius.
+    ///
+    /// Returns `None` if no node is close enough, or if GPU surface is not ready.
+    fn pick_entity(
+        &mut self,
+        screen_pos: common::Vec2,
+        gpu_w: f32,
+        gpu_h: f32,
+    ) -> Option<bevy_ecs::entity::Entity> {
+        // NDC (Normalized Device Coordinates): [-1,1] × [-1,1]
+        let ndc_x = (screen_pos.x / gpu_w) * 2.0 - 1.0;
+        let ndc_y = -((screen_pos.y / gpu_h) * 2.0 - 1.0); // Y is flipped
+
+        // World space: invert the orthographic projection
+        let half_w = (gpu_w / 2.0) / self.camera_zoom;
+        let half_h = (gpu_h / 2.0) / self.camera_zoom;
+        let world_x = ndc_x * half_w + self.camera_pos.x;
+        let world_y = ndc_y * half_h + self.camera_pos.y;
+        let world_pos = common::Vec2::new(world_x, world_y);
+
+        let pick_radius = 12.0 / self.camera_zoom;
+
+        let mut best: Option<bevy_ecs::entity::Entity> = None;
+        let mut best_dist = pick_radius;
+
+        // query() requires &mut World in bevy_ecs 0.14
+        let mut query = self
+            .world
+            .ecs
+            .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
+        for (entity, node) in query.iter(&self.world.ecs) {
+            let dist = (node.position - world_pos).length();
+            if dist < best_dist {
+                best_dist = dist;
+                best = Some(entity);
+            }
+        }
+
+        best
     }
 
     /// Advances the simulation and renders one frame.
@@ -260,12 +369,16 @@ impl PhylonApp {
         let Some(physics_compute) = self.physics_compute.as_ref() else {
             return Ok(());
         };
-        let Some(debug_renderer) = self.debug_renderer.as_ref() else {
-            return Ok(());
-        };
 
         // Advance time
-        self.total_sim_time += 0.016; // Fixed step for now
+        const DT: f32 = 0.016; // Fixed 60 Hz timestep
+        self.total_sim_time += DT;
+
+        // Record analytics — read entity_count before mutably borrowing the resource
+        let entity_count = self.world.ecs.entities().len() as usize;
+        if let Some(mut metrics) = self.world.ecs.get_resource_mut::<analytics::MetricsState>() {
+            metrics.record_frame(entity_count, f64::from(DT));
+        }
 
         // 1. Run Biology Systems (Sensing, Brain, Behavior)
         use bevy_ecs::system::RunSystemOnce;
@@ -418,27 +531,63 @@ impl PhylonApp {
         }
 
         // 6. Gather rendering instances
-        let mut instances = Vec::new();
+        let mut debug_instances = Vec::new();
+        let mut sdf_bones = Vec::new();
 
-        // Render soft body nodes
-        let mut query_nodes = self.world.ecs.query::<&physics::ParticleNode>();
-        for node in query_nodes.iter(&self.world.ecs) {
-            instances.push(rendering::DebugInstance {
+        // Build node position lookup for bone endpoint resolution
+        let mut node_positions: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 2]> =
+            std::collections::HashMap::new();
+
+        let mut query_nodes_render = self
+            .world
+            .ecs
+            .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
+        for (entity, node) in query_nodes_render.iter(&self.world.ecs) {
+            node_positions.insert(entity, [node.position.x, node.position.y]);
+            debug_instances.push(rendering::DebugInstance {
                 position: [node.position.x, node.position.y],
-                color: [0.2, 0.8, 0.4, 1.0], // Green
-                radius: 4.0,                 // Fixed radius for nodes
+                color: match node.segment_type {
+                    0 => [0.9, 0.3, 0.3, 1.0], // Head — red
+                    2 => [0.3, 0.5, 1.0, 1.0], // Muscle — blue
+                    3 => [0.6, 0.6, 0.3, 1.0], // Tail — yellow-green
+                    4 => [0.3, 0.9, 0.9, 1.0], // Fin — cyan
+                    _ => [0.5, 0.5, 0.5, 1.0], // Torso — grey
+                },
+                radius: if node.segment_type == 4 { 3.0 } else { 5.0 },
                 segment_type: node.segment_type,
             });
         }
 
-        // Render food pellets
+        // Collect Rigid bones for SDF capsule rendering
+        let mut query_springs_render = self.world.ecs.query::<&physics::Spring>();
+        for spring in query_springs_render.iter(&self.world.ecs) {
+            if spring.constraint_type != physics::ConstraintType::Rigid
+                && spring.constraint_type != physics::ConstraintType::Rotational
+            {
+                continue;
+            }
+            if let (Some(&pa), Some(&pb)) = (
+                node_positions.get(&spring.node_a),
+                node_positions.get(&spring.node_b),
+            ) {
+                let radius = if spring.is_fin == 1 { 5.0 } else { 8.0 };
+                sdf_bones.push(rendering::SdfBoneInstance {
+                    pos_a: pa,
+                    pos_b: pb,
+                    radius,
+                    color: [0.15, 0.72, 0.45],
+                });
+            }
+        }
+
+        // Render food pellets (always shown in debug view)
         let mut query_food = self.world.ecs.query::<&ecology::FoodPellet>();
         for food in query_food.iter(&self.world.ecs) {
-            instances.push(rendering::DebugInstance {
+            debug_instances.push(rendering::DebugInstance {
                 position: [food.position.x, food.position.y],
-                color: [1.0, 0.8, 0.0, 1.0], // Gold/Yellow
-                radius: 2.5,                 // Smaller radius for food
-                segment_type: 0,             // arbitrary for food
+                color: [1.0, 0.8, 0.0, 1.0],
+                radius: 2.5,
+                segment_type: 0,
             });
         }
 
@@ -457,6 +606,50 @@ impl PhylonApp {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        let mut central_rect_px = None;
+
+        let mut full_output = None;
+        let mut egui_context = None;
+
+        if let (Some(egui_state), Some(window)) = (&mut self.egui_state, &self.window) {
+            let raw_input = egui_state.take_egui_input(window);
+            let ctx = egui_state.egui_ctx().clone();
+
+            let mut ui_rect = egui::Rect::NOTHING;
+            let output = ctx.run(raw_input, |ctx| {
+                ui_rect = ui::render_ui(
+                    ctx,
+                    &mut self.world,
+                    self.camera_pos,
+                    self.camera_zoom,
+                    self.selected_entity,
+                    &mut self.debug_structural,
+                );
+            });
+
+            egui_state.handle_platform_output(window, output.platform_output.clone());
+
+            let scale = window.scale_factor() as f32;
+            let x = (ui_rect.min.x * scale).round() as u32;
+            let y = (ui_rect.min.y * scale).round() as u32;
+            let mut w = (ui_rect.width() * scale).round() as u32;
+            let mut h = (ui_rect.height() * scale).round() as u32;
+
+            if x + w > gpu.config.width {
+                w = gpu.config.width.saturating_sub(x);
+            }
+            if y + h > gpu.config.height {
+                h = gpu.config.height.saturating_sub(y);
+            }
+
+            if w > 0 && h > 0 {
+                central_rect_px = Some([x, y, w, h]);
+            }
+
+            full_output = Some(output);
+            egui_context = Some(ctx);
+        }
+
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -469,18 +662,126 @@ impl PhylonApp {
             &mut encoder,
             &view,
             diffusion_compute.current_texture_view(),
+            central_rect_px,
         );
 
         gpu.queue.submit(std::iter::once(encoder.finish()));
 
-        // Render debug quads over the field background
-        debug_renderer.render(
-            &gpu.device,
-            &gpu.queue,
-            &view,
-            &instances,
-            [gpu.config.width as f32, gpu.config.height as f32],
-        );
+        let mut render_w = gpu.config.width as f32;
+        let mut render_h = gpu.config.height as f32;
+        if let Some([_, _, w, h]) = central_rect_px {
+            render_w = w as f32;
+            render_h = h as f32;
+        }
+
+        // ── Organism rendering — branch on debug_structural toggle ─────────
+        if self.debug_structural {
+            // Structural view: raw physics circles + coloured segment dots
+            if let Some(debug_renderer) = self.debug_renderer.as_ref() {
+                debug_renderer.render(
+                    &gpu.device,
+                    &gpu.queue,
+                    &view,
+                    &debug_instances,
+                    [render_w, render_h],
+                    self.camera_pos,
+                    self.camera_zoom,
+                    central_rect_px,
+                );
+            }
+        } else {
+            // Organic skin: accumulate-then-threshold SDF capsule skin
+            if let Some(sdf) = self.sdf_skin_renderer.as_mut() {
+                sdf.render(
+                    &gpu.device,
+                    &gpu.queue,
+                    &view,
+                    &sdf_bones,
+                    [gpu.config.width as f32, gpu.config.height as f32],
+                    self.camera_pos,
+                    self.camera_zoom,
+                    central_rect_px,
+                );
+            }
+            // Always overlay food and food pellets as debug quads
+            if let Some(debug_renderer) = self.debug_renderer.as_ref() {
+                // Re-collect only food pellets for the overlay
+                let food_only: Vec<rendering::DebugInstance> = debug_instances
+                    .iter()
+                    .filter(|i| i.color == [1.0, 0.8, 0.0, 1.0_f32])
+                    .copied()
+                    .collect();
+                if !food_only.is_empty() {
+                    debug_renderer.render(
+                        &gpu.device,
+                        &gpu.queue,
+                        &view,
+                        &food_only,
+                        [render_w, render_h],
+                        self.camera_pos,
+                        self.camera_zoom,
+                        central_rect_px,
+                    );
+                }
+            }
+        }
+
+        if let (Some(egui_renderer), Some(window), Some(output), Some(ctx)) = (
+            &mut self.egui_renderer,
+            &self.window,
+            full_output,
+            egui_context,
+        ) {
+            let clipped_primitives = ctx.tessellate(output.shapes, window.scale_factor() as f32);
+            let screen_descriptor = egui_wgpu::ScreenDescriptor {
+                size_in_pixels: [gpu.config.width, gpu.config.height],
+                pixels_per_point: window.scale_factor() as f32,
+            };
+
+            let mut egui_encoder =
+                gpu.device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("egui_encoder"),
+                    });
+
+            for (id, image_delta) in &output.textures_delta.set {
+                egui_renderer.update_texture(&gpu.device, &gpu.queue, *id, image_delta);
+            }
+
+            egui_renderer.update_buffers(
+                &gpu.device,
+                &gpu.queue,
+                &mut egui_encoder,
+                &clipped_primitives,
+                &screen_descriptor,
+            );
+
+            {
+                let mut render_pass = egui_encoder
+                    .begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("egui_render_pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    })
+                    .forget_lifetime();
+                egui_renderer.render(&mut render_pass, &clipped_primitives, &screen_descriptor);
+            }
+
+            gpu.queue.submit(std::iter::once(egui_encoder.finish()));
+
+            for id in &output.textures_delta.free {
+                egui_renderer.free_texture(id);
+            }
+        }
 
         output.present();
 
@@ -522,6 +823,15 @@ impl ApplicationHandler for PhylonApp {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        if let Some(egui_state) = &mut self.egui_state {
+            if let Some(window) = &self.window {
+                let response = egui_state.on_window_event(window, &event);
+                if response.consumed {
+                    return; // event handled by egui
+                }
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 info!("Window close requested — exiting");
@@ -529,6 +839,54 @@ impl ApplicationHandler for PhylonApp {
             }
             WindowEvent::Resized(new_size) => {
                 self.resize(new_size);
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if button == winit::event::MouseButton::Left {
+                    match state {
+                        winit::event::ElementState::Pressed => {
+                            self.is_dragging = true;
+                            self.click_start_pos = Some(self.last_mouse_pos);
+                        }
+                        winit::event::ElementState::Released => {
+                            self.is_dragging = false;
+
+                            // Distinguish click (≤5 px delta) from drag (>5 px)
+                            if let Some(start) = self.click_start_pos.take() {
+                                let delta = (self.last_mouse_pos - start).length();
+                                if delta <= 5.0 {
+                                    // Extract GPU dimensions first so we don't
+                                    // hold a borrow on self when calling pick_entity
+                                    let dims = self
+                                        .gpu
+                                        .as_ref()
+                                        .map(|g| (g.config.width as f32, g.config.height as f32));
+                                    if let Some((gpu_w, gpu_h)) = dims {
+                                        let click_pos = self.last_mouse_pos;
+                                        self.selected_entity =
+                                            self.pick_entity(click_pos, gpu_w, gpu_h);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            WindowEvent::MouseWheel {
+                delta: winit::event::MouseScrollDelta::LineDelta(_x, y),
+                ..
+            } => {
+                self.camera_zoom *= 1.0 + (y * 0.1);
+                self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
+            }
+            WindowEvent::MouseWheel { .. } => {}
+            WindowEvent::CursorMoved { position, .. } => {
+                let current_pos = common::Vec2::new(position.x as f32, position.y as f32);
+                if self.is_dragging {
+                    let delta = current_pos - self.last_mouse_pos;
+                    self.camera_pos.x -= delta.x / self.camera_zoom;
+                    self.camera_pos.y += delta.y / self.camera_zoom;
+                }
+                self.last_mouse_pos = current_pos;
             }
             WindowEvent::RedrawRequested => {
                 if let Err(e) = self.render() {

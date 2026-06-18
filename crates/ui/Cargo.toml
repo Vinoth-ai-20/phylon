@@ -5,6 +5,17 @@ edition = "2021"
 description = "egui-based research interface: inspector panels, analytics, controls, and charts."
 
 [dependencies]
-common    = { workspace = true }
-events    = { workspace = true }
-thiserror = { workspace = true }
+common     = { workspace = true }
+events     = { workspace = true }
+thiserror  = { workspace = true }
+bevy_ecs   = { workspace = true }
+genetics   = { workspace = true }
+physics    = { workspace = true }
+organisms  = { workspace = true }
+brain      = { workspace = true }
+metabolism = { workspace = true }
+analytics  = { workspace = true }
+world      = { workspace = true }
+egui       = { workspace = true }
+egui_plot  = { workspace = true }
+egui_dock  = { workspace = true }

@@ -103,6 +103,7 @@ impl FieldRenderer {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         field_texture_view: &wgpu::TextureView,
+        viewport: Option<[u32; 4]>,
     ) {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("FieldBindGroup"),
@@ -133,6 +134,13 @@ impl FieldRenderer {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
+
+        if let Some([x, y, w, h]) = viewport {
+            if w > 0 && h > 0 {
+                rpass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
+                rpass.set_scissor_rect(x, y, w, h);
+            }
+        }
 
         rpass.set_pipeline(&self.pipeline);
         rpass.set_bind_group(0, &bind_group, &[]);

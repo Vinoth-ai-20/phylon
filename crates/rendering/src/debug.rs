@@ -123,6 +123,7 @@ impl DebugRenderer {
     }
 
     /// Renders instances.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
         device: &wgpu::Device,
@@ -130,16 +131,20 @@ impl DebugRenderer {
         view: &wgpu::TextureView,
         instances: &[DebugInstance],
         screen_size: [f32; 2],
+        camera_pos: common::Vec2,
+        camera_zoom: f32,
+        viewport: Option<[u32; 4]>,
     ) {
         if instances.is_empty() {
             return;
         }
 
         // Orthographic projection mapping screen coordinates to clip space.
-        let w = screen_size[0] / 2.0;
-        let h = screen_size[1] / 2.0;
-        let view_proj: [[f32; 4]; 4] =
-            glam::Mat4::orthographic_rh(-w, w, -h, h, -1.0, 1.0).to_cols_array_2d();
+        let w = screen_size[0] / 2.0 / camera_zoom;
+        let h = screen_size[1] / 2.0 / camera_zoom;
+        let mut proj = glam::Mat4::orthographic_rh(-w, w, -h, h, -1.0, 1.0);
+        proj *= glam::Mat4::from_translation(glam::Vec3::new(-camera_pos.x, -camera_pos.y, 0.0));
+        let view_proj: [[f32; 4]; 4] = proj.to_cols_array_2d();
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&view_proj));
 
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -159,7 +164,7 @@ impl DebugRenderer {
                     view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        load: wgpu::LoadOp::Load, // We load here because field_renderer cleared it
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -167,6 +172,13 @@ impl DebugRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            if let Some([vx, vy, vw, vh]) = viewport {
+                if vw > 0 && vh > 0 {
+                    rpass.set_viewport(vx as f32, vy as f32, vw as f32, vh as f32, 0.0, 1.0);
+                    rpass.set_scissor_rect(vx, vy, vw, vh);
+                }
+            }
 
             rpass.set_pipeline(&self.pipeline);
             rpass.set_bind_group(0, &self.camera_bind_group, &[]);

@@ -42,7 +42,7 @@ pub enum DietType {
 }
 
 /// Spatial components of an organism: position, velocity, and collision radius.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(bevy_ecs::component::Component, Debug, Clone, Serialize, Deserialize)]
 pub struct SpatialComponents {
     /// Current position in the simulation world.
     pub position: Vec2,
@@ -53,7 +53,7 @@ pub struct SpatialComponents {
 }
 
 /// Biological state components: energy, age, and diet.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(bevy_ecs::component::Component, Debug, Clone, Serialize, Deserialize)]
 pub struct BiologicalComponents {
     /// Current energy reserve. Organism dies when this reaches zero.
     pub energy: SimEnergy,
@@ -549,3 +549,115 @@ pub fn spawn_organism(
         is_fin: 0,
     });
 }
+
+/// Spawns a deterministic "Proto-Fish" with an instant adult topology.
+///
+/// This **bypasses** the CPPN/[`GrowthState`] state machine entirely and is
+/// intended as a diagnostic fixture for iterating on physics and rendering.
+/// The topology is:
+///
+/// - 5-node rigid spine along the negative-X axis (head at `pos`, tail left).
+/// - 2 lateral fin nodes branching from spine node 2 (the middle segment).
+/// - Rotational fin springs with opposing actuation phases so the fins flap.
+///
+/// The head node carries [`metabolism::Energy`], [`metabolism::Age`], and
+/// [`metabolism::Metabolism`] components so the inspector sidebar can display
+/// biological metrics.
+///
+/// # CPPN branching backlog note
+///
+/// The CPPN's `branching_signal` (output index 5) threshold is too rarely
+/// exceeded in random genomes. A targeted tuning pass is required — see the
+/// Phase 5 implementation plan for details.
+pub fn spawn_proto_fish(world: &mut bevy_ecs::world::World, pos: Vec2) {
+    use physics::{ConstraintType, ParticleNode, Spring};
+
+    // Geometry constants — all in world units
+    let segment_len: f32 = 20.0;
+    let fin_spread: f32 = 15.0;
+
+    // ── Spine (5 nodes along −X axis, head at pos, tail to the left) ──────
+    // Segment types: Head(0), Torso(1), Torso(1), Torso(1), Tail(3)
+    let spine_types: [u32; 5] = [0, 1, 1, 1, 3];
+    let spine_nodes: Vec<bevy_ecs::entity::Entity> = spine_types
+        .iter()
+        .enumerate()
+        .map(|(i, &seg_type)| {
+            let p = pos + Vec2::new(-(i as f32) * segment_len, 0.0);
+            world.spawn(ParticleNode::new(p, 1.0, seg_type)).id()
+        })
+        .collect();
+
+    // Rigid bone springs connecting adjacent spine nodes
+    for i in 0..4 {
+        world.spawn(Spring {
+            node_a: spine_nodes[i],
+            node_b: spine_nodes[i + 1],
+            constraint_type: ConstraintType::Rigid,
+            rest_length: segment_len,
+            base_length: segment_len,
+            stiffness: 20.0,
+            damping: 0.5,
+            actuation_amplitude: 0.0,
+            actuation_phase: 0.0,
+            breaking_strain: 5.0,
+            is_fin: 0,
+        });
+    }
+
+    // ── Lateral fins at spine node index 2 (centre of spine) ───────────────
+    let fin_root = spine_nodes[2];
+    let fin_root_pos = pos + Vec2::new(-2.0 * segment_len, 0.0);
+
+    let f_up_pos = fin_root_pos + Vec2::new(0.0, fin_spread);
+    let f_dn_pos = fin_root_pos + Vec2::new(0.0, -fin_spread);
+
+    let f_up = world.spawn(ParticleNode::new(f_up_pos, 0.5, 4)).id();
+    let f_dn = world.spawn(ParticleNode::new(f_dn_pos, 0.5, 4)).id();
+
+    // Rotational springs — opposing phases produce a flapping motion
+    world.spawn(Spring {
+        node_a: fin_root,
+        node_b: f_up,
+        constraint_type: ConstraintType::Rotational,
+        rest_length: fin_spread,
+        base_length: fin_spread,
+        stiffness: 5.0,
+        damping: 0.3,
+        actuation_amplitude: 8.0,
+        actuation_phase: 0.0, // Phase 0
+        breaking_strain: 5.0,
+        is_fin: 1,
+    });
+    world.spawn(Spring {
+        node_a: fin_root,
+        node_b: f_dn,
+        constraint_type: ConstraintType::Rotational,
+        rest_length: fin_spread,
+        base_length: fin_spread,
+        stiffness: 5.0,
+        damping: 0.3,
+        actuation_amplitude: 8.0,
+        actuation_phase: std::f32::consts::PI, // Opposing phase → flap
+        breaking_strain: 5.0,
+        is_fin: 1,
+    });
+
+    // ── Biological state on the head node ──────────────────────────────────
+    world.entity_mut(spine_nodes[0]).insert((
+        metabolism::Energy {
+            current: 100.0,
+            max: 200.0,
+        },
+        metabolism::Age {
+            ticks: 0,
+            max_lifespan: 10000,
+        },
+        metabolism::Metabolism {
+            mass: 10.0,
+            base_rate: 0.05,
+        },
+        ecology::Diet::Herbivore,
+    ));
+}
+

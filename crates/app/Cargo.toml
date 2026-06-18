@@ -26,6 +26,13 @@ diffusion = { workspace = true }
 metabolism = { workspace = true }
 ecology    = { workspace = true }
 reproduction = { workspace = true }
+ui         = { workspace = true }
+analytics  = { workspace = true }
+
+# GUI
+egui       = { workspace = true }
+egui-wgpu  = { workspace = true }
+egui-winit = { workspace = true }
 
 # ECS
 bevy_ecs  = { workspace = true }
