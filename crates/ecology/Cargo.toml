@@ -8,4 +8,8 @@ description = "Food chain, predation, disease spread, fungi networks, and decomp
 common    = { workspace = true }
 world     = { workspace = true }
 events    = { workspace = true }
-thiserror = { workspace = true }
+thiserror  = { workspace = true }
+bevy_ecs   = { workspace = true }
+physics    = { workspace = true }
+metabolism = { workspace = true }
+fastrand   = "2.3"

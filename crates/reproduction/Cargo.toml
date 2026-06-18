@@ -9,4 +9,9 @@ common    = { workspace = true }
 world     = { workspace = true }
 genetics  = { workspace = true }
 events    = { workspace = true }
-thiserror = { workspace = true }
+thiserror  = { workspace = true }
+bevy_ecs   = { workspace = true }
+physics    = { workspace = true }
+metabolism = { workspace = true }
+ecology    = { workspace = true }
+fastrand   = "2.3"

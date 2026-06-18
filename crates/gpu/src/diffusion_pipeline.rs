@@ -61,7 +61,8 @@ impl DiffusionComputePipeline {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("DiffusionBindGroupLayout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry { // field_in
+                wgpu::BindGroupLayoutEntry {
+                    // field_in
                     binding: 0,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Texture {
@@ -71,7 +72,8 @@ impl DiffusionComputePipeline {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry { // field_out
+                wgpu::BindGroupLayoutEntry {
+                    // field_out
                     binding: 1,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::StorageTexture {
@@ -81,7 +83,8 @@ impl DiffusionComputePipeline {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry { // config uniforms
+                wgpu::BindGroupLayoutEntry {
+                    // config uniforms
                     binding: 2,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
@@ -91,7 +94,8 @@ impl DiffusionComputePipeline {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry { // emitters storage buffer
+                wgpu::BindGroupLayoutEntry {
+                    // emitters storage buffer
                     binding: 3,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
@@ -121,7 +125,11 @@ impl DiffusionComputePipeline {
 
         let texture_desc = wgpu::TextureDescriptor {
             label: Some("DiffusionTexture"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -130,8 +138,14 @@ impl DiffusionComputePipeline {
             view_formats: &[],
         };
 
-        let texture_a = device.create_texture(&wgpu::TextureDescriptor { label: Some("DiffusionTextureA"), ..texture_desc });
-        let texture_b = device.create_texture(&wgpu::TextureDescriptor { label: Some("DiffusionTextureB"), ..texture_desc });
+        let texture_a = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("DiffusionTextureA"),
+            ..texture_desc
+        });
+        let texture_b = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("DiffusionTextureB"),
+            ..texture_desc
+        });
         let view_a = texture_a.create_view(&wgpu::TextureViewDescriptor::default());
         let view_b = texture_b.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -143,7 +157,11 @@ impl DiffusionComputePipeline {
         });
 
         // Dummy emitter buffer (must be at least 1 byte if we bind it, let's just make it sized for 1 emitter)
-        let dummy_emitters = [GpuEmitter { grid_pos: [0.0, 0.0], value: 0.0, grid_radius: 0.0 }];
+        let dummy_emitters = [GpuEmitter {
+            grid_pos: [0.0, 0.0],
+            value: 0.0,
+            grid_radius: 0.0,
+        }];
         let dummy_emitter_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("DummyEmitterBuffer"),
             contents: bytemuck::cast_slice(&dummy_emitters),
@@ -154,10 +172,22 @@ impl DiffusionComputePipeline {
             label: Some("DiffusionBindGroupA"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view_a) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view_b) },
-                wgpu::BindGroupEntry { binding: 2, resource: uniform_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: dummy_emitter_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view_a),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view_b),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: dummy_emitter_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -165,10 +195,22 @@ impl DiffusionComputePipeline {
             label: Some("DiffusionBindGroupB"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view_b) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view_a) },
-                wgpu::BindGroupEntry { binding: 2, resource: uniform_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: dummy_emitter_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view_b),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view_a),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: dummy_emitter_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -190,7 +232,11 @@ impl DiffusionComputePipeline {
 
     /// Returns the view of the texture that holds the *current* stable field state.
     pub fn current_texture_view(&self) -> &wgpu::TextureView {
-        if self.read_a { &self.view_a } else { &self.view_b }
+        if self.read_a {
+            &self.view_a
+        } else {
+            &self.view_b
+        }
     }
 
     /// Dispatches the compute shader to step the diffusion simulation.
@@ -205,7 +251,11 @@ impl DiffusionComputePipeline {
 
         // Create emitter buffer for this frame
         let emitter_buffer = if emitters.is_empty() {
-            let dummy = [GpuEmitter { grid_pos: [0.0, 0.0], value: 0.0, grid_radius: 0.0 }];
+            let dummy = [GpuEmitter {
+                grid_pos: [0.0, 0.0],
+                value: 0.0,
+                grid_radius: 0.0,
+            }];
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("EmitterBuffer"),
                 contents: bytemuck::cast_slice(&dummy),
@@ -225,10 +275,30 @@ impl DiffusionComputePipeline {
             label: Some("ActiveDiffusionBindGroup"),
             layout: &self.bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(if self.read_a { &self.view_a } else { &self.view_b }) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(if self.read_a { &self.view_b } else { &self.view_a }) },
-                wgpu::BindGroupEntry { binding: 2, resource: self.uniform_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: emitter_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(if self.read_a {
+                        &self.view_a
+                    } else {
+                        &self.view_b
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(if self.read_a {
+                        &self.view_b
+                    } else {
+                        &self.view_a
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: emitter_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -243,7 +313,7 @@ impl DiffusionComputePipeline {
             });
             cpass.set_pipeline(&self.pipeline);
             cpass.set_bind_group(0, &active_bind_group, &[]);
-            
+
             let workgroup_count_x = (self.width as f32 / 16.0).ceil() as u32;
             let workgroup_count_y = (self.height as f32 / 16.0).ceil() as u32;
             cpass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);

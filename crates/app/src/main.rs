@@ -86,6 +86,31 @@ struct PhylonApp {
     total_sim_time: f32,
 }
 
+use bevy_ecs::prelude::*;
+
+struct SpawnOrganismCommand {
+    genome: genetics::Genome,
+    position: common::Vec2,
+}
+
+impl bevy_ecs::world::Command for SpawnOrganismCommand {
+    fn apply(self, world: &mut bevy_ecs::world::World) {
+        organisms::spawn_organism(world, &self.genome, self.position);
+    }
+}
+
+pub fn process_births_system(
+    mut commands: Commands,
+    mut events: EventReader<reproduction::BirthRequest>,
+) {
+    for event in events.read() {
+        commands.add(SpawnOrganismCommand {
+            genome: event.genome.clone(),
+            position: event.position,
+        });
+    }
+}
+
 impl PhylonApp {
     /// Creates a new application state from a loaded config.
     fn new(sim_config: PhylonConfig) -> Self {
@@ -94,8 +119,16 @@ impl PhylonApp {
         let mut world = world::World::new();
 
         // Add resources
-        world.ecs.insert_resource(physics::PhysicsConfig { dt: 0.016 }); // 60hz tick
-        world.ecs.insert_resource(diffusion::DiffusionConfig::default());
+        world
+            .ecs
+            .insert_resource(physics::PhysicsConfig { dt: 0.016 }); // 60hz tick
+        world
+            .ecs
+            .insert_resource(diffusion::DiffusionConfig::default());
+        world.ecs.insert_resource(ecology::EcologyConfig::default());
+        world
+            .ecs
+            .insert_resource(bevy_ecs::event::Events::<reproduction::BirthRequest>::default());
 
         // Spawn test soft body
         let genome = genetics::Genome::new(
@@ -196,7 +229,8 @@ impl PhylonApp {
         let debug_renderer = rendering::DebugRenderer::new(&device, surface_format);
         let field_renderer = rendering::FieldRenderer::new(&device, surface_format);
         let muscle_compute = gpu::muscle::MuscleComputePipeline::new(&device);
-        let diffusion_compute = gpu::diffusion_pipeline::DiffusionComputePipeline::new(&device, 256, 256);
+        let diffusion_compute =
+            gpu::diffusion_pipeline::DiffusionComputePipeline::new(&device, 256, 256);
 
         self.gpu = Some(GpuSurface {
             surface,
@@ -276,10 +310,28 @@ impl PhylonApp {
             }
         }
 
-        // 4. Run Physics Systems
+        // 4. Run Physics and Biology Systems
         use bevy_ecs::system::RunSystemOnce;
         self.world.ecs.run_system_once(physics::spring_force_system);
-        self.world.ecs.run_system_once(physics::physics_integration_system);
+        self.world
+            .ecs
+            .run_system_once(physics::physics_integration_system);
+        self.world.ecs.run_system_once(ecology::food_spawner_system);
+        self.world.ecs.run_system_once(ecology::foraging_system);
+        self.world
+            .ecs
+            .run_system_once(metabolism::metabolism_system);
+        self.world
+            .ecs
+            .run_system_once(reproduction::reproduction_system);
+        self.world.ecs.run_system_once(process_births_system);
+        if let Some(mut events) = self
+            .world
+            .ecs
+            .get_resource_mut::<bevy_ecs::event::Events<reproduction::BirthRequest>>()
+        {
+            events.update();
+        }
 
         let Some(diffusion_compute) = self.diffusion_compute.as_mut() else {
             return Ok(());
@@ -289,10 +341,14 @@ impl PhylonApp {
         };
 
         // 5. Gather diffusion emitters and run compute
-        let diffusion_config = self.world.ecs.resource::<diffusion::DiffusionConfig>().clone();
+        let diffusion_config = self
+            .world
+            .ecs
+            .resource::<diffusion::DiffusionConfig>()
+            .clone();
         let mut query_emitters = self.world.ecs.query::<&diffusion::Emitter>();
         let mut gpu_emitters = Vec::new();
-        
+
         let screen_w = gpu.config.width as f32;
         let screen_h = gpu.config.height as f32;
 
@@ -322,13 +378,25 @@ impl PhylonApp {
         );
 
         // 6. Gather rendering instances
-        let mut query_nodes = self.world.ecs.query::<&physics::ParticleNode>();
         let mut instances = Vec::new();
+
+        // Render soft body nodes
+        let mut query_nodes = self.world.ecs.query::<&physics::ParticleNode>();
         for node in query_nodes.iter(&self.world.ecs) {
             instances.push(rendering::DebugInstance {
                 position: [node.position.x, node.position.y],
                 color: [0.2, 0.8, 0.4, 1.0], // Green
                 radius: 4.0,                 // Fixed radius for nodes
+            });
+        }
+
+        // Render food pellets
+        let mut query_food = self.world.ecs.query::<&ecology::FoodPellet>();
+        for food in query_food.iter(&self.world.ecs) {
+            instances.push(rendering::DebugInstance {
+                position: [food.position.x, food.position.y],
+                color: [1.0, 0.8, 0.0, 1.0], // Gold/Yellow
+                radius: 2.5,                 // Smaller radius for food
             });
         }
 

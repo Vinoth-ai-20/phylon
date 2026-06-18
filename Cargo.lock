@@ -118,13 +118,16 @@ dependencies = [
  "common",
  "config",
  "diffusion",
+ "ecology",
  "events",
  "genetics",
  "gpu",
+ "metabolism",
  "organisms",
  "physics",
  "pollster",
  "rendering",
+ "reproduction",
  "scheduler",
  "tracing",
  "tracing-subscriber",
@@ -826,8 +829,12 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 name = "ecology"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "common",
  "events",
+ "fastrand",
+ "metabolism",
+ "physics",
  "thiserror 2.0.18",
  "world",
 ]
@@ -1486,6 +1493,7 @@ dependencies = [
 name = "metabolism"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "common",
  "thiserror 2.0.18",
  "world",
@@ -1860,8 +1868,11 @@ version = "0.1.0"
 dependencies = [
  "bevy_ecs",
  "common",
+ "ecology",
  "genetics",
+ "metabolism",
  "physics",
+ "reproduction",
  "serde",
  "thiserror 2.0.18",
  "world",
@@ -2253,9 +2264,14 @@ dependencies = [
 name = "reproduction"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "common",
+ "ecology",
  "events",
+ "fastrand",
  "genetics",
+ "metabolism",
+ "physics",
  "thiserror 2.0.18",
  "world",
 ]

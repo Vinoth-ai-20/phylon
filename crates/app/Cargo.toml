@@ -21,6 +21,9 @@ gpu       = { workspace = true }
 genetics  = { workspace = true }
 organisms = { workspace = true }
 diffusion = { workspace = true }
+metabolism = { workspace = true }
+ecology    = { workspace = true }
+reproduction = { workspace = true }
 
 # ECS
 bevy_ecs  = { workspace = true }

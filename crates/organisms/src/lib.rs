@@ -126,7 +126,34 @@ pub fn spawn_organism(
         let n1_pos = current_pos + Vec2::new(0.0, vertical_spread);
         let n2_pos = current_pos + Vec2::new(0.0, -vertical_spread);
 
-        let n1 = world.spawn(ParticleNode::new(n1_pos, 1.0)).id();
+        let mut n1_builder = world.spawn(ParticleNode::new(n1_pos, 1.0));
+        if i == 0 {
+            // First node (Head) holds the biological state
+            n1_builder.insert((
+                metabolism::Energy {
+                    current: 100.0,
+                    max: 200.0,
+                },
+                metabolism::Age {
+                    ticks: 0,
+                    max_lifespan: 10000,
+                },
+                metabolism::Metabolism {
+                    mass: genome.segments.len() as f32 * 2.0,
+                    base_rate: 0.05,
+                },
+                ecology::Diet::Herbivore,
+                reproduction::ReproductionStrategy {
+                    energy_threshold: 180.0,
+                    energy_cost: 100.0,
+                    cooldown_ticks: 300,
+                    current_cooldown: 0,
+                    mode: reproduction::ReproductionMode::Asexual,
+                    genome: genome.clone(),
+                },
+            ));
+        }
+        let n1 = n1_builder.id();
         let n2 = world.spawn(ParticleNode::new(n2_pos, 1.0)).id();
 
         // Connect the two nodes with a vertical spring

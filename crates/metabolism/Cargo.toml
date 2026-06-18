@@ -8,3 +8,4 @@ description = "Energy management, ageing, respiration, starvation, and hunger sy
 common    = { workspace = true }
 world     = { workspace = true }
 thiserror = { workspace = true }
+bevy_ecs  = { workspace = true }
