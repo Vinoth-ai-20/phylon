@@ -9,13 +9,13 @@
 | Phase | Version | Theme | Status |
 | --- | --- | --- | --- |
 | 0 | v0.0.1 | Foundation | ✅ Complete |
-| 1 | v0.1 | Decentralized Physics & Debug Renderer | 🔧 In Progress |
-| 1.5 | v0.15 | Topological Plasticity | 💭 Speculative |
-| 2 | v0.2 | Fields & Environment | 📋 Planned |
-| 2.5 | v0.25 | Closed-Loop Fields | 💭 Speculative |
-| 3 | v0.3 | Hox Genetics & Passive Ecology | 📋 Planned |
-| 3.5 | v0.35 | Sexual Recombination & Drift | 💭 Speculative |
-| 4 | v0.4 | Actuation, Cognition & Behavior | 📋 Planned |
+| 1 | v0.1 | Decentralized Physics & Debug Renderer | ✅ Complete |
+| 1.5 | v0.15 | Topological Plasticity | ✅ Complete |
+| 2 | v0.2 | Fields & Environment | ✅ Complete |
+| 2.5 | v0.25 | Closed-Loop Fields | ✅ Complete |
+| 3 | v0.3 | Hox Genetics & Passive Ecology | ✅ Complete |
+| 3.5 | v0.35 | Sexual Recombination & Drift | ✅ Complete |
+| 4 | v0.4 | Actuation, Cognition & Behavior | 🔧 In Progress |
 | 4.5 | v0.45 | Learned Gaits | 💭 Speculative |
 | 5 | v0.5 | UI & Analytics | 📋 Planned |
 | 6 | v0.6 | Persistence & Speciation Tools | 📋 Planned |

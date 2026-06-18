@@ -46,9 +46,7 @@ cargo run --release --bin phylon
 
 ## Current Status
 
-Phase 8 is complete. The workspace features SQLite database integration via `storage` to persist massive simulation telemetry asynchronously, a headless command-line orchestrator (`phylon-research`), and a live-reloading God-Mode API embedded with `rhai` via the `plugins` crate. The biological features include Continuous-Time Recurrent Neural Networks (CTRNN) with Hebbian learning, heritable sexual/asexual/facultative reproduction, multi-sector vision, speciation mechanics, and communicable disease spread.
-
-Phase 7 introduced procedurally generated SDF visuals and Multiple Render Targets (MRT) for movement trails, replacing simple colored squares with biologically plausible forms. Phase 8 overhauled the `egui` interface into a complete application shell, implementing a persistent menu bar, non-blocking asynchronous progress overlays, centralized UI state, and global keyboard shortcuts. Phase 9 (Network & Multiplayer) is slated next.
+Phase 3.5 is complete. The workspace features a decentralized, GPU-accelerated ecosystem. The simulation core uses `bevy_ecs` and a fixed-timestep `hecs` inspired model for topological soft-body physics. In recent phases (1.5, 2.5, 3.5), we implemented procedural organism growth (topological plasticity), a double-buffered wgpu staging ring for closed-loop chemical diffusion readbacks, and collision-based sexual reproduction with genetic drift. The application is now preparing for Phase 4 (Actuation, Cognition & Behavior) to integrate Continuous-Time Recurrent Neural Networks (CTRNNs).
 
 ## Documentation
 
