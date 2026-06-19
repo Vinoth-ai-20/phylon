@@ -123,6 +123,15 @@ struct PhylonApp {
 
     /// Total simulation time in seconds.
     total_sim_time: f32,
+
+    /// Multiplier for simulation speed (1.0 = normal, 0.5 = half speed, 2.0 = double).
+    simulation_speed: f32,
+
+    /// Accumulator for sub-frame simulation steps.
+    accumulated_time: f32,
+
+    /// If true, the simulation is paused and no physics/biology ticks occur.
+    is_paused: bool,
 }
 
 use bevy_ecs::prelude::*;
@@ -243,6 +252,9 @@ impl PhylonApp {
             canvas_rect: None,
             max_ticks_per_frame: 5,
             total_sim_time: 0.0,
+            simulation_speed: 1.0,
+            accumulated_time: 0.0,
+            is_paused: false,
         }
     }
 
@@ -430,15 +442,7 @@ impl PhylonApp {
             return Ok(());
         };
 
-        // Advance time
         const DT: f32 = 0.016; // Fixed 60 Hz timestep
-        self.total_sim_time += DT;
-
-        // Record analytics — read entity_count before mutably borrowing the resource
-        let entity_count = self.world.ecs.entities().len() as usize;
-        if let Some(mut metrics) = self.world.ecs.get_resource_mut::<analytics::MetricsState>() {
-            metrics.record_frame(entity_count, f64::from(DT));
-        }
 
         // 1. Camera Tracking
         if let Some(tracked) = self.tracked_entity {
@@ -456,242 +460,262 @@ impl PhylonApp {
             }
         }
 
-        // 2. Run Biology Systems (Sensing, Brain, Behavior)
-        use bevy_ecs::system::RunSystemOnce;
-        self.world.ecs.run_system_once(organisms::growth_system);
-        self.world.ecs.run_system_once(sensing::sensing_system);
-
-        // -- GPU CTRNN EVALUATION --
-        let mut gpu_brain_nodes = Vec::new();
-        let mut gpu_brain_synapses = Vec::new();
-        let mut brain_offsets = Vec::new();
-
-        let mut query = self.world.ecs.query::<(
-            bevy_ecs::entity::Entity,
-            &sensing::SensoryState,
-            &mut brain::Brain,
-        )>();
-        for (entity, sensory, mut brain) in query.iter_mut(&mut self.world.ecs) {
-            brain.set_inputs(&sensory.inputs);
-
-            let start_node = gpu_brain_nodes.len() as u32;
-            let start_syn = gpu_brain_synapses.len() as u32;
-
-            for node in &brain.nodes {
-                gpu_brain_nodes.push(gpu::brain_pipeline::GpuCtrnnNode {
-                    state: node.state,
-                    time_constant: node.time_constant,
-                    bias: node.bias,
-                    activation: node.activation,
-                    first_synapse: start_syn + node.first_synapse,
-                    synapse_count: node.synapse_count,
-                });
-            }
-
-            for syn in &brain.synapses {
-                gpu_brain_synapses.push(gpu::brain_pipeline::GpuCtrnnSynapse {
-                    source: start_node + syn.source,
-                    target: start_node + syn.target,
-                    weight: syn.weight,
-                    _padding: 0,
-                });
-            }
-
-            brain_offsets.push((entity, start_node, brain.nodes.len()));
+        if !self.is_paused {
+            self.accumulated_time += self.simulation_speed;
         }
 
-        if let Some(gpu) = self.gpu.as_ref() {
-            if let Some(brain_compute) = self.brain_compute.as_ref() {
-                brain_compute.compute_step(
-                    &gpu.device,
-                    &gpu.queue,
-                    &mut gpu_brain_nodes,
-                    &gpu_brain_synapses,
-                    DT,
-                );
-            }
-        }
+        let mut physics_duration_ms = 0.0;
+        let mut diffusion_duration_ms = 0.0;
 
-        // Readback integrated node state
-        let mut query = self.world.ecs.query::<&mut brain::Brain>();
-        for (entity, start_node, len) in brain_offsets {
-            if let Ok(mut brain) = query.get_mut(&mut self.world.ecs, entity) {
-                for i in 0..len {
-                    brain.nodes[i].state = gpu_brain_nodes[(start_node as usize) + i].state;
+        let ticks_this_frame = self.accumulated_time.floor() as u32;
+        let ticks_to_run = ticks_this_frame.min(self.max_ticks_per_frame);
+        self.accumulated_time -= ticks_this_frame as f32;
+
+        for _ in 0..ticks_to_run {
+            self.total_sim_time += DT;
+
+            // 2. Run Biology Systems (Sensing, Brain, Behavior)
+            use bevy_ecs::system::RunSystemOnce;
+            self.world.ecs.run_system_once(organisms::growth_system);
+            self.world.ecs.run_system_once(sensing::sensing_system);
+
+            // -- GPU CTRNN EVALUATION --
+            let mut gpu_brain_nodes = Vec::new();
+            let mut gpu_brain_synapses = Vec::new();
+            let mut brain_offsets = Vec::new();
+
+            let mut query = self.world.ecs.query::<(
+                bevy_ecs::entity::Entity,
+                &sensing::SensoryState,
+                &mut brain::Brain,
+            )>();
+            for (entity, sensory, mut brain) in query.iter_mut(&mut self.world.ecs) {
+                brain.set_inputs(&sensory.inputs);
+
+                let start_node = gpu_brain_nodes.len() as u32;
+                let start_syn = gpu_brain_synapses.len() as u32;
+
+                for node in &brain.nodes {
+                    gpu_brain_nodes.push(gpu::brain_pipeline::GpuCtrnnNode {
+                        state: node.state,
+                        time_constant: node.time_constant,
+                        bias: node.bias,
+                        activation: node.activation,
+                        first_synapse: start_syn + node.first_synapse,
+                        synapse_count: node.synapse_count,
+                    });
+                }
+
+                for syn in &brain.synapses {
+                    gpu_brain_synapses.push(gpu::brain_pipeline::GpuCtrnnSynapse {
+                        source: start_node + syn.source,
+                        target: start_node + syn.target,
+                        weight: syn.weight,
+                        _padding: 0,
+                    });
+                }
+
+                brain_offsets.push((entity, start_node, brain.nodes.len()));
+            }
+
+            if let Some(gpu) = self.gpu.as_ref() {
+                if let Some(brain_compute) = self.brain_compute.as_ref() {
+                    brain_compute.compute_step(
+                        &gpu.device,
+                        &gpu.queue,
+                        &mut gpu_brain_nodes,
+                        &gpu_brain_synapses,
+                        DT,
+                    );
                 }
             }
-        }
 
-        self.world.ecs.run_system_once(behavior::behavior_system);
-
-        // 2. Gather Nodes and build Entity -> Index map
-        let mut entity_to_index = std::collections::HashMap::new();
-        let mut gpu_nodes = Vec::new();
-        let mut node_entities = Vec::new();
-
-        let mut query_nodes = self
-            .world
-            .ecs
-            .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
-        for (entity, node) in query_nodes.iter(&self.world.ecs) {
-            entity_to_index.insert(entity, gpu_nodes.len() as u32);
-            gpu_nodes.push(gpu::physics_pipeline::GpuParticleNode {
-                position: [node.position.x, node.position.y],
-                velocity: [node.velocity.x, node.velocity.y],
-                force: [node.force.x, node.force.y],
-                mass: node.mass,
-                _padding: 0,
-            });
-            node_entities.push(entity);
-        }
-
-        // 3. Gather Springs
-        let mut query_springs = self.world.ecs.query::<&physics::Spring>();
-        let mut gpu_springs = Vec::new();
-        for spring in query_springs.iter(&self.world.ecs) {
-            let Some(&idx_a) = entity_to_index.get(&spring.node_a) else {
-                continue;
-            };
-            let Some(&idx_b) = entity_to_index.get(&spring.node_b) else {
-                continue;
-            };
-
-            let constraint_type = match spring.constraint_type {
-                physics::ConstraintType::Elastic => 0,
-                physics::ConstraintType::Rigid => 1,
-                physics::ConstraintType::Passive => 2,
-                physics::ConstraintType::Rotational => 3,
-            };
-
-            gpu_springs.push(gpu::physics_pipeline::GpuPhysicsSpring {
-                node_a: idx_a,
-                node_b: idx_b,
-                constraint_type,
-                rest_length: spring.rest_length,
-                base_length: spring.base_length,
-                stiffness: spring.stiffness,
-                damping: spring.damping,
-                actuation_amplitude: spring.actuation_amplitude,
-                actuation_phase: spring.actuation_phase,
-                breaking_strain: spring.breaking_strain,
-                is_fin: spring.is_fin,
-                _padding_2: 0,
-            });
-        }
-
-        // 4. Compute GPU Physics
-        let physics_start = std::time::Instant::now();
-        let global_time = self
-            .world
-            .ecs
-            .resource::<diffusion::DiffusionConfig>()
-            .global_time;
-        let updated_nodes = physics_compute.compute_step(
-            &gpu.device,
-            &gpu.queue,
-            &gpu_nodes,
-            &gpu_springs,
-            0.016,
-            global_time,
-        );
-        let physics_duration_ms = physics_start.elapsed().as_secs_f64() * 1000.0;
-
-        // 5. Update ECS Nodes
-        for (i, entity) in node_entities.iter().enumerate() {
-            if let Some(mut node) = self.world.ecs.get_mut::<physics::ParticleNode>(*entity) {
-                node.position.x = updated_nodes[i].position[0];
-                node.position.y = updated_nodes[i].position[1];
-                node.velocity.x = updated_nodes[i].velocity[0];
-                node.velocity.y = updated_nodes[i].velocity[1];
-                // Clear forces for next tick
-                node.force = common::Vec2::new(0.0, 0.0);
+            // Readback integrated node state
+            let mut query = self.world.ecs.query::<&mut brain::Brain>();
+            for (entity, start_node, len) in brain_offsets {
+                if let Ok(mut brain) = query.get_mut(&mut self.world.ecs, entity) {
+                    for i in 0..len {
+                        brain.nodes[i].state = gpu_brain_nodes[(start_node as usize) + i].state;
+                    }
+                }
             }
-        }
 
-        // 6. Run remaining biological systems
-        self.world.ecs.run_system_once(ecology::food_spawner_system);
-        self.world.ecs.run_system_once(ecology::foraging_system);
-        self.world
-            .ecs
-            .run_system_once(metabolism::metabolism_system);
-        self.world
-            .ecs
-            .run_system_once(reproduction::reproduction_system);
-        self.world.ecs.run_system_once(process_births_system);
-        self.world.ecs.run_system_once(process_deaths_system);
-        if let Some(mut events) = self
-            .world
-            .ecs
-            .get_resource_mut::<bevy_ecs::event::Events<reproduction::BirthRequest>>()
-        {
-            events.update();
-        }
+            self.world.ecs.run_system_once(behavior::behavior_system);
 
-        let mut diffusion_duration_ms = 0.0;
-        if let Some(diffusion_compute) = self.diffusion_compute.as_mut() {
-            // 5. Gather diffusion emitters and run compute
-            let (diff_rate, dec_rate) = {
-                let mut diffusion_config =
-                    self.world.ecs.resource_mut::<diffusion::DiffusionConfig>();
+            // 2. Gather Nodes and build Entity -> Index map
+            let mut entity_to_index = std::collections::HashMap::new();
+            let mut gpu_nodes = Vec::new();
+            let mut node_entities = Vec::new();
 
-                // Diurnal modulation
-                diffusion_config.global_time += 0.016;
-                // Oscillate decay rate between 0.5x and 1.5x of base
-                let diurnal_mod = 1.0 + 0.5 * (diffusion_config.global_time * 0.1).sin();
-                diffusion_config.decay_rate = diffusion_config.base_decay_rate * diurnal_mod;
+            let mut query_nodes = self
+                .world
+                .ecs
+                .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
+            for (entity, node) in query_nodes.iter(&self.world.ecs) {
+                entity_to_index.insert(entity, gpu_nodes.len() as u32);
+                gpu_nodes.push(gpu::physics_pipeline::GpuParticleNode {
+                    position: [node.position.x, node.position.y],
+                    velocity: [node.velocity.x, node.velocity.y],
+                    force: [node.force.x, node.force.y],
+                    mass: node.mass,
+                    _padding: 0,
+                });
+                node_entities.push(entity);
+            }
 
-                (diffusion_config.diffusion_rate, diffusion_config.decay_rate)
-            };
-            let mut query_emitters = self.world.ecs.query::<&diffusion::Emitter>();
-            let mut gpu_emitters = Vec::new();
+            // 3. Gather Springs
+            let mut query_springs = self.world.ecs.query::<&physics::Spring>();
+            let mut gpu_springs = Vec::new();
+            for spring in query_springs.iter(&self.world.ecs) {
+                let Some(&idx_a) = entity_to_index.get(&spring.node_a) else {
+                    continue;
+                };
+                let Some(&idx_b) = entity_to_index.get(&spring.node_b) else {
+                    continue;
+                };
 
-            let screen_w = gpu.config.width as f32;
-            let screen_h = gpu.config.height as f32;
+                let constraint_type = match spring.constraint_type {
+                    physics::ConstraintType::Elastic => 0,
+                    physics::ConstraintType::Rigid => 1,
+                    physics::ConstraintType::Passive => 2,
+                    physics::ConstraintType::Rotational => 3,
+                };
 
-            for emitter in query_emitters.iter(&self.world.ecs) {
-                // Map world space to 256x256 grid space
-                let grid_x = (emitter.position.x / (screen_w * 0.5)) * 128.0 + 128.0;
-                let grid_y = (-emitter.position.y / (screen_h * 0.5)) * 128.0 + 128.0;
-                let grid_radius = (emitter.radius / (screen_w * 0.5)) * 128.0;
-
-                gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
-                    grid_pos: [grid_x, grid_y],
-                    value: emitter.value,
-                    grid_radius,
+                gpu_springs.push(gpu::physics_pipeline::GpuPhysicsSpring {
+                    node_a: idx_a,
+                    node_b: idx_b,
+                    constraint_type,
+                    rest_length: spring.rest_length,
+                    base_length: spring.base_length,
+                    stiffness: spring.stiffness,
+                    damping: spring.damping,
+                    actuation_amplitude: spring.actuation_amplitude,
+                    actuation_phase: spring.actuation_phase,
+                    breaking_strain: spring.breaking_strain,
+                    is_fin: spring.is_fin,
+                    _padding_2: 0,
                 });
             }
 
-            let diffusion_start = std::time::Instant::now();
-            diffusion_compute.step(
+            // 4. Compute GPU Physics
+            let physics_start = std::time::Instant::now();
+            let global_time = self
+                .world
+                .ecs
+                .resource::<diffusion::DiffusionConfig>()
+                .global_time;
+            let updated_nodes = physics_compute.compute_step(
                 &gpu.device,
                 &gpu.queue,
-                gpu::diffusion_pipeline::DiffusionUniforms {
-                    diffusion_rate: diff_rate,
-                    decay_rate: dec_rate,
-                    dt: 0.016, // fixed timestep
-                    emitter_count: gpu_emitters.len() as u32,
-                },
-                &gpu_emitters,
+                &gpu_nodes,
+                &gpu_springs,
+                0.016,
+                global_time,
             );
+            physics_duration_ms += physics_start.elapsed().as_secs_f64() * 1000.0;
 
-            if let Some(field_data) = diffusion_compute.try_read_field(&gpu.device) {
-                let mut cpu_field = self.world.ecs.resource_mut::<diffusion::CpuFieldState>();
-                cpu_field.data = field_data;
+            // 5. Update ECS Nodes
+            for (i, entity) in node_entities.iter().enumerate() {
+                if let Some(mut node) = self.world.ecs.get_mut::<physics::ParticleNode>(*entity) {
+                    node.position.x = updated_nodes[i].position[0];
+                    node.position.y = updated_nodes[i].position[1];
+                    node.velocity.x = updated_nodes[i].velocity[0];
+                    node.velocity.y = updated_nodes[i].velocity[1];
+                    // Clear forces for next tick
+                    node.force = common::Vec2::new(0.0, 0.0);
+                }
             }
-            diffusion_duration_ms = diffusion_start.elapsed().as_secs_f64() * 1000.0;
+
+            // 6. Run remaining biological systems
+            self.world.ecs.run_system_once(ecology::food_spawner_system);
+            self.world.ecs.run_system_once(ecology::foraging_system);
+            self.world
+                .ecs
+                .run_system_once(metabolism::metabolism_system);
+            self.world
+                .ecs
+                .run_system_once(reproduction::reproduction_system);
+            self.world.ecs.run_system_once(process_births_system);
+            self.world.ecs.run_system_once(process_deaths_system);
+            if let Some(mut events) = self
+                .world
+                .ecs
+                .get_resource_mut::<bevy_ecs::event::Events<reproduction::BirthRequest>>()
+            {
+                events.update();
+            }
+
+            if let Some(diffusion_compute) = self.diffusion_compute.as_mut() {
+                // 5. Gather diffusion emitters and run compute
+                let (diff_rate, dec_rate) = {
+                    let mut diffusion_config =
+                        self.world.ecs.resource_mut::<diffusion::DiffusionConfig>();
+
+                    // Diurnal modulation
+                    diffusion_config.global_time += 0.016;
+                    // Oscillate decay rate between 0.5x and 1.5x of base
+                    let diurnal_mod = 1.0 + 0.5 * (diffusion_config.global_time * 0.1).sin();
+                    diffusion_config.decay_rate = diffusion_config.base_decay_rate * diurnal_mod;
+
+                    (diffusion_config.diffusion_rate, diffusion_config.decay_rate)
+                };
+                let mut query_emitters = self.world.ecs.query::<&diffusion::Emitter>();
+                let mut gpu_emitters = Vec::new();
+
+                let screen_w = gpu.config.width as f32;
+                let screen_h = gpu.config.height as f32;
+
+                for emitter in query_emitters.iter(&self.world.ecs) {
+                    // Map world space to 256x256 grid space
+                    let grid_x = (emitter.position.x / (screen_w * 0.5)) * 128.0 + 128.0;
+                    let grid_y = (-emitter.position.y / (screen_h * 0.5)) * 128.0 + 128.0;
+                    let grid_radius = (emitter.radius / (screen_w * 0.5)) * 128.0;
+
+                    gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
+                        grid_pos: [grid_x, grid_y],
+                        value: emitter.value,
+                        grid_radius,
+                    });
+                }
+
+                let diffusion_start = std::time::Instant::now();
+                diffusion_compute.step(
+                    &gpu.device,
+                    &gpu.queue,
+                    gpu::diffusion_pipeline::DiffusionUniforms {
+                        diffusion_rate: diff_rate,
+                        decay_rate: dec_rate,
+                        dt: 0.016, // fixed timestep
+                        emitter_count: gpu_emitters.len() as u32,
+                    },
+                    &gpu_emitters,
+                );
+
+                if let Some(field_data) = diffusion_compute.try_read_field(&gpu.device) {
+                    let mut cpu_field = self.world.ecs.resource_mut::<diffusion::CpuFieldState>();
+                    cpu_field.data = field_data;
+                }
+                diffusion_duration_ms += diffusion_start.elapsed().as_secs_f64() * 1000.0;
+            }
         }
 
+        // Record analytics — read entity_count before mutably borrowing the resource
+        let entity_count = self.world.ecs.entities().len() as usize;
         if let Some(mut metrics) = self.world.ecs.get_resource_mut::<analytics::MetricsState>() {
-            metrics.compute_profiles = vec![
-                analytics::PassTiming {
-                    name: "Physics (Compute & PBD)".to_string(),
-                    duration_ms: physics_duration_ms,
-                },
-                analytics::PassTiming {
-                    name: "Diffusion Field".to_string(),
-                    duration_ms: diffusion_duration_ms,
-                },
-            ];
+            metrics.record_frame(entity_count, f64::from(DT));
+
+            if ticks_to_run > 0 {
+                metrics.compute_profiles = vec![
+                    analytics::PassTiming {
+                        name: "Physics (Compute & PBD)".to_string(),
+                        duration_ms: physics_duration_ms,
+                    },
+                    analytics::PassTiming {
+                        name: "Diffusion Field".to_string(),
+                        duration_ms: diffusion_duration_ms,
+                    },
+                ];
+            }
         }
 
         // 6. Gather rendering instances
@@ -856,12 +880,14 @@ impl PhylonApp {
         let mut interaction = ui::CanvasInteraction::default();
         let mut scale = 1.0;
 
+        let mut ui_actions = Vec::new();
+
         if let (Some(egui_state), Some(window)) = (&mut self.egui_state, &self.window) {
             let raw_input = egui_state.take_egui_input(window);
             let ctx = egui_state.egui_ctx().clone();
 
             let output = ctx.run(raw_input, |ctx| {
-                interaction = ui::render_ui(
+                let (interact, acts) = ui::render_ui(
                     ctx,
                     &mut self.world,
                     self.camera_pos,
@@ -871,7 +897,11 @@ impl PhylonApp {
                     &mut self.debug_structural,
                     &mut self.bone_line_thickness,
                     &mut self.active_tab,
+                    &mut self.simulation_speed,
+                    &mut self.is_paused,
                 );
+                interaction = interact;
+                ui_actions = acts;
             });
 
             scale = window.scale_factor() as f32;
@@ -1062,7 +1092,97 @@ impl PhylonApp {
 
         output.present();
 
+        self.handle_menu_actions(ui_actions);
+
         Ok(())
+    }
+
+    fn handle_menu_actions(&mut self, actions: Vec<ui::MenuAction>) {
+        for action in actions {
+            match action {
+                ui::MenuAction::SaveState => {
+                    tracing::warn!("Save State not yet implemented fully.");
+                }
+                ui::MenuAction::LoadState => {
+                    tracing::warn!("Load State not yet implemented fully.");
+                }
+                ui::MenuAction::Undo => {
+                    tracing::warn!("Undo not yet implemented fully.");
+                }
+                ui::MenuAction::Redo => {
+                    tracing::warn!("Redo not yet implemented fully.");
+                }
+                ui::MenuAction::StepForward => {
+                    self.accumulated_time += 1.0;
+                }
+                ui::MenuAction::Reset => {
+                    // Despawn all entities
+                    let entities: Vec<_> = self.world.ecs.iter_entities().map(|e| e.id()).collect();
+                    for entity in entities {
+                        self.world.ecs.despawn(entity);
+                    }
+
+                    // Respawn defaults
+                    let worm_hox = genetics::HoxSequence::worm(6, [0.85, 0.35, 0.35]);
+                    let worm_genome = genetics::Genome::new_hox_driven(
+                        genetics::GenomeId(1),
+                        common::EntityId(0),
+                        worm_hox,
+                    );
+                    organisms::spawn_organism(
+                        &mut self.world.ecs,
+                        &worm_genome,
+                        common::Vec2::new(0.0, 80.0),
+                    );
+
+                    let fish_hox = genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]);
+                    let fish_genome = genetics::Genome::new_hox_driven(
+                        genetics::GenomeId(2),
+                        common::EntityId(0),
+                        fish_hox,
+                    );
+                    organisms::spawn_organism(
+                        &mut self.world.ecs,
+                        &fish_genome,
+                        common::Vec2::new(0.0, 0.0),
+                    );
+                }
+                ui::MenuAction::SelectAll => {
+                    // Just select the first head we find
+                    let mut query = self
+                        .world
+                        .ecs
+                        .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
+                    for (entity, node) in query.iter(&self.world.ecs) {
+                        if node.segment_type == 0 {
+                            // Head
+                            self.selected_entity = Some(entity);
+                            self.tracked_entity = Some(entity);
+                            break;
+                        }
+                    }
+                }
+                ui::MenuAction::Deselect => {
+                    self.selected_entity = None;
+                    self.tracked_entity = None;
+                }
+                ui::MenuAction::SpawnProtoFish => {
+                    let fish_hox = genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]);
+                    let fish_genome = genetics::Genome::new_hox_driven(
+                        genetics::GenomeId(100),
+                        common::EntityId(0),
+                        fish_hox,
+                    );
+                    organisms::spawn_organism(&mut self.world.ecs, &fish_genome, self.camera_pos);
+                }
+                ui::MenuAction::ShowDocumentation => {
+                    tracing::info!("Documentation clicked");
+                }
+                ui::MenuAction::ShowAbout => {
+                    tracing::info!("About clicked");
+                }
+            }
+        }
     }
 }
 

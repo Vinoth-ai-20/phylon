@@ -63,6 +63,33 @@ impl Default for CanvasInteraction {
     }
 }
 
+/// Actions triggered from the UI Menu Bar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MenuAction {
+    /// Save the simulation state to disk.
+    SaveState,
+    /// Load a simulation state from disk.
+    LoadState,
+    /// Undo the last action.
+    Undo,
+    /// Redo the last undone action.
+    Redo,
+    /// Advance the simulation by one tick while paused.
+    StepForward,
+    /// Reset the simulation to default organisms.
+    Reset,
+    /// Select all or cycle through organisms.
+    SelectAll,
+    /// Clear the current selection.
+    Deselect,
+    /// Spawn a new proto-fish under the camera.
+    SpawnProtoFish,
+    /// Show the Phylon documentation.
+    ShowDocumentation,
+    /// Show the About Phylon dialog.
+    ShowAbout,
+}
+
 /// Renders the main immediate-mode user interface.
 ///
 /// Returns a `CanvasInteraction` containing the screen-space `Rect` of the
@@ -83,41 +110,81 @@ pub fn render_ui(
     debug_structural: &mut bool,
     bone_line_thickness: &mut f32,
     active_tab: &mut SidebarTab,
-) -> CanvasInteraction {
+    simulation_speed: &mut f32,
+    is_paused: &mut bool,
+) -> (CanvasInteraction, Vec<MenuAction>) {
+    let mut actions = Vec::new();
+
     // ── Top menu bar ───────────────────────────────────────────────────────
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
-                let _ = ui.button("Save State");
-                let _ = ui.button("Load State");
+                if ui.button("Save State").clicked() {
+                    actions.push(MenuAction::SaveState);
+                }
+                if ui.button("Load State").clicked() {
+                    actions.push(MenuAction::LoadState);
+                }
                 ui.separator();
                 if ui.button("Quit").clicked() {
                     std::process::exit(0);
                 }
             });
             ui.menu_button("Edit", |ui| {
-                let _ = ui.button("Undo");
-                let _ = ui.button("Redo");
+                if ui.button("Undo").clicked() {
+                    actions.push(MenuAction::Undo);
+                }
+                if ui.button("Redo").clicked() {
+                    actions.push(MenuAction::Redo);
+                }
             });
             ui.menu_button("Simulation", |ui| {
-                let _ = ui.button("Play/Pause");
-                let _ = ui.button("Step Forward");
-                let _ = ui.button("Reset");
+                if ui
+                    .button(if *is_paused { "Play" } else { "Pause" })
+                    .clicked()
+                {
+                    *is_paused = !*is_paused;
+                }
+                if ui.button("Step Forward").clicked() {
+                    actions.push(MenuAction::StepForward);
+                }
+                if ui.button("Reset").clicked() {
+                    actions.push(MenuAction::Reset);
+                }
             });
             ui.menu_button("View", |ui| {
                 ui.checkbox(debug_structural, "Debug Structural View");
             });
             ui.menu_button("Selection", |ui| {
-                let _ = ui.button("Select All");
-                let _ = ui.button("Deselect");
+                if ui.button("Select All").clicked() {
+                    actions.push(MenuAction::SelectAll);
+                }
+                if ui.button("Deselect").clicked() {
+                    actions.push(MenuAction::Deselect);
+                }
             });
             ui.menu_button("Tools", |ui| {
-                let _ = ui.button("Spawn Proto-Fish");
+                if ui.button("Spawn Proto-Fish").clicked() {
+                    actions.push(MenuAction::SpawnProtoFish);
+                }
             });
             ui.menu_button("Help", |ui| {
-                let _ = ui.button("Documentation");
-                let _ = ui.button("About Phylon");
+                if ui.button("Documentation").clicked() {
+                    actions.push(MenuAction::ShowDocumentation);
+                }
+                if ui.button("About Phylon").clicked() {
+                    actions.push(MenuAction::ShowAbout);
+                }
             });
+
+            ui.separator();
+            ui.label("Speed:");
+            ui.add(
+                egui::Slider::new(simulation_speed, 0.1..=10.0)
+                    .text("x")
+                    .logarithmic(true),
+            );
+
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let track_str = if let Some(e) = tracked_entity {
                     format!(" — Tracking {:?}", e)
@@ -740,13 +807,16 @@ pub fn render_ui(
     let interact_response = central.inner;
     let zoom_delta = ctx.input(|i| i.zoom_delta());
 
-    CanvasInteraction {
-        rect: central.response.rect,
-        clicked: interact_response.clicked(),
-        click_pos: interact_response.interact_pointer_pos(),
-        drag_delta: interact_response.drag_delta(),
-        zoom_delta,
-    }
+    (
+        CanvasInteraction {
+            rect: central.response.rect,
+            clicked: interact_response.clicked(),
+            click_pos: interact_response.interact_pointer_pos(),
+            drag_delta: interact_response.drag_delta(),
+            zoom_delta,
+        },
+        actions,
+    )
 }
 
 fn draw_segment_tree(
