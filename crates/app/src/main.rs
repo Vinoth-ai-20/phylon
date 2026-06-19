@@ -132,6 +132,12 @@ struct PhylonApp {
 
     /// If true, the simulation is paused and no physics/biology ticks occur.
     is_paused: bool,
+
+    /// If true, show the About dialog.
+    show_about: bool,
+
+    /// If true, show the Documentation window.
+    show_docs: bool,
 }
 
 use bevy_ecs::prelude::*;
@@ -255,6 +261,8 @@ impl PhylonApp {
             simulation_speed: 1.0,
             accumulated_time: 0.0,
             is_paused: false,
+            show_about: false,
+            show_docs: false,
         }
     }
 
@@ -702,7 +710,9 @@ impl PhylonApp {
         // Record analytics — read entity_count before mutably borrowing the resource
         let entity_count = self.world.ecs.entities().len() as usize;
         if let Some(mut metrics) = self.world.ecs.get_resource_mut::<analytics::MetricsState>() {
-            metrics.record_frame(entity_count, f64::from(DT));
+            let sim_dt = (ticks_to_run as f64) * f64::from(DT);
+            let real_dt = f64::from(DT); // Fixed render step for now
+            metrics.record_frame(entity_count, sim_dt, real_dt);
 
             if ticks_to_run > 0 {
                 metrics.compute_profiles = vec![
@@ -899,6 +909,8 @@ impl PhylonApp {
                     &mut self.active_tab,
                     &mut self.simulation_speed,
                     &mut self.is_paused,
+                    &mut self.show_about,
+                    &mut self.show_docs,
                 );
                 interaction = interact;
                 ui_actions = acts;
@@ -1176,10 +1188,23 @@ impl PhylonApp {
                     organisms::spawn_organism(&mut self.world.ecs, &fish_genome, self.camera_pos);
                 }
                 ui::MenuAction::ShowDocumentation => {
-                    tracing::info!("Documentation clicked");
+                    self.show_docs = true;
                 }
                 ui::MenuAction::ShowAbout => {
-                    tracing::info!("About clicked");
+                    self.show_about = true;
+                }
+                ui::MenuAction::CameraZoomIn => {
+                    self.camera_zoom *= 1.1;
+                    self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
+                }
+                ui::MenuAction::CameraZoomOut => {
+                    self.camera_zoom /= 1.1;
+                    self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
+                }
+                ui::MenuAction::CameraHome => {
+                    self.camera_pos = common::Vec2::new(0.0, 0.0);
+                    self.camera_zoom = 1.0;
+                    self.tracked_entity = None;
                 }
             }
         }
@@ -1361,8 +1386,9 @@ fn main() -> Result<()> {
     // Initialise structured logging.
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("info,wgpu_core=warn,wgpu_hal=warn")
+            }),
         )
         .init();
 

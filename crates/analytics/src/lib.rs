@@ -97,11 +97,11 @@ impl MetricsState {
     /// Records one simulation frame with the current entity count and frame delta time.
     ///
     /// `dt` is in seconds (typically 0.016 for 60 Hz).
-    pub fn record_frame(&mut self, entity_count: usize, dt: f64) {
-        self.sim_time += dt;
+    pub fn record_frame(&mut self, entity_count: usize, sim_dt: f64, real_dt: f64) {
+        self.sim_time += sim_dt;
 
         // Exponential moving average for FPS (α = 0.05)
-        let raw_fps = if dt > 0.0 { 1.0 / dt } else { 60.0 };
+        let raw_fps = if real_dt > 0.0 { 1.0 / real_dt } else { 60.0 };
         self.smoothed_fps = self.smoothed_fps * 0.95 + raw_fps * 0.05;
 
         if self.population_history.len() >= METRICS_RING_CAPACITY {
@@ -140,7 +140,7 @@ mod tests {
     fn metrics_state_ring_buffer_caps_at_max() {
         let mut m = MetricsState::new();
         for _ in 0..(METRICS_RING_CAPACITY + 10) {
-            m.record_frame(42, 0.016);
+            m.record_frame(42, 0.016, 0.016);
         }
         assert_eq!(m.population_history.len(), METRICS_RING_CAPACITY);
         assert_eq!(m.fps_history.len(), METRICS_RING_CAPACITY);

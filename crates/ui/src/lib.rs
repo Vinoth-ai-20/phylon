@@ -88,6 +88,12 @@ pub enum MenuAction {
     ShowDocumentation,
     /// Show the About Phylon dialog.
     ShowAbout,
+    /// Zoom camera in.
+    CameraZoomIn,
+    /// Zoom camera out.
+    CameraZoomOut,
+    /// Reset camera view.
+    CameraHome,
 }
 
 /// Renders the main immediate-mode user interface.
@@ -112,17 +118,104 @@ pub fn render_ui(
     active_tab: &mut SidebarTab,
     simulation_speed: &mut f32,
     is_paused: &mut bool,
+    show_about: &mut bool,
+    show_docs: &mut bool,
 ) -> (CanvasInteraction, Vec<MenuAction>) {
     let mut actions = Vec::new();
+
+    let shortcut_save = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::S);
+    let shortcut_load = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::O);
+    let shortcut_undo = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Z);
+    let shortcut_redo =
+        egui::KeyboardShortcut::new(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::Z);
+    let shortcut_play_pause = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Space);
+    let shortcut_step = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::ArrowRight);
+    let shortcut_reset = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::R);
+    let shortcut_select_all = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::A);
+    let shortcut_deselect = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Escape);
+    let shortcut_spawn = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::P);
+
+    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_save)) {
+        actions.push(MenuAction::SaveState);
+    }
+    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_load)) {
+        actions.push(MenuAction::LoadState);
+    }
+    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_undo)) {
+        actions.push(MenuAction::Undo);
+    }
+    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_redo)) {
+        actions.push(MenuAction::Redo);
+    }
+    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_play_pause)) {
+        *is_paused = !*is_paused;
+    }
+    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_step)) {
+        actions.push(MenuAction::StepForward);
+    }
+    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_reset)) {
+        actions.push(MenuAction::Reset);
+    }
+    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_select_all)) {
+        actions.push(MenuAction::SelectAll);
+    }
+    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_deselect)) {
+        actions.push(MenuAction::Deselect);
+    }
+    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_spawn)) {
+        actions.push(MenuAction::SpawnProtoFish);
+    }
+
+    // Hardcode camera zoom keys
+    if ctx.input(|i| i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals)) {
+        actions.push(MenuAction::CameraZoomIn);
+    }
+    if ctx.input(|i| i.key_pressed(egui::Key::Minus)) {
+        actions.push(MenuAction::CameraZoomOut);
+    }
+    if ctx.input(|i| i.key_pressed(egui::Key::Home) || i.key_pressed(egui::Key::Num0)) {
+        actions.push(MenuAction::CameraHome);
+    }
+
+    egui::Window::new("About Phylon")
+        .open(show_about)
+        .show(ctx, |ui| {
+            ui.heading("Phylon Artificial Life Simulator");
+            ui.label("A GPU-accelerated ALife simulation.");
+            ui.label("Version: 0.1.0");
+        });
+
+    egui::Window::new("Documentation")
+        .open(show_docs)
+        .show(ctx, |ui| {
+            ui.heading("Documentation");
+            ui.label("Welcome to Phylon. The core architecture uses continuous space and compute shaders.");
+            ui.label("Features:");
+            ui.label("- Hox-driven procedural generation");
+            ui.label("- Neural network control via CTRNNs");
+            ui.label("- Diffusion based metabolism");
+        });
 
     // ── Top menu bar ───────────────────────────────────────────────────────
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
-                if ui.button("Save State").clicked() {
+                if ui
+                    .add(
+                        egui::Button::new("Save State")
+                            .shortcut_text(ctx.format_shortcut(&shortcut_save)),
+                    )
+                    .clicked()
+                {
                     actions.push(MenuAction::SaveState);
                 }
-                if ui.button("Load State").clicked() {
+                if ui
+                    .add(
+                        egui::Button::new("Load State")
+                            .shortcut_text(ctx.format_shortcut(&shortcut_load)),
+                    )
+                    .clicked()
+                {
                     actions.push(MenuAction::LoadState);
                 }
                 ui.separator();
@@ -131,24 +224,51 @@ pub fn render_ui(
                 }
             });
             ui.menu_button("Edit", |ui| {
-                if ui.button("Undo").clicked() {
+                if ui
+                    .add(
+                        egui::Button::new("Undo")
+                            .shortcut_text(ctx.format_shortcut(&shortcut_undo)),
+                    )
+                    .clicked()
+                {
                     actions.push(MenuAction::Undo);
                 }
-                if ui.button("Redo").clicked() {
+                if ui
+                    .add(
+                        egui::Button::new("Redo")
+                            .shortcut_text(ctx.format_shortcut(&shortcut_redo)),
+                    )
+                    .clicked()
+                {
                     actions.push(MenuAction::Redo);
                 }
             });
             ui.menu_button("Simulation", |ui| {
                 if ui
-                    .button(if *is_paused { "Play" } else { "Pause" })
+                    .add(
+                        egui::Button::new(if *is_paused { "Play" } else { "Pause" })
+                            .shortcut_text(ctx.format_shortcut(&shortcut_play_pause)),
+                    )
                     .clicked()
                 {
                     *is_paused = !*is_paused;
                 }
-                if ui.button("Step Forward").clicked() {
+                if ui
+                    .add(
+                        egui::Button::new("Step Forward")
+                            .shortcut_text(ctx.format_shortcut(&shortcut_step)),
+                    )
+                    .clicked()
+                {
                     actions.push(MenuAction::StepForward);
                 }
-                if ui.button("Reset").clicked() {
+                if ui
+                    .add(
+                        egui::Button::new("Reset")
+                            .shortcut_text(ctx.format_shortcut(&shortcut_reset)),
+                    )
+                    .clicked()
+                {
                     actions.push(MenuAction::Reset);
                 }
             });
@@ -156,15 +276,33 @@ pub fn render_ui(
                 ui.checkbox(debug_structural, "Debug Structural View");
             });
             ui.menu_button("Selection", |ui| {
-                if ui.button("Select All").clicked() {
+                if ui
+                    .add(
+                        egui::Button::new("Select All")
+                            .shortcut_text(ctx.format_shortcut(&shortcut_select_all)),
+                    )
+                    .clicked()
+                {
                     actions.push(MenuAction::SelectAll);
                 }
-                if ui.button("Deselect").clicked() {
+                if ui
+                    .add(
+                        egui::Button::new("Deselect")
+                            .shortcut_text(ctx.format_shortcut(&shortcut_deselect)),
+                    )
+                    .clicked()
+                {
                     actions.push(MenuAction::Deselect);
                 }
             });
             ui.menu_button("Tools", |ui| {
-                if ui.button("Spawn Proto-Fish").clicked() {
+                if ui
+                    .add(
+                        egui::Button::new("Spawn Proto-Fish")
+                            .shortcut_text(ctx.format_shortcut(&shortcut_spawn)),
+                    )
+                    .clicked()
+                {
                     actions.push(MenuAction::SpawnProtoFish);
                 }
             });
@@ -172,7 +310,7 @@ pub fn render_ui(
                 if ui.button("Documentation").clicked() {
                     actions.push(MenuAction::ShowDocumentation);
                 }
-                if ui.button("About Phylon").clicked() {
+                if ui.button("About").clicked() {
                     actions.push(MenuAction::ShowAbout);
                 }
             });
@@ -186,6 +324,24 @@ pub fn render_ui(
             );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // right-to-left means items are placed from right edge toward left edge.
+                // we want the order visual left-to-right to be: "Cam info", "-", "Home", "+"
+                // so we add "+", "Home", "-", then the label.
+
+                if ui.button("+").on_hover_text("Zoom In (+/=)").clicked() {
+                    actions.push(MenuAction::CameraZoomIn);
+                }
+                if ui
+                    .button("Home")
+                    .on_hover_text("Reset Camera (Home/0)")
+                    .clicked()
+                {
+                    actions.push(MenuAction::CameraHome);
+                }
+                if ui.button("-").on_hover_text("Zoom Out (-)").clicked() {
+                    actions.push(MenuAction::CameraZoomOut);
+                }
+
                 let track_str = if let Some(e) = tracked_entity {
                     format!(" — Tracking {:?}", e)
                 } else {
@@ -462,17 +618,24 @@ pub fn render_ui(
                                 ui.label(format!("Origin: {:?}", genome.origin));
 
                                 ui.add_space(8.0);
-                                ui.horizontal(|ui| {
-                                    if ui.button("🎲 Mutate Add Node").clicked() {
-                                        pending_mutation = Some("add_node");
-                                    }
-                                    if ui.button("🎲 Mutate Add Connection").clicked() {
-                                        pending_mutation = Some("add_conn");
-                                    }
-                                    if ui.button("🎲 Mutate Weights").clicked() {
-                                        pending_mutation = Some("mutate_weight");
-                                    }
-                                });
+                                if genome.hox.is_some() {
+                                    ui.label(
+                                        egui::RichText::new("⚠️ This organism's morphology and wiring is hardcoded by its Hox Sequence. CPPN mutations are disabled.")
+                                            .color(egui::Color32::YELLOW),
+                                    );
+                                } else {
+                                    ui.horizontal(|ui| {
+                                        if ui.button("🎲 Mutate Add Node").clicked() {
+                                            pending_mutation = Some("add_node");
+                                        }
+                                        if ui.button("🎲 Mutate Add Connection").clicked() {
+                                            pending_mutation = Some("add_conn");
+                                        }
+                                        if ui.button("🎲 Mutate Weights").clicked() {
+                                            pending_mutation = Some("mutate_weight");
+                                        }
+                                    });
+                                }
                                 ui.separator();
 
                                 if let Some(hox) = &genome.hox {
