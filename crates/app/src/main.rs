@@ -69,6 +69,9 @@ struct PhylonApp {
     /// Compute pipeline for the diffusion field.
     diffusion_compute: Option<gpu::diffusion_pipeline::DiffusionComputePipeline>,
 
+    /// Compute pipeline for the CTRNN brain.
+    brain_compute: Option<gpu::brain_pipeline::BrainComputePipeline>,
+
     /// Debug renderer for entities (grey quads / circles).
     debug_renderer: Option<rendering::DebugRenderer>,
 
@@ -221,6 +224,7 @@ impl PhylonApp {
             gpu: None,
             physics_compute: None,
             diffusion_compute: None,
+            brain_compute: None,
             debug_renderer: None,
             sdf_skin_renderer: None,
             field_renderer: None,
@@ -318,6 +322,7 @@ impl PhylonApp {
         let physics_compute = gpu::physics_pipeline::PhysicsComputePipeline::new(&device);
         let diffusion_compute =
             gpu::diffusion_pipeline::DiffusionComputePipeline::new(&device, 256, 256);
+        let brain_compute = gpu::brain_pipeline::BrainComputePipeline::new(&device);
 
         let egui_context = egui::Context::default();
         egui_context.options_mut(|o| {
@@ -345,6 +350,7 @@ impl PhylonApp {
         self.field_renderer = Some(field_renderer);
         self.physics_compute = Some(physics_compute);
         self.diffusion_compute = Some(diffusion_compute);
+        self.brain_compute = Some(brain_compute);
         self.egui_state = Some(egui_state);
         self.egui_renderer = Some(egui_renderer);
         self.window = Some(window);
@@ -454,6 +460,68 @@ impl PhylonApp {
         use bevy_ecs::system::RunSystemOnce;
         self.world.ecs.run_system_once(organisms::growth_system);
         self.world.ecs.run_system_once(sensing::sensing_system);
+
+        // -- GPU CTRNN EVALUATION --
+        let mut gpu_brain_nodes = Vec::new();
+        let mut gpu_brain_synapses = Vec::new();
+        let mut brain_offsets = Vec::new();
+
+        let mut query = self.world.ecs.query::<(
+            bevy_ecs::entity::Entity,
+            &sensing::SensoryState,
+            &mut brain::Brain,
+        )>();
+        for (entity, sensory, mut brain) in query.iter_mut(&mut self.world.ecs) {
+            brain.set_inputs(&sensory.inputs);
+
+            let start_node = gpu_brain_nodes.len() as u32;
+            let start_syn = gpu_brain_synapses.len() as u32;
+
+            for node in &brain.nodes {
+                gpu_brain_nodes.push(gpu::brain_pipeline::GpuCtrnnNode {
+                    state: node.state,
+                    time_constant: node.time_constant,
+                    bias: node.bias,
+                    activation: node.activation,
+                    first_synapse: start_syn + node.first_synapse,
+                    synapse_count: node.synapse_count,
+                });
+            }
+
+            for syn in &brain.synapses {
+                gpu_brain_synapses.push(gpu::brain_pipeline::GpuCtrnnSynapse {
+                    source: start_node + syn.source,
+                    target: start_node + syn.target,
+                    weight: syn.weight,
+                    _padding: 0,
+                });
+            }
+
+            brain_offsets.push((entity, start_node, brain.nodes.len()));
+        }
+
+        if let Some(gpu) = self.gpu.as_ref() {
+            if let Some(brain_compute) = self.brain_compute.as_ref() {
+                brain_compute.compute_step(
+                    &gpu.device,
+                    &gpu.queue,
+                    &mut gpu_brain_nodes,
+                    &gpu_brain_synapses,
+                    DT,
+                );
+            }
+        }
+
+        // Readback integrated node state
+        let mut query = self.world.ecs.query::<&mut brain::Brain>();
+        for (entity, start_node, len) in brain_offsets {
+            if let Ok(mut brain) = query.get_mut(&mut self.world.ecs, entity) {
+                for i in 0..len {
+                    brain.nodes[i].state = gpu_brain_nodes[(start_node as usize) + i].state;
+                }
+            }
+        }
+
         self.world.ecs.run_system_once(behavior::behavior_system);
 
         // 2. Gather Nodes and build Entity -> Index map
@@ -550,6 +618,7 @@ impl PhylonApp {
             .ecs
             .run_system_once(reproduction::reproduction_system);
         self.world.ecs.run_system_once(process_births_system);
+        self.world.ecs.run_system_once(process_deaths_system);
         if let Some(mut events) = self
             .world
             .ecs
@@ -1198,4 +1267,63 @@ fn main() -> Result<()> {
 
     info!("Phylon shutdown complete");
     Ok(())
+}
+
+/// Traverses the physics spring network to completely remove organisms marked as Dead.
+fn process_deaths_system(
+    mut commands: bevy_ecs::prelude::Commands,
+    dead_q: bevy_ecs::prelude::Query<
+        bevy_ecs::entity::Entity,
+        bevy_ecs::prelude::With<metabolism::Dead>,
+    >,
+    spring_q: bevy_ecs::prelude::Query<(bevy_ecs::entity::Entity, &physics::Spring)>,
+) {
+    if dead_q.is_empty() {
+        return;
+    }
+
+    let mut adj: std::collections::HashMap<
+        bevy_ecs::entity::Entity,
+        Vec<(bevy_ecs::entity::Entity, bevy_ecs::entity::Entity)>,
+    > = std::collections::HashMap::new();
+
+    for (s_entity, spring) in spring_q.iter() {
+        adj.entry(spring.node_a)
+            .or_default()
+            .push((spring.node_b, s_entity));
+        adj.entry(spring.node_b)
+            .or_default()
+            .push((spring.node_a, s_entity));
+    }
+
+    let mut nodes_to_despawn = std::collections::HashSet::new();
+    let mut springs_to_despawn = std::collections::HashSet::new();
+
+    for head in dead_q.iter() {
+        if nodes_to_despawn.contains(&head) {
+            continue;
+        }
+
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(head);
+        nodes_to_despawn.insert(head);
+
+        while let Some(curr) = queue.pop_front() {
+            if let Some(neighbors) = adj.get(&curr) {
+                for &(neighbor, s_entity) in neighbors {
+                    springs_to_despawn.insert(s_entity);
+                    if nodes_to_despawn.insert(neighbor) {
+                        queue.push_back(neighbor);
+                    }
+                }
+            }
+        }
+    }
+
+    for n in nodes_to_despawn {
+        commands.entity(n).despawn();
+    }
+    for s in springs_to_despawn {
+        commands.entity(s).despawn();
+    }
 }

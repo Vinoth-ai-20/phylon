@@ -121,6 +121,7 @@ dependencies = [
  "anyhow",
  "behavior",
  "bevy_ecs",
+ "brain",
  "common",
  "config",
  "diffusion",

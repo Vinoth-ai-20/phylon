@@ -18,6 +18,7 @@ world     = { workspace = true }
 physics    = { workspace = true }
 sensing    = { path = "../sensing" }
 behavior   = { path = "../behavior" }
+brain      = { workspace = true }
 rendering = { workspace = true }
 gpu       = { workspace = true }
 genetics  = { workspace = true }

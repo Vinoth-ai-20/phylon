@@ -24,6 +24,9 @@ pub mod diffusion_pipeline;
 /// Physics compute pipeline module for forces and PBD projection.
 pub mod physics_pipeline;
 
+/// Brain compute pipeline module for CTRNN integration.
+pub mod brain_pipeline;
+
 /// Errors from GPU resource management.
 #[derive(Debug, thiserror::Error)]
 pub enum GpuError {

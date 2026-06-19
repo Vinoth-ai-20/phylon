@@ -355,13 +355,15 @@ pub fn render_ui(
                         queue.push_back(entity);
                         visited.insert(entity);
 
-                        let mut node_q = world.ecs.query::<&physics::ParticleNode>();
+                        let mut repro_q = world.ecs.query::<&reproduction::ReproductionStrategy>();
+                        let mut growth_q = world.ecs.query::<&organisms::GrowthState>();
+
                         while let Some(curr) = queue.pop_front() {
-                            if let Ok(n) = node_q.get(&world.ecs, curr) {
-                                if n.segment_type == 0 {
-                                    head_node = Some(curr);
-                                    break;
-                                }
+                            if repro_q.get(&world.ecs, curr).is_ok()
+                                || growth_q.get(&world.ecs, curr).is_ok()
+                            {
+                                head_node = Some(curr);
+                                break;
                             }
                             if let Some(neighbors) = adj.get(&curr) {
                                 for neighbor in neighbors {
@@ -374,16 +376,14 @@ pub fn render_ui(
 
                         let mut found_genome = false;
                         if let Some(head) = head_node {
-                            let mut repro_q =
-                                world.ecs.query::<&reproduction::ReproductionStrategy>();
-                            let mut growth_q = world.ecs.query::<&organisms::GrowthState>();
-
                             let mut genome_ref = None;
                             if let Ok(repro) = repro_q.get(&world.ecs, head) {
-                                genome_ref = Some(&repro.genome);
+                                genome_ref = Some(repro.genome.clone());
                             } else if let Ok(growth) = growth_q.get(&world.ecs, head) {
-                                genome_ref = Some(&growth.genome);
+                                genome_ref = Some(growth.genome.clone());
                             }
+
+                            let mut pending_mutation = None;
 
                             if let Some(genome) = genome_ref {
                                 found_genome = true;
@@ -393,13 +393,31 @@ pub fn render_ui(
                                 );
                                 ui.label(format!("Ploidy: {:?}", genome.ploidy));
                                 ui.label(format!("Origin: {:?}", genome.origin));
+
+                                ui.add_space(8.0);
+                                ui.horizontal(|ui| {
+                                    if ui.button("🎲 Mutate Add Node").clicked() {
+                                        pending_mutation = Some("add_node");
+                                    }
+                                    if ui.button("🎲 Mutate Add Connection").clicked() {
+                                        pending_mutation = Some("add_conn");
+                                    }
+                                    if ui.button("🎲 Mutate Weights").clicked() {
+                                        pending_mutation = Some("mutate_weight");
+                                    }
+                                });
                                 ui.separator();
 
                                 if let Some(hox) = &genome.hox {
-                                    ui.heading("Hox Sequence");
+                                    ui.horizontal(|ui| {
+                                        ui.heading("Hox Sequence");
+                                        ui.add_space(8.0);
+                                        let mut color = [hox.color[0], hox.color[1], hox.color[2]];
+                                        ui.color_edit_button_rgb(&mut color);
+                                    });
                                     egui::ScrollArea::vertical()
                                         .id_salt("hox_scroll")
-                                        .max_height(300.0)
+                                        .max_height(200.0)
                                         .show(ui, |ui| {
                                             for (i, gene) in hox.genes.iter().enumerate() {
                                                 ui.group(|ui| {
@@ -437,6 +455,148 @@ pub fn render_ui(
                                 ui.heading("CPPN Topology");
                                 ui.label(format!("Nodes: {}", genome.nodes.len()));
                                 ui.label(format!("Connections: {}", genome.connections.len()));
+
+                                // Draw CPPN Graph
+                                let (response, painter) = ui.allocate_painter(
+                                    egui::vec2(ui.available_width(), 300.0),
+                                    egui::Sense::hover(),
+                                );
+                                let rect = response.rect;
+                                painter.rect_filled(rect, 4.0, egui::Color32::from_black_alpha(50));
+
+                                // Find max layer
+                                let max_layer =
+                                    genome.nodes.iter().map(|n| n.layer).max().unwrap_or(0);
+
+                                // Group nodes by layer
+                                let mut layer_counts = std::collections::HashMap::new();
+                                let mut node_positions = std::collections::HashMap::new();
+
+                                for n in &genome.nodes {
+                                    *layer_counts.entry(n.layer).or_insert(0) += 1;
+                                }
+
+                                let mut current_layer_idx = std::collections::HashMap::new();
+
+                                for (i, node) in genome.nodes.iter().enumerate() {
+                                    let layer_idx =
+                                        *current_layer_idx.entry(node.layer).or_insert(0);
+                                    let count = *layer_counts.get(&node.layer).unwrap();
+
+                                    let x = if max_layer == 0 {
+                                        rect.center().x
+                                    } else {
+                                        rect.left()
+                                            + 20.0
+                                            + (rect.width() - 40.0)
+                                                * (node.layer as f32 / max_layer as f32)
+                                    };
+
+                                    let y = if count == 1 {
+                                        rect.center().y
+                                    } else {
+                                        rect.top()
+                                            + 20.0
+                                            + (rect.height() - 40.0)
+                                                * (layer_idx as f32 / (count - 1) as f32)
+                                    };
+
+                                    node_positions.insert(i, egui::pos2(x, y));
+                                    current_layer_idx.insert(node.layer, layer_idx + 1);
+                                }
+
+                                // Draw edges
+                                for conn in &genome.connections {
+                                    if !conn.enabled {
+                                        continue;
+                                    }
+                                    if let (Some(&p1), Some(&p2)) = (
+                                        node_positions.get(&conn.source),
+                                        node_positions.get(&conn.target),
+                                    ) {
+                                        let color = if conn.weight > 0.0 {
+                                            egui::Color32::from_rgba_premultiplied(0, 255, 0, 150)
+                                        } else {
+                                            egui::Color32::from_rgba_premultiplied(255, 0, 0, 150)
+                                        };
+                                        let thickness = (conn.weight.abs() * 2.0).clamp(1.0, 5.0);
+                                        painter.line_segment([p1, p2], (thickness, color));
+                                    }
+                                }
+
+                                // Draw nodes
+                                for (i, node) in genome.nodes.iter().enumerate() {
+                                    if let Some(&pos) = node_positions.get(&i) {
+                                        let fill = if node.layer == 0 {
+                                            egui::Color32::LIGHT_BLUE
+                                        } else if node.layer == max_layer {
+                                            egui::Color32::LIGHT_RED
+                                        } else {
+                                            egui::Color32::GRAY
+                                        };
+                                        painter.circle_filled(pos, 6.0, fill);
+                                        painter.circle_stroke(
+                                            pos,
+                                            6.0,
+                                            (1.0, egui::Color32::WHITE),
+                                        );
+
+                                        // Tooltip for activation/bias
+                                        if response
+                                            .hover_pos()
+                                            .is_some_and(|p| p.distance(pos) < 6.0)
+                                        {
+                                            egui::show_tooltip(
+                                                ctx,
+                                                ui.layer_id(),
+                                                ui.id().with("tooltip"),
+                                                |ui| {
+                                                    ui.label(format!("Node {}", i));
+                                                    ui.label(format!("Layer: {}", node.layer));
+                                                    ui.label(format!(
+                                                        "Activation: {:?}",
+                                                        node.activation
+                                                    ));
+                                                    ui.label(format!("Bias: {:.2}", node.bias));
+                                                },
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Apply pending mutation
+                            if let Some(action) = pending_mutation {
+                                drop(repro_q);
+                                drop(growth_q);
+                                drop(spring_q);
+
+                                let mut repro_mut =
+                                    world.ecs.query::<&mut reproduction::ReproductionStrategy>();
+                                let mut growth_mut =
+                                    world.ecs.query::<&mut organisms::GrowthState>();
+
+                                if let Ok(mut r) = repro_mut.get_mut(&mut world.ecs, head) {
+                                    let mut next_innov = r.genome.connections.len() * 100;
+                                    match action {
+                                        "add_node" => r.genome.mutate_add_node(&mut next_innov),
+                                        "add_conn" => {
+                                            r.genome.mutate_add_connection(&mut next_innov)
+                                        }
+                                        "mutate_weight" => r.genome.mutate_weight(),
+                                        _ => {}
+                                    }
+                                } else if let Ok(mut g) = growth_mut.get_mut(&mut world.ecs, head) {
+                                    let mut next_innov = g.genome.connections.len() * 100;
+                                    match action {
+                                        "add_node" => g.genome.mutate_add_node(&mut next_innov),
+                                        "add_conn" => {
+                                            g.genome.mutate_add_connection(&mut next_innov)
+                                        }
+                                        "mutate_weight" => g.genome.mutate_weight(),
+                                        _ => {}
+                                    }
+                                }
                             }
                         }
 

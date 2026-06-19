@@ -59,6 +59,10 @@ pub struct CtrnnNode {
     pub bias: f32,
     /// Activation function index (mapped from ActivationFn enum).
     pub activation: u32,
+    /// Start index of synapses targeting this node.
+    pub first_synapse: u32,
+    /// Number of synapses targeting this node.
+    pub synapse_count: u32,
 }
 
 /// A synapse connecting two nodes in the CTRNN, designed for GPU/Pod compatibility.
@@ -91,45 +95,14 @@ pub struct Brain {
 }
 
 impl Brain {
-    /// Steps the CTRNN forward by `dt` given an array of inputs.
-    /// Returns the outputs of the network.
-    pub fn step(&mut self, inputs: &[f32], dt: f32) -> Vec<f32> {
+    /// Extracts the output values from the current node states.
+    /// In the new architecture, the integration happens on the GPU,
+    /// so this simply reads the post-activation output states.
+    pub fn get_outputs(&self) -> Vec<f32> {
         if self.nodes.is_empty() {
             return Vec::new();
         }
 
-        // Apply external inputs directly to the state of input nodes
-        for (i, &input_val) in inputs.iter().enumerate() {
-            if i < self.input_count && i < self.nodes.len() {
-                self.nodes[i].state = input_val;
-            }
-        }
-
-        // Compute pre-activation inputs for all nodes
-        let mut network_inputs = vec![0.0; self.nodes.len()];
-        for synapse in &self.synapses {
-            let src_idx = synapse.source as usize;
-            let tgt_idx = synapse.target as usize;
-
-            if src_idx < self.nodes.len() && tgt_idx < self.nodes.len() {
-                let src_activation = Self::apply_activation(
-                    self.nodes[src_idx].state + self.nodes[src_idx].bias,
-                    self.nodes[src_idx].activation,
-                );
-                network_inputs[tgt_idx] += src_activation * synapse.weight;
-            }
-        }
-
-        // Update states using Euler integration
-        for (i, node) in self.nodes.iter_mut().enumerate() {
-            // Input nodes don't integrate via time constant, they just reflect the environment.
-            if i >= self.input_count {
-                let dy_dt = (1.0 / node.time_constant) * (-node.state + network_inputs[i]);
-                node.state += dy_dt * dt;
-            }
-        }
-
-        // Extract outputs
         let mut outputs = Vec::with_capacity(self.output_count);
         let start_idx = self.nodes.len().saturating_sub(self.output_count);
         for i in start_idx..self.nodes.len() {
@@ -140,6 +113,16 @@ impl Brain {
         }
 
         outputs
+    }
+
+    /// Sets the input node states from sensor values.
+    /// This happens on CPU before uploading the nodes to the GPU.
+    pub fn set_inputs(&mut self, inputs: &[f32]) {
+        for (i, &input_val) in inputs.iter().enumerate() {
+            if i < self.input_count && i < self.nodes.len() {
+                self.nodes[i].state = input_val;
+            }
+        }
     }
 
     fn apply_activation(x: f32, act_id: u32) -> f32 {
@@ -169,14 +152,49 @@ impl Brain {
         }
     }
 
-    /// Creates a new functional CTRNN brain.
+    /// Creates a new functional CTRNN brain and properly sorts synapses for GPU compatibility.
     pub fn new(
         id: BrainId,
-        nodes: Vec<CtrnnNode>,
-        synapses: Vec<CtrnnSynapse>,
+        mut nodes: Vec<CtrnnNode>,
+        mut synapses: Vec<CtrnnSynapse>,
         input_count: usize,
         output_count: usize,
     ) -> Self {
+        // Sort synapses by target node to allow efficient GPU gather operations
+        synapses.sort_by_key(|s| s.target);
+
+        // Reset all synapse counts
+        for node in &mut nodes {
+            node.first_synapse = 0;
+            node.synapse_count = 0;
+        }
+
+        // Compute offsets
+        if !synapses.is_empty() {
+            let mut current_target = synapses[0].target as usize;
+            let mut current_start = 0;
+            let mut current_count = 0;
+
+            for (i, syn) in synapses.iter().enumerate() {
+                if syn.target as usize != current_target {
+                    if current_target < nodes.len() {
+                        nodes[current_target].first_synapse = current_start;
+                        nodes[current_target].synapse_count = current_count;
+                    }
+                    current_target = syn.target as usize;
+                    current_start = i as u32;
+                    current_count = 1;
+                } else {
+                    current_count += 1;
+                }
+            }
+            // Tail
+            if current_target < nodes.len() {
+                nodes[current_target].first_synapse = current_start;
+                nodes[current_target].synapse_count = current_count;
+            }
+        }
+
         Self {
             id,
             nodes,

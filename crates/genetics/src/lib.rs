@@ -251,6 +251,120 @@ impl Genome {
         }
     }
 
+    /// Mutates a random existing connection's weight.
+    pub fn mutate_weight(&mut self) {
+        if self.connections.is_empty() {
+            return;
+        }
+        let idx = rand::random::<usize>() % self.connections.len();
+        // Perturb by [-0.5, 0.5]
+        let delta = rand::random::<f32>() - 0.5;
+        self.connections[idx].weight += delta;
+    }
+
+    /// Adds a random connection between two unconnected nodes.
+    pub fn mutate_add_connection(&mut self, next_innovation: &mut usize) {
+        if self.nodes.len() < 2 {
+            return;
+        }
+
+        // Try a few times to find an unconnected pair
+        for _ in 0..10 {
+            let src = rand::random::<usize>() % self.nodes.len();
+            let tgt = rand::random::<usize>() % self.nodes.len();
+
+            // Enforce feedforward: source layer must be < target layer
+            if self.nodes[src].layer >= self.nodes[tgt].layer {
+                continue;
+            }
+
+            // Check if connection already exists
+            let exists = self
+                .connections
+                .iter()
+                .any(|c| c.source == src && c.target == tgt);
+            if !exists {
+                self.connections.push(CppnConnection {
+                    source: src,
+                    target: tgt,
+                    weight: (rand::random::<f32>() - 0.5) * 2.0, // Initial random weight [-1.0, 1.0]
+                    enabled: true,
+                    innovation: *next_innovation,
+                });
+                *next_innovation += 1;
+                break;
+            }
+        }
+    }
+
+    /// Splits a connection and inserts a new hidden node.
+    pub fn mutate_add_node(&mut self, next_innovation: &mut usize) {
+        if self.connections.is_empty() {
+            return;
+        }
+
+        // Pick a random enabled connection
+        let mut enabled_indices = Vec::new();
+        for (i, c) in self.connections.iter().enumerate() {
+            if c.enabled {
+                enabled_indices.push(i);
+            }
+        }
+
+        if enabled_indices.is_empty() {
+            return;
+        }
+
+        let idx = enabled_indices[rand::random::<usize>() % enabled_indices.len()];
+        let conn = self.connections[idx].clone();
+
+        // Disable old connection
+        self.connections[idx].enabled = false;
+
+        // Create new node in a layer between source and target
+        let src_layer = self.nodes[conn.source].layer;
+        let tgt_layer = self.nodes[conn.target].layer;
+
+        let new_layer = if tgt_layer > src_layer + 1 {
+            src_layer + 1
+        } else {
+            // Need to push all downstream nodes forward to make room for a new layer
+            for n in &mut self.nodes {
+                if n.layer >= tgt_layer {
+                    n.layer += 1;
+                }
+            }
+            src_layer + 1
+        };
+
+        let new_node_idx = self.nodes.len();
+        self.nodes.push(CppnNode {
+            activation: brain::ActivationFn::Tanh,
+            bias: 0.0,
+            layer: new_layer,
+        });
+
+        // Connection from source to new node (weight 1.0)
+        self.connections.push(CppnConnection {
+            source: conn.source,
+            target: new_node_idx,
+            weight: 1.0,
+            enabled: true,
+            innovation: *next_innovation,
+        });
+        *next_innovation += 1;
+
+        // Connection from new node to target (original weight)
+        self.connections.push(CppnConnection {
+            source: new_node_idx,
+            target: conn.target,
+            weight: conn.weight,
+            enabled: true,
+            innovation: *next_innovation,
+        });
+        *next_innovation += 1;
+    }
+
     /// Evaluates the CPPN for a given set of inputs.
     pub fn evaluate(&self, inputs: &[f32]) -> Vec<f32> {
         // A simple feedforward evaluation. We assume nodes are sorted by layer!

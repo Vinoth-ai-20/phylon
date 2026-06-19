@@ -55,16 +55,18 @@ pub fn metabolism_system(
 
         // Check starvation
         if energy.current <= 0.0 {
-            // Emitting event would be ideal, but despawning is the immediate ECS action.
-            // In a full implementation, we push `events::DeathCause::Starvation` to the bus.
-            commands.entity(entity).despawn();
+            commands.entity(entity).insert(Dead);
             continue;
         }
 
         // Check old age
         if age.ticks >= age.max_lifespan {
-            commands.entity(entity).despawn();
+            commands.entity(entity).insert(Dead);
             continue;
         }
     }
 }
+
+/// Marker component for dead organisms. App logic should catch this to clean up the physical body.
+#[derive(Component)]
+pub struct Dead;

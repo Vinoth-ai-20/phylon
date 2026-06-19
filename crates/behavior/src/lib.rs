@@ -29,12 +29,12 @@ pub fn behavior_system(
     )>,
     mut springs: bevy_ecs::prelude::Query<&mut physics::Spring>,
 ) {
-    let dt = 1.0 / 60.0; // Fixed timestep for now
+    // Time step integration is now fully handled by the GPU compute pass
 
-    for (sensory, mut brain_opt, motor_opt) in query.iter_mut() {
+    for (_sensory, mut brain_opt, motor_opt) in query.iter_mut() {
         if let Some(brain) = brain_opt.as_mut() {
-            // 1. Evaluate the Brain using the sensory inputs
-            let outputs = brain.step(&sensory.inputs, dt);
+            // 1. Extract outputs (the integration happened globally on GPU)
+            let outputs = brain.get_outputs();
 
             // 2. Route outputs to effectors
             if let Some(motor) = motor_opt {

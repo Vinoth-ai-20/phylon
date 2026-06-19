@@ -166,6 +166,8 @@ pub fn growth_system(
                     time_constant: 1.0,
                     bias: 0.0,
                     activation: 7, // Linear
+                    first_synapse: 0,
+                    synapse_count: 0,
                 });
             }
             for _ in 0..output_count {
@@ -174,6 +176,8 @@ pub fn growth_system(
                     time_constant: 0.5,
                     bias: 0.0,
                     activation: 1, // Tanh [-1, 1]
+                    first_synapse: 0,
+                    synapse_count: 0,
                 });
             }
             for i in 0..input_count {
