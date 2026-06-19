@@ -95,13 +95,14 @@ struct PhylonApp {
     /// Currently selected entity for inspection
     selected_entity: Option<bevy_ecs::entity::Entity>,
 
-    /// Is the user currently dragging the camera?
-    is_dragging: bool,
-    /// Screen position where the last left-button press occurred.
-    /// Used to distinguish a click (small delta) from a drag (large delta).
-    click_start_pos: Option<common::Vec2>,
-    /// Last recorded mouse position (physical pixels)
-    last_mouse_pos: common::Vec2,
+    /// Entity currently tracked by the camera
+    tracked_entity: Option<bevy_ecs::entity::Entity>,
+
+    /// Track keyboard modifiers
+    modifiers: winit::keyboard::ModifiersState,
+
+    /// Pending canvas click to be processed after the render pass
+    pending_click: Option<common::Vec2>,
 
     /// When `true`, render raw physics quads; when `false`, render SDF skin.
     debug_structural: bool,
@@ -226,12 +227,12 @@ impl PhylonApp {
             camera_pos: common::Vec2::new(0.0, 0.0),
             camera_zoom: 1.0,
             selected_entity: None,
+            tracked_entity: None,
             debug_structural: false,
             bone_line_thickness: 1.5,
             active_tab: ui::SidebarTab::Inspector,
-            is_dragging: false,
-            click_start_pos: None,
-            last_mouse_pos: common::Vec2::ZERO,
+            modifiers: winit::keyboard::ModifiersState::empty(),
+            pending_click: None,
             max_ticks_per_frame: 5,
             total_sim_time: 0.0,
         }
@@ -423,7 +424,18 @@ impl PhylonApp {
             metrics.record_frame(entity_count, f64::from(DT));
         }
 
-        // 1. Run Biology Systems (Sensing, Brain, Behavior)
+        // 1. Camera Tracking
+        if let Some(tracked) = self.tracked_entity {
+            if let Ok(node) = self.world.ecs.query::<&physics::ParticleNode>().get(&self.world.ecs, tracked) {
+                // Smoothly follow the target
+                self.camera_pos = self.camera_pos.lerp(node.position, 0.1);
+            } else {
+                // Entity no longer exists (e.g. died), drop tracking
+                self.tracked_entity = None;
+            }
+        }
+
+        // 2. Run Biology Systems (Sensing, Brain, Behavior)
         use bevy_ecs::system::RunSystemOnce;
         self.world.ecs.run_system_once(organisms::growth_system);
         self.world.ecs.run_system_once(sensing::sensing_system);
@@ -485,6 +497,7 @@ impl PhylonApp {
         }
 
         // 4. Compute GPU Physics
+        let physics_start = std::time::Instant::now();
         let global_time = self
             .world
             .ecs
@@ -498,6 +511,7 @@ impl PhylonApp {
             0.016,
             global_time,
         );
+        let physics_duration_ms = physics_start.elapsed().as_secs_f64() * 1000.0;
 
         // 5. Update ECS Nodes
         for (i, entity) in node_entities.iter().enumerate() {
@@ -529,59 +543,70 @@ impl PhylonApp {
             events.update();
         }
 
-        let Some(diffusion_compute) = self.diffusion_compute.as_mut() else {
-            return Ok(());
-        };
-        let Some(field_renderer) = self.field_renderer.as_ref() else {
-            return Ok(());
-        };
+        let mut diffusion_duration_ms = 0.0;
+        if let Some(diffusion_compute) = self.diffusion_compute.as_mut() {
+            // 5. Gather diffusion emitters and run compute
+            let (diff_rate, dec_rate) = {
+                let mut diffusion_config = self.world.ecs.resource_mut::<diffusion::DiffusionConfig>();
 
-        // 5. Gather diffusion emitters and run compute
-        let (diff_rate, dec_rate) = {
-            let mut diffusion_config = self.world.ecs.resource_mut::<diffusion::DiffusionConfig>();
+                // Diurnal modulation
+                diffusion_config.global_time += 0.016;
+                // Oscillate decay rate between 0.5x and 1.5x of base
+                let diurnal_mod = 1.0 + 0.5 * (diffusion_config.global_time * 0.1).sin();
+                diffusion_config.decay_rate = diffusion_config.base_decay_rate * diurnal_mod;
 
-            // Diurnal modulation
-            diffusion_config.global_time += 0.016;
-            // Oscillate decay rate between 0.5x and 1.5x of base
-            let diurnal_mod = 1.0 + 0.5 * (diffusion_config.global_time * 0.1).sin();
-            diffusion_config.decay_rate = diffusion_config.base_decay_rate * diurnal_mod;
+                (diffusion_config.diffusion_rate, diffusion_config.decay_rate)
+            };
+            let mut query_emitters = self.world.ecs.query::<&diffusion::Emitter>();
+            let mut gpu_emitters = Vec::new();
 
-            (diffusion_config.diffusion_rate, diffusion_config.decay_rate)
-        };
-        let mut query_emitters = self.world.ecs.query::<&diffusion::Emitter>();
-        let mut gpu_emitters = Vec::new();
+            let screen_w = gpu.config.width as f32;
+            let screen_h = gpu.config.height as f32;
 
-        let screen_w = gpu.config.width as f32;
-        let screen_h = gpu.config.height as f32;
+            for emitter in query_emitters.iter(&self.world.ecs) {
+                // Map world space to 256x256 grid space
+                let grid_x = (emitter.position.x / (screen_w * 0.5)) * 128.0 + 128.0;
+                let grid_y = (-emitter.position.y / (screen_h * 0.5)) * 128.0 + 128.0;
+                let grid_radius = (emitter.radius / (screen_w * 0.5)) * 128.0;
 
-        for emitter in query_emitters.iter(&self.world.ecs) {
-            // Map world space to 256x256 grid space
-            let grid_x = (emitter.position.x / (screen_w * 0.5)) * 128.0 + 128.0;
-            let grid_y = (-emitter.position.y / (screen_h * 0.5)) * 128.0 + 128.0;
-            let grid_radius = (emitter.radius / (screen_w * 0.5)) * 128.0;
+                gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
+                    grid_pos: [grid_x, grid_y],
+                    value: emitter.value,
+                    grid_radius,
+                });
+            }
 
-            gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
-                grid_pos: [grid_x, grid_y],
-                value: emitter.value,
-                grid_radius,
-            });
+            let diffusion_start = std::time::Instant::now();
+            diffusion_compute.step(
+                &gpu.device,
+                &gpu.queue,
+                gpu::diffusion_pipeline::DiffusionUniforms {
+                    diffusion_rate: diff_rate,
+                    decay_rate: dec_rate,
+                    dt: 0.016, // fixed timestep
+                    emitter_count: gpu_emitters.len() as u32,
+                },
+                &gpu_emitters,
+            );
+
+            if let Some(field_data) = diffusion_compute.try_read_field(&gpu.device) {
+                let mut cpu_field = self.world.ecs.resource_mut::<diffusion::CpuFieldState>();
+                cpu_field.data = field_data;
+            }
+            diffusion_duration_ms = diffusion_start.elapsed().as_secs_f64() * 1000.0;
         }
 
-        diffusion_compute.step(
-            &gpu.device,
-            &gpu.queue,
-            gpu::diffusion_pipeline::DiffusionUniforms {
-                diffusion_rate: diff_rate,
-                decay_rate: dec_rate,
-                dt: 0.016, // fixed timestep
-                emitter_count: gpu_emitters.len() as u32,
-            },
-            &gpu_emitters,
-        );
-
-        if let Some(field_data) = diffusion_compute.try_read_field(&gpu.device) {
-            let mut cpu_field = self.world.ecs.resource_mut::<diffusion::CpuFieldState>();
-            cpu_field.data = field_data;
+        if let Some(mut metrics) = self.world.ecs.get_resource_mut::<analytics::MetricsState>() {
+            metrics.compute_profiles = vec![
+                analytics::PassTiming {
+                    name: "Physics (Compute & PBD)".to_string(),
+                    duration_ms: physics_duration_ms,
+                },
+                analytics::PassTiming {
+                    name: "Diffusion Field".to_string(),
+                    duration_ms: diffusion_duration_ms,
+                },
+            ];
         }
 
         // 6. Gather rendering instances
@@ -743,27 +768,33 @@ impl PhylonApp {
         let mut full_output = None;
         let mut egui_context = None;
 
+        let mut interaction = ui::CanvasInteraction::default();
+        let mut scale = 1.0;
+
         if let (Some(egui_state), Some(window)) = (&mut self.egui_state, &self.window) {
             let raw_input = egui_state.take_egui_input(window);
             let ctx = egui_state.egui_ctx().clone();
 
-            let mut ui_rect = egui::Rect::NOTHING;
             let output = ctx.run(raw_input, |ctx| {
-                ui_rect = ui::render_ui(
+                interaction = ui::render_ui(
                     ctx,
                     &mut self.world,
                     self.camera_pos,
                     self.camera_zoom,
-                    self.selected_entity,
+                    &mut self.selected_entity,
+                    &mut self.tracked_entity,
                     &mut self.debug_structural,
                     &mut self.bone_line_thickness,
                     &mut self.active_tab,
                 );
             });
 
+            scale = window.scale_factor() as f32;
+
             egui_state.handle_platform_output(window, output.platform_output.clone());
 
-            let scale = window.scale_factor() as f32;
+            let ui_rect = interaction.rect;
+
             let x = (ui_rect.min.x * scale).round() as u32;
             let y = (ui_rect.min.y * scale).round() as u32;
             let mut w = (ui_rect.width() * scale).round() as u32;
@@ -784,6 +815,23 @@ impl PhylonApp {
             egui_context = Some(ctx);
         }
 
+        // Process native interactions from the transparent canvas
+        if interaction.zoom_delta != 1.0 && interaction.zoom_delta > 0.0 {
+            self.camera_zoom *= interaction.zoom_delta;
+            self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
+        }
+
+        if interaction.drag_delta.length_sq() > 0.0 {
+            self.camera_pos.x -= (interaction.drag_delta.x * scale) / self.camera_zoom;
+            self.camera_pos.y += (interaction.drag_delta.y * scale) / self.camera_zoom;
+        }
+
+        if interaction.clicked {
+            if let Some(pos) = interaction.click_pos {
+                self.pending_click = Some(common::Vec2::new(pos.x * scale, pos.y * scale));
+            }
+        }
+
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -791,13 +839,17 @@ impl PhylonApp {
             });
 
         // Render the continuous diffusion field as the background (clearing the screen)
-        field_renderer.render(
-            &gpu.device,
-            &mut encoder,
-            &view,
-            diffusion_compute.current_texture_view(),
-            central_rect_px,
-        );
+        if let (Some(field_renderer), Some(diffusion_compute)) =
+            (self.field_renderer.as_ref(), self.diffusion_compute.as_ref())
+        {
+            field_renderer.render(
+                &gpu.device,
+                &mut encoder,
+                &view,
+                diffusion_compute.current_texture_view(),
+                central_rect_px,
+            );
+        }
 
         gpu.queue.submit(std::iter::once(encoder.finish()));
 
@@ -959,9 +1011,11 @@ impl ApplicationHandler for PhylonApp {
     ) {
         if let Some(egui_state) = &mut self.egui_state {
             if let Some(window) = &self.window {
-                let response = egui_state.on_window_event(window, &event);
-                if response.consumed {
-                    return; // event handled by egui
+                let _response = egui_state.on_window_event(window, &event);
+                if _response.consumed {
+                    // Only return early if egui consumed the event specifically (e.g. text input),
+                    // since we now handle primary interactions inside the render loop via egui's output.
+                    return;
                 }
             }
         }
@@ -973,37 +1027,6 @@ impl ApplicationHandler for PhylonApp {
             }
             WindowEvent::Resized(new_size) => {
                 self.resize(new_size);
-            }
-            WindowEvent::MouseInput { state, button, .. } => {
-                if button == winit::event::MouseButton::Left {
-                    match state {
-                        winit::event::ElementState::Pressed => {
-                            self.is_dragging = true;
-                            self.click_start_pos = Some(self.last_mouse_pos);
-                        }
-                        winit::event::ElementState::Released => {
-                            self.is_dragging = false;
-
-                            // Distinguish click (≤5 px delta) from drag (>5 px)
-                            if let Some(start) = self.click_start_pos.take() {
-                                let delta = (self.last_mouse_pos - start).length();
-                                if delta <= 5.0 {
-                                    // Extract GPU dimensions first so we don't
-                                    // hold a borrow on self when calling pick_entity
-                                    let dims = self
-                                        .gpu
-                                        .as_ref()
-                                        .map(|g| (g.config.width as f32, g.config.height as f32));
-                                    if let Some((gpu_w, gpu_h)) = dims {
-                                        let click_pos = self.last_mouse_pos;
-                                        self.selected_entity =
-                                            self.pick_entity(click_pos, gpu_w, gpu_h);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
             }
             WindowEvent::KeyboardInput {
                 event:
@@ -1042,40 +1065,59 @@ impl ApplicationHandler for PhylonApp {
                     _ => {}
                 }
             }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers.state();
+            }
             WindowEvent::MouseWheel { delta, .. } => {
-                // Issue 8: Smooth zooming and invert zoom direction to feel natural
                 match delta {
-                    winit::event::MouseScrollDelta::LineDelta(_, y) => {
-                        if y > 0.0 {
-                            self.camera_zoom *= 1.1;
-                        } else if y < 0.0 {
-                            self.camera_zoom /= 1.1;
+                    winit::event::MouseScrollDelta::LineDelta(x, y) => {
+                        if self.modifiers.control_key() {
+                            // Zoom with Ctrl + Scroll
+                            if y > 0.0 {
+                                self.camera_zoom *= 1.1;
+                            } else if y < 0.0 {
+                                self.camera_zoom /= 1.1;
+                            }
+                        } else {
+                            // Pan
+                            self.camera_pos.x -= x as f32 * 20.0 / self.camera_zoom;
+                            self.camera_pos.y += y as f32 * 20.0 / self.camera_zoom;
                         }
                     }
                     winit::event::MouseScrollDelta::PixelDelta(p) => {
-                        let zoom_factor = 1.0 + (p.y as f32 * 0.01);
-                        if zoom_factor > 0.0 {
-                            self.camera_zoom *= zoom_factor;
+                        if self.modifiers.control_key() {
+                            // Zoom
+                            let zoom_factor = 1.0 + (p.y as f32 * 0.01);
+                            if zoom_factor > 0.0 {
+                                self.camera_zoom *= zoom_factor;
+                            }
+                        } else {
+                            // Touchpad two-finger swipe: pan
+                            self.camera_pos.x -= p.x as f32 / self.camera_zoom;
+                            self.camera_pos.y += p.y as f32 / self.camera_zoom;
                         }
                     }
                 }
                 self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
             }
-            WindowEvent::CursorMoved { position, .. } => {
-                let current_pos = common::Vec2::new(position.x as f32, position.y as f32);
-                if self.is_dragging {
-                    let delta = current_pos - self.last_mouse_pos;
-                    // Issue 1: Invert panning so world follows mouse
-                    self.camera_pos.x += delta.x / self.camera_zoom;
-                    self.camera_pos.y -= delta.y / self.camera_zoom;
-                }
-                self.last_mouse_pos = current_pos;
-            }
+
             WindowEvent::RedrawRequested => {
                 if let Err(e) = self.render() {
                     error!("Render error: {e:#}");
                     event_loop.exit();
                 }
+
+                // Process pending clicks that require mutably borrowing self
+                if let Some(click_pos) = self.pending_click.take() {
+                    let dims = self
+                        .gpu
+                        .as_ref()
+                        .map(|g| (g.config.width as f32, g.config.height as f32));
+                    if let Some((gpu_w, gpu_h)) = dims {
+                        self.selected_entity = self.pick_entity(click_pos, gpu_w, gpu_h);
+                    }
+                }
+
                 // Request the next frame immediately.
                 if let Some(window) = &self.window {
                     window.request_redraw();

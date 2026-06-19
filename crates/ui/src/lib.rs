@@ -35,10 +35,39 @@ pub enum SidebarTab {
     Analytics,
 }
 
+/// Contains the screen-space rect of the transparent canvas area and the
+/// unified touch/mouse/trackpad gesture interactions performed on it.
+#[derive(Debug, Clone, Copy)]
+pub struct CanvasInteraction {
+    /// The screen-space bounding rect of the central canvas panel.
+    pub rect: egui::Rect,
+    /// True if the user tapped/clicked on the canvas this frame.
+    pub clicked: bool,
+    /// The screen-space coordinates of the tap/click, if `clicked` is true.
+    pub click_pos: Option<egui::Pos2>,
+    /// The screen-space delta for a pan/drag gesture this frame.
+    pub drag_delta: egui::Vec2,
+    /// The scale factor for a pinch-to-zoom or scroll-zoom gesture this frame (1.0 = no change).
+    pub zoom_delta: f32,
+}
+
+impl Default for CanvasInteraction {
+    fn default() -> Self {
+        Self {
+            rect: egui::Rect::NOTHING,
+            clicked: false,
+            click_pos: None,
+            drag_delta: egui::Vec2::ZERO,
+            zoom_delta: 1.0,
+        }
+    }
+}
+
 /// Renders the main immediate-mode user interface.
 ///
-/// Returns the screen-space `Rect` of the transparent `CentralPanel` so the
-/// caller can set the simulation's GPU viewport and scissor rect to match it.
+/// Returns a `CanvasInteraction` containing the screen-space `Rect` of the 
+/// transparent `CentralPanel` (for viewport sizing) and the unified 
+/// touch/mouse interactions (clicks, drags, zooms) generated on it.
 ///
 /// `debug_structural` is mutated by a checkbox in the Inspector sidebar.
 /// When `true`, the caller should render raw physics quads instead of the SDF
@@ -49,11 +78,12 @@ pub fn render_ui(
     world: &mut world::World,
     camera_pos: common::Vec2,
     camera_zoom: f32,
-    selected_entity: Option<bevy_ecs::entity::Entity>,
+    selected_entity: &mut Option<bevy_ecs::entity::Entity>,
+    tracked_entity: &mut Option<bevy_ecs::entity::Entity>,
     debug_structural: &mut bool,
     bone_line_thickness: &mut f32,
     active_tab: &mut SidebarTab,
-) -> egui::Rect {
+) -> CanvasInteraction {
     // ── Top menu bar ───────────────────────────────────────────────────────
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
         egui::menu::bar(ui, |ui| {
@@ -89,9 +119,14 @@ pub fn render_ui(
                 let _ = ui.button("About Phylon");
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let track_str = if let Some(e) = tracked_entity {
+                    format!(" — Tracking {:?}", e)
+                } else {
+                    String::new()
+                };
                 ui.label(format!(
-                    "Cam: ({:.0}, {:.0})  ×{:.1}",
-                    camera_pos.x, camera_pos.y, camera_zoom
+                    "Cam: ({:.0}, {:.0})  ×{:.1}{}",
+                    camera_pos.x, camera_pos.y, camera_zoom, track_str
                 ));
             });
         });
@@ -147,14 +182,24 @@ pub fn render_ui(
                         );
                     }
                     ui.separator();
-                    if let Some(entity) = selected_entity {
+                    if let Some(entity) = *selected_entity {
                         ui.label(
-                            egui::RichText::new(format!("Entity {:?}", entity))
-                                .small()
-                                .color(egui::Color32::GRAY),
+                            egui::RichText::new(format!("Selected: {:?}", entity))
+                                .heading()
+                                .color(egui::Color32::LIGHT_GREEN),
                         );
-
-                        // Physics node
+                        let mut is_tracked = *tracked_entity == Some(entity);
+                        if ui.checkbox(&mut is_tracked, "Track Selected").changed() {
+                            if is_tracked {
+                                *tracked_entity = Some(entity);
+                            } else {
+                                if *tracked_entity == Some(entity) {
+                                    *tracked_entity = None;
+                                }
+                            }
+                        }
+                        
+                        ui.separator(); // Physics node
                         let mut node_q = world.ecs.query::<&physics::ParticleNode>();
                         if let Ok(node) = node_q.get(&world.ecs, entity) {
                             egui::CollapsingHeader::new("⚙ Physics Node")
@@ -220,6 +265,67 @@ pub fn render_ui(
                         if let Ok(bio) = bio_q.get(&world.ecs, entity) {
                             ui.label(format!("Diet   : {:?}", bio.diet));
                         }
+
+                        // Entity Graph / Segment Tree
+                        egui::CollapsingHeader::new("🌳 Body Structure")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                // Build adjacency list from springs
+                                let mut adj: std::collections::HashMap<
+                                    bevy_ecs::entity::Entity,
+                                    Vec<(bevy_ecs::entity::Entity, physics::Spring)>,
+                                > = std::collections::HashMap::new();
+                                let mut spring_q = world.ecs.query::<&physics::Spring>();
+                                for spring in spring_q.iter(&world.ecs) {
+                                    adj.entry(spring.node_a)
+                                        .or_default()
+                                        .push((spring.node_b, spring.clone()));
+                                    adj.entry(spring.node_b)
+                                        .or_default()
+                                        .push((spring.node_a, spring.clone()));
+                                }
+
+                                // Find the root of this connected component (the Head node)
+                                let mut visited = std::collections::HashSet::new();
+                                let mut component = Vec::new();
+                                let mut queue = std::collections::VecDeque::new();
+                                queue.push_back(entity);
+                                visited.insert(entity);
+
+                                while let Some(curr) = queue.pop_front() {
+                                    component.push(curr);
+                                    if let Some(neighbors) = adj.get(&curr) {
+                                        for (neighbor, _) in neighbors {
+                                            if visited.insert(*neighbor) {
+                                                queue.push_back(*neighbor);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Try to find the head (segment_type == 0) in the component
+                                let mut root = entity; // fallback
+                                let mut node_q = world.ecs.query::<&physics::ParticleNode>();
+                                for &node_entity in &component {
+                                    if let Ok(n) = node_q.get(&world.ecs, node_entity) {
+                                        if n.segment_type == 0 {
+                                            // Head
+                                            root = node_entity;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                let mut tree_visited = std::collections::HashSet::new();
+                                draw_segment_tree(
+                                    ui,
+                                    root,
+                                    &adj,
+                                    &world.ecs,
+                                    &mut tree_visited,
+                                    selected_entity,
+                                );
+                            });
                     } else {
                         ui.label(
                             egui::RichText::new("Click a node to inspect")
@@ -231,12 +337,157 @@ pub fn render_ui(
                 SidebarTab::Genetics => {
                     ui.heading("Genetics");
                     ui.separator();
-                    ui.label("Genome view not implemented yet.");
+                    if let Some(entity) = *selected_entity {
+                        // Find the head node for this organism to get the genome
+                        let mut adj: std::collections::HashMap<
+                            bevy_ecs::entity::Entity,
+                            Vec<bevy_ecs::entity::Entity>,
+                        > = std::collections::HashMap::new();
+                        let mut spring_q = world.ecs.query::<&physics::Spring>();
+                        for spring in spring_q.iter(&world.ecs) {
+                            adj.entry(spring.node_a).or_default().push(spring.node_b);
+                            adj.entry(spring.node_b).or_default().push(spring.node_a);
+                        }
+
+                        let mut head_node = None;
+                        let mut queue = std::collections::VecDeque::new();
+                        let mut visited = std::collections::HashSet::new();
+                        queue.push_back(entity);
+                        visited.insert(entity);
+
+                        let mut node_q = world.ecs.query::<&physics::ParticleNode>();
+                        while let Some(curr) = queue.pop_front() {
+                            if let Ok(n) = node_q.get(&world.ecs, curr) {
+                                if n.segment_type == 0 {
+                                    head_node = Some(curr);
+                                    break;
+                                }
+                            }
+                            if let Some(neighbors) = adj.get(&curr) {
+                                for neighbor in neighbors {
+                                    if visited.insert(*neighbor) {
+                                        queue.push_back(*neighbor);
+                                    }
+                                }
+                            }
+                        }
+
+                        let mut found_genome = false;
+                        if let Some(head) = head_node {
+                            let mut repro_q =
+                                world.ecs.query::<&reproduction::ReproductionStrategy>();
+                            let mut growth_q = world.ecs.query::<&organisms::GrowthState>();
+
+                            let mut genome_ref = None;
+                            if let Ok(repro) = repro_q.get(&world.ecs, head) {
+                                genome_ref = Some(&repro.genome);
+                            } else if let Ok(growth) = growth_q.get(&world.ecs, head) {
+                                genome_ref = Some(&growth.genome);
+                            }
+
+                            if let Some(genome) = genome_ref {
+                                found_genome = true;
+                                ui.label(
+                                    egui::RichText::new(format!("Genome ID: {}", genome.id.0))
+                                        .strong(),
+                                );
+                                ui.label(format!("Ploidy: {:?}", genome.ploidy));
+                                ui.label(format!("Origin: {:?}", genome.origin));
+                                ui.separator();
+
+                                if let Some(hox) = &genome.hox {
+                                    ui.heading("Hox Sequence");
+                                    egui::ScrollArea::vertical()
+                                        .id_salt("hox_scroll")
+                                        .max_height(300.0)
+                                        .show(ui, |ui| {
+                                            for (i, gene) in hox.genes.iter().enumerate() {
+                                                ui.group(|ui| {
+                                                    ui.label(
+                                                        egui::RichText::new(format!(
+                                                            "[{}] {:?}",
+                                                            i, gene.segment
+                                                        ))
+                                                        .strong(),
+                                                    );
+                                                    if gene.branching_signal > 0.0 {
+                                                        ui.label(format!(
+                                                            "Branching Signal: {:.2}",
+                                                            gene.branching_signal
+                                                        ));
+                                                    }
+                                                    if gene.actuation_amplitude > 0.0 {
+                                                        ui.label(format!(
+                                                            "Actuation Amp: {:.2}",
+                                                            gene.actuation_amplitude
+                                                        ));
+                                                        ui.label(format!(
+                                                            "Actuation Phase: {:.2}",
+                                                            gene.actuation_phase
+                                                        ));
+                                                    }
+                                                });
+                                            }
+                                        });
+                                } else {
+                                    ui.label("No explicit Hox sequence (CPPN driven).");
+                                }
+
+                                ui.separator();
+                                ui.heading("CPPN Topology");
+                                ui.label(format!("Nodes: {}", genome.nodes.len()));
+                                ui.label(format!("Connections: {}", genome.connections.len()));
+                            }
+                        }
+
+                        if !found_genome {
+                            ui.label("Selected entity has no Genome component.");
+                        }
+                    } else {
+                        ui.label(
+                            egui::RichText::new("Select an organism's head to view its genome.")
+                                .italics(),
+                        );
+                    }
                 }
                 SidebarTab::Analytics => {
                     ui.heading("Analytics");
                     ui.separator();
-                    ui.label("Analytics dashboard not implemented yet.");
+                    if let Some(metrics) = world.ecs.get_resource::<analytics::MetricsState>() {
+                        ui.label(egui::RichText::new("Compute Profiling").strong());
+                        ui.label(egui::RichText::new("(CPU-side estimate)").italics().small());
+
+                        egui::Frame::none()
+                            .fill(egui::Color32::from_black_alpha(20))
+                            .inner_margin(8.0)
+                            .rounding(4.0)
+                            .show(ui, |ui| {
+                                for pass in &metrics.compute_profiles {
+                                    ui.horizontal(|ui| {
+                                        ui.label(&pass.name);
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(
+                                                    egui::RichText::new(format!(
+                                                        "{:.2} ms",
+                                                        pass.duration_ms
+                                                    ))
+                                                    .monospace(),
+                                                );
+                                            },
+                                        );
+                                    });
+                                }
+                            });
+
+                        ui.add_space(16.0);
+                        ui.label(egui::RichText::new("Global Simulation Metrics").strong());
+                        ui.label(format!("Total Entities: {}", world.ecs.entities().len()));
+                        ui.label(format!("Smoothed FPS: {:.1}", metrics.smoothed_fps));
+                    } else {
+                        ui.label("Analytics data not available.");
+                    }
                 }
             }
         });
@@ -322,7 +573,104 @@ pub fn render_ui(
                 .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(120)))
                 .rounding(4.0),
         )
-        .show(ctx, |_ui| {});
+        .show(ctx, |ui| {
+            ui.allocate_response(ui.available_size(), egui::Sense::click_and_drag())
+        });
 
-    central.response.rect
+    let interact_response = central.inner;
+    let zoom_delta = ctx.input(|i| i.zoom_delta());
+
+    CanvasInteraction {
+        rect: central.response.rect,
+        clicked: interact_response.clicked(),
+        click_pos: interact_response.interact_pointer_pos(),
+        drag_delta: interact_response.drag_delta(),
+        zoom_delta,
+    }
+}
+
+fn draw_segment_tree(
+    ui: &mut egui::Ui,
+    current_node: bevy_ecs::entity::Entity,
+    adj: &std::collections::HashMap<
+        bevy_ecs::entity::Entity,
+        Vec<(bevy_ecs::entity::Entity, physics::Spring)>,
+    >,
+    world: &bevy_ecs::world::World,
+    visited: &mut std::collections::HashSet<bevy_ecs::entity::Entity>,
+    selected_entity: &mut Option<bevy_ecs::entity::Entity>,
+) {
+    if visited.contains(&current_node) {
+        return;
+    }
+    visited.insert(current_node);
+
+    let Some(node) = world.get::<physics::ParticleNode>(current_node) else {
+        return;
+    };
+
+    let seg_name = match node.segment_type {
+        0 => "Head",
+        1 => "Torso",
+        2 => "Muscle",
+        3 => "Tail",
+        4 => "Fin",
+        _ => "Unknown",
+    };
+
+    // Find children
+    let empty = Vec::new();
+    let neighbors = adj.get(&current_node).unwrap_or(&empty);
+    let mut children = Vec::new();
+    for (neighbor, spring) in neighbors {
+        if !visited.contains(neighbor) {
+            children.push((*neighbor, spring.clone()));
+        }
+    }
+
+    let label = format!("{:?} ({})", current_node, seg_name);
+    let is_selected = *selected_entity == Some(current_node);
+
+    if children.is_empty() {
+        if ui.selectable_label(is_selected, label).clicked() {
+            *selected_entity = Some(current_node);
+        }
+    } else {
+        let header = egui::CollapsingHeader::new(label).default_open(true);
+
+        let response = header.show(ui, |ui| {
+            for (child, spring) in children {
+                let constraint_name = match spring.constraint_type {
+                    physics::ConstraintType::Elastic => "Elastic",
+                    physics::ConstraintType::Rigid => "Rigid",
+                    physics::ConstraintType::Passive => "Passive",
+                    physics::ConstraintType::Rotational => "Rotational",
+                };
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("↳ {}", constraint_name))
+                            .small()
+                            .color(egui::Color32::GRAY),
+                    );
+                    if spring.actuation_amplitude > 0.0 {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "(amp: {:.1}, ph: {:.1})",
+                                spring.actuation_amplitude, spring.actuation_phase
+                            ))
+                            .small()
+                            .color(egui::Color32::from_rgb(200, 150, 100)),
+                        );
+                    }
+                });
+
+                draw_segment_tree(ui, child, adj, world, visited, selected_entity);
+            }
+        });
+
+        if response.header_response.clicked() {
+            *selected_entity = Some(current_node);
+        }
+    }
 }

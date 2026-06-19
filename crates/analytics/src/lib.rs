@@ -22,6 +22,15 @@ pub struct PopulationSample {
     pub total: u64,
 }
 
+/// A single compute pass timing record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PassTiming {
+    /// Identifier for the compute pass (e.g., "Muscle", "Diffusion").
+    pub name: String,
+    /// CPU-side estimated duration in milliseconds.
+    pub duration_ms: f64,
+}
+
 /// Placeholder for the analytics accumulator.
 pub struct AnalyticsAccumulator {
     samples: Vec<PopulationSample>,
@@ -69,6 +78,8 @@ pub struct MetricsState {
     pub sim_time: f64,
     /// Smoothed FPS estimate (exponential moving average).
     pub smoothed_fps: f64,
+    /// CPU-side timings for the most recent frame's compute passes.
+    pub compute_profiles: Vec<PassTiming>,
 }
 
 impl MetricsState {
@@ -79,6 +90,7 @@ impl MetricsState {
             fps_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
             sim_time: 0.0,
             smoothed_fps: 60.0,
+            compute_profiles: Vec::new(),
         }
     }
 
