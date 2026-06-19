@@ -148,11 +148,13 @@ use bevy_ecs::prelude::*;
 struct SpawnOrganismCommand {
     genome: genetics::Genome,
     position: common::Vec2,
+    diet: ecology::Diet,
+    category: ecology::EcologicalCategory,
 }
 
 impl bevy_ecs::world::Command for SpawnOrganismCommand {
     fn apply(self, world: &mut bevy_ecs::world::World) {
-        organisms::spawn_organism(world, &self.genome, self.position);
+        organisms::spawn_organism(world, &self.genome, self.position, self.diet, self.category);
     }
 }
 
@@ -164,6 +166,8 @@ pub fn process_births_system(
         commands.add(SpawnOrganismCommand {
             genome: event.genome.clone(),
             position: event.position,
+            diet: event.diet.clone(),
+            category: event.category.clone(),
         });
     }
 }
@@ -196,13 +200,25 @@ impl PhylonApp {
         let worm_hox = genetics::HoxSequence::worm(6, [0.85, 0.35, 0.35]);
         let worm_genome =
             genetics::Genome::new_hox_driven(genetics::GenomeId(1), common::EntityId(0), worm_hox);
-        organisms::spawn_organism(&mut world.ecs, &worm_genome, common::Vec2::new(0.0, 80.0));
+        organisms::spawn_organism(
+            &mut world.ecs,
+            &worm_genome,
+            common::Vec2::new(0.0, 80.0),
+            ecology::Diet::Herbivore,
+            ecology::EcologicalCategory::None,
+        );
 
         // Organism 2: Fish — 5 segments, fin pair at segment index 2.
         let fish_hox = genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]);
         let fish_genome =
             genetics::Genome::new_hox_driven(genetics::GenomeId(2), common::EntityId(0), fish_hox);
-        organisms::spawn_organism(&mut world.ecs, &fish_genome, common::Vec2::new(0.0, 0.0));
+        organisms::spawn_organism(
+            &mut world.ecs,
+            &fish_genome,
+            common::Vec2::new(0.0, 0.0),
+            ecology::Diet::Carnivore,
+            ecology::EcologicalCategory::None,
+        );
 
         // Organism 3: Multi-fin — 8 segments, bilateral fins at positions 1 and 4.
         let branchy_genome = genetics::Genome::new_hox_driven(
@@ -226,6 +242,8 @@ impl PhylonApp {
             &mut world.ecs,
             &branchy_genome,
             common::Vec2::new(0.0, -90.0),
+            ecology::Diet::Producer,
+            ecology::EcologicalCategory::None,
         );
 
         // Spawn a static food/nutrient emitter at the center
@@ -740,11 +758,12 @@ impl PhylonApp {
         let mut node_positions: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 2]> =
             std::collections::HashMap::new();
 
-        let mut query_nodes_render = self
-            .world
-            .ecs
-            .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
-        for (entity, node) in query_nodes_render.iter(&self.world.ecs) {
+        let mut query_nodes_render = self.world.ecs.query::<(
+            bevy_ecs::entity::Entity,
+            &physics::ParticleNode,
+            Option<&ecology::EcologicalCategory>,
+        )>();
+        for (entity, node, category) in query_nodes_render.iter(&self.world.ecs) {
             node_positions.insert(entity, [node.position.x, node.position.y]);
             debug_instances.push(rendering::DebugInstance {
                 pos_a: [node.position.x, node.position.y],
@@ -759,6 +778,32 @@ impl PhylonApp {
                 radius: if node.segment_type == 4 { 3.0 } else { 5.0 },
                 segment_type: node.segment_type,
             });
+
+            // Draw category ring around head
+            if let Some(cat) = category {
+                let ring_color = match cat {
+                    ecology::EcologicalCategory::Keystone => Some([1.0, 0.84, 0.0, 1.0]), // Gold
+                    ecology::EcologicalCategory::Indicator => Some([0.0, 1.0, 1.0, 1.0]), // Cyan
+                    ecology::EcologicalCategory::Endemic => Some([0.0, 0.5, 0.5, 1.0]),   // Teal
+                    ecology::EcologicalCategory::Invasive => Some([1.0, 0.0, 1.0, 1.0]),  // Magenta
+                    _ => None,
+                };
+                if let Some(col) = ring_color {
+                    // We render a slightly larger circle with the category color.
+                    // To do an outline, we could rely on a new shader feature, or just render a bigger circle behind it.
+                    // Since it pushes sequentially, we just push it before the main circle, wait, the loop is already pushing.
+                    // We can just push it now; it's debug instances, order determines z-index (painters algorithm).
+                    // Let's push it after, it might overlay, but wait! We can just make segment_type=99 for transparency or something.
+                    // Actually, let's just push it.
+                    debug_instances.push(rendering::DebugInstance {
+                        pos_a: [node.position.x, node.position.y],
+                        pos_b: [node.position.x, node.position.y],
+                        color: [col[0], col[1], col[2], 0.3], // Semi-transparent
+                        radius: 12.0,                         // Larger radius
+                        segment_type: 99,
+                    });
+                }
+            }
         }
 
         // Collect springs for SDF capsule rendering.
@@ -867,6 +912,30 @@ impl PhylonApp {
                 pos_b: [food.position.x, food.position.y],
                 color: [1.0, 0.8, 0.0, 1.0],
                 radius: 2.5,
+                segment_type: 0,
+            });
+        }
+
+        // Render mineral pellets
+        let mut query_mineral = self.world.ecs.query::<&ecology::MineralPellet>();
+        for mineral in query_mineral.iter(&self.world.ecs) {
+            debug_instances.push(rendering::DebugInstance {
+                pos_a: [mineral.position.x, mineral.position.y],
+                pos_b: [mineral.position.x, mineral.position.y],
+                color: [1.0, 1.0, 1.0, 1.0], // Bright White
+                radius: 2.0,
+                segment_type: 0,
+            });
+        }
+
+        // Render corpses
+        let mut query_corpse = self.world.ecs.query::<&ecology::Corpse>();
+        for corpse in query_corpse.iter(&self.world.ecs) {
+            debug_instances.push(rendering::DebugInstance {
+                pos_a: [corpse.position.x, corpse.position.y],
+                pos_b: [corpse.position.x, corpse.position.y],
+                color: [0.3, 0.3, 0.3, 1.0], // Dark Grey
+                radius: 4.0,
                 segment_type: 0,
             });
         }
@@ -1150,6 +1219,8 @@ impl PhylonApp {
                         &mut self.world.ecs,
                         &worm_genome,
                         common::Vec2::new(0.0, 80.0),
+                        ecology::Diet::Herbivore,
+                        ecology::EcologicalCategory::None,
                     );
 
                     let fish_hox = genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]);
@@ -1162,6 +1233,8 @@ impl PhylonApp {
                         &mut self.world.ecs,
                         &fish_genome,
                         common::Vec2::new(0.0, 0.0),
+                        ecology::Diet::Carnivore,
+                        ecology::EcologicalCategory::None,
                     );
                 }
                 ui::MenuAction::SelectAll => {
@@ -1190,7 +1263,13 @@ impl PhylonApp {
                         common::EntityId(0),
                         fish_hox,
                     );
-                    organisms::spawn_organism(&mut self.world.ecs, &fish_genome, self.camera_pos);
+                    organisms::spawn_organism(
+                        &mut self.world.ecs,
+                        &fish_genome,
+                        self.camera_pos,
+                        ecology::Diet::Carnivore,
+                        ecology::EcologicalCategory::None,
+                    );
                 }
                 ui::MenuAction::ShowDocumentation => {
                     self.show_docs = true;
@@ -1424,7 +1503,11 @@ fn main() -> Result<()> {
 fn process_deaths_system(
     mut commands: bevy_ecs::prelude::Commands,
     dead_q: bevy_ecs::prelude::Query<
-        bevy_ecs::entity::Entity,
+        (
+            bevy_ecs::entity::Entity,
+            &physics::ParticleNode,
+            &metabolism::Energy,
+        ),
         bevy_ecs::prelude::With<metabolism::Dead>,
     >,
     spring_q: bevy_ecs::prelude::Query<(bevy_ecs::entity::Entity, &physics::Spring)>,
@@ -1450,10 +1533,18 @@ fn process_deaths_system(
     let mut nodes_to_despawn = std::collections::HashSet::new();
     let mut springs_to_despawn = std::collections::HashSet::new();
 
-    for head in dead_q.iter() {
+    for (head, node, energy) in dead_q.iter() {
         if nodes_to_despawn.contains(&head) {
             continue;
         }
+
+        // Spawn a corpse entity at the position of the dead organism
+        commands.spawn(ecology::Corpse {
+            position: node.position,
+            energy_value: energy.max, // Corpse yields the organism's max potential energy
+            decay_timer: 1800,        // About 30 seconds at 60 FPS
+            max_decay: 1800,
+        });
 
         let mut queue = std::collections::VecDeque::new();
         queue.push_back(head);

@@ -13,3 +13,4 @@ bevy_ecs   = { workspace = true }
 physics    = { workspace = true }
 metabolism = { workspace = true }
 fastrand   = "2.3"
+serde      = { workspace = true }

@@ -41,6 +41,10 @@ pub struct BirthRequest {
     pub genome: Genome,
     /// The position to spawn the child.
     pub position: Vec2,
+    /// The diet inherited from the parent.
+    pub diet: ecology::Diet,
+    /// The ecological category inherited from the parent.
+    pub category: ecology::EcologicalCategory,
 }
 
 /// System that handles reproduction (Asexual cloning and Sexual mating).
@@ -50,6 +54,8 @@ pub fn reproduction_system(
         &mut Energy,
         &mut ReproductionStrategy,
         &physics::ParticleNode,
+        &ecology::Diet,
+        &ecology::EcologicalCategory,
     )>,
     config: Res<ecology::EcologyConfig>,
     all_organisms: Query<(), With<ReproductionStrategy>>,
@@ -61,35 +67,56 @@ pub fn reproduction_system(
     let mut ready_sexuals = Vec::new();
 
     // First pass: asexual + gather sexuals
-    for (entity, mut energy, mut strategy, node) in query.iter_mut() {
+    for (entity, mut energy, mut strategy, node, diet, category) in query.iter_mut() {
         if strategy.current_cooldown > 0 {
             strategy.current_cooldown -= 1;
-            continue;
         }
 
-        if energy.current >= strategy.energy_threshold {
+        // Apply Invasive species reproduction buff (e.g. 50% faster cooldown or cheaper cost)
+        // Since cooldown is applied via tick reduction, we can reduce cost or threshold.
+        // Let's just reduce the energy cost by 50% if Invasive.
+        let mut actual_cost = strategy.energy_cost;
+        let mut actual_threshold = strategy.energy_threshold;
+        if *category == ecology::EcologicalCategory::Invasive {
+            actual_cost *= 0.5;
+            actual_threshold *= 0.5; // Also reproduce sooner
+        }
+
+        if energy.current >= actual_threshold && strategy.current_cooldown == 0 {
+            // Asexual clone
             if strategy.mode == ReproductionMode::Asexual {
                 if current_population + pending_births >= config.max_organisms {
                     continue;
                 }
-                energy.current -= strategy.energy_cost;
+                energy.current -= actual_cost;
                 strategy.current_cooldown = strategy.cooldown_ticks;
 
-                let mut offset_pos = node.position;
-                offset_pos.x += (fastrand::f32() - 0.5) * 100.0;
-                offset_pos.y += (fastrand::f32() - 0.5) * 100.0;
+                let child_genome = strategy.genome.clone();
+                // Introduce slight random mutation (placeholder)
+                // In Phase 5, call proper `mutate()`
 
-                let mut child_genome = strategy.genome.clone();
-                child_genome.mutate(0.05, &mut rand::thread_rng());
+                // Spawn child slightly offset
+                let offset = Vec2::new(
+                    (fastrand::f32() - 0.5) * 50.0,
+                    (fastrand::f32() - 0.5) * 50.0,
+                );
 
                 birth_events.send(BirthRequest {
                     genome: child_genome,
-                    position: offset_pos,
+                    position: node.position + offset,
+                    diet: diet.clone(),
+                    category: category.clone(),
                 });
 
                 pending_births += 1;
             } else if strategy.mode == ReproductionMode::Sexual {
-                ready_sexuals.push((entity, node.position, strategy.genome.clone()));
+                ready_sexuals.push((
+                    entity,
+                    node.position,
+                    strategy.genome.clone(),
+                    diet.clone(),
+                    category.clone(),
+                ));
             }
         }
     }
@@ -106,8 +133,8 @@ pub fn reproduction_system(
                 continue;
             }
 
-            let (e1, p1, g1) = &ready_sexuals[i];
-            let (e2, p2, g2) = &ready_sexuals[j];
+            let (e1, p1, g1, d1, c1) = &ready_sexuals[i];
+            let (e2, p2, g2, _d2, _c2) = &ready_sexuals[j];
 
             // Distance check (collision radius approx 50.0)
             if p1.distance(*p2) < 50.0 {
@@ -133,6 +160,8 @@ pub fn reproduction_system(
                     birth_events.send(BirthRequest {
                         genome: child_genome,
                         position: offset_pos,
+                        diet: d1.clone(),
+                        category: c1.clone(),
                     });
                     pending_births += 1;
                     break; // e1 has mated, move to next i
@@ -142,7 +171,7 @@ pub fn reproduction_system(
     }
 
     // Deduct energy for those who mated sexually
-    for (entity, mut energy, mut strategy, _) in query.iter_mut() {
+    for (entity, mut energy, mut strategy, _, _, _) in query.iter_mut() {
         if mated.contains(&entity) {
             energy.current -= strategy.energy_cost;
             strategy.current_cooldown = strategy.cooldown_ticks;

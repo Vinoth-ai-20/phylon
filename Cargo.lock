@@ -946,6 +946,7 @@ dependencies = [
  "fastrand",
  "metabolism",
  "physics",
+ "serde",
  "thiserror 2.0.18",
  "world",
 ]
@@ -3360,6 +3361,7 @@ dependencies = [
  "bevy_ecs",
  "brain",
  "common",
+ "ecology",
  "egui",
  "egui_dock",
  "egui_plot",

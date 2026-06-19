@@ -17,29 +17,7 @@ use bevy_ecs::prelude::{Component, Entity, Query};
 use common::{EntityId, SimEnergy, SimLength, Vec2};
 use serde::{Deserialize, Serialize};
 
-/// The dietary strategy of an organism.
-///
-/// This is the primary axis of ecological role assignment. Diet determines
-/// what an organism can consume and how it interacts with resource fields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum DietType {
-    /// Consumes plant matter and nutrient fields.
-    Herbivore,
-    /// Hunts and consumes other organisms.
-    Carnivore,
-    /// Consumes both plant matter and other organisms.
-    Omnivore,
-    /// Consumes fungal networks and decomposing matter.
-    Fungivore,
-    /// Harvests energy directly from the sunlight field.
-    Phototroph,
-    /// Consumes dead organisms and carrion.
-    Scavenger,
-    /// Lives on a host organism, draining its energy.
-    Parasite,
-    /// Consumes detritus and waste products.
-    Detritivore,
-}
+// Diet type is now defined in the ecology crate to avoid duplication.
 
 /// Spatial components of an organism: position, velocity, and collision radius.
 #[derive(bevy_ecs::component::Component, Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +38,9 @@ pub struct BiologicalComponents {
     /// Age in simulation ticks.
     pub age_ticks: u64,
     /// The organism's dietary strategy.
-    pub diet: DietType,
+    pub diet: ecology::Diet,
+    /// The organism's special ecological trait/category.
+    pub category: ecology::EcologicalCategory,
     /// Parent entity ID (null if initial spawn).
     pub parent: EntityId,
 }
@@ -68,33 +48,6 @@ pub struct BiologicalComponents {
 /// The base color of an organism's skin, driven by genetics.
 #[derive(bevy_ecs::component::Component, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct OrganismColor(pub [f32; 3]);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn diet_type_is_copy() {
-        let d = DietType::Herbivore;
-        let _d2 = d; // copy semantics
-    }
-
-    #[test]
-    fn all_diet_types_are_distinct() {
-        let types = [
-            DietType::Herbivore,
-            DietType::Carnivore,
-            DietType::Omnivore,
-            DietType::Fungivore,
-            DietType::Phototroph,
-            DietType::Scavenger,
-            DietType::Parasite,
-            DietType::Detritivore,
-        ];
-        // All 8 variants present
-        assert_eq!(types.len(), 8);
-    }
-}
 
 /// Tracks the sequential growth of an organism from its Hox genome.
 ///
@@ -379,6 +332,8 @@ pub fn spawn_organism(
     world: &mut bevy_ecs::world::World,
     genome: &genetics::Genome,
     start_pos: Vec2,
+    diet: ecology::Diet,
+    category: ecology::EcologicalCategory,
 ) {
     use physics::ParticleNode;
 
@@ -420,7 +375,8 @@ pub fn spawn_organism(
             mass: 10.0,
             base_rate: 0.05,
         },
-        ecology::Diet::Herbivore,
+        diet,
+        category,
         reproduction::ReproductionStrategy {
             energy_threshold: 180.0,
             energy_cost: 100.0,
@@ -474,7 +430,12 @@ pub fn spawn_organism(
 /// The CPPN's `branching_signal` (output index 5) threshold is too rarely
 /// exceeded in random genomes. A targeted tuning pass is required — see the
 /// Phase 5 implementation plan for details.
-pub fn spawn_proto_fish(world: &mut bevy_ecs::world::World, pos: Vec2) {
+pub fn spawn_proto_fish(
+    world: &mut bevy_ecs::world::World,
+    pos: Vec2,
+    diet: ecology::Diet,
+    category: ecology::EcologicalCategory,
+) {
     use physics::{ConstraintType, ParticleNode, Spring};
 
     // Geometry constants — all in world units
@@ -588,6 +549,7 @@ pub fn spawn_proto_fish(world: &mut bevy_ecs::world::World, pos: Vec2) {
             mass: 10.0,
             base_rate: 0.05,
         },
-        ecology::Diet::Herbivore,
+        diet,
+        category,
     ));
 }

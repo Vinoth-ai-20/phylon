@@ -486,10 +486,14 @@ pub fn render_ui(
                                 });
                         }
 
-                        // Biological components (diet)
-                        let mut bio_q = world.ecs.query::<&organisms::BiologicalComponents>();
-                        if let Ok(bio) = bio_q.get(&world.ecs, entity) {
-                            ui.label(format!("Diet   : {:?}", bio.diet));
+                        // Biological components (ecology)
+                        let mut diet_q = world.ecs.query::<&ecology::Diet>();
+                        if let Ok(diet) = diet_q.get(&world.ecs, entity) {
+                            ui.label(format!("Diet   : {:?}", diet));
+                        }
+                        let mut category_q = world.ecs.query::<&ecology::EcologicalCategory>();
+                        if let Ok(cat) = category_q.get(&world.ecs, entity) {
+                            ui.label(format!("Category: {:?}", cat));
                         }
 
                         // Entity Graph / Segment Tree

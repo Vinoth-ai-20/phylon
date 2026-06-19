@@ -6,25 +6,67 @@
 use bevy_ecs::prelude::*;
 use common::Vec2;
 use metabolism::Energy;
+use serde::{Deserialize, Serialize};
 
 /// Indicates the diet of an organism.
-#[derive(Component, Debug, Clone, PartialEq, Eq)]
+#[derive(Component, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Diet {
-    /// Eats food pellets or plants.
+    /// Autotrophs: generate energy from environment / minerals
+    Producer,
+    /// Eats plants/producers and food pellets.
     Herbivore,
-    /// Eats other organisms.
+    /// Eats other living organisms.
     Carnivore,
-    /// Eats anything.
+    /// Eats both plants and animals.
     Omnivore,
+    /// Eats corpses, recycling them into minerals.
+    Decomposer,
 }
 
-/// A food pellet in the environment.
+/// Identifies special ecological traits of an organism.
+#[derive(Component, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EcologicalCategory {
+    /// Default trait, no special category.
+    None,
+    /// Disproportionately important species.
+    Keystone,
+    /// Proxy for overall health.
+    Indicator,
+    /// Hyper-specialized to a niche.
+    Endemic,
+    /// Highly aggressive reproductive behavior.
+    Invasive,
+}
+
+/// A food pellet in the environment (biomass).
 #[derive(Component, Debug, Clone)]
 pub struct FoodPellet {
     /// World position.
     pub position: Vec2,
     /// Energy provided when eaten.
     pub energy_value: f32,
+}
+
+/// An inorganic mineral nutrient in the environment.
+#[derive(Component, Debug, Clone)]
+pub struct MineralPellet {
+    /// World position.
+    pub position: Vec2,
+    /// Energy provided when consumed by Producers.
+    pub energy_value: f32,
+}
+
+/// A dead organism that can be decomposed.
+#[derive(Component, Debug, Clone)]
+pub struct Corpse {
+    /// World position.
+    pub position: Vec2,
+    /// Total energy contained.
+    pub energy_value: f32,
+    /// Ticks until the corpse automatically decays into a mineral pellet.
+    pub decay_timer: u32,
+    /// Max decay ticks.
+    pub max_decay: u32,
 }
 
 /// Config for the food spawner.
@@ -64,36 +106,78 @@ pub fn food_spawner_system(
     }
 }
 
-/// System that handles passive collision eating.
-///
-/// For Phase 3, we just check distance between the organism's root/head node (which has `Energy` and `Diet`)
-/// and the food pellets.
+/// System that handles collision eating based on ecological roles.
 pub fn foraging_system(
     mut commands: Commands,
-    mut organism_query: Query<(&mut Energy, &Diet, &physics::ParticleNode)>,
+    mut organism_query: Query<(Entity, &mut Energy, &Diet, &physics::ParticleNode)>,
     food_query: Query<(Entity, &FoodPellet)>,
+    mineral_query: Query<(Entity, &MineralPellet)>,
+    corpse_query: Query<(Entity, &Corpse)>,
 ) {
-    for (mut energy, diet, node) in organism_query.iter_mut() {
-        if *diet != Diet::Herbivore && *diet != Diet::Omnivore {
-            continue; // Carnivores don't eat pellets
-        }
+    // We will do interactions by iterating organisms and then checking the environment queries.
+    // For Carnivores eating Herbivores, we need to iterate pairs, which requires a nested query or `iter_combinations_mut`.
+    // Since Bevy 0.14 `iter_combinations_mut` requires equal components.
+    // We will leave Carnivore eating Herbivore for the physics system or handle it safely here.
 
-        let eat_radius = 20.0; // Interaction radius
+    let eat_radius = 20.0;
 
-        for (food_entity, food) in food_query.iter() {
-            let dist = node.position.distance(food.position);
-            if dist <= eat_radius {
-                // Consume food
-                energy.current += food.energy_value;
-                if energy.current > energy.max {
-                    energy.current = energy.max;
+    for (_entity, mut energy, diet, node) in organism_query.iter_mut() {
+        match diet {
+            Diet::Producer => {
+                // Producers eat Minerals
+                for (mineral_entity, mineral) in mineral_query.iter() {
+                    if node.position.distance(mineral.position) <= eat_radius {
+                        energy.current = (energy.current + mineral.energy_value).min(energy.max);
+                        commands.entity(mineral_entity).despawn();
+                        break;
+                    }
                 }
-
-                // Despawn the eaten food pellet
-                commands.entity(food_entity).despawn();
-                // We only eat one pellet per tick per organism to simplify
-                break;
             }
+            Diet::Herbivore | Diet::Omnivore => {
+                // Herbivores eat FoodPellets
+                for (food_entity, food) in food_query.iter() {
+                    if node.position.distance(food.position) <= eat_radius {
+                        energy.current = (energy.current + food.energy_value).min(energy.max);
+                        commands.entity(food_entity).despawn();
+                        break;
+                    }
+                }
+            }
+            Diet::Decomposer => {
+                // Decomposers eat Corpses and spawn Minerals
+                for (corpse_entity, corpse) in corpse_query.iter() {
+                    if node.position.distance(corpse.position) <= eat_radius {
+                        energy.current = (energy.current + corpse.energy_value).min(energy.max);
+                        commands.entity(corpse_entity).despawn();
+
+                        // Recycle into mineral
+                        commands.spawn(MineralPellet {
+                            position: corpse.position,
+                            energy_value: corpse.energy_value * 0.8, // 80% recycled
+                        });
+                        break;
+                    }
+                }
+            }
+            Diet::Carnivore => {
+                // To be implemented: Carnivore vs Herbivore predation
+            }
+        }
+    }
+}
+
+/// System that decays Corpses into MineralPellets over time.
+pub fn corpse_decay_system(mut commands: Commands, mut corpse_query: Query<(Entity, &mut Corpse)>) {
+    for (entity, mut corpse) in corpse_query.iter_mut() {
+        if corpse.decay_timer > 0 {
+            corpse.decay_timer -= 1;
+        } else {
+            // Decay into mineral
+            commands.spawn(MineralPellet {
+                position: corpse.position,
+                energy_value: corpse.energy_value * 0.5, // 50% energy lost to environment if not eaten directly
+            });
+            commands.entity(entity).despawn();
         }
     }
 }

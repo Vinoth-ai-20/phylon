@@ -21,3 +21,4 @@ egui       = { workspace = true }
 egui_plot  = { workspace = true }
 egui_dock  = { workspace = true }
 sensing.workspace = true
+ecology = { version = "0.1.0", path = "../ecology" }
