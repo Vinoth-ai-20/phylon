@@ -120,6 +120,7 @@ pub fn render_ui(
     is_paused: &mut bool,
     show_about: &mut bool,
     show_docs: &mut bool,
+    show_vision_cones: &mut bool,
 ) -> (CanvasInteraction, Vec<MenuAction>) {
     let mut actions = Vec::new();
 
@@ -274,6 +275,7 @@ pub fn render_ui(
             });
             ui.menu_button("View", |ui| {
                 ui.checkbox(debug_structural, "Debug Structural View");
+                ui.checkbox(show_vision_cones, "Show Vision Cones");
             });
             ui.menu_button("Selection", |ui| {
                 if ui
@@ -404,6 +406,7 @@ pub fn render_ui(
                                 .text("Bone Line Thickness"),
                         );
                     }
+                    ui.checkbox(show_vision_cones, "👁 Show Vision Cones");
                     ui.separator();
                     if let Some(entity) = *selected_entity {
                         ui.label(
@@ -969,6 +972,50 @@ pub fn render_ui(
 
     let interact_response = central.inner;
     let zoom_delta = ctx.input(|i| i.zoom_delta());
+
+    // Render vision cones if enabled
+    if *show_vision_cones {
+        let mut query = world
+            .ecs
+            .query::<(&physics::ParticleNode, &sensing::HeadVision)>();
+        let mut painter = ctx.layer_painter(egui::LayerId::background());
+        painter.set_clip_rect(interact_response.rect);
+
+        let screen_center = interact_response.rect.center();
+        let to_screen = |pos: common::Vec2| {
+            egui::pos2(
+                screen_center.x + (pos.x - camera_pos.x) * camera_zoom,
+                screen_center.y + (pos.y - camera_pos.y) * camera_zoom,
+            )
+        };
+
+        for (node, vision) in query.iter(&world.ecs) {
+            let origin = to_screen(node.position);
+
+            let fwd = vision.last_forward;
+            // Angle of the forward direction
+            let base_angle = fwd.y.atan2(fwd.x);
+            let half_fov = vision.fov / 2.0;
+
+            // Generate an arc polygon
+            let segments = 16;
+            let mut points = Vec::with_capacity(segments + 2);
+            points.push(origin);
+            for i in 0..=segments {
+                let t = i as f32 / segments as f32;
+                let angle = base_angle - half_fov + (vision.fov * t);
+                let x = node.position.x + angle.cos() * vision.range;
+                let y = node.position.y + angle.sin() * vision.range;
+                points.push(to_screen(common::Vec2::new(x, y)));
+            }
+
+            painter.add(egui::Shape::convex_polygon(
+                points,
+                egui::Color32::from_rgba_premultiplied(0, 255, 255, 30),
+                egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(0, 255, 255, 80)),
+            ));
+        }
+    }
 
     (
         CanvasInteraction {

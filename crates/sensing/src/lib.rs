@@ -44,17 +44,33 @@ impl SensoryState {
     }
 }
 
+/// A component attached to the Head node of an organism, defining its vision capabilities.
+#[derive(bevy_ecs::prelude::Component, Debug, Clone)]
+pub struct HeadVision {
+    /// Maximum distance the organism can see.
+    pub range: f32,
+    /// Field of view angle in radians.
+    pub fov: f32,
+    /// Last known forward direction (used when velocity is near zero).
+    pub last_forward: common::Vec2,
+    /// Distance within which nodes are ignored (self-occlusion heuristic).
+    pub self_occlusion_radius: f32,
+}
+
 /// System that gathers sensory data from the environment and biology.
+#[allow(clippy::type_complexity)]
 pub fn sensing_system(
     mut query: bevy_ecs::prelude::Query<(
         &mut SensoryState,
         &physics::ParticleNode,
+        Option<&mut HeadVision>,
         Option<&metabolism::Energy>,
         Option<&metabolism::Age>,
     )>,
+    node_query: bevy_ecs::prelude::Query<&physics::ParticleNode>,
     cpu_field: Option<bevy_ecs::prelude::Res<diffusion::CpuFieldState>>,
 ) {
-    for (mut state, node, energy_opt, age_opt) in query.iter_mut() {
+    for (mut state, node, mut vision_opt, energy_opt, age_opt) in query.iter_mut() {
         if state.inputs.is_empty() {
             continue;
         }
@@ -83,6 +99,64 @@ pub fn sensing_system(
         if let Some(age) = age_opt {
             if idx < state.inputs.len() {
                 state.inputs[idx] = age.ticks as f32 / age.max_lifespan.max(1) as f32;
+                idx += 1;
+            }
+        }
+
+        // 4, 5, 6. Vision (Left, Center, Right bins)
+        if let Some(vision) = &mut vision_opt {
+            // Update forward direction based on velocity
+            if node.velocity.length_squared() > 0.01 {
+                vision.last_forward = node.velocity.normalize();
+            } else if vision.last_forward.length_squared() < 0.01 {
+                vision.last_forward = common::Vec2::X; // Fallback
+            }
+            let forward = vision.last_forward;
+
+            let mut left_val = 0.0f32;
+            let mut center_val = 0.0f32;
+            let mut right_val = 0.0f32;
+
+            for other_node in node_query.iter() {
+                let diff = other_node.position - node.position;
+                let dist = diff.length();
+
+                // Ignore self (heuristic), very close nodes, or nodes beyond range
+                if dist < vision.self_occlusion_radius || dist > vision.range {
+                    continue;
+                }
+
+                let dir = diff / dist;
+                // Angle between forward and dir
+                let angle = forward.angle_to(dir);
+
+                // If within FOV
+                let half_fov = vision.fov / 2.0;
+                if angle >= -half_fov && angle <= half_fov {
+                    // Vision strength is inverse to distance
+                    let strength = 1.0 - (dist / vision.range);
+
+                    let third_fov = half_fov / 1.5; // Divide FOV into 3 bins
+                    if angle < -third_fov {
+                        left_val = left_val.max(strength);
+                    } else if angle > third_fov {
+                        right_val = right_val.max(strength);
+                    } else {
+                        center_val = center_val.max(strength);
+                    }
+                }
+            }
+
+            if idx < state.inputs.len() {
+                state.inputs[idx] = left_val;
+                idx += 1;
+            }
+            if idx < state.inputs.len() {
+                state.inputs[idx] = center_val;
+                idx += 1;
+            }
+            if idx < state.inputs.len() {
+                state.inputs[idx] = right_val;
             }
         }
 

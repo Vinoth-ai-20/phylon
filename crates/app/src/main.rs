@@ -138,6 +138,9 @@ struct PhylonApp {
 
     /// If true, show the Documentation window.
     show_docs: bool,
+
+    /// If true, overlay vision cones on the simulation viewport.
+    show_vision_cones: bool,
 }
 
 use bevy_ecs::prelude::*;
@@ -263,6 +266,7 @@ impl PhylonApp {
             is_paused: false,
             show_about: false,
             show_docs: false,
+            show_vision_cones: false,
         }
     }
 
@@ -911,6 +915,7 @@ impl PhylonApp {
                     &mut self.is_paused,
                     &mut self.show_about,
                     &mut self.show_docs,
+                    &mut self.show_vision_cones,
                 );
                 interaction = interact;
                 ui_actions = acts;

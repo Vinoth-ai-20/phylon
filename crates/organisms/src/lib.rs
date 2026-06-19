@@ -154,7 +154,7 @@ pub fn growth_system(
 
         if is_finished {
             // ── Wire the brain once the body is fully grown ──────────────────
-            let input_count = 3;
+            let input_count = 6;
             let output_count = state.effectors.len();
 
             let mut nodes = Vec::new();
@@ -440,6 +440,17 @@ pub fn spawn_organism(
             segment_length,
             effectors: Vec::new(),
             color,
+        },
+        sensing::HeadVision {
+            range: 250.0,
+            fov: std::f32::consts::PI * 0.8, // ~144 degrees
+            last_forward: common::Vec2::X,
+            self_occlusion_radius: genome
+                .hox
+                .as_ref()
+                .map(|hox| hox.genes.len() as f32 * segment_length)
+                .unwrap_or(5.0 * segment_length)
+                * 1.5, // Add a 50% margin
         },
     ));
 }

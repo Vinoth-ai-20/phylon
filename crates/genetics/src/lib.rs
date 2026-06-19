@@ -204,6 +204,8 @@ pub struct CppnConnection {
 /// to dictate morphology (Segment types, Symmetries) and wire synaptic weights.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Genome {
+    /// Schema version for serialization compatibility (currently 1).
+    pub schema_version: u32,
     /// Unique identifier for this genome sequence.
     pub id: GenomeId,
     /// The ID of the organism that created this genome (for lineage tracking).
@@ -226,6 +228,7 @@ impl Genome {
     /// Creates a minimal genome (e.g. just inputs wired to outputs).
     pub fn new_minimal(id: GenomeId, origin: EntityId) -> Self {
         Self {
+            schema_version: 1,
             id,
             origin,
             ploidy: Ploidy::Haploid,
@@ -242,6 +245,7 @@ impl Genome {
     /// from the empty CPPN (identity mapping) as a placeholder.
     pub fn new_hox_driven(id: GenomeId, origin: EntityId, hox: HoxSequence) -> Self {
         Self {
+            schema_version: 1,
             id,
             origin,
             ploidy: Ploidy::Haploid,
@@ -424,6 +428,7 @@ impl Genome {
         // TODO(phase-5): Full NEAT crossover based on historical innovation numbers.
         // For Phase 4, we just clone self (asexual drift).
         Self {
+            schema_version: self.schema_version,
             id: new_id,
             origin: self.origin, // Caller must update
             ploidy: self.ploidy,

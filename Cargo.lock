@@ -3369,6 +3369,7 @@ dependencies = [
  "organisms",
  "physics",
  "reproduction",
+ "sensing",
  "thiserror 2.0.18",
  "world",
 ]
