@@ -426,7 +426,12 @@ impl PhylonApp {
 
         // 1. Camera Tracking
         if let Some(tracked) = self.tracked_entity {
-            if let Ok(node) = self.world.ecs.query::<&physics::ParticleNode>().get(&self.world.ecs, tracked) {
+            if let Ok(node) = self
+                .world
+                .ecs
+                .query::<&physics::ParticleNode>()
+                .get(&self.world.ecs, tracked)
+            {
                 // Smoothly follow the target
                 self.camera_pos = self.camera_pos.lerp(node.position, 0.1);
             } else {
@@ -525,7 +530,18 @@ impl PhylonApp {
             }
         }
 
-        // 6. Run remaining biological systems
+        // 6. Camera tracking
+        if let Some(tracked) = self.tracked_entity {
+            if let Some(node) = self.world.ecs.get::<physics::ParticleNode>(tracked) {
+                // Smooth lerp can be added later, snap is fine for now
+                self.camera_pos = node.position;
+            } else {
+                // Node was deleted
+                self.tracked_entity = None;
+            }
+        }
+
+        // 7. Run remaining biological systems
         self.world.ecs.run_system_once(ecology::food_spawner_system);
         self.world.ecs.run_system_once(ecology::foraging_system);
         self.world
@@ -547,7 +563,8 @@ impl PhylonApp {
         if let Some(diffusion_compute) = self.diffusion_compute.as_mut() {
             // 5. Gather diffusion emitters and run compute
             let (diff_rate, dec_rate) = {
-                let mut diffusion_config = self.world.ecs.resource_mut::<diffusion::DiffusionConfig>();
+                let mut diffusion_config =
+                    self.world.ecs.resource_mut::<diffusion::DiffusionConfig>();
 
                 // Diurnal modulation
                 diffusion_config.global_time += 0.016;
@@ -824,6 +841,7 @@ impl PhylonApp {
         if interaction.drag_delta.length_sq() > 0.0 {
             self.camera_pos.x -= (interaction.drag_delta.x * scale) / self.camera_zoom;
             self.camera_pos.y += (interaction.drag_delta.y * scale) / self.camera_zoom;
+            self.tracked_entity = None; // Detach on manual pan
         }
 
         if interaction.clicked {
@@ -839,9 +857,10 @@ impl PhylonApp {
             });
 
         // Render the continuous diffusion field as the background (clearing the screen)
-        if let (Some(field_renderer), Some(diffusion_compute)) =
-            (self.field_renderer.as_ref(), self.diffusion_compute.as_ref())
-        {
+        if let (Some(field_renderer), Some(diffusion_compute)) = (
+            self.field_renderer.as_ref(),
+            self.diffusion_compute.as_ref(),
+        ) {
             field_renderer.render(
                 &gpu.device,
                 &mut encoder,
@@ -1042,15 +1061,19 @@ impl ApplicationHandler for PhylonApp {
                 match physical_key {
                     PhysicalKey::Code(KeyCode::KeyW) | PhysicalKey::Code(KeyCode::ArrowUp) => {
                         self.camera_pos.y += pan_speed;
+                        self.tracked_entity = None;
                     }
                     PhysicalKey::Code(KeyCode::KeyS) | PhysicalKey::Code(KeyCode::ArrowDown) => {
                         self.camera_pos.y -= pan_speed;
+                        self.tracked_entity = None;
                     }
                     PhysicalKey::Code(KeyCode::KeyA) | PhysicalKey::Code(KeyCode::ArrowLeft) => {
                         self.camera_pos.x -= pan_speed;
+                        self.tracked_entity = None;
                     }
                     PhysicalKey::Code(KeyCode::KeyD) | PhysicalKey::Code(KeyCode::ArrowRight) => {
                         self.camera_pos.x += pan_speed;
+                        self.tracked_entity = None;
                     }
                     // Zoom with + and -
                     PhysicalKey::Code(KeyCode::Equal) | PhysicalKey::Code(KeyCode::NumpadAdd) => {
@@ -1080,8 +1103,8 @@ impl ApplicationHandler for PhylonApp {
                             }
                         } else {
                             // Pan
-                            self.camera_pos.x -= x as f32 * 20.0 / self.camera_zoom;
-                            self.camera_pos.y += y as f32 * 20.0 / self.camera_zoom;
+                            self.camera_pos.x -= x * 20.0 / self.camera_zoom;
+                            self.camera_pos.y += y * 20.0 / self.camera_zoom;
                         }
                     }
                     winit::event::MouseScrollDelta::PixelDelta(p) => {
@@ -1114,7 +1137,9 @@ impl ApplicationHandler for PhylonApp {
                         .as_ref()
                         .map(|g| (g.config.width as f32, g.config.height as f32));
                     if let Some((gpu_w, gpu_h)) = dims {
-                        self.selected_entity = self.pick_entity(click_pos, gpu_w, gpu_h);
+                        let selected = self.pick_entity(click_pos, gpu_w, gpu_h);
+                        self.selected_entity = selected;
+                        self.tracked_entity = selected;
                     }
                 }
 

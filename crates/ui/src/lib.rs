@@ -65,8 +65,8 @@ impl Default for CanvasInteraction {
 
 /// Renders the main immediate-mode user interface.
 ///
-/// Returns a `CanvasInteraction` containing the screen-space `Rect` of the 
-/// transparent `CentralPanel` (for viewport sizing) and the unified 
+/// Returns a `CanvasInteraction` containing the screen-space `Rect` of the
+/// transparent `CentralPanel` (for viewport sizing) and the unified
 /// touch/mouse interactions (clicks, drags, zooms) generated on it.
 ///
 /// `debug_structural` is mutated by a checkbox in the Inspector sidebar.
@@ -198,7 +198,7 @@ pub fn render_ui(
                                 }
                             }
                         }
-                        
+
                         ui.separator(); // Physics node
                         let mut node_q = world.ecs.query::<&physics::ParticleNode>();
                         if let Ok(node) = node_q.get(&world.ecs, entity) {
