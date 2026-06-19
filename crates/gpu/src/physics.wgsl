@@ -111,7 +111,31 @@ fn integrate(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     // Global damping
     node.velocity = node.velocity * 0.99;
-    
+
+    // ── Hard velocity cap (BEFORE position update) ──────────────────────────
+    // This must be here — not just in apply_pbd — because position is updated
+    // below. apply_pbd runs after position update so it cannot prevent the
+    // displacement from an uncapped velocity.
+    let max_speed = 200.0; // world-units / s; typical locomotion is < 20
+    let speed = length(node.velocity);
+    if (speed > max_speed) {
+        node.velocity = node.velocity * (max_speed / speed);
+    }
+
+    // ── Soft world-bounds reflection (BEFORE position update) ───────────────
+    // Reflect nodes that are already out-of-bounds so they migrate back.
+    // This runs before the position update so the reflected velocity produces
+    // inward displacement this same tick.
+    let bounds = 1500.0;
+    if (abs(node.position.x) > bounds) {
+        node.position.x = clamp(node.position.x, -bounds, bounds);
+        node.velocity.x = -node.velocity.x * 0.5; // lose half energy on bounce
+    }
+    if (abs(node.position.y) > bounds) {
+        node.position.y = clamp(node.position.y, -bounds, bounds);
+        node.velocity.y = -node.velocity.y * 0.5;
+    }
+
     node.position = node.position + node.velocity * config.dt;
     
     // Reset forces
@@ -121,6 +145,7 @@ fn integrate(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     nodes[index] = node;
 }
+
 
 // Pass 3: PBD Projection
 @compute @workgroup_size(64)
@@ -167,16 +192,43 @@ fn apply_pbd(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (index >= arrayLength(&nodes)) { return; }
 
     var node = nodes[index];
-    
+
     let cx = f32(atomicLoad(&atomic_forces_x[index])) / FORCE_SCALE;
     let cy = f32(atomicLoad(&atomic_forces_y[index])) / FORCE_SCALE;
     let correction = vec2<f32>(cx, cy);
-    
+
     node.position = node.position + correction;
-    node.velocity = node.velocity + (correction / config.dt);
-    
+
+    // Inject velocity from PBD correction — clamp to prevent explosion.
+    // Without clamping, large corrections (from nodes far apart) inject
+    // huge velocities that accumulate across ticks and cause fly-off.
+    let raw_vel_correction = correction / config.dt;
+    let max_pbd_vel = 150.0; // world-units/s cap on PBD velocity injection
+    let pbd_vel = clamp(raw_vel_correction, vec2<f32>(-max_pbd_vel, -max_pbd_vel), vec2<f32>(max_pbd_vel, max_pbd_vel));
+    node.velocity = node.velocity + pbd_vel;
+
+    // Hard velocity cap — prevents runaway accumulation regardless of cause.
+    let max_speed = 300.0;
+    let speed = length(node.velocity);
+    if (speed > max_speed) {
+        node.velocity = node.velocity * (max_speed / speed);
+    }
+
+    // Soft world-bounds: reflect nodes that drift too far so they stay
+    // within a reasonable simulation area (±2000 world units).
+    let bounds = 2000.0;
+    if (abs(node.position.x) > bounds) {
+        node.position.x = clamp(node.position.x, -bounds, bounds);
+        node.velocity.x = node.velocity.x * -0.5;
+    }
+    if (abs(node.position.y) > bounds) {
+        node.position.y = clamp(node.position.y, -bounds, bounds);
+        node.velocity.y = node.velocity.y * -0.5;
+    }
+
     atomicStore(&atomic_forces_x[index], 0);
     atomicStore(&atomic_forces_y[index], 0);
-    
+
     nodes[index] = node;
 }
+

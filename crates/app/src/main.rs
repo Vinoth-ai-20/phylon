@@ -166,9 +166,42 @@ impl PhylonApp {
             .insert_resource(bevy_ecs::event::Events::<reproduction::BirthRequest>::default());
         world.ecs.insert_resource(analytics::MetricsState::new());
 
-        // Spawn test soft body with minimal genome
-        let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
-        organisms::spawn_organism(&mut world.ecs, &genome, common::Vec2::new(0.0, 0.0));
+        // ── Spawn three organisms with distinct Hox sequences ─────────────────
+        // Organism 1: Simple worm — 6 muscle segments, no branching.
+        let worm_hox = genetics::HoxSequence::worm(6, [0.85, 0.35, 0.35]);
+        let worm_genome =
+            genetics::Genome::new_hox_driven(genetics::GenomeId(1), common::EntityId(0), worm_hox);
+        organisms::spawn_organism(&mut world.ecs, &worm_genome, common::Vec2::new(0.0, 80.0));
+
+        // Organism 2: Fish — 5 segments, fin pair at segment index 2.
+        let fish_hox = genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]);
+        let fish_genome =
+            genetics::Genome::new_hox_driven(genetics::GenomeId(2), common::EntityId(0), fish_hox);
+        organisms::spawn_organism(&mut world.ecs, &fish_genome, common::Vec2::new(0.0, 0.0));
+
+        // Organism 3: Multi-fin — 8 segments, bilateral fins at positions 1 and 4.
+        let branchy_genome = genetics::Genome::new_hox_driven(
+            genetics::GenomeId(3),
+            common::EntityId(0),
+            genetics::HoxSequence::new(
+                vec![
+                    genetics::HoxGene::head(),
+                    genetics::HoxGene::branching_torso(2.5, 0.0),
+                    genetics::HoxGene::muscle(1.2, 0.0),
+                    genetics::HoxGene::torso(),
+                    genetics::HoxGene::branching_torso(2.5, std::f32::consts::PI * 0.5),
+                    genetics::HoxGene::muscle(1.2, std::f32::consts::PI),
+                    genetics::HoxGene::muscle(1.2, std::f32::consts::PI * 1.5),
+                    genetics::HoxGene::tail(),
+                ],
+                [0.95, 0.75, 0.20],
+            ),
+        );
+        organisms::spawn_organism(
+            &mut world.ecs,
+            &branchy_genome,
+            common::Vec2::new(0.0, -90.0),
+        );
 
         // Spawn a static food/nutrient emitter at the center
         world.ecs.spawn(diffusion::Emitter {
@@ -580,12 +613,73 @@ impl PhylonApp {
             });
         }
 
-        // Collect Rigid bones for SDF capsule rendering
+        // Collect springs for SDF capsule rendering.
+        // Rigid + Rotational: drawn as full-weight skin bones.
+        // Elastic (muscle) + Passive (tail): drawn as thinner, slightly dimmer bones so
+        // the spine of muscle-only organisms (e.g. the worm) is visible in skin mode.
         let mut query_springs_render = self
             .world
             .ecs
             .query::<(&physics::Spring, Option<&organisms::OrganismColor>)>();
         for (spring, opt_color) in query_springs_render.iter(&self.world.ecs) {
+            // Skip springs that have no associated organism color (e.g. broken/detached).
+            if spring.constraint_type == physics::ConstraintType::Passive && spring.is_fin == 0 {
+                // Passive tail bones: thin and dimmed
+                if let (Some(&pa), Some(&pb)) = (
+                    node_positions.get(&spring.node_a),
+                    node_positions.get(&spring.node_b),
+                ) {
+                    let color = opt_color
+                        .map(|c| {
+                            let c = c.0;
+                            [c[0] * 0.6, c[1] * 0.6, c[2] * 0.6]
+                        })
+                        .unwrap_or([0.4, 0.4, 0.4]);
+                    sdf_bones.push(rendering::SdfBoneInstance {
+                        pos_a: pa,
+                        pos_b: pb,
+                        radius: 4.0,
+                        color,
+                    });
+                    if self.debug_structural {
+                        debug_instances.push(rendering::DebugInstance {
+                            pos_a: pa,
+                            pos_b: pb,
+                            color: [color[0], color[1], color[2], 0.5],
+                            radius: self.bone_line_thickness,
+                            segment_type: 99,
+                        });
+                    }
+                }
+                continue;
+            }
+
+            if spring.constraint_type == physics::ConstraintType::Elastic {
+                // Elastic muscle bones: medium weight
+                if let (Some(&pa), Some(&pb)) = (
+                    node_positions.get(&spring.node_a),
+                    node_positions.get(&spring.node_b),
+                ) {
+                    let color = opt_color.map(|c| c.0).unwrap_or([0.5, 0.5, 0.8]);
+                    sdf_bones.push(rendering::SdfBoneInstance {
+                        pos_a: pa,
+                        pos_b: pb,
+                        radius: 6.0,
+                        color,
+                    });
+                    if self.debug_structural {
+                        debug_instances.push(rendering::DebugInstance {
+                            pos_a: pa,
+                            pos_b: pb,
+                            color: [color[0], color[1], color[2], 0.6],
+                            radius: self.bone_line_thickness,
+                            segment_type: 99,
+                        });
+                    }
+                }
+                continue;
+            }
+
             if spring.constraint_type != physics::ConstraintType::Rigid
                 && spring.constraint_type != physics::ConstraintType::Rotational
             {
@@ -606,9 +700,6 @@ impl PhylonApp {
 
                 // Also draw a line for Debug Structural View
                 if self.debug_structural {
-                    if color[1] > 0.6 {
-                        println!("Pushing a very green line! Color: {:?}", color);
-                    }
                     debug_instances.push(rendering::DebugInstance {
                         pos_a: pa,
                         pos_b: pb,

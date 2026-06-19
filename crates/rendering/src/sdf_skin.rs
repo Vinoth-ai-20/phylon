@@ -58,6 +58,8 @@ pub struct SdfSkinRenderer {
     accum_sampler: wgpu::Sampler,
 
     // ── Size-dependent accumulation texture ───────────────────────────────
+    accum_texture: wgpu::Texture,
+    accum_view: wgpu::TextureView,
     composite_bind_group: wgpu::BindGroup,
     current_width: u32,
     current_height: u32,
@@ -142,7 +144,11 @@ impl SdfSkinRenderer {
                             dst_factor: wgpu::BlendFactor::One,
                             operation: wgpu::BlendOperation::Add,
                         },
-                        alpha: wgpu::BlendComponent::REPLACE,
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
                     }),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -229,7 +235,7 @@ impl SdfSkinRenderer {
             ..Default::default()
         });
 
-        let (_, accum_view) = Self::create_accum_texture(device, width, height);
+        let (accum_texture, accum_view) = Self::create_accum_texture(device, width, height);
         let composite_bind_group =
             Self::create_composite_bind_group(device, &composite_bgl, &accum_view, &accum_sampler);
 
@@ -240,6 +246,8 @@ impl SdfSkinRenderer {
             composite_pipeline,
             composite_bind_group_layout: composite_bgl,
             accum_sampler,
+            accum_texture,
+            accum_view,
             composite_bind_group,
             current_width: width,
             current_height: height,
@@ -296,13 +304,15 @@ impl SdfSkinRenderer {
         if width == self.current_width && height == self.current_height {
             return;
         }
-        let (_, view) = Self::create_accum_texture(device, width, height);
+        let (tex, view) = Self::create_accum_texture(device, width, height);
         self.composite_bind_group = Self::create_composite_bind_group(
             device,
             &self.composite_bind_group_layout,
             &view,
             &self.accum_sampler,
         );
+        self.accum_texture = tex;
+        self.accum_view = view;
         self.current_width = width;
         self.current_height = height;
     }
@@ -354,21 +364,10 @@ impl SdfSkinRenderer {
 
         // ── Pass 1: accumulate density into offscreen texture ──────────────
         {
-            // We need a fresh view each time since resize() may have invalidated it.
-            let (_, accum_view) =
-                Self::create_accum_texture(device, self.current_width, self.current_height);
-            // Recreate composite bind group with the fresh view
-            self.composite_bind_group = Self::create_composite_bind_group(
-                device,
-                &self.composite_bind_group_layout,
-                &accum_view,
-                &self.accum_sampler,
-            );
-
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SdfAccumPass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &accum_view,
+                    view: &self.accum_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), // Clear density to 0
