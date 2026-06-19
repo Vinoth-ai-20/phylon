@@ -4,19 +4,49 @@ use wgpu::util::DeviceExt;
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct DebugInstance {
-    /// 2D position
-    pub position: [f32; 2],
+    /// World position A
+    pub pos_a: [f32; 2],
+    /// World position B (if equal to pos_a, renders a circle)
+    pub pos_b: [f32; 2],
     /// Color (RGBA)
     pub color: [f32; 4],
-    /// Radius
+    /// Radius or line thickness
     pub radius: f32,
-    /// Segment type for SDF clamping
+    /// Type to distinguish components or set max_radius (0=Head, 1=Torso, 2=Muscle, 3=Tail, 4=Fin, 99=Line)
     pub segment_type: u32,
 }
 
 impl DebugInstance {
-    const ATTRIBS: [wgpu::VertexAttribute; 4] =
-        wgpu::vertex_attr_array![1 => Float32x2, 2 => Float32x4, 3 => Float32, 4 => Uint32];
+    const ATTRIBS: [wgpu::VertexAttribute; 5] = [
+        wgpu::VertexAttribute {
+            offset: 0,
+            shader_location: 1,
+            format: wgpu::VertexFormat::Float32x2,
+        },
+        wgpu::VertexAttribute {
+            offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
+            shader_location: 2,
+            format: wgpu::VertexFormat::Float32x2,
+        },
+        wgpu::VertexAttribute {
+            offset: (std::mem::size_of::<[f32; 2]>() * 2) as wgpu::BufferAddress,
+            shader_location: 3,
+            format: wgpu::VertexFormat::Float32x4,
+        },
+        wgpu::VertexAttribute {
+            offset: (std::mem::size_of::<[f32; 2]>() * 2 + std::mem::size_of::<[f32; 4]>())
+                as wgpu::BufferAddress,
+            shader_location: 4,
+            format: wgpu::VertexFormat::Float32,
+        },
+        wgpu::VertexAttribute {
+            offset: (std::mem::size_of::<[f32; 2]>() * 2
+                + std::mem::size_of::<[f32; 4]>()
+                + std::mem::size_of::<f32>()) as wgpu::BufferAddress,
+            shader_location: 5,
+            format: wgpu::VertexFormat::Uint32,
+        },
+    ];
 
     fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {

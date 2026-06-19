@@ -22,6 +22,8 @@ struct Spring {
 
 struct PhysicsConfig {
     dt: f32,
+    time: f32,
+    _padding: vec2<f32>,
 }
 
 @group(0) @binding(0) var<storage, read_write> nodes: array<ParticleNode>;
@@ -46,12 +48,11 @@ fn compute_forces(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let pos_b = nodes[b_idx].position;
     
     let delta = pos_b - pos_a;
-    let dist = length(delta);
-    
-    if (dist > 0.0) {
-        let dir = delta / dist;
-        // Only apply standard forces for Elastic, Passive, and Rotational. Rigid is handled in PBD.
-        if (spring.constraint_type != 1u) {
+    let dist = max(length(delta), 0.0001); // Prevent div-by-zero
+
+    let dir = delta / dist;
+    // Only apply standard forces for Elastic, Passive, and Rotational. Rigid is handled in PBD.
+    if (spring.constraint_type != 1u) {
             let displacement = dist - spring.rest_length;
             let spring_force = dir * (displacement * spring.stiffness);
             
@@ -89,7 +90,6 @@ fn compute_forces(@builtin(global_invocation_id) global_id: vec3<u32>) {
             atomicAdd(&atomic_forces_y[a_idx], fy);
             atomicAdd(&atomic_forces_x[b_idx], -fx);
             atomicAdd(&atomic_forces_y[b_idx], -fy);
-        }
     }
 }
 
@@ -139,12 +139,12 @@ fn pbd_projection(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let pos_b = nodes[b_idx].position;
         
         let delta = pos_b - pos_a;
-        let dist = length(delta);
+        let dist = max(length(delta), 0.0001); // Prevent div-by-zero
         
-        if (dist > 0.0) {
-            let correction_mag = (dist - spring.rest_length) * 0.5; // Distribute equally
-            let dir = delta / dist;
-            let correction = dir * correction_mag;
+        // Dampen correction by 0.25 (relaxation factor) to prevent multi-spring atomicAdd explosions
+        let correction_mag = (dist - spring.rest_length) * 0.5 * 0.25;
+        let dir = delta / dist;
+        let correction = dir * correction_mag;
             
             // To be thread-safe without atomic floats, PBD on GPU typically uses Graph Coloring or Jacobi methods.
             // For a simple implementation, we just atomic add the positional correction and divide later, 
@@ -157,7 +157,6 @@ fn pbd_projection(@builtin(global_invocation_id) global_id: vec3<u32>) {
             atomicAdd(&atomic_forces_y[a_idx], cy);
             atomicAdd(&atomic_forces_x[b_idx], -cx);
             atomicAdd(&atomic_forces_y[b_idx], -cy);
-        }
     }
 }
 
@@ -171,8 +170,10 @@ fn apply_pbd(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     let cx = f32(atomicLoad(&atomic_forces_x[index])) / FORCE_SCALE;
     let cy = f32(atomicLoad(&atomic_forces_y[index])) / FORCE_SCALE;
+    let correction = vec2<f32>(cx, cy);
     
-    node.position = node.position + vec2<f32>(cx, cy);
+    node.position = node.position + correction;
+    node.velocity = node.velocity + (correction / config.dt);
     
     atomicStore(&atomic_forces_x[index], 0);
     atomicStore(&atomic_forces_y[index], 0);

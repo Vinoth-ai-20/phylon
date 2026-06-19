@@ -22,13 +22,21 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let val = textureSample(t_field, s_field, in.uv).r;
     
-    // Map scalar to a color (dark navy to vibrant green)
-    let bg = vec3<f32>(0.012, 0.024, 0.055);
+    // The background is cleared by the render pass.
+    // We only need to output the green diffusion field with transparency.
     let fg = vec3<f32>(0.1, 0.9, 0.3);
     
-    // Non-linear glow mapping
-    let factor = clamp(val, 0.0, 1.0);
-    let color = mix(bg, fg, factor * factor); // squared for better contrast
+    // Configurable constants for tuning the field visualization curve
+    let FIELD_VALUE_SCALE: f32 = 0.05; // Scales raw simulation value (which peaks around 10.0)
+    let FIELD_MAX_ALPHA: f32 = 0.45;   // Hard cap on opacity so the background always shows through
     
-    return vec4<f32>(color, 1.0);
+    // Scale down the raw simulation value
+    let scaled_val = max(val, 0.0) * FIELD_VALUE_SCALE;
+    
+    // Use a soft non-linear curve (sqrt) to spread the gradient outward,
+    // then clamp to the max alpha so the center doesn't saturate to an opaque blob.
+    let curve = sqrt(scaled_val);
+    let alpha = clamp(curve, 0.0, FIELD_MAX_ALPHA);
+    
+    return vec4<f32>(fg, alpha);
 }

@@ -105,6 +105,10 @@ struct PhylonApp {
 
     /// When `true`, render raw physics quads; when `false`, render SDF skin.
     debug_structural: bool,
+    /// Thickness of bone lines in structural view.
+    bone_line_thickness: f32,
+    /// Active tab in the sidebar
+    active_tab: ui::SidebarTab,
 
     /// Maximum number of simulation ticks fired per frame.
     #[allow(dead_code)]
@@ -162,15 +166,15 @@ impl PhylonApp {
             .insert_resource(bevy_ecs::event::Events::<reproduction::BirthRequest>::default());
         world.ecs.insert_resource(analytics::MetricsState::new());
 
-        // Spawn the deterministic proto-fish for physics/rendering validation.
-        // CPPN-driven organisms are still spawned via spawn_organism() during reproduction.
-        organisms::spawn_proto_fish(&mut world.ecs, common::Vec2::new(0.0, 0.0));
+        // Spawn test soft body with minimal genome
+        let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        organisms::spawn_organism(&mut world.ecs, &genome, common::Vec2::new(0.0, 0.0));
 
         // Spawn a static food/nutrient emitter at the center
         world.ecs.spawn(diffusion::Emitter {
-            position: common::Vec2::new(0.0, 0.0), // World center
-            value: 50.0,
-            radius: 20.0, // World radius
+            position: common::Vec2::new(0.0, 0.0),
+            value: 10.0,
+            radius: 50.0,
         });
 
         Self {
@@ -189,11 +193,13 @@ impl PhylonApp {
             camera_pos: common::Vec2::new(0.0, 0.0),
             camera_zoom: 1.0,
             selected_entity: None,
+            debug_structural: false,
+            bone_line_thickness: 1.5,
+            active_tab: ui::SidebarTab::Inspector,
             is_dragging: false,
             click_start_pos: None,
-            last_mouse_pos: common::Vec2::new(0.0, 0.0),
-            debug_structural: false,
-            max_ticks_per_frame: 4,
+            last_mouse_pos: common::Vec2::ZERO,
+            max_ticks_per_frame: 5,
             total_sim_time: 0.0,
         }
     }
@@ -276,13 +282,17 @@ impl PhylonApp {
             gpu::diffusion_pipeline::DiffusionComputePipeline::new(&device, 256, 256);
 
         let egui_context = egui::Context::default();
+        egui_context.options_mut(|o| {
+            o.zoom_with_keyboard = false;
+        });
+        let scale_factor = window.scale_factor() as f32;
         let egui_state = egui_winit::State::new(
             egui_context,
             egui::ViewportId::ROOT,
             &window,
-            Some(window.scale_factor() as f32),
+            Some(scale_factor),
             None,
-            None,
+            Some(2048),
         );
         let egui_renderer = egui_wgpu::Renderer::new(&device, surface_format, None, 1, false);
 
@@ -442,8 +452,19 @@ impl PhylonApp {
         }
 
         // 4. Compute GPU Physics
-        let updated_nodes =
-            physics_compute.compute_step(&gpu.device, &gpu.queue, &gpu_nodes, &gpu_springs, 0.016);
+        let global_time = self
+            .world
+            .ecs
+            .resource::<diffusion::DiffusionConfig>()
+            .global_time;
+        let updated_nodes = physics_compute.compute_step(
+            &gpu.device,
+            &gpu.queue,
+            &gpu_nodes,
+            &gpu_springs,
+            0.016,
+            global_time,
+        );
 
         // 5. Update ECS Nodes
         for (i, entity) in node_entities.iter().enumerate() {
@@ -525,7 +546,7 @@ impl PhylonApp {
             &gpu_emitters,
         );
 
-        if let Some(field_data) = diffusion_compute.try_read_field() {
+        if let Some(field_data) = diffusion_compute.try_read_field(&gpu.device) {
             let mut cpu_field = self.world.ecs.resource_mut::<diffusion::CpuFieldState>();
             cpu_field.data = field_data;
         }
@@ -545,7 +566,8 @@ impl PhylonApp {
         for (entity, node) in query_nodes_render.iter(&self.world.ecs) {
             node_positions.insert(entity, [node.position.x, node.position.y]);
             debug_instances.push(rendering::DebugInstance {
-                position: [node.position.x, node.position.y],
+                pos_a: [node.position.x, node.position.y],
+                pos_b: [node.position.x, node.position.y],
                 color: match node.segment_type {
                     0 => [0.9, 0.3, 0.3, 1.0], // Head — red
                     2 => [0.3, 0.5, 1.0, 1.0], // Muscle — blue
@@ -559,8 +581,11 @@ impl PhylonApp {
         }
 
         // Collect Rigid bones for SDF capsule rendering
-        let mut query_springs_render = self.world.ecs.query::<&physics::Spring>();
-        for spring in query_springs_render.iter(&self.world.ecs) {
+        let mut query_springs_render = self
+            .world
+            .ecs
+            .query::<(&physics::Spring, Option<&organisms::OrganismColor>)>();
+        for (spring, opt_color) in query_springs_render.iter(&self.world.ecs) {
             if spring.constraint_type != physics::ConstraintType::Rigid
                 && spring.constraint_type != physics::ConstraintType::Rotational
             {
@@ -570,13 +595,28 @@ impl PhylonApp {
                 node_positions.get(&spring.node_a),
                 node_positions.get(&spring.node_b),
             ) {
+                let color = opt_color.map(|c| c.0).unwrap_or([0.8, 0.4, 0.4]);
                 let radius = if spring.is_fin == 1 { 5.0 } else { 8.0 };
                 sdf_bones.push(rendering::SdfBoneInstance {
                     pos_a: pa,
                     pos_b: pb,
                     radius,
-                    color: [0.15, 0.72, 0.45],
+                    color,
                 });
+
+                // Also draw a line for Debug Structural View
+                if self.debug_structural {
+                    if color[1] > 0.6 {
+                        println!("Pushing a very green line! Color: {:?}", color);
+                    }
+                    debug_instances.push(rendering::DebugInstance {
+                        pos_a: pa,
+                        pos_b: pb,
+                        color: [color[0], color[1], color[2], 0.7],
+                        radius: self.bone_line_thickness,
+                        segment_type: 99,
+                    });
+                }
             }
         }
 
@@ -584,7 +624,8 @@ impl PhylonApp {
         let mut query_food = self.world.ecs.query::<&ecology::FoodPellet>();
         for food in query_food.iter(&self.world.ecs) {
             debug_instances.push(rendering::DebugInstance {
-                position: [food.position.x, food.position.y],
+                pos_a: [food.position.x, food.position.y],
+                pos_b: [food.position.x, food.position.y],
                 color: [1.0, 0.8, 0.0, 1.0],
                 radius: 2.5,
                 segment_type: 0,
@@ -624,6 +665,8 @@ impl PhylonApp {
                     self.camera_zoom,
                     self.selected_entity,
                     &mut self.debug_structural,
+                    &mut self.bone_line_thickness,
+                    &mut self.active_tab,
                 );
             });
 
@@ -697,7 +740,7 @@ impl PhylonApp {
                     &gpu.queue,
                     &view,
                     &sdf_bones,
-                    [gpu.config.width as f32, gpu.config.height as f32],
+                    [render_w, render_h],
                     self.camera_pos,
                     self.camera_zoom,
                     central_rect_px,
@@ -871,20 +914,69 @@ impl ApplicationHandler for PhylonApp {
                     }
                 }
             }
-            WindowEvent::MouseWheel {
-                delta: winit::event::MouseScrollDelta::LineDelta(_x, y),
+            WindowEvent::KeyboardInput {
+                event:
+                    winit::event::KeyEvent {
+                        physical_key,
+                        state: winit::event::ElementState::Pressed,
+                        ..
+                    },
                 ..
             } => {
-                self.camera_zoom *= 1.0 + (y * 0.1);
+                use winit::keyboard::{KeyCode, PhysicalKey};
+                let pan_speed = 10.0 / self.camera_zoom;
+                match physical_key {
+                    PhysicalKey::Code(KeyCode::KeyW) | PhysicalKey::Code(KeyCode::ArrowUp) => {
+                        self.camera_pos.y += pan_speed;
+                    }
+                    PhysicalKey::Code(KeyCode::KeyS) | PhysicalKey::Code(KeyCode::ArrowDown) => {
+                        self.camera_pos.y -= pan_speed;
+                    }
+                    PhysicalKey::Code(KeyCode::KeyA) | PhysicalKey::Code(KeyCode::ArrowLeft) => {
+                        self.camera_pos.x -= pan_speed;
+                    }
+                    PhysicalKey::Code(KeyCode::KeyD) | PhysicalKey::Code(KeyCode::ArrowRight) => {
+                        self.camera_pos.x += pan_speed;
+                    }
+                    // Zoom with + and -
+                    PhysicalKey::Code(KeyCode::Equal) | PhysicalKey::Code(KeyCode::NumpadAdd) => {
+                        self.camera_zoom *= 1.1;
+                        self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
+                    }
+                    PhysicalKey::Code(KeyCode::Minus)
+                    | PhysicalKey::Code(KeyCode::NumpadSubtract) => {
+                        self.camera_zoom /= 1.1;
+                        self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
+                    }
+                    _ => {}
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                // Issue 8: Smooth zooming and invert zoom direction to feel natural
+                match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => {
+                        if y > 0.0 {
+                            self.camera_zoom *= 1.1;
+                        } else if y < 0.0 {
+                            self.camera_zoom /= 1.1;
+                        }
+                    }
+                    winit::event::MouseScrollDelta::PixelDelta(p) => {
+                        let zoom_factor = 1.0 + (p.y as f32 * 0.01);
+                        if zoom_factor > 0.0 {
+                            self.camera_zoom *= zoom_factor;
+                        }
+                    }
+                }
                 self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
             }
-            WindowEvent::MouseWheel { .. } => {}
             WindowEvent::CursorMoved { position, .. } => {
                 let current_pos = common::Vec2::new(position.x as f32, position.y as f32);
                 if self.is_dragging {
                     let delta = current_pos - self.last_mouse_pos;
-                    self.camera_pos.x -= delta.x / self.camera_zoom;
-                    self.camera_pos.y += delta.y / self.camera_zoom;
+                    // Issue 1: Invert panning so world follows mouse
+                    self.camera_pos.x += delta.x / self.camera_zoom;
+                    self.camera_pos.y -= delta.y / self.camera_zoom;
                 }
                 self.last_mouse_pos = current_pos;
             }

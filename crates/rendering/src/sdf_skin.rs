@@ -71,7 +71,12 @@ impl SdfSkinRenderer {
     ///
     /// `surface_format` must be the swapchain format (used for the composite
     /// pipeline's colour target).
-    pub fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat, width: u32, height: u32) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Self {
         // ── Camera uniform ─────────────────────────────────────────────────
         let camera_matrix: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -109,11 +114,12 @@ impl SdfSkinRenderer {
             source: wgpu::ShaderSource::Wgsl(include_str!("sdf_accum.wgsl").into()),
         });
 
-        let accum_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("SdfAccumPipelineLayout"),
-            bind_group_layouts: &[&camera_bgl],
-            push_constant_ranges: &[],
-        });
+        let accum_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("SdfAccumPipelineLayout"),
+                bind_group_layouts: &[&camera_bgl],
+                push_constant_ranges: &[],
+            });
 
         let accum_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("SdfAccumPipeline"),
@@ -247,7 +253,11 @@ impl SdfSkinRenderer {
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("SdfAccumTexture"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -361,7 +371,7 @@ impl SdfSkinRenderer {
                     view: &accum_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), // Clear density to 0
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), // Clear density to 0
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -369,13 +379,6 @@ impl SdfSkinRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-
-            if let Some([vx, vy, vw, vh]) = viewport {
-                if vw > 0 && vh > 0 {
-                    rpass.set_viewport(vx as f32, vy as f32, vw as f32, vh as f32, 0.0, 1.0);
-                    rpass.set_scissor_rect(vx, vy, vw, vh);
-                }
-            }
 
             rpass.set_pipeline(&self.accum_pipeline);
             rpass.set_bind_group(0, &self.camera_bind_group, &[]);

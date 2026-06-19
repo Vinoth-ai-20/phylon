@@ -2,8 +2,11 @@
 
 /// Renders the scalar diffusion field as a background overlay.
 pub struct FieldRenderer {
+    #[allow(dead_code)]
     pipeline: wgpu::RenderPipeline,
+    #[allow(dead_code)]
     bind_group_layout: wgpu::BindGroupLayout,
+    #[allow(dead_code)]
     sampler: wgpu::Sampler,
 }
 
@@ -57,7 +60,7 @@ impl FieldRenderer {
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
@@ -99,12 +102,13 @@ impl FieldRenderer {
     /// Renders the field into the specified render pass.
     pub fn render(
         &self,
-        device: &wgpu::Device,
+        _device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        field_texture_view: &wgpu::TextureView,
+        _field_texture_view: &wgpu::TextureView,
         viewport: Option<[u32; 4]>,
     ) {
+        /*
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("FieldBindGroup"),
             layout: &self.bind_group_layout,
@@ -119,6 +123,7 @@ impl FieldRenderer {
                 },
             ],
         });
+        */
 
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("FieldRenderPass"),
@@ -126,7 +131,12 @@ impl FieldRenderer {
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), // Fully overwritten
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 1.0,
+                    }), // Black background
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -142,9 +152,12 @@ impl FieldRenderer {
             }
         }
 
+        // The user requested to remove the green diffusion field visualization entirely.
+        // The render pass now acts purely as a black clear pass for the background.
+        /*
         rpass.set_pipeline(&self.pipeline);
         rpass.set_bind_group(0, &bind_group, &[]);
-        // Draw 3 vertices for a single full-screen triangle covering the screen
         rpass.draw(0..3, 0..1);
+        */
     }
 }

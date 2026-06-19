@@ -33,21 +33,21 @@ fn vs_composite(@builtin(vertex_index) vi: u32) -> VertexOutput {
 
 @fragment
 fn fs_composite(in: VertexOutput) -> @location(0) vec4<f32> {
-    let density = textureSample(accum_texture, accum_sampler, in.uv).r;
+    let accum = textureSample(accum_texture, accum_sampler, in.uv);
+    let density = accum.a;
 
     // Threshold at 1.0 with a narrow smoothstep band for anti-aliasing.
-    // Values above 1.0 come from overlapping bone contributions (joints) —
-    // these remain fully opaque, avoiding seam artifacts.
     let alpha = smoothstep(0.7, 1.0, density);
 
     if alpha < 0.01 {
         discard;
     }
 
-    // Organism body colour — a deep ocean green with slight luminance variation
-    // driven by density (brighter at thick joints, dimmer at fin tips).
+    // Organism body colour — un-premultiply the accumulated color
+    let base_color = accum.rgb / max(density, 0.0001);
+    
+    // Add slight luminance variation driven by density
     let brightness = clamp(density * 0.4 + 0.6, 0.0, 1.0);
-    let base_color = vec3<f32>(0.15, 0.72, 0.45);
     let color      = base_color * brightness;
 
     return vec4<f32>(color, alpha);

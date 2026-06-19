@@ -23,6 +23,7 @@ struct VertexOutput {
     @location(1)       pos_a:     vec2<f32>,
     @location(2)       pos_b:     vec2<f32>,
     @location(3)       radius:    f32,
+    @location(4)       color:     vec3<f32>,
 }
 
 @vertex
@@ -51,6 +52,7 @@ fn vs_accum(
     out.pos_a     = inst.pos_a;
     out.pos_b     = inst.pos_b;
     out.radius    = inst.radius;
+    out.color     = inst.color;
     return out;
 }
 
@@ -80,6 +82,7 @@ fn fs_accum(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    // Output density in the R channel only; ADDITIVE blend accumulates across bones.
-    return vec4<f32>(density, 0.0, 0.0, 1.0);
+    // Output density in the A channel and pre-multiplied color in RGB.
+    let color_contribution = in.color * density;
+    return vec4<f32>(color_contribution, density);
 }

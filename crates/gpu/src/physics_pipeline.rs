@@ -50,11 +50,13 @@ pub struct GpuPhysicsSpring {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct PhysicsConfigUniform {
     dt: f32,
-    _padding: [u32; 3],
+    time: f32,
+    _padding: [u32; 2],
 }
 
 /// Wrapper around the physics WGSL compute pipelines.
 pub struct PhysicsComputePipeline {
+    muscle_actuation_pipeline: wgpu::ComputePipeline,
     compute_forces_pipeline: wgpu::ComputePipeline,
     integrate_pipeline: wgpu::ComputePipeline,
     pbd_projection_pipeline: wgpu::ComputePipeline,
@@ -147,6 +149,21 @@ impl PhysicsComputePipeline {
                 cache: None,
             });
 
+        let muscle_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("MuscleActuationShader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("muscle_actuation.wgsl").into()),
+        });
+
+        let muscle_actuation_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("MuscleActuationPipeline"),
+                layout: Some(&pipeline_layout),
+                module: &muscle_shader,
+                entry_point: "main",
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
         let integrate_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("IntegratePipeline"),
             layout: Some(&pipeline_layout),
@@ -176,6 +193,7 @@ impl PhysicsComputePipeline {
         });
 
         Self {
+            muscle_actuation_pipeline,
             compute_forces_pipeline,
             integrate_pipeline,
             pbd_projection_pipeline,
@@ -197,6 +215,7 @@ impl PhysicsComputePipeline {
         nodes: &[GpuParticleNode],
         springs: &[GpuPhysicsSpring],
         dt: f32,
+        global_time: f32,
     ) -> Vec<GpuParticleNode> {
         if nodes.is_empty() || springs.is_empty() {
             return nodes.to_vec();
@@ -221,7 +240,8 @@ impl PhysicsComputePipeline {
 
         let config = PhysicsConfigUniform {
             dt,
-            _padding: [0; 3],
+            time: global_time,
+            _padding: [0; 2],
         };
         let config_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("PhysicsConfigBuffer"),
@@ -280,6 +300,16 @@ impl PhysicsComputePipeline {
 
         let node_workgroups = ((nodes.len() as f32) / 64.0).ceil() as u32;
         let spring_workgroups = ((springs.len() as f32) / 64.0).ceil() as u32;
+
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("MuscleActuationPass"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.muscle_actuation_pipeline);
+            cpass.set_bind_group(0, &bind_group, &[]);
+            cpass.dispatch_workgroups(spring_workgroups, 1, 1);
+        }
 
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {

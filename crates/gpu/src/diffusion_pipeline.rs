@@ -419,7 +419,7 @@ impl DiffusionComputePipeline {
     }
 
     /// Tries to read the latest available field state from the GPU.
-    pub fn try_read_field(&self) -> Option<Vec<f32>> {
+    pub fn try_read_field(&self, device: &wgpu::Device) -> Option<Vec<f32>> {
         // Drain the channel to get the latest mapped buffer
         let mut latest_idx = None;
         while let Ok(idx) = self.ready_rx.try_recv() {
@@ -427,6 +427,10 @@ impl DiffusionComputePipeline {
         }
 
         if let Some(idx) = latest_idx {
+            // Wgpu requires the main thread to poll before the buffer state officially updates to Mapped,
+            // even if the map_async callback already fired on a background thread.
+            device.poll(wgpu::Maintain::Wait);
+
             let slice = self.staging_buffers[idx].slice(..);
             let data = slice.get_mapped_range();
             let floats: &[f32] = bytemuck::cast_slice(&data);

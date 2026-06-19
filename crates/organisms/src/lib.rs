@@ -65,6 +65,10 @@ pub struct BiologicalComponents {
     pub parent: EntityId,
 }
 
+/// The base color of an organism's skin, driven by genetics.
+#[derive(bevy_ecs::component::Component, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct OrganismColor(pub [f32; 3]);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +117,8 @@ pub struct GrowthState {
     pub vertical_spread: f32,
     /// The list of effector muscles/fins created during growth.
     pub effectors: Vec<bevy_ecs::entity::Entity>,
+    /// The color of the organism.
+    pub color: [f32; 3],
 }
 
 /// System that builds out the organism's body sequentially.
@@ -258,10 +264,16 @@ pub fn growth_system(
         };
 
         let n1 = commands
-            .spawn(ParticleNode::new(n1_pos, 1.0, segment_u32))
+            .spawn((
+                ParticleNode::new(n1_pos, 1.0, segment_u32),
+                OrganismColor(state.color),
+            ))
             .id();
         let n2 = commands
-            .spawn(ParticleNode::new(n2_pos, 1.0, segment_u32))
+            .spawn((
+                ParticleNode::new(n2_pos, 1.0, segment_u32),
+                OrganismColor(state.color),
+            ))
             .id();
 
         let constraint_type = match segment {
@@ -274,19 +286,22 @@ pub fn growth_system(
 
         // Connect the two nodes with a vertical spring
         let s1 = commands
-            .spawn(Spring {
-                node_a: n1,
-                node_b: n2,
-                constraint_type,
-                rest_length: state.vertical_spread * 2.0,
-                base_length: state.vertical_spread * 2.0,
-                stiffness,
-                damping: 0.5,
-                actuation_amplitude: 0.0,
-                actuation_phase: 0.0,
-                breaking_strain: 2.0,
-                is_fin: 0,
-            })
+            .spawn((
+                Spring {
+                    node_a: n1,
+                    node_b: n2,
+                    constraint_type,
+                    rest_length: state.vertical_spread * 2.0,
+                    base_length: state.vertical_spread * 2.0,
+                    stiffness,
+                    damping: 0.5,
+                    actuation_amplitude: 0.0,
+                    actuation_phase: 0.0,
+                    breaking_strain: 2.0,
+                    is_fin: 0,
+                },
+                OrganismColor(state.color),
+            ))
             .id();
         if constraint_type == physics::ConstraintType::Elastic
             || constraint_type == physics::ConstraintType::Rotational
@@ -301,19 +316,22 @@ pub fn growth_system(
 
             // Horizontal springs
             let s2 = commands
-                .spawn(Spring {
-                    node_a: p1,
-                    node_b: n1,
-                    constraint_type,
-                    rest_length: state.segment_length,
-                    base_length: state.segment_length,
-                    stiffness,
-                    damping: 0.5,
-                    actuation_amplitude,
-                    actuation_phase,
-                    breaking_strain: 2.0,
-                    is_fin: 0,
-                })
+                .spawn((
+                    Spring {
+                        node_a: p1,
+                        node_b: n1,
+                        constraint_type,
+                        rest_length: state.segment_length,
+                        base_length: state.segment_length,
+                        stiffness,
+                        damping: 0.5,
+                        actuation_amplitude,
+                        actuation_phase,
+                        breaking_strain: 2.0,
+                        is_fin: 0,
+                    },
+                    OrganismColor(state.color),
+                ))
                 .id();
             if constraint_type == physics::ConstraintType::Elastic
                 || constraint_type == physics::ConstraintType::Rotational
@@ -322,19 +340,22 @@ pub fn growth_system(
             }
 
             let s3 = commands
-                .spawn(Spring {
-                    node_a: p2,
-                    node_b: n2,
-                    constraint_type,
-                    rest_length: state.segment_length,
-                    base_length: state.segment_length,
-                    stiffness,
-                    damping: 0.5,
-                    actuation_amplitude,
-                    actuation_phase,
-                    breaking_strain: 2.0,
-                    is_fin: 0,
-                })
+                .spawn((
+                    Spring {
+                        node_a: p2,
+                        node_b: n2,
+                        constraint_type,
+                        rest_length: state.segment_length,
+                        base_length: state.segment_length,
+                        stiffness,
+                        damping: 0.5,
+                        actuation_amplitude,
+                        actuation_phase,
+                        breaking_strain: 2.0,
+                        is_fin: 0,
+                    },
+                    OrganismColor(state.color),
+                ))
                 .id();
             if constraint_type == physics::ConstraintType::Elastic
                 || constraint_type == physics::ConstraintType::Rotational
@@ -346,32 +367,38 @@ pub fn growth_system(
             let cross_length = (state.segment_length * state.segment_length
                 + (state.vertical_spread * 2.0).powi(2))
             .sqrt();
-            commands.spawn(Spring {
-                node_a: p1,
-                node_b: n2,
-                constraint_type: physics::ConstraintType::Passive,
-                rest_length: cross_length,
-                base_length: cross_length,
-                stiffness,
-                damping: 0.5,
-                actuation_amplitude,
-                actuation_phase,
-                breaking_strain: 2.0,
-                is_fin: 0,
-            });
-            commands.spawn(Spring {
-                node_a: p2,
-                node_b: n1,
-                constraint_type: physics::ConstraintType::Passive,
-                rest_length: cross_length,
-                base_length: cross_length,
-                stiffness,
-                damping: 0.5,
-                actuation_amplitude,
-                actuation_phase,
-                breaking_strain: 2.0,
-                is_fin: 0,
-            });
+            commands.spawn((
+                Spring {
+                    node_a: p1,
+                    node_b: n2,
+                    constraint_type: physics::ConstraintType::Passive,
+                    rest_length: cross_length,
+                    base_length: cross_length,
+                    stiffness,
+                    damping: 0.5,
+                    actuation_amplitude,
+                    actuation_phase,
+                    breaking_strain: 2.0,
+                    is_fin: 0,
+                },
+                OrganismColor(state.color),
+            ));
+            commands.spawn((
+                Spring {
+                    node_a: p2,
+                    node_b: n1,
+                    constraint_type: physics::ConstraintType::Passive,
+                    rest_length: cross_length,
+                    base_length: cross_length,
+                    stiffness,
+                    damping: 0.5,
+                    actuation_amplitude,
+                    actuation_phase,
+                    breaking_strain: 2.0,
+                    is_fin: 0,
+                },
+                OrganismColor(state.color),
+            ));
         }
 
         // Evaluate branching signal
@@ -381,8 +408,18 @@ pub fn growth_system(
             let f1_pos = state.current_pos + Vec2::new(0.0, state.vertical_spread * 2.0);
             let f2_pos = state.current_pos + Vec2::new(0.0, -state.vertical_spread * 2.0);
 
-            let f1 = commands.spawn(ParticleNode::new(f1_pos, 0.5, 4)).id();
-            let f2 = commands.spawn(ParticleNode::new(f2_pos, 0.5, 4)).id();
+            let f1 = commands
+                .spawn((
+                    ParticleNode::new(f1_pos, 0.5, 4),
+                    OrganismColor(state.color),
+                ))
+                .id();
+            let f2 = commands
+                .spawn((
+                    ParticleNode::new(f2_pos, 0.5, 4),
+                    OrganismColor(state.color),
+                ))
+                .id();
 
             // Connect fins to spine with Rotational constraints
             let sf1 = commands
@@ -403,19 +440,22 @@ pub fn growth_system(
             state.effectors.push(sf1);
 
             let sf2 = commands
-                .spawn(Spring {
-                    node_a: n2,
-                    node_b: f2,
-                    constraint_type: physics::ConstraintType::Rotational,
-                    rest_length: state.vertical_spread,
-                    base_length: state.vertical_spread,
-                    stiffness: 5.0,
-                    damping: 0.5,
-                    actuation_amplitude: 0.0,
-                    actuation_phase: 0.0,
-                    breaking_strain: 2.0,
-                    is_fin: 1,
-                })
+                .spawn((
+                    Spring {
+                        node_a: n2,
+                        node_b: f2,
+                        constraint_type: physics::ConstraintType::Rotational,
+                        rest_length: state.vertical_spread,
+                        base_length: state.vertical_spread,
+                        stiffness: 5.0,
+                        damping: 0.5,
+                        actuation_amplitude: 0.0,
+                        actuation_phase: 0.0,
+                        breaking_strain: 2.0,
+                        is_fin: 1,
+                    },
+                    OrganismColor(state.color),
+                ))
                 .id();
             state.effectors.push(sf2);
 
@@ -484,11 +524,29 @@ pub fn spawn_organism(
         SegmentType::Fin => 4,
     };
 
+    // Evaluate genome for color (inputs = 0.5, 0.5)
+    let color_outputs = genome.evaluate(&[0.5, 0.5]);
+    let color = if color_outputs.len() >= 3 {
+        [
+            (color_outputs[0] * 0.5 + 0.5).clamp(0.1, 1.0),
+            (color_outputs[1] * 0.5 + 0.5).clamp(0.1, 1.0),
+            (color_outputs[2] * 0.5 + 0.5).clamp(0.1, 1.0),
+        ]
+    } else {
+        [0.8, 0.4, 0.4] // Default reddish fallback
+    };
+
     let n1 = world
-        .spawn(ParticleNode::new(n1_pos, 1.0, segment_u32))
+        .spawn((
+            ParticleNode::new(n1_pos, 1.0, segment_u32),
+            OrganismColor(color),
+        ))
         .id();
     let n2 = world
-        .spawn(ParticleNode::new(n2_pos, 1.0, segment_u32))
+        .spawn((
+            ParticleNode::new(n2_pos, 1.0, segment_u32),
+            OrganismColor(color),
+        ))
         .id();
 
     // First node (Head) holds the biological state
@@ -524,6 +582,7 @@ pub fn spawn_organism(
             segment_length,
             vertical_spread,
             effectors: Vec::new(),
+            color,
         },
     ));
 
@@ -535,19 +594,22 @@ pub fn spawn_organism(
         SegmentType::Fin => physics::ConstraintType::Rotational,
     };
 
-    world.spawn(Spring {
-        node_a: n1,
-        node_b: n2,
-        constraint_type,
-        rest_length: vertical_spread * 2.0,
-        base_length: vertical_spread * 2.0,
-        stiffness,
-        damping: 0.5,
-        actuation_amplitude: 0.0,
-        actuation_phase: 0.0,
-        breaking_strain: 2.0,
-        is_fin: 0,
-    });
+    world.spawn((
+        Spring {
+            node_a: n1,
+            node_b: n2,
+            constraint_type,
+            rest_length: vertical_spread * 2.0,
+            base_length: vertical_spread * 2.0,
+            stiffness,
+            damping: 0.5,
+            actuation_amplitude: 0.0,
+            actuation_phase: 0.0,
+            breaking_strain: 2.0,
+            is_fin: 0,
+        },
+        OrganismColor(color),
+    ));
 }
 
 /// Spawns a deterministic "Proto-Fish" with an instant adult topology.
@@ -579,30 +641,40 @@ pub fn spawn_proto_fish(world: &mut bevy_ecs::world::World, pos: Vec2) {
     // ── Spine (5 nodes along −X axis, head at pos, tail to the left) ──────
     // Segment types: Head(0), Torso(1), Torso(1), Torso(1), Tail(3)
     let spine_types: [u32; 5] = [0, 1, 1, 1, 3];
+    let proto_color = [0.15, 0.72, 0.45]; // The original green used for debug proto-fish
+
     let spine_nodes: Vec<bevy_ecs::entity::Entity> = spine_types
         .iter()
         .enumerate()
         .map(|(i, &seg_type)| {
             let p = pos + Vec2::new(-(i as f32) * segment_len, 0.0);
-            world.spawn(ParticleNode::new(p, 1.0, seg_type)).id()
+            world
+                .spawn((
+                    ParticleNode::new(p, 1.0, seg_type),
+                    OrganismColor(proto_color),
+                ))
+                .id()
         })
         .collect();
 
     // Rigid bone springs connecting adjacent spine nodes
     for i in 0..4 {
-        world.spawn(Spring {
-            node_a: spine_nodes[i],
-            node_b: spine_nodes[i + 1],
-            constraint_type: ConstraintType::Rigid,
-            rest_length: segment_len,
-            base_length: segment_len,
-            stiffness: 20.0,
-            damping: 0.5,
-            actuation_amplitude: 0.0,
-            actuation_phase: 0.0,
-            breaking_strain: 5.0,
-            is_fin: 0,
-        });
+        world.spawn((
+            Spring {
+                node_a: spine_nodes[i],
+                node_b: spine_nodes[i + 1],
+                constraint_type: ConstraintType::Rigid,
+                rest_length: segment_len,
+                base_length: segment_len,
+                stiffness: 20.0,
+                damping: 0.5,
+                actuation_amplitude: 0.0,
+                actuation_phase: 0.0,
+                breaking_strain: 5.0,
+                is_fin: 0,
+            },
+            OrganismColor(proto_color),
+        ));
     }
 
     // ── Lateral fins at spine node index 2 (centre of spine) ───────────────
@@ -612,36 +684,52 @@ pub fn spawn_proto_fish(world: &mut bevy_ecs::world::World, pos: Vec2) {
     let f_up_pos = fin_root_pos + Vec2::new(0.0, fin_spread);
     let f_dn_pos = fin_root_pos + Vec2::new(0.0, -fin_spread);
 
-    let f_up = world.spawn(ParticleNode::new(f_up_pos, 0.5, 4)).id();
-    let f_dn = world.spawn(ParticleNode::new(f_dn_pos, 0.5, 4)).id();
+    let f_up = world
+        .spawn((
+            ParticleNode::new(f_up_pos, 0.5, 4),
+            OrganismColor(proto_color),
+        ))
+        .id();
+    let f_dn = world
+        .spawn((
+            ParticleNode::new(f_dn_pos, 0.5, 4),
+            OrganismColor(proto_color),
+        ))
+        .id();
 
     // Rotational springs — opposing phases produce a flapping motion
-    world.spawn(Spring {
-        node_a: fin_root,
-        node_b: f_up,
-        constraint_type: ConstraintType::Rotational,
-        rest_length: fin_spread,
-        base_length: fin_spread,
-        stiffness: 5.0,
-        damping: 0.3,
-        actuation_amplitude: 8.0,
-        actuation_phase: 0.0, // Phase 0
-        breaking_strain: 5.0,
-        is_fin: 1,
-    });
-    world.spawn(Spring {
-        node_a: fin_root,
-        node_b: f_dn,
-        constraint_type: ConstraintType::Rotational,
-        rest_length: fin_spread,
-        base_length: fin_spread,
-        stiffness: 5.0,
-        damping: 0.3,
-        actuation_amplitude: 8.0,
-        actuation_phase: std::f32::consts::PI, // Opposing phase → flap
-        breaking_strain: 5.0,
-        is_fin: 1,
-    });
+    world.spawn((
+        Spring {
+            node_a: fin_root,
+            node_b: f_up,
+            constraint_type: ConstraintType::Rotational,
+            rest_length: fin_spread,
+            base_length: fin_spread,
+            stiffness: 5.0,
+            damping: 0.3,
+            actuation_amplitude: 8.0,
+            actuation_phase: 0.0, // Phase 0
+            breaking_strain: 5.0,
+            is_fin: 1,
+        },
+        OrganismColor(proto_color),
+    ));
+    world.spawn((
+        Spring {
+            node_a: fin_root,
+            node_b: f_dn,
+            constraint_type: ConstraintType::Rotational,
+            rest_length: fin_spread,
+            base_length: fin_spread,
+            stiffness: 5.0,
+            damping: 0.3,
+            actuation_amplitude: 8.0,
+            actuation_phase: std::f32::consts::PI, // Opposing phase → flap
+            breaking_strain: 5.0,
+            is_fin: 1,
+        },
+        OrganismColor(proto_color),
+    ));
 
     // ── Biological state on the head node ──────────────────────────────────
     world.entity_mut(spine_nodes[0]).insert((
@@ -660,4 +748,3 @@ pub fn spawn_proto_fish(world: &mut bevy_ecs::world::World, pos: Vec2) {
         ecology::Diet::Herbivore,
     ));
 }
-
