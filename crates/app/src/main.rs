@@ -104,6 +104,9 @@ struct PhylonApp {
     /// Pending canvas click to be processed after the render pass
     pending_click: Option<common::Vec2>,
 
+    /// The viewport dimensions of the simulation canvas (x, y, w, h) in physical pixels
+    canvas_rect: Option<[u32; 4]>,
+
     /// When `true`, render raw physics quads; when `false`, render SDF skin.
     debug_structural: bool,
     /// Thickness of bone lines in structural view.
@@ -233,6 +236,7 @@ impl PhylonApp {
             active_tab: ui::SidebarTab::Inspector,
             modifiers: winit::keyboard::ModifiersState::empty(),
             pending_click: None,
+            canvas_rect: None,
             max_ticks_per_frame: 5,
             total_sim_time: 0.0,
         }
@@ -373,18 +377,24 @@ impl PhylonApp {
         gpu_w: f32,
         gpu_h: f32,
     ) -> Option<bevy_ecs::entity::Entity> {
+        let [vx, vy, vw, vh] = self
+            .canvas_rect
+            .unwrap_or([0, 0, gpu_w as u32, gpu_h as u32]);
+        let local_x = screen_pos.x - vx as f32;
+        let local_y = screen_pos.y - vy as f32;
+
         // NDC (Normalized Device Coordinates): [-1,1] × [-1,1]
-        let ndc_x = (screen_pos.x / gpu_w) * 2.0 - 1.0;
-        let ndc_y = -((screen_pos.y / gpu_h) * 2.0 - 1.0); // Y is flipped
+        let ndc_x = (local_x / vw as f32) * 2.0 - 1.0;
+        let ndc_y = -((local_y / vh as f32) * 2.0 - 1.0); // Y is flipped
 
         // World space: invert the orthographic projection
-        let half_w = (gpu_w / 2.0) / self.camera_zoom;
-        let half_h = (gpu_h / 2.0) / self.camera_zoom;
+        let half_w = (vw as f32 / 2.0) / self.camera_zoom;
+        let half_h = (vh as f32 / 2.0) / self.camera_zoom;
         let world_x = ndc_x * half_w + self.camera_pos.x;
         let world_y = ndc_y * half_h + self.camera_pos.y;
         let world_pos = common::Vec2::new(world_x, world_y);
 
-        let pick_radius = 12.0 / self.camera_zoom;
+        let pick_radius = 30.0 / self.camera_zoom;
 
         let mut best: Option<bevy_ecs::entity::Entity> = None;
         let mut best_dist = pick_radius;
@@ -530,18 +540,7 @@ impl PhylonApp {
             }
         }
 
-        // 6. Camera tracking
-        if let Some(tracked) = self.tracked_entity {
-            if let Some(node) = self.world.ecs.get::<physics::ParticleNode>(tracked) {
-                // Smooth lerp can be added later, snap is fine for now
-                self.camera_pos = node.position;
-            } else {
-                // Node was deleted
-                self.tracked_entity = None;
-            }
-        }
-
-        // 7. Run remaining biological systems
+        // 6. Run remaining biological systems
         self.world.ecs.run_system_once(ecology::food_spawner_system);
         self.world.ecs.run_system_once(ecology::foraging_system);
         self.world
@@ -826,6 +825,7 @@ impl PhylonApp {
 
             if w > 0 && h > 0 {
                 central_rect_px = Some([x, y, w, h]);
+                self.canvas_rect = central_rect_px;
             }
 
             full_output = Some(output);
@@ -841,7 +841,10 @@ impl PhylonApp {
         if interaction.drag_delta.length_sq() > 0.0 {
             self.camera_pos.x -= (interaction.drag_delta.x * scale) / self.camera_zoom;
             self.camera_pos.y += (interaction.drag_delta.y * scale) / self.camera_zoom;
-            self.tracked_entity = None; // Detach on manual pan
+            // Only detach tracking if it's a genuine drag, not a trackpad micro-movement
+            if interaction.drag_delta.length_sq() > 9.0 {
+                self.tracked_entity = None;
+            }
         }
 
         if interaction.clicked {
