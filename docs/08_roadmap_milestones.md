@@ -74,9 +74,9 @@ The compiled CTRNN brain from the CPPN drives muscle actuation. Updated physics 
 Brain output drives phase/amplitude/frequency of muscle actuation directly — gait becomes a heritable trait instead of a hardcoded sine wave.
 **Crates**: `brain`, `actuation`, `evolution`
 
-## Phase 5 — UI & Analytics (v0.5) 🔧
+## Phase 5 — UI & Analytics (v0.5) ✅
 
-Full `egui` integration: decentralized entity-graph inspection, population analytics, Hox sequence viewer, compute-shader profiling.
+Full `egui` integration: decentralized entity-graph inspection, global keyboard shortcuts, viewport camera navigation, population analytics, structural debugging overlays (including Vision Cone visualization).
 **Crates**: `ui`, `analytics`
 
 ## Phase 6 — Persistence & Speciation Tools (v0.6) 📋
@@ -84,9 +84,9 @@ Full `egui` integration: decentralized entity-graph inspection, population analy
 Serialize/deserialize via `bincode`/`ron`. SQLite run-tracking. Functional replay system. Formal speciation tracking (Levenshtein clustering on Hox sequences). God-mode interventions.
 **Crates**: `storage`, `research`, `plugins`
 
-## Phase 7 — Procedural Visuals & Trails (v0.7) 📋
+## Phase 7 — Procedural Visuals & Trails (v0.7) ✅
 
-Dual-Mode Rendering pipeline (Structural vs. SDF/Metaball Skin). Mode A renders explicit physics primitives, while Mode B uses a 2D distance field in the fragment shader to render fluid-like outer skin (future-proofing for 3D raymarching). Clamped SDF radii strictly to SegmentType to prevent runaway scaling, with sharpened isosurface thresholds to eliminate blurry halos. Explicit RTT framebuffer clears per-frame prevent temporal accumulation. MRT handles decay and pheromone trails.
+Dual-Mode Rendering pipeline (Structural vs. SDF/Metaball Skin). Mode A renders explicit physics primitives, while Mode B uses a 2D distance field in the fragment shader to render fluid-like outer skin (future-proofing for 3D raymarching). Clamped SDF radii strictly to SegmentType to prevent runaway scaling, with sharpened isosurface thresholds to eliminate blurry halos. Explicit RTT framebuffer clears per-frame prevent temporal accumulation. Vision cones rendered as translucent overlays. MRT handles decay and pheromone trails.
 **Crates**: `rendering`, `shaders`
 
 ## Phase 8 — Application Shell (v0.8) 📋

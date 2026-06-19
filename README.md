@@ -46,8 +46,7 @@ cargo run --release --bin phylon
 
 ## Current Status
 
-Phase 4.5 is complete. The workspace features a decentralized, GPU-accelerated ecosystem. The simulation core uses `bevy_ecs` and a fixed-timestep `hecs` inspired model for topological soft-body physics. In recent phases we implemented procedural organism growth (topological plasticity via CPPNs), a double-buffered wgpu staging ring for closed-loop chemical diffusion readbacks, and collision-based sexual reproduction with genetic drift. Most recently, Phase 4 introduced Continuous-Time Recurrent Neural Networks (CTRNNs) for brain evaluation and an advanced GPU compute shader for Position-Based Dynamics (PBD) physics. Phase 4.5 added heritable learned gaits. The application is now preparing for Phase 5 (UI & Analytics) to integrate an `egui` frontend.
-
+Phase 5 is complete. The workspace features a decentralized, GPU-accelerated ecosystem. The simulation core uses `bevy_ecs` and a fixed-timestep `hecs` inspired model for topological soft-body physics. In recent phases we implemented procedural organism growth (topological plasticity via Hox sequences and CPPNs), a double-buffered wgpu staging ring for closed-loop chemical diffusion readbacks, collision-based sexual reproduction with genetic drift, and a 3-sector raycasting Vision sense. We have also fully integrated an `egui` frontend (Phase 5) providing a rich Inspector, population analytics, and global keyboard shortcuts. Furthermore, Phase 7's Dual-Mode rendering is active, featuring both structural physics primitives and a 2D distance field (SDF) skin for a fluid-like appearance.
 ## Documentation
 
 Comprehensive architectural design documents, crate dependency graphs, and technical specifications are available in the [`docs/`](docs/) directory.
