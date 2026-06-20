@@ -37,19 +37,31 @@ impl PhylonApp {
         for action in actions {
             match action {
                 ui::MenuAction::SaveState => {
-                    tracing::warn!("Save State not yet implemented fully.");
+                    let snapshot = storage::snapshot::SimulationSnapshot::from_world(
+                        &mut self.world.ecs,
+                        self.sim_config.simulation.rng_seed,
+                        self.total_sim_time,
+                    );
+                    if let Err(e) = self
+                        .storage
+                        .save_simulation_state(&snapshot, std::path::Path::new("data/autosave.bin"))
+                    {
+                        tracing::error!("Failed to save state: {}", e);
+                    } else {
+                        tracing::info!("Saved state to data/autosave.bin");
+                    }
                 }
                 ui::MenuAction::DeleteSelection => {
-                    if let Some(entity) = self.selected_entity {
+                    if let Some(entity) = self.ui.selected_entity {
                         self.world.ecs.despawn(entity);
-                        self.selected_entity = None;
-                        if self.tracked_entity == Some(entity) {
-                            self.tracked_entity = None;
+                        self.ui.selected_entity = None;
+                        if self.ui.tracked_entity == Some(entity) {
+                            self.ui.tracked_entity = None;
                         }
                     }
                 }
                 ui::MenuAction::ToggleStationary => {
-                    if let Some(entity) = self.selected_entity {
+                    if let Some(entity) = self.ui.selected_entity {
                         if let Ok(mut node) = self
                             .world
                             .ecs
@@ -69,7 +81,7 @@ impl PhylonApp {
                         .find(|p| p.name == name);
 
                     if let Some(preset) = preset_opt {
-                        let spawn_pos = self.camera_pos;
+                        let spawn_pos = self.ui.camera_pos;
                         if preset.evolvable {
                             // Evolvable presets get a HoxSequence
                             let hox = match name.as_str() {
@@ -153,7 +165,7 @@ impl PhylonApp {
                 } => {
                     organisms::sandbox::generate_hex_mesh(
                         &mut self.world.ecs,
-                        self.camera_pos,
+                        self.ui.camera_pos,
                         cols,
                         rows,
                         spacing,
@@ -165,21 +177,32 @@ impl PhylonApp {
                 ui::MenuAction::JoinSelection => tracing::warn!("JoinSelection not implemented"),
                 ui::MenuAction::GrabSelection => tracing::warn!("GrabSelection not implemented"),
                 ui::MenuAction::GoToMainMenu => {
-                    self.app_state = ui::AppState::MainMenu;
+                    self.ui.app_state = ui::AppState::MainMenu;
                 }
                 ui::MenuAction::StartSimulation => {
-                    self.app_state = ui::AppState::Simulation;
+                    self.ui.app_state = ui::AppState::Simulation;
                     // Reset standard flags
-                    self.is_paused = false;
-                    self.show_about = false;
-                    self.show_docs = false;
+                    self.ui.is_paused = false;
+                    self.ui.show_about = false;
+                    self.ui.show_docs = false;
                 }
                 ui::MenuAction::Quit => {
                     info!("Quit action triggered from menu.");
                     std::process::exit(0);
                 }
                 ui::MenuAction::LoadState => {
-                    tracing::warn!("Load State not yet implemented fully.");
+                    match self
+                        .storage
+                        .load_simulation_state(std::path::Path::new("data/autosave.bin"))
+                    {
+                        Ok(snapshot) => {
+                            snapshot.restore_world(&mut self.world.ecs);
+                            tracing::info!("Loaded state from data/autosave.bin");
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to load state: {}", e);
+                        }
+                    }
                 }
                 ui::MenuAction::Undo => {
                     tracing::warn!("Undo not yet implemented fully.");
@@ -298,15 +321,15 @@ impl PhylonApp {
                     for (entity, node) in query.iter(&self.world.ecs) {
                         if node.segment_type == 0 {
                             // Head
-                            self.selected_entity = Some(entity);
-                            self.tracked_entity = Some(entity);
+                            self.ui.selected_entity = Some(entity);
+                            self.ui.tracked_entity = Some(entity);
                             break;
                         }
                     }
                 }
                 ui::MenuAction::Deselect => {
-                    self.selected_entity = None;
-                    self.tracked_entity = None;
+                    self.ui.selected_entity = None;
+                    self.ui.tracked_entity = None;
                 }
                 ui::MenuAction::SpawnProtoFish => {
                     let fish_hox = genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]);
@@ -318,7 +341,7 @@ impl PhylonApp {
                     organisms::spawn_organism(
                         &mut self.world.ecs,
                         &fish_genome,
-                        self.camera_pos,
+                        self.ui.camera_pos,
                         ecology::Diet::Carnivore,
                         ecology::EcologicalCategory::None,
                         0,
@@ -326,23 +349,23 @@ impl PhylonApp {
                     );
                 }
                 ui::MenuAction::ShowDocumentation => {
-                    self.show_docs = true;
+                    self.ui.show_docs = true;
                 }
                 ui::MenuAction::ShowAbout => {
-                    self.show_about = true;
+                    self.ui.show_about = true;
                 }
                 ui::MenuAction::CameraZoomIn => {
-                    self.camera_zoom *= 1.1;
-                    self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
+                    self.ui.camera_zoom *= 1.1;
+                    self.ui.camera_zoom = self.ui.camera_zoom.clamp(0.1, 10.0);
                 }
                 ui::MenuAction::CameraZoomOut => {
-                    self.camera_zoom /= 1.1;
-                    self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
+                    self.ui.camera_zoom /= 1.1;
+                    self.ui.camera_zoom = self.ui.camera_zoom.clamp(0.1, 10.0);
                 }
                 ui::MenuAction::CameraHome => {
-                    self.camera_pos = common::Vec2::new(0.0, 0.0);
-                    self.camera_zoom = 1.0;
-                    self.tracked_entity = None;
+                    self.ui.camera_pos = common::Vec2::new(0.0, 0.0);
+                    self.ui.camera_zoom = 1.0;
+                    self.ui.tracked_entity = None;
                 }
             }
         }
@@ -412,71 +435,71 @@ impl ApplicationHandler for PhylonApp {
                 ..
             } => {
                 use winit::keyboard::{KeyCode, PhysicalKey};
-                let pan_speed = 10.0 / self.camera_zoom;
+                let pan_speed = 10.0 / self.ui.camera_zoom;
                 match physical_key {
                     PhysicalKey::Code(KeyCode::KeyW) | PhysicalKey::Code(KeyCode::ArrowUp) => {
-                        self.camera_pos.y += pan_speed;
-                        self.tracked_entity = None;
+                        self.ui.camera_pos.y += pan_speed;
+                        self.ui.tracked_entity = None;
                     }
                     PhysicalKey::Code(KeyCode::KeyS) | PhysicalKey::Code(KeyCode::ArrowDown) => {
-                        self.camera_pos.y -= pan_speed;
-                        self.tracked_entity = None;
+                        self.ui.camera_pos.y -= pan_speed;
+                        self.ui.tracked_entity = None;
                     }
                     PhysicalKey::Code(KeyCode::KeyA) | PhysicalKey::Code(KeyCode::ArrowLeft) => {
-                        self.camera_pos.x -= pan_speed;
-                        self.tracked_entity = None;
+                        self.ui.camera_pos.x -= pan_speed;
+                        self.ui.tracked_entity = None;
                     }
                     PhysicalKey::Code(KeyCode::KeyD) | PhysicalKey::Code(KeyCode::ArrowRight) => {
-                        self.camera_pos.x += pan_speed;
-                        self.tracked_entity = None;
+                        self.ui.camera_pos.x += pan_speed;
+                        self.ui.tracked_entity = None;
                     }
                     // Zoom with + and -
                     PhysicalKey::Code(KeyCode::Equal) | PhysicalKey::Code(KeyCode::NumpadAdd) => {
-                        self.camera_zoom *= 1.1;
-                        self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
+                        self.ui.camera_zoom *= 1.1;
+                        self.ui.camera_zoom = self.ui.camera_zoom.clamp(0.1, 10.0);
                     }
                     PhysicalKey::Code(KeyCode::Minus)
                     | PhysicalKey::Code(KeyCode::NumpadSubtract) => {
-                        self.camera_zoom /= 1.1;
-                        self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
+                        self.ui.camera_zoom /= 1.1;
+                        self.ui.camera_zoom = self.ui.camera_zoom.clamp(0.1, 10.0);
                     }
                     _ => {}
                 }
             }
             WindowEvent::ModifiersChanged(modifiers) => {
-                self.modifiers = modifiers.state();
+                self.ui.modifiers = modifiers.state();
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 match delta {
                     winit::event::MouseScrollDelta::LineDelta(x, y) => {
-                        if self.modifiers.control_key() {
+                        if self.ui.modifiers.control_key() {
                             // Zoom with Ctrl + Scroll
                             if y > 0.0 {
-                                self.camera_zoom *= 1.1;
+                                self.ui.camera_zoom *= 1.1;
                             } else if y < 0.0 {
-                                self.camera_zoom /= 1.1;
+                                self.ui.camera_zoom /= 1.1;
                             }
                         } else {
                             // Pan
-                            self.camera_pos.x -= x * 20.0 / self.camera_zoom;
-                            self.camera_pos.y += y * 20.0 / self.camera_zoom;
+                            self.ui.camera_pos.x -= x * 20.0 / self.ui.camera_zoom;
+                            self.ui.camera_pos.y += y * 20.0 / self.ui.camera_zoom;
                         }
                     }
                     winit::event::MouseScrollDelta::PixelDelta(p) => {
-                        if self.modifiers.control_key() {
+                        if self.ui.modifiers.control_key() {
                             // Zoom
                             let zoom_factor = 1.0 + (p.y as f32 * 0.01);
                             if zoom_factor > 0.0 {
-                                self.camera_zoom *= zoom_factor;
+                                self.ui.camera_zoom *= zoom_factor;
                             }
                         } else {
                             // Touchpad two-finger swipe: pan
-                            self.camera_pos.x -= p.x as f32 / self.camera_zoom;
-                            self.camera_pos.y += p.y as f32 / self.camera_zoom;
+                            self.ui.camera_pos.x -= p.x as f32 / self.ui.camera_zoom;
+                            self.ui.camera_pos.y += p.y as f32 / self.ui.camera_zoom;
                         }
                     }
                 }
-                self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
+                self.ui.camera_zoom = self.ui.camera_zoom.clamp(0.1, 10.0);
             }
 
             WindowEvent::RedrawRequested => {
@@ -486,15 +509,15 @@ impl ApplicationHandler for PhylonApp {
                 }
 
                 // Process pending clicks that require mutably borrowing self
-                if let Some(click_pos) = self.pending_click.take() {
+                if let Some(click_pos) = self.ui.pending_click.take() {
                     let dims = self
                         .gpu
                         .as_ref()
                         .map(|g| (g.config.width as f32, g.config.height as f32));
                     if let Some((gpu_w, gpu_h)) = dims {
                         let selected = self.pick_entity(click_pos, gpu_w, gpu_h);
-                        self.selected_entity = selected;
-                        self.tracked_entity = selected;
+                        self.ui.selected_entity = selected;
+                        self.ui.tracked_entity = selected;
                     }
                 }
 
@@ -503,10 +526,10 @@ impl ApplicationHandler for PhylonApp {
                     .as_ref()
                     .map(|g| (g.config.width as f32, g.config.height as f32));
                 if let Some((gpu_w, gpu_h)) = dims {
-                    if let Some(pos) = self.current_hover_pos {
-                        self.hovered_entity = self.pick_entity(pos, gpu_w, gpu_h);
+                    if let Some(pos) = self.ui.current_hover_pos {
+                        self.ui.hovered_entity = self.pick_entity(pos, gpu_w, gpu_h);
                     } else {
-                        self.hovered_entity = None;
+                        self.ui.hovered_entity = None;
                     }
                 }
 

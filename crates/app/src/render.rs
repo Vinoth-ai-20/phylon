@@ -38,7 +38,7 @@ impl PhylonApp {
         const DT: f32 = 0.016; // Fixed 60 Hz timestep
 
         // 1. Camera Tracking
-        if let Some(tracked) = self.tracked_entity {
+        if let Some(tracked) = self.ui.tracked_entity {
             if let Ok(node) = self
                 .world
                 .ecs
@@ -46,20 +46,20 @@ impl PhylonApp {
                 .get(&self.world.ecs, tracked)
             {
                 // Smoothly follow the target
-                self.camera_pos = self.camera_pos.lerp(node.position, 0.1);
+                self.ui.camera_pos = self.ui.camera_pos.lerp(node.position, 0.1);
             } else {
                 // Entity no longer exists (e.g. died), drop tracking
-                self.tracked_entity = None;
+                self.ui.tracked_entity = None;
             }
         }
 
-        if self.total_sim_time > 1.0 && !self.is_paused {
+        if self.total_sim_time > 1.0 && !self.ui.is_paused {
             println!("SIMULATING PAUSE");
-            self.is_paused = true;
+            self.ui.is_paused = true;
         }
 
         // Only step simulation if we're in the simulation state and not paused
-        if self.app_state == ui::AppState::Simulation && !self.is_paused {
+        if self.ui.app_state == ui::AppState::Simulation && !self.ui.is_paused {
             self.accumulated_time += self.simulation_speed;
         }
 
@@ -292,6 +292,16 @@ impl PhylonApp {
                     gpu.query_set.as_ref(),
                 );
 
+                if let Some(field_data) = diffusion_compute.try_read_field(&gpu.device) {
+                    let mut cpu_field = self.world.ecs.resource_mut::<diffusion::CpuFieldState>();
+                    cpu_field.data = field_data;
+                }
+                diffusion_duration_ms += diffusion_start.elapsed().as_secs_f64() * 1000.0;
+            }
+        }
+
+        if ticks_to_run > 0 {
+            if let Some(gpu) = self.gpu.as_ref() {
                 if let (Some(qs), Some(rb), Some(readback)) =
                     (&gpu.query_set, &gpu.resolve_buffer, &gpu.readback_buffer)
                 {
@@ -318,24 +328,30 @@ impl PhylonApp {
                     }
                     let period = gpu.queue.get_timestamp_period();
 
+                    // Override the CPU accumulated timings with the GPU timings (multiplied by ticks to reflect total frame cost)
                     if timestamps[1] > timestamps[0] {
-                        physics_duration_ms =
+                        let tick_ms =
                             (timestamps[1] - timestamps[0]) as f64 * period as f64 / 1_000_000.0;
+                        physics_duration_ms = tick_ms * ticks_to_run as f64;
                     }
                     if timestamps[3] > timestamps[2] {
-                        diffusion_duration_ms =
+                        let tick_ms =
                             (timestamps[3] - timestamps[2]) as f64 * period as f64 / 1_000_000.0;
+                        diffusion_duration_ms = tick_ms * ticks_to_run as f64;
                     }
 
                     drop(data);
                     readback.unmap();
                 }
+            }
+        }
 
+        if let Some(diffusion_compute) = self.diffusion_compute.as_mut() {
+            if let Some(gpu) = self.gpu.as_ref() {
                 if let Some(field_data) = diffusion_compute.try_read_field(&gpu.device) {
                     let mut cpu_field = self.world.ecs.resource_mut::<diffusion::CpuFieldState>();
                     cpu_field.data = field_data;
                 }
-                diffusion_duration_ms += diffusion_start.elapsed().as_secs_f64() * 1000.0;
             }
         }
 
@@ -394,8 +410,8 @@ impl PhylonApp {
             visited
         };
 
-        let selected_component = self.selected_entity.map(&mut get_connected_component);
-        let hovered_component = self.hovered_entity.map(&mut get_connected_component);
+        let selected_component = self.ui.selected_entity.map(&mut get_connected_component);
+        let hovered_component = self.ui.hovered_entity.map(&mut get_connected_component);
 
         // Build node position lookup for bone endpoint resolution
         let mut node_positions: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 2]> =
@@ -413,7 +429,7 @@ impl PhylonApp {
                 .as_ref()
                 .is_some_and(|comp| comp.contains(&entity));
             let should_draw_debug =
-                self.debug_structural && (selected_component.is_none() || is_in_selected);
+                self.ui.debug_structural && (selected_component.is_none() || is_in_selected);
 
             if should_draw_debug {
                 debug_instances.push(rendering::DebugInstance {
@@ -499,9 +515,9 @@ impl PhylonApp {
             }
 
             let should_draw_debug =
-                self.debug_structural && (selected_component.is_none() || is_in_selected);
+                self.ui.debug_structural && (selected_component.is_none() || is_in_selected);
             let should_draw_sdf =
-                !self.debug_structural || (selected_component.is_some() && !is_in_selected);
+                !self.ui.debug_structural || (selected_component.is_some() && !is_in_selected);
 
             // Skip springs that have no associated organism color (e.g. broken/detached).
             if spring.constraint_type == physics::ConstraintType::Passive && spring.is_fin == 0 {
@@ -530,7 +546,7 @@ impl PhylonApp {
                             pos_a: pa,
                             pos_b: pb,
                             color: [color[0], color[1], color[2], 0.5],
-                            radius: self.bone_line_thickness,
+                            radius: self.ui.bone_line_thickness,
                             segment_type: 99,
                         });
                     }
@@ -558,7 +574,7 @@ impl PhylonApp {
                             pos_a: pa,
                             pos_b: pb,
                             color: [color[0], color[1], color[2], 0.6],
-                            radius: self.bone_line_thickness,
+                            radius: self.ui.bone_line_thickness,
                             segment_type: 99,
                         });
                     }
@@ -592,7 +608,7 @@ impl PhylonApp {
                         pos_a: pa,
                         pos_b: pb,
                         color: [color[0], color[1], color[2], 0.8],
-                        radius: self.bone_line_thickness,
+                        radius: self.ui.bone_line_thickness,
                         segment_type: 99,
                     });
                 }
@@ -610,9 +626,9 @@ impl PhylonApp {
                 .as_ref()
                 .is_some_and(|c| c.contains(&entity));
             let should_draw_debug =
-                self.debug_structural && (selected_component.is_none() || is_in_selected);
+                self.ui.debug_structural && (selected_component.is_none() || is_in_selected);
             let should_draw_sdf =
-                !self.debug_structural || (selected_component.is_some() && !is_in_selected);
+                !self.ui.debug_structural || (selected_component.is_some() && !is_in_selected);
 
             if should_draw_debug {
                 debug_instances.push(rendering::DebugInstance {
@@ -666,9 +682,9 @@ impl PhylonApp {
                 .as_ref()
                 .is_some_and(|c| c.contains(&entity));
             let should_draw_debug =
-                self.debug_structural && (selected_component.is_none() || is_in_selected);
+                self.ui.debug_structural && (selected_component.is_none() || is_in_selected);
             let should_draw_sdf =
-                !self.debug_structural || (selected_component.is_some() && !is_in_selected);
+                !self.ui.debug_structural || (selected_component.is_some() && !is_in_selected);
 
             if should_draw_debug {
                 debug_instances.push(rendering::DebugInstance {
@@ -722,9 +738,9 @@ impl PhylonApp {
                 .as_ref()
                 .is_some_and(|c| c.contains(&entity));
             let should_draw_debug =
-                self.debug_structural && (selected_component.is_none() || is_in_selected);
+                self.ui.debug_structural && (selected_component.is_none() || is_in_selected);
             let should_draw_sdf =
-                !self.debug_structural || (selected_component.is_some() && !is_in_selected);
+                !self.ui.debug_structural || (selected_component.is_some() && !is_in_selected);
 
             if should_draw_debug {
                 debug_instances.push(rendering::DebugInstance {
@@ -799,26 +815,40 @@ impl PhylonApp {
             let output = ctx.run(raw_input, |ctx| {
                 let (canvas_interact, acts) = ui::render_ui(
                     ctx,
-                    &mut self.app_state,
+                    &mut self.ui.app_state,
                     &mut self.world,
-                    self.camera_pos,
-                    self.camera_zoom,
-                    &mut self.selected_entity,
-                    &mut self.tracked_entity,
-                    &mut self.debug_structural,
-                    &mut self.bone_line_thickness,
-                    &mut self.active_tab,
+                    self.ui.camera_pos,
+                    self.ui.camera_zoom,
+                    &mut self.ui.selected_entity,
+                    &mut self.ui.tracked_entity,
+                    &mut self.ui.debug_structural,
+                    &mut self.ui.bone_line_thickness,
+                    &mut self.ui.active_tab,
                     &mut self.simulation_speed,
-                    &mut self.is_paused,
-                    &mut self.show_about,
-                    &mut self.show_docs,
-                    &mut self.show_vision_cones,
-                    self.hovered_entity,
-                    &mut self.quit_confirm_time,
-                    &mut self.main_menu_confirm_time,
+                    &mut self.ui.is_paused,
+                    &mut self.ui.show_about,
+                    &mut self.ui.show_docs,
+                    &mut self.ui.show_vision_cones,
+                    self.ui.hovered_entity,
+                    &mut self.ui.quit_confirm_time,
+                    &mut self.ui.main_menu_confirm_time,
                 );
                 ui_actions.extend(acts);
                 interaction = canvas_interact;
+
+                // Render active toast if present
+                if let Some((msg, progress)) = &self.ui.active_toast {
+                    egui::Window::new("Progress")
+                        .title_bar(false)
+                        .resizable(false)
+                        .collapsible(false)
+                        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-20.0, -20.0))
+                        .show(ctx, |ui| {
+                            ui.label(egui::RichText::new(msg).strong());
+                            ui.add_space(4.0);
+                            ui.add(egui::ProgressBar::new(*progress).animate(true));
+                        });
+                }
             });
 
             scale = window.scale_factor() as f32;
@@ -841,13 +871,13 @@ impl PhylonApp {
 
             if w > 0 && h > 0 {
                 central_rect_px = Some([x, y, w, h]);
-                self.canvas_rect = central_rect_px;
+                self.ui.canvas_rect = central_rect_px;
             }
 
             if let Some(pos) = interaction.hover_pos {
-                self.current_hover_pos = Some(common::Vec2::new(pos.x * scale, pos.y * scale));
+                self.ui.current_hover_pos = Some(common::Vec2::new(pos.x * scale, pos.y * scale));
             } else {
-                self.current_hover_pos = None;
+                self.ui.current_hover_pos = None;
             }
 
             full_output = Some(output);
@@ -856,22 +886,22 @@ impl PhylonApp {
 
         // Process native interactions from the transparent canvas
         if interaction.zoom_delta != 1.0 && interaction.zoom_delta > 0.0 {
-            self.camera_zoom *= interaction.zoom_delta;
-            self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
+            self.ui.camera_zoom *= interaction.zoom_delta;
+            self.ui.camera_zoom = self.ui.camera_zoom.clamp(0.1, 10.0);
         }
 
         if interaction.drag_delta.length_sq() > 0.0 {
-            self.camera_pos.x -= (interaction.drag_delta.x * scale) / self.camera_zoom;
-            self.camera_pos.y += (interaction.drag_delta.y * scale) / self.camera_zoom;
+            self.ui.camera_pos.x -= (interaction.drag_delta.x * scale) / self.ui.camera_zoom;
+            self.ui.camera_pos.y += (interaction.drag_delta.y * scale) / self.ui.camera_zoom;
             // Only detach tracking if it's a genuine drag, not a trackpad micro-movement
             if interaction.drag_delta.length_sq() > 9.0 {
-                self.tracked_entity = None;
+                self.ui.tracked_entity = None;
             }
         }
 
         if interaction.clicked {
             if let Some(pos) = interaction.click_pos {
-                self.pending_click = Some(common::Vec2::new(pos.x * scale, pos.y * scale));
+                self.ui.pending_click = Some(common::Vec2::new(pos.x * scale, pos.y * scale));
             }
         }
 
@@ -912,8 +942,8 @@ impl PhylonApp {
                     &view,
                     &sdf_bones,
                     [view_w, view_h],
-                    self.camera_pos,
-                    self.camera_zoom,
+                    self.ui.camera_pos,
+                    self.ui.camera_zoom,
                     central_rect_px,
                 );
             }
@@ -928,8 +958,8 @@ impl PhylonApp {
                     &hover_bones,
                     [0.0, 1.0, 0.0, 1.0],
                     [view_w, view_h],
-                    self.camera_pos,
-                    self.camera_zoom,
+                    self.ui.camera_pos,
+                    self.ui.camera_zoom,
                     central_rect_px,
                 );
             }
@@ -945,8 +975,8 @@ impl PhylonApp {
                     &selected_bones,
                     [1.0, 1.0, 1.0, pulse],
                     [view_w, view_h],
-                    self.camera_pos,
-                    self.camera_zoom,
+                    self.ui.camera_pos,
+                    self.ui.camera_zoom,
                     central_rect_px,
                 );
             }
@@ -959,8 +989,8 @@ impl PhylonApp {
                     &view,
                     &debug_instances,
                     [view_w, view_h],
-                    self.camera_pos,
-                    self.camera_zoom,
+                    self.ui.camera_pos,
+                    self.ui.camera_zoom,
                     central_rect_px,
                 );
             }
@@ -1025,7 +1055,7 @@ impl PhylonApp {
 
         output.present();
 
-        if self.is_paused && self.total_sim_time > 1.0 {
+        if self.ui.is_paused && self.total_sim_time > 1.0 {
             println!("SIMULATING SAVE WHILE PAUSED");
             ui_actions.push(ui::MenuAction::SaveState);
             // also exit after one test so we don't spam

@@ -38,34 +38,83 @@ pub struct GpuSurface {
     pub(crate) readback_buffer: Option<wgpu::Buffer>,
 }
 
-pub struct PhylonApp {
-    /// Simulation configuration loaded at startup.
+/// UI-specific state for the Phylon application.
+pub(crate) struct PhylonUIState {
+    pub(crate) camera_pos: common::Vec2,
+    pub(crate) camera_zoom: f32,
+    pub(crate) selected_entity: Option<bevy_ecs::entity::Entity>,
+    pub(crate) tracked_entity: Option<bevy_ecs::entity::Entity>,
+    pub(crate) modifiers: winit::keyboard::ModifiersState,
+    pub(crate) pending_click: Option<common::Vec2>,
+    pub(crate) current_hover_pos: Option<common::Vec2>,
+    pub(crate) canvas_rect: Option<[u32; 4]>,
+    pub(crate) debug_structural: bool,
+    pub(crate) bone_line_thickness: f32,
+    pub(crate) active_tab: ui::SidebarTab,
+    pub(crate) app_state: ui::AppState,
+    pub(crate) is_paused: bool,
+    pub(crate) show_about: bool,
+    pub(crate) show_docs: bool,
+    pub(crate) show_vision_cones: bool,
+    pub(crate) hovered_entity: Option<bevy_ecs::entity::Entity>,
+    pub(crate) quit_confirm_time: Option<f64>,
+    pub(crate) main_menu_confirm_time: Option<f64>,
+    pub(crate) active_toast: Option<(String, f32)>, // (message, progress 0..1)
+}
+
+impl Default for PhylonUIState {
+    fn default() -> Self {
+        Self {
+            camera_pos: common::Vec2::new(0.0, 0.0),
+            camera_zoom: 1.0,
+            selected_entity: None,
+            tracked_entity: None,
+            modifiers: winit::keyboard::ModifiersState::default(),
+            pending_click: None,
+            current_hover_pos: None,
+            canvas_rect: None,
+            debug_structural: false,
+            bone_line_thickness: 2.0,
+            active_tab: ui::SidebarTab::Inspector,
+            app_state: ui::AppState::MainMenu,
+            is_paused: false,
+            show_about: false,
+            show_docs: false,
+            show_vision_cones: false,
+            hovered_entity: None,
+            quit_confirm_time: None,
+            main_menu_confirm_time: None,
+            active_toast: None,
+        }
+    }
+}
+
+pub(crate) struct PhylonApp {
+    /// Deserialised application/simulation config
     pub(crate) sim_config: PhylonConfig,
 
-    /// The scheduler that drives all simulation ticks.
+    /// Drives the biological/physics simulation ticks
     #[allow(dead_code)]
     pub(crate) scheduler: SimulationScheduler,
 
-    /// The core ECS world.
+    /// Central ECS World holding all entities and global resources
     pub(crate) world: world::World,
 
-    /// GPU surface resources (created after window is ready).
-    /// Must be declared before `window` so it drops first!
+    /// Retained wgpu surface and device info
     pub(crate) gpu: Option<GpuSurface>,
 
-    /// Compute pipeline for physics (forces, integration, PBD).
+    /// Compute pipeline for physics constraint resolution
     pub(crate) physics_compute: Option<gpu::physics_pipeline::PhysicsComputePipeline>,
 
-    /// Compute pipeline for the diffusion field.
+    /// Compute pipeline for reaction-diffusion fields (pheromones)
     pub(crate) diffusion_compute: Option<gpu::diffusion_pipeline::DiffusionComputePipeline>,
 
-    /// Compute pipeline for the CTRNN brain.
     pub(crate) brain_compute: Option<gpu::brain_pipeline::BrainComputePipeline>,
 
-    /// Debug renderer for entities (grey quads / circles).
+    /// Rendering pipeline for structural/debug view
     pub(crate) debug_renderer: Option<rendering::DebugRenderer>,
 
-    /// SDF organic skin renderer (accumulate-then-threshold).
+    /// Rendering pipeline for organic SDF skin view
     pub(crate) sdf_skin_renderer: Option<rendering::SdfSkinRenderer>,
 
     /// Renderer for the diffusion field.
@@ -80,35 +129,8 @@ pub struct PhylonApp {
     /// Egui wgpu renderer
     pub(crate) egui_renderer: Option<egui_wgpu::Renderer>,
 
-    /// Camera2D position
-    pub(crate) camera_pos: common::Vec2,
-    /// Camera2D zoom (scale)
-    pub(crate) camera_zoom: f32,
-
-    /// Currently selected entity for inspection
-    pub(crate) selected_entity: Option<bevy_ecs::entity::Entity>,
-
-    /// Entity currently tracked by the camera
-    pub(crate) tracked_entity: Option<bevy_ecs::entity::Entity>,
-
-    /// Track keyboard modifiers
-    pub(crate) modifiers: winit::keyboard::ModifiersState,
-
-    /// Pending canvas click to be processed after the render pass
-    pub(crate) pending_click: Option<common::Vec2>,
-
-    /// Current hover position in physical pixels
-    pub(crate) current_hover_pos: Option<common::Vec2>,
-
-    /// The viewport dimensions of the simulation canvas (x, y, w, h) in physical pixels
-    pub(crate) canvas_rect: Option<[u32; 4]>,
-
-    /// When `true`, render raw physics quads; when `false`, render SDF skin.
-    pub(crate) debug_structural: bool,
-    /// Thickness of bone lines in structural view.
-    pub(crate) bone_line_thickness: f32,
-    /// Active tab in the sidebar
-    pub(crate) active_tab: ui::SidebarTab,
+    /// The UI State bundle
+    pub(crate) ui: PhylonUIState,
 
     /// Maximum number of simulation ticks fired per frame.
     #[allow(dead_code)]
@@ -123,26 +145,8 @@ pub struct PhylonApp {
     /// Accumulator for sub-frame simulation steps.
     pub(crate) accumulated_time: f32,
 
-    /// High-level application state (Main Menu vs Simulation).
-    pub(crate) app_state: ui::AppState,
-
-    /// If true, the simulation is paused and no physics/biology ticks occur.
-    pub(crate) is_paused: bool,
-
-    /// If true, show the About dialog.
-    pub(crate) show_about: bool,
-
-    /// If true, show the Documentation window.
-    pub(crate) show_docs: bool,
-
-    /// If true, overlay vision cones on the simulation viewport.
-    pub(crate) show_vision_cones: bool,
-    /// Currently hovered entity from mouse pos
-    pub(crate) hovered_entity: Option<bevy_ecs::entity::Entity>,
-    /// Time when the user first clicked "Quit"
-    pub(crate) quit_confirm_time: Option<f64>,
-    /// Time when the user first clicked "Main Menu"
-    pub(crate) main_menu_confirm_time: Option<f64>,
+    /// Storage manager for snapshots and database logs
+    pub(crate) storage: storage::StorageManager,
 }
 
 impl PhylonApp {
@@ -294,29 +298,12 @@ impl PhylonApp {
             window: None,
             egui_state: None,
             egui_renderer: None,
-            camera_pos: common::Vec2::new(0.0, 0.0),
-            camera_zoom: 1.0,
-            selected_entity: None,
-            tracked_entity: None,
-            debug_structural: false,
-            bone_line_thickness: 1.5,
-            active_tab: ui::SidebarTab::Inspector,
-            modifiers: winit::keyboard::ModifiersState::empty(),
-            pending_click: None,
-            current_hover_pos: None,
-            canvas_rect: None,
+            ui: PhylonUIState::default(),
             max_ticks_per_frame: 10,
             total_sim_time: 0.0,
             simulation_speed: 1.0,
             accumulated_time: 0.0,
-            app_state: ui::AppState::default(),
-            is_paused: false,
-            show_about: false,
-            show_docs: false,
-            show_vision_cones: false,
-            hovered_entity: None,
-            quit_confirm_time: None,
-            main_menu_confirm_time: None,
+            storage: storage::StorageManager::new(),
         }
     }
 
@@ -493,24 +480,27 @@ impl PhylonApp {
         gpu_w: f32,
         gpu_h: f32,
     ) -> Option<bevy_ecs::entity::Entity> {
-        let [vx, vy, vw, vh] = self
+        let canvas_rect = self
+            .ui
             .canvas_rect
-            .unwrap_or([0, 0, gpu_w as u32, gpu_h as u32]);
-        let local_x = screen_pos.x - vx as f32;
-        let local_y = screen_pos.y - vy as f32;
+            .map(|r| [r[0] as f32, r[1] as f32, r[2] as f32, r[3] as f32])
+            .unwrap_or([0.0, 0.0, gpu_w, gpu_h]);
+        let [vx, vy, vw, vh] = canvas_rect;
+        let local_x = screen_pos.x - vx;
+        let local_y = screen_pos.y - vy;
 
         // NDC (Normalized Device Coordinates): [-1,1] × [-1,1]
-        let ndc_x = (local_x / vw as f32) * 2.0 - 1.0;
-        let ndc_y = -((local_y / vh as f32) * 2.0 - 1.0); // Y is flipped
+        let ndc_x = (local_x / vw) * 2.0 - 1.0;
+        let ndc_y = -((local_y / vh) * 2.0 - 1.0); // Y is flipped
 
         // World space: invert the orthographic projection
-        let half_w = (vw as f32 / 2.0) / self.camera_zoom;
-        let half_h = (vh as f32 / 2.0) / self.camera_zoom;
-        let world_x = ndc_x * half_w + self.camera_pos.x;
-        let world_y = ndc_y * half_h + self.camera_pos.y;
+        let half_w = (vw / 2.0) / self.ui.camera_zoom;
+        let half_h = (vh / 2.0) / self.ui.camera_zoom;
+        let world_x = ndc_x * half_w + self.ui.camera_pos.x;
+        let world_y = ndc_y * half_h + self.ui.camera_pos.y;
         let world_pos = common::Vec2::new(world_x, world_y);
 
-        let pick_radius = 30.0 / self.camera_zoom;
+        let pick_radius = 30.0 / self.ui.camera_zoom;
 
         let mut best: Option<bevy_ecs::entity::Entity> = None;
         let mut best_dist = pick_radius;

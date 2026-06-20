@@ -61,16 +61,91 @@ pub enum StorageError {
 
 impl common::PhylonError for StorageError {}
 
-/// Placeholder for the storage manager.
-///
-/// TODO(phase-5): Implement snapshot serialisation, incremental autosave,
-/// replay recording, and SQLite experiment database.
-pub struct StorageManager;
+pub mod snapshot;
+
+use snapshot::SimulationSnapshot;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::Path;
+
+/// Manages serialization of simulation state and run tracking.
+pub struct StorageManager {
+    run_db: Option<rusqlite::Connection>,
+}
 
 impl StorageManager {
-    /// Creates a new storage manager.
+    /// Creates a new storage manager, optionally opening the SQLite run database.
     pub fn new() -> Self {
-        Self
+        let run_db = rusqlite::Connection::open("data/runs.db").ok();
+        if let Some(db) = &run_db {
+            let _ = db.execute(
+                "CREATE TABLE IF NOT EXISTS runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    start_time TEXT NOT NULL,
+                    seed INTEGER NOT NULL,
+                    end_time TEXT,
+                    ticks INTEGER,
+                    final_population INTEGER
+                )",
+                [],
+            );
+        }
+        Self { run_db }
+    }
+
+    /// Serializes the given snapshot to a binary file using bincode.
+    pub fn save_simulation_state(
+        &self,
+        snapshot: &SimulationSnapshot,
+        path: &Path,
+    ) -> Result<(), StorageError> {
+        let mut file = File::create(path)?;
+        let encoded = bincode::serialize(snapshot).map_err(std::io::Error::other)?;
+        file.write_all(&encoded)?;
+        Ok(())
+    }
+
+    /// Deserializes a binary snapshot from a file.
+    pub fn load_simulation_state(&self, path: &Path) -> Result<SimulationSnapshot, StorageError> {
+        let mut file = File::open(path)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+        let snapshot: SimulationSnapshot = bincode::deserialize(&buffer)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        if snapshot.schema_version > SchemaVersion::CURRENT.0 {
+            return Err(StorageError::UnsupportedSchema {
+                found: SchemaVersion(snapshot.schema_version),
+                max_supported: SchemaVersion::CURRENT,
+            });
+        }
+
+        Ok(snapshot)
+    }
+
+    /// Logs the start of a simulation run to the database and returns the row ID.
+    pub fn log_run_start(&self, seed: u64) -> Option<i64> {
+        if let Some(db) = &self.run_db {
+            let start_time = chrono::Utc::now().to_rfc3339();
+            db.execute(
+                "INSERT INTO runs (start_time, seed) VALUES (?1, ?2)",
+                rusqlite::params![start_time, seed as i64],
+            )
+            .ok()?;
+            return Some(db.last_insert_rowid());
+        }
+        None
+    }
+
+    /// Logs the end of a simulation run to the database, updating ticks and final population.
+    pub fn log_run_end(&self, run_id: i64, ticks: u64, final_population: u32) {
+        if let Some(db) = &self.run_db {
+            let end_time = chrono::Utc::now().to_rfc3339();
+            let _ = db.execute(
+                "UPDATE runs SET end_time = ?1, ticks = ?2, final_population = ?3 WHERE id = ?4",
+                rusqlite::params![end_time, ticks as i64, final_population, run_id],
+            );
+        }
     }
 }
 

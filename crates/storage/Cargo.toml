@@ -10,3 +10,12 @@ world     = { workspace = true }
 serde     = { workspace = true }
 bincode   = { workspace = true }
 thiserror = { workspace = true }
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+chrono = "0.4.45"
+ecology.workspace = true
+genetics.workspace = true
+brain.workspace = true
+physics.workspace = true
+bevy_ecs.workspace = true
+organisms.workspace = true
+reproduction.workspace = true
