@@ -60,3 +60,7 @@ app
 ```
 
 *Note: Edges flow downwards to dependencies. Cycles are impossible.*
+
+## License
+
+This document is dual-licensed under the MIT License and the Apache License, Version 2.0.

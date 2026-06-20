@@ -26,3 +26,7 @@ All pull requests must originate from feature branches using the following namin
 ## Architectural Enforcement
 
 All simulation decisions, library additions, and architectural patterns must strictly conform to the specifications defined in `PHYLON_PROMPT_v2.md`. Pull requests that violate the deterministic boundary conditions, introduce circular dependencies, or fail to adhere to the defined crate structure will be rejected.
+
+## Licensing
+
+By contributing to Phylon, you agree that your contributions will be dual-licensed under the MIT License and the Apache License, Version 2.0.

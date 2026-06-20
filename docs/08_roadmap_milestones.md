@@ -131,3 +131,7 @@ These aren't sequenced yet — they're directions worth keeping on the radar as 
 ---
 
 *This map folds the original Phase 0–9 architecture doc together with the speculative 1.5/2.5/3.5/4.5 sub-phases and the 10–12 post-1.0 arcs. Treat the `.5` phases and Phase 10+ as a backlog to formalize, not a committed schedule.*
+
+## License
+
+This document is dual-licensed under the MIT License and the Apache License, Version 2.0.

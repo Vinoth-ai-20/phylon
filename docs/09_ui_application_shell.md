@@ -32,3 +32,7 @@ To add a new tool or panel:
 1. Add a boolean flag to `PanelVisibility` in `state.rs`.
 2. Map a toggle checkbox to it inside `menu.rs` (under the View menu).
 3. Check the boolean state in `crates/ui/src/lib.rs` and render your `egui::Window` conditionally.
+
+## License
+
+This document is dual-licensed under the MIT License and the Apache License, Version 2.0.

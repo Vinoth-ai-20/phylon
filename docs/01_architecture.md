@@ -36,3 +36,7 @@ To maintain GPU and CPU cache efficiency, `bevy_ecs` archetypes provide contiguo
 - **Traits & Types**: Domain models use newtype patterns and generic traits.
 - **Channels**: Communication between the compute-heavy simulation (`rayon`) and asynchronous I/O (`tokio`) occurs exclusively via lock-free channels (`crossbeam`).
 - **Events**: Cross-domain simulation actions (e.g., an organism dying, reproducing, or a field spiking) are published to the `events` bus. The `scheduler` consumes these during the `PostTick` phase to mutate the ECS, and persists them in the `world` state so decoupled systems like `analytics` or UI layers can react without destructive reads.
+
+## License
+
+This document is dual-licensed under the MIT License and the Apache License, Version 2.0.

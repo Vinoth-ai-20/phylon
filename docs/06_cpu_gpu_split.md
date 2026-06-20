@@ -32,3 +32,7 @@ A common issue in massive GPU ecosystem simulations is thread divergence caused 
 - After `Sensing` and `Brain` inference, output buffers containing action intents (floats) are mapped back to the CPU via `wgpu::Buffer::map_async`. To maximize throughput and avoid CPU stalls, these readbacks are **pipelined**. The CPU processes logic using the buffer from tick `N-1` while the GPU computes tick `N`.
 - Field gradients at organism locations are read back sparsely via the pipelined staging buffers.
 - Massive field data is *never* read back entirely unless requested by a save state or heavy analytics snapshot. The CPU only reads what it needs to execute the next behavioral logic step.
+
+## License
+
+This document is dual-licensed under the MIT License and the Apache License, Version 2.0.

@@ -21,3 +21,7 @@ To ensure replay works correctly despite GPU variance, Phylon employs strict rea
 2. **Keyframe Snapshots**: The `research` layer saves deterministic binary snapshots periodically. If a replay diverges, the system detects the divergence and can resume from the nearest canonical snapshot.
 
 For mathematically perfect 100% cross-platform determinism (e.g., for continuous integration testing), a `software_fallback` compute mode can be toggled via `PhylonConfig`, bypassing the GPU entirely at the cost of massive performance degradation.
+
+## License
+
+This document is dual-licensed under the MIT License and the Apache License, Version 2.0.

@@ -41,3 +41,7 @@ Where:
 The world handles field diffusion at boundaries using **Neumann (reflecting) boundary conditions**. The field gradients at the edges of the active simulation area are assumed to be zero, preventing mass/energy loss across the boundary and ensuring conservation within the active zone.
 
 When chunks are loaded dynamically, boundary ghost cells apply these Neumann conditions if the adjacent chunk is not loaded. If adjacent chunks are loaded, they seamlessly exchange gradients.
+
+## License
+
+This document is dual-licensed under the MIT License and the Apache License, Version 2.0.

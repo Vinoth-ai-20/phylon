@@ -206,3 +206,7 @@ to a file created or a command run. Completed items are checked off.
 | The `app` binary opens a stable window | ✅ Code complete |
 | `data/default.ron` is a valid, loadable config file | ✅ |
 | `docs/09_phase0_implementation_plan.md` has every item checked off | 🔄 In progress |
+
+## License
+
+This document is dual-licensed under the MIT License and the Apache License, Version 2.0.

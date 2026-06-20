@@ -123,3 +123,7 @@ phylon/
         ├── Cargo.toml
         └── src/lib.rs
 ```
+
+## License
+
+This document is dual-licensed under the MIT License and the Apache License, Version 2.0.

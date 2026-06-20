@@ -4,6 +4,7 @@ Phylon is a research-grade, high-performance artificial life laboratory built in
 
 ![CI](https://github.com/Vinoth-ai-20/phylon/actions/workflows/ci.yml/badge.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Rust 1.80+](https://img.shields.io/badge/rust-1.80+-lightgray.svg)](https://www.rust-lang.org)
 
 Phylon simulates massive populations of neural-driven organisms within a continuous, deterministic physics environment. It leverages a data-oriented Entity-Component-System (ECS) architecture tightly coupled with GPU compute shaders to solve chemical diffusion and rigid-body mechanics at scale. The system enforces bit-exact reproducibility across platforms by adhering to fixed-timestep updates and explicitly avoiding floating-point non-determinism in critical simulation paths.
@@ -57,4 +58,4 @@ We accept pull requests that align with the core architectural constraints. Plea
 
 ## License
 
-MIT License
+This project is dual-licensed under either the [MIT License](LICENSE-MIT) or the [Apache License, Version 2.0](LICENSE-APACHE), at your option.

@@ -24,3 +24,7 @@ Events are not polled; they are published eagerly into the `events` bus via `cro
 
 - **Dispatches**: Occur strictly within the `Diffusion`, `Sensing`, and `Brain` phases.
 - **Readbacks (Pipelined)**: We employ asynchronous pipelined readbacks to avoid `bevy_ecs` thread stalls. The CPU logic for the *current* tick may operate on the readback mapped from the *previous* tick for sensing/brain outputs. `wgpu` maps staging buffers back to the CPU so that deterministic CPU algorithms operate on concrete numbers without blocking the main execution graph. Where blocking readbacks are strictly required, precision rules ensure cross-platform reproducibility.
+
+## License
+
+This document is dual-licensed under the MIT License and the Apache License, Version 2.0.

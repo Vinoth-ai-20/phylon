@@ -338,7 +338,7 @@ pub fn render_ui(
                     actions.push(MenuAction::CameraZoomIn);
                 }
                 if ui
-                    .button("Home")
+                    .button("🏠")
                     .on_hover_text("Reset Camera (Home/0)")
                     .clicked()
                 {
@@ -349,7 +349,7 @@ pub fn render_ui(
                 }
 
                 let track_str = if let Some(e) = tracked_entity {
-                    format!(" — Tracking {:?}", e)
+                    format!(" - Tracking {:?}", e)
                 } else {
                     String::new()
                 };
@@ -401,7 +401,7 @@ pub fn render_ui(
         .show(ctx, |ui| {
             match active_tab {
                 SidebarTab::Inspector => {
-                    ui.heading("Inspector");
+                    ui.heading("🔍 Inspector");
                     ui.separator();
                     ui.checkbox(debug_structural, "🔲 Debug Structural View");
                     if *debug_structural {
@@ -489,7 +489,7 @@ pub fn render_ui(
                         let has_meta = energy_q.get(&world.ecs, entity).is_ok();
 
                         if has_meta {
-                            egui::CollapsingHeader::new("🧬 Biology")
+                            egui::CollapsingHeader::new("🔬 Biology")
                                 .default_open(true)
                                 .show(ui, |ui| {
                                     if let Ok(en) = energy_q.get(&world.ecs, entity) {
@@ -595,7 +595,7 @@ pub fn render_ui(
                     }
                 }
                 SidebarTab::Genetics => {
-                    ui.heading("Genetics");
+                    ui.heading("🧬 Genetics");
                     ui.separator();
                     if let Some(entity) = *selected_entity {
                         // Find the head node for this organism to get the genome
@@ -657,7 +657,7 @@ pub fn render_ui(
                                 ui.add_space(8.0);
                                 if genome.hox.is_some() {
                                     ui.label(
-                                        egui::RichText::new("⚠️ This organism's morphology and wiring is hardcoded by its Hox Sequence. CPPN mutations are disabled.")
+                                        egui::RichText::new("⚠ This organism's morphology and wiring is hardcoded by its Hox Sequence. CPPN mutations are disabled.")
                                             .color(egui::Color32::YELLOW),
                                     );
                                 } else {
@@ -878,7 +878,7 @@ pub fn render_ui(
                     }
                 }
                 SidebarTab::Analytics => {
-                    ui.heading("Analytics");
+                    ui.heading("📈 Analytics");
                     ui.separator();
                     if let Some(metrics) = world.ecs.get_resource::<analytics::MetricsState>() {
                         ui.label(egui::RichText::new("Compute Profiling").strong());
