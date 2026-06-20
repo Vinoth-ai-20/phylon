@@ -33,6 +33,12 @@ pub enum SidebarTab {
     Genetics,
     /// Global metrics and population charts
     Analytics,
+    /// Entity Presets and Structure Generator
+    Sandbox,
+    /// Physics tuning and global parameters
+    Tuning,
+    /// Environmental data and cell info
+    Ecology,
 }
 
 /// Contains the screen-space rect of the transparent canvas area and the
@@ -66,8 +72,18 @@ impl Default for CanvasInteraction {
     }
 }
 
-/// Actions triggered from the UI Menu Bar.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The current high-level state of the application.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AppState {
+    /// The main title screen.
+    #[default]
+    MainMenu,
+    /// The active simulation sandbox.
+    Simulation,
+}
+
+/// Menu actions returned by the UI layer to the main app loop.
+#[derive(Debug, Clone, PartialEq)]
 pub enum MenuAction {
     /// Save the simulation state to disk.
     SaveState,
@@ -85,6 +101,21 @@ pub enum MenuAction {
     SelectAll,
     /// Clear the current selection.
     Deselect,
+    /// Spawn a preset by name
+    SpawnPreset(String),
+    /// Generate a procedural hex mesh
+    GenerateHexMesh {
+        /// Number of columns
+        cols: usize,
+        /// Number of rows
+        rows: usize,
+        /// Spacing between nodes
+        spacing: f32,
+        /// Spring stiffness
+        stiffness: f32,
+        /// Are the nodes anchored
+        is_fixed: bool,
+    },
     /// Spawn a new proto-fish under the camera.
     SpawnProtoFish,
     /// Show the Phylon documentation.
@@ -97,6 +128,26 @@ pub enum MenuAction {
     CameraZoomOut,
     /// Reset camera view.
     CameraHome,
+    /// Transition to Simulation State
+    StartSimulation,
+    /// Transition to Main Menu State
+    GoToMainMenu,
+    /// Quit the application.
+    Quit,
+
+    // Canvas Shortcuts
+    /// Delete the selected entity.
+    DeleteSelection,
+    /// Duplicate the selected entity.
+    DuplicateSelection,
+    /// Spawn/paste a new entity from the clipboard.
+    SpawnPaste,
+    /// Toggle whether the selected entity is fixed in place.
+    ToggleStationary,
+    /// Join/link the selected entity.
+    JoinSelection,
+    /// Enter drag mode for the selected entity.
+    GrabSelection,
 }
 
 /// Renders the main immediate-mode user interface.
@@ -111,6 +162,7 @@ pub enum MenuAction {
 #[allow(clippy::too_many_arguments)]
 pub fn render_ui(
     ctx: &egui::Context,
+    app_state: &mut AppState,
     world: &mut world::World,
     camera_pos: common::Vec2,
     camera_zoom: f32,
@@ -171,6 +223,29 @@ pub fn render_ui(
         actions.push(MenuAction::SpawnProtoFish);
     }
 
+    if *app_state == AppState::MainMenu {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(ui.available_height() / 3.0);
+                ui.heading(egui::RichText::new("PHYLON").size(48.0).strong());
+                ui.add_space(20.0);
+                if ui
+                    .button(egui::RichText::new("Start Simulation").size(24.0))
+                    .clicked()
+                {
+                    actions.push(MenuAction::StartSimulation);
+                }
+                ui.add_space(10.0);
+                if ui.button(egui::RichText::new("Quit").size(24.0)).clicked() {
+                    actions.push(MenuAction::Quit);
+                }
+            });
+        });
+
+        // Return early with empty interaction
+        return (CanvasInteraction::default(), actions);
+    }
+
     // Hardcode camera zoom keys
     if ctx.input(|i| i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals)) {
         actions.push(MenuAction::CameraZoomIn);
@@ -224,8 +299,14 @@ pub fn render_ui(
                     actions.push(MenuAction::LoadState);
                 }
                 ui.separator();
+                if ui.button("Settings").clicked() {
+                    // Placeholder
+                }
+                if ui.button("Main Menu").clicked() {
+                    actions.push(MenuAction::GoToMainMenu);
+                }
                 if ui.button("Quit").clicked() {
-                    std::process::exit(0);
+                    actions.push(MenuAction::Quit);
                 }
             });
             ui.menu_button("Edit", |ui| {
@@ -377,7 +458,7 @@ pub fn render_ui(
                 }
                 ui.add_space(4.0);
                 if ui
-                    .selectable_label(*active_tab == SidebarTab::Genetics, "🧬")
+                    .selectable_label(*active_tab == SidebarTab::Genetics, "⚗")
                     .on_hover_text("Genetics")
                     .clicked()
                 {
@@ -526,6 +607,38 @@ pub fn render_ui(
                             ui.label(format!("Category: {:?}", cat));
                         }
 
+                        let mut gen_q = world.ecs.query::<&organisms::Generation>();
+                        if let Ok(gen) = gen_q.get(&world.ecs, entity) {
+                            ui.label(format!("Generation: {}", gen.0));
+                        }
+
+                        let mut spawn_q = world.ecs.query::<&organisms::SpawnTick>();
+                        if let Ok(spawn) = spawn_q.get(&world.ecs, entity) {
+                            ui.label(format!("Spawn tick: {}", spawn.0));
+                        }
+
+                        let mut traits_q = world.ecs.query::<&organisms::SandboxTraits>();
+                        if let Ok(traits) = traits_q.get(&world.ecs, entity) {
+                            egui::CollapsingHeader::new("🏷 Active Components")
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    if traits.is_membrane_seed { ui.label("Membrane Seed"); }
+                                    if traits.link_duplicate { ui.label("Link Duplicate"); }
+                                    if traits.sends_energy { ui.label("Sends Energy"); }
+                                    if traits.respires { ui.label("Respires"); }
+                                    if traits.photosynthesis { ui.label("Photosynthesis"); }
+                                    if traits.has_tail { ui.label("Has Tail"); }
+                                    if traits.kills_animals { ui.label("Kills Animals"); }
+                                    if traits.edible_plant { ui.label("Edible Plant"); }
+                                    if traits.edible_animal { ui.label("Edible Animal"); }
+                                    if traits.repels { ui.label("Repels"); }
+                                    if traits.grabbable { ui.label("Grabbable"); }
+                                    if traits.fixable { ui.label("Fixable"); }
+                                    if traits.velocity_tear { ui.label("Velocity Tear"); }
+                                    if traits.mesh { ui.label("Mesh"); }
+                                });
+                        }
+
                         // Entity Graph / Segment Tree
                         egui::CollapsingHeader::new("🌳 Body Structure")
                             .default_open(true)
@@ -592,10 +705,11 @@ pub fn render_ui(
                                 .italics()
                                 .color(egui::Color32::GRAY),
                         );
+                        ui.separator();
                     }
                 }
                 SidebarTab::Genetics => {
-                    ui.heading("🧬 Genetics");
+                    ui.heading("⚗ Genetics");
                     ui.separator();
                     if let Some(entity) = *selected_entity {
                         // Find the head node for this organism to get the genome
@@ -911,10 +1025,130 @@ pub fn render_ui(
                         ui.add_space(16.0);
                         ui.label(egui::RichText::new("Global Simulation Metrics").strong());
                         ui.label(format!("Total Entities: {}", world.ecs.entities().len()));
-                        ui.label(format!("Smoothed FPS: {:.1}", metrics.smoothed_fps));
+
+                        let avg_fps = metrics.smoothed_fps;
+                        let avg_frame_time = if avg_fps > 0.0 { 1000.0 / avg_fps } else { 0.0 };
+                        // To accurately get max frame time we'd need to look at fps_history
+                        // For now we just use the smoothed frame time
+                        ui.label(format!("Avg Frame Time: {:.1} ms", avg_frame_time));
+                        ui.label("Target TPS: 60");
+
+                        let ticks = (metrics.sim_time / 0.016).round() as u64;
+                        ui.label(format!("Ticks Elapsed: {}", ticks));
+
+                        ui.label(format!("Smoothed FPS: {:.1}", avg_fps));
                     } else {
                         ui.label("Analytics data not available.");
                     }
+                }
+                SidebarTab::Sandbox => {
+                    ui.heading("🛠 Sandbox & Presets");
+                    ui.separator();
+
+                    egui::CollapsingHeader::new("Entity Presets")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new("Click to spawn under camera.").small());
+                            ui.add_space(8.0);
+                            for preset in organisms::sandbox::PresetDefinition::standard_presets() {
+                                if ui.button(&preset.name).clicked() {
+                                    actions.push(MenuAction::SpawnPreset(preset.name.clone()));
+                                }
+                            }
+                        });
+
+                    ui.add_space(10.0);
+
+                    egui::CollapsingHeader::new("Structure Generator")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new("Procedural hex-mesh builder.").small());
+                            ui.add_space(8.0);
+
+                            // Temporary UI state for the builder parameters
+                            let id = egui::Id::new("hex_mesh_builder_state");
+                            let mut cols = ui.data_mut(|d| d.get_temp::<usize>(id).unwrap_or(5));
+                            let mut rows = ui.data_mut(|d| d.get_temp::<usize>(id.with("rows")).unwrap_or(5));
+                            let mut spacing = ui.data_mut(|d| d.get_temp::<f32>(id.with("spacing")).unwrap_or(20.0));
+                            let mut stiffness = ui.data_mut(|d| d.get_temp::<f32>(id.with("stiffness")).unwrap_or(20.0));
+                            let mut is_fixed = ui.data_mut(|d| d.get_temp::<bool>(id.with("fixed")).unwrap_or(true));
+
+                            ui.add(egui::Slider::new(&mut cols, 1..=20).text("Columns"));
+                            ui.add(egui::Slider::new(&mut rows, 1..=20).text("Rows"));
+                            ui.add(egui::Slider::new(&mut spacing, 10.0..=50.0).text("Spacing"));
+                            ui.add(egui::Slider::new(&mut stiffness, 1.0..=100.0).text("Stiffness"));
+                            ui.checkbox(&mut is_fixed, "Fixed (Anchored)");
+
+                            ui.data_mut(|d| d.insert_temp(id, cols));
+                            ui.data_mut(|d| d.insert_temp(id.with("rows"), rows));
+                            ui.data_mut(|d| d.insert_temp(id.with("spacing"), spacing));
+                            ui.data_mut(|d| d.insert_temp(id.with("stiffness"), stiffness));
+                            ui.data_mut(|d| d.insert_temp(id.with("fixed"), is_fixed));
+
+                            ui.add_space(8.0);
+                            if ui.button("Generate Test Mesh").clicked() {
+                                actions.push(MenuAction::GenerateHexMesh {
+                                    cols,
+                                    rows,
+                                    spacing,
+                                    stiffness,
+                                    is_fixed,
+                                });
+                            }
+                        });
+                }
+                SidebarTab::Tuning => {
+                    ui.heading("⚙ Physics Tuning");
+                    ui.separator();
+                    if let Some(mut phys) = world.ecs.get_resource_mut::<physics::PhysicsConfig>() {
+                        egui::Grid::new("tuning_grid").num_columns(2).show(ui, |ui| {
+                            ui.label("Substeps");
+                            ui.add(egui::Slider::new(&mut phys.substep_count, 1..=10));
+                            ui.end_row();
+
+                            ui.label("Dampening");
+                            ui.add(egui::Slider::new(&mut phys.dampening, 0.8..=1.0));
+                            ui.end_row();
+
+                            ui.label("Centering Force");
+                            ui.add(egui::Slider::new(&mut phys.centering_force, 0.0..=10.0));
+                            ui.end_row();
+
+                            ui.label("Gravity");
+                            ui.add(egui::Slider::new(&mut phys.gravity, -20.0..=20.0));
+                            ui.end_row();
+
+                            ui.label("Collision Force");
+                            ui.add(egui::Slider::new(&mut phys.collision_force, 0.0..=5.0));
+                            ui.end_row();
+
+                            ui.label("Repel Force");
+                            ui.add(egui::Slider::new(&mut phys.repel_force, 0.0..=5.0));
+                            ui.end_row();
+
+                            ui.label("Links Force");
+                            ui.add(egui::Slider::new(&mut phys.links_force, 0.0..=5.0));
+                            ui.end_row();
+
+                            ui.label("Wall Force");
+                            ui.add(egui::Slider::new(&mut phys.wall_force, 0.0..=5.0));
+                            ui.end_row();
+
+                            ui.label("Bone Thickness");
+                            ui.add(egui::Slider::new(bone_line_thickness, 1.0..=10.0));
+                            ui.end_row();
+                        });
+                    } else {
+                        ui.label("Physics resource not found.");
+                    }
+                }
+                SidebarTab::Ecology => {
+                    ui.heading("🌍 Ecology & Environment");
+                    ui.separator();
+                    ui.label("Global Sunlight: 100%");
+                    ui.label("Ambient CO2: 400 ppm");
+                    ui.label("Soil Fertility: High");
+                    ui.label("Temperature: 22°C");
                 }
             }
         });
@@ -1253,6 +1487,25 @@ pub fn render_ui(
             }
         }
     }
+
+    // ── Bottom status bar ──────────────────────────────────────────────────
+    egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            if *is_paused {
+                ui.label(
+                    egui::RichText::new("⏸ PAUSED")
+                        .color(egui::Color32::from_rgb(255, 150, 50))
+                        .strong(),
+                );
+                ui.separator();
+            }
+            ui.label("Status: Running");
+            ui.separator();
+            ui.label("FPS: --"); // Replaced by metrics later
+            ui.separator();
+            ui.label("Tick: --"); // Replaced by metrics later
+        });
+    });
 
     (
         CanvasInteraction {

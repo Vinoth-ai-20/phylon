@@ -19,6 +19,10 @@ use serde::{Deserialize, Serialize};
 
 // Diet type is now defined in the ecology crate to avoid duplication.
 
+/// Tools for sandbox mode, presets, and procedural generation.
+pub mod sandbox;
+pub use sandbox::{PresetDefinition, SandboxTraits};
+
 /// Spatial components of an organism: position, velocity, and collision radius.
 #[derive(bevy_ecs::component::Component, Debug, Clone, Serialize, Deserialize)]
 pub struct SpatialComponents {
@@ -48,6 +52,14 @@ pub struct BiologicalComponents {
 /// The base color of an organism's skin, driven by genetics.
 #[derive(bevy_ecs::component::Component, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct OrganismColor(pub [f32; 3]);
+
+/// The generational distance from the initial population (Generation 0).
+#[derive(bevy_ecs::component::Component, Debug, Clone, Copy, Serialize, Deserialize, Default)]
+pub struct Generation(pub u32);
+
+/// The absolute simulation tick when this entity was spawned.
+#[derive(bevy_ecs::component::Component, Debug, Clone, Copy, Serialize, Deserialize, Default)]
+pub struct SpawnTick(pub u64);
 
 /// Tracks the sequential growth of an organism from its Hox genome.
 ///
@@ -334,6 +346,8 @@ pub fn spawn_organism(
     start_pos: Vec2,
     diet: ecology::Diet,
     category: ecology::EcologicalCategory,
+    generation: u32,
+    spawn_tick: u64,
 ) {
     use physics::ParticleNode;
 
@@ -375,6 +389,8 @@ pub fn spawn_organism(
             mass: 10.0,
             base_rate: 0.05,
         },
+        Generation(generation),
+        SpawnTick(spawn_tick),
         diet,
         category,
         reproduction::ReproductionStrategy {
@@ -435,6 +451,8 @@ pub fn spawn_proto_fish(
     pos: Vec2,
     diet: ecology::Diet,
     category: ecology::EcologicalCategory,
+    generation: u32,
+    spawn_tick: u64,
 ) {
     use physics::{ConstraintType, ParticleNode, Spring};
 
@@ -546,9 +564,11 @@ pub fn spawn_proto_fish(
             max_lifespan: 10000,
         },
         metabolism::Metabolism {
-            mass: 10.0,
+            mass: 15.0, // approx mass of 5 spine + 2 fin nodes
             base_rate: 0.05,
         },
+        Generation(generation),
+        SpawnTick(spawn_tick),
         diet,
         category,
     ));

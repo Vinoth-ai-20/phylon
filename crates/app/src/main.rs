@@ -133,6 +133,9 @@ struct PhylonApp {
     /// Accumulator for sub-frame simulation steps.
     accumulated_time: f32,
 
+    /// High-level application state (Main Menu vs Simulation).
+    app_state: ui::AppState,
+
     /// If true, the simulation is paused and no physics/biology ticks occur.
     is_paused: bool,
 
@@ -159,7 +162,15 @@ struct SpawnOrganismCommand {
 
 impl bevy_ecs::world::Command for SpawnOrganismCommand {
     fn apply(self, world: &mut bevy_ecs::world::World) {
-        organisms::spawn_organism(world, &self.genome, self.position, self.diet, self.category);
+        organisms::spawn_organism(
+            world,
+            &self.genome,
+            self.position,
+            self.diet,
+            self.category,
+            0,
+            0,
+        );
     }
 }
 
@@ -185,9 +196,10 @@ impl PhylonApp {
         let mut world = world::World::new();
 
         // Add resources
-        world
-            .ecs
-            .insert_resource(physics::PhysicsConfig { dt: 0.016 }); // 60hz tick
+        world.ecs.insert_resource(physics::PhysicsConfig {
+            dt: 0.016,
+            ..Default::default()
+        }); // 60hz tick
         world
             .ecs
             .insert_resource(diffusion::DiffusionConfig::default());
@@ -211,6 +223,8 @@ impl PhylonApp {
             common::Vec2::new(0.0, 80.0),
             ecology::Diet::Herbivore,
             ecology::EcologicalCategory::None,
+            0,
+            0,
         );
 
         // Organism 2: Fish — 5 segments, fin pair at segment index 2.
@@ -223,6 +237,8 @@ impl PhylonApp {
             common::Vec2::new(0.0, 0.0),
             ecology::Diet::Carnivore,
             ecology::EcologicalCategory::None,
+            0,
+            0,
         );
 
         // Organism 3: Multi-fin — 8 segments, bilateral fins at positions 1 and 4.
@@ -249,6 +265,8 @@ impl PhylonApp {
             common::Vec2::new(0.0, -90.0),
             ecology::Diet::Producer,
             ecology::EcologicalCategory::None,
+            0,
+            0,
         );
 
         // Organism 4: Omnivore — purple fish
@@ -264,6 +282,8 @@ impl PhylonApp {
             common::Vec2::new(-80.0, 0.0),
             ecology::Diet::Omnivore,
             ecology::EcologicalCategory::None,
+            0,
+            0,
         );
 
         // Organism 5: Decomposer — small grey worm
@@ -279,6 +299,8 @@ impl PhylonApp {
             common::Vec2::new(80.0, 0.0),
             ecology::Diet::Decomposer,
             ecology::EcologicalCategory::None,
+            0,
+            0,
         );
 
         // Spawn a static food/nutrient emitter at the center
@@ -327,10 +349,11 @@ impl PhylonApp {
             pending_click: None,
             current_hover_pos: None,
             canvas_rect: None,
-            max_ticks_per_frame: 5,
+            max_ticks_per_frame: 10,
             total_sim_time: 0.0,
             simulation_speed: 1.0,
             accumulated_time: 0.0,
+            app_state: ui::AppState::default(),
             is_paused: false,
             show_about: false,
             show_docs: false,
@@ -577,7 +600,13 @@ impl PhylonApp {
             }
         }
 
-        if !self.is_paused {
+        if self.total_sim_time > 1.0 && !self.is_paused {
+            println!("SIMULATING PAUSE");
+            self.is_paused = true;
+        }
+
+        // Only step simulation if we're in the simulation state and not paused
+        if self.app_state == ui::AppState::Simulation && !self.is_paused {
             self.accumulated_time += self.simulation_speed;
         }
 
@@ -1102,8 +1131,9 @@ impl PhylonApp {
             let ctx = egui_state.egui_ctx().clone();
 
             let output = ctx.run(raw_input, |ctx| {
-                let (interact, acts) = ui::render_ui(
+                let (canvas_interact, acts) = ui::render_ui(
                     ctx,
+                    &mut self.app_state,
                     &mut self.world,
                     self.camera_pos,
                     self.camera_zoom,
@@ -1119,8 +1149,8 @@ impl PhylonApp {
                     &mut self.show_vision_cones,
                     self.hovered_entity,
                 );
-                interaction = interact;
-                ui_actions = acts;
+                ui_actions.extend(acts);
+                interaction = canvas_interact;
             });
 
             scale = window.scale_factor() as f32;
@@ -1295,6 +1325,12 @@ impl PhylonApp {
 
         output.present();
 
+        if self.is_paused && self.total_sim_time > 1.0 {
+            println!("SIMULATING SAVE WHILE PAUSED");
+            ui_actions.push(ui::MenuAction::SaveState);
+            // also exit after one test so we don't spam
+            self.total_sim_time = -100.0;
+        }
         self.handle_menu_actions(ui_actions);
 
         Ok(())
@@ -1305,6 +1341,145 @@ impl PhylonApp {
             match action {
                 ui::MenuAction::SaveState => {
                     tracing::warn!("Save State not yet implemented fully.");
+                }
+                ui::MenuAction::DeleteSelection => {
+                    if let Some(entity) = self.selected_entity {
+                        self.world.ecs.despawn(entity);
+                        self.selected_entity = None;
+                        if self.tracked_entity == Some(entity) {
+                            self.tracked_entity = None;
+                        }
+                    }
+                }
+                ui::MenuAction::ToggleStationary => {
+                    if let Some(entity) = self.selected_entity {
+                        if let Ok(mut node) = self
+                            .world
+                            .ecs
+                            .query::<&mut physics::ParticleNode>()
+                            .get_mut(&mut self.world.ecs, entity)
+                        {
+                            node.is_fixed = !node.is_fixed;
+                        }
+                    }
+                }
+                ui::MenuAction::DuplicateSelection => {
+                    tracing::warn!("DuplicateSelection not implemented")
+                }
+                ui::MenuAction::SpawnPreset(name) => {
+                    let preset_opt = organisms::sandbox::PresetDefinition::standard_presets()
+                        .into_iter()
+                        .find(|p| p.name == name);
+
+                    if let Some(preset) = preset_opt {
+                        let spawn_pos = self.camera_pos;
+                        if preset.evolvable {
+                            // Evolvable presets get a HoxSequence
+                            let hox = match name.as_str() {
+                                "Herbivore (Evolvable)" => {
+                                    genetics::HoxSequence::worm(6, [0.3, 0.8, 0.3])
+                                }
+                                "Hunter (Evolvable)" => {
+                                    genetics::HoxSequence::fish(5, 2, [0.8, 0.2, 0.2])
+                                }
+                                "Edible Plant (Evolvable)" => {
+                                    genetics::HoxSequence::worm(2, [0.2, 0.9, 0.2])
+                                }
+                                _ => genetics::HoxSequence::worm(4, [0.5, 0.5, 0.5]),
+                            };
+                            let genome = genetics::Genome::new_hox_driven(
+                                genetics::GenomeId(0), // Would normally be a unique ID
+                                common::EntityId(0),
+                                hox,
+                            );
+
+                            let diet = preset.diet.unwrap_or(ecology::Diet::Herbivore);
+                            let category =
+                                preset.category.unwrap_or(ecology::EcologicalCategory::None);
+
+                            // Spawn the organism
+                            organisms::spawn_organism(
+                                &mut self.world.ecs,
+                                &genome,
+                                spawn_pos,
+                                diet,
+                                category,
+                                0,
+                                0,
+                            );
+
+                            // We would attach the sandbox traits to the root node if possible,
+                            // but spawn_organism doesn't return the head node easily right now.
+                            // We'll leave the marker traits for later or add them to all nodes.
+                        } else {
+                            // Non-evolvable structures get a fixed static node topology.
+                            // For Membrane Seed or Structure Node, just spawn a single node.
+                            let seg_type = if preset.traits.is_membrane_seed { 1 } else { 0 };
+                            let color = if preset.traits.is_membrane_seed {
+                                [0.5, 0.5, 0.9]
+                            } else {
+                                [0.7, 0.7, 0.7]
+                            };
+
+                            let mut node = physics::ParticleNode::new(spawn_pos, 5.0, seg_type);
+                            node.is_fixed = preset.traits.fixable;
+                            let entity = self
+                                .world
+                                .ecs
+                                .spawn((
+                                    node,
+                                    organisms::OrganismColor(color),
+                                    preset.traits, // Attach SandboxTraits
+                                ))
+                                .id();
+
+                            // Attach biological components so Inspector can view it
+                            self.world.ecs.entity_mut(entity).insert((
+                                metabolism::Energy {
+                                    current: 100.0,
+                                    max: 200.0,
+                                },
+                                metabolism::Age {
+                                    ticks: 0,
+                                    max_lifespan: 10000,
+                                },
+                            ));
+                        }
+                    }
+                }
+                ui::MenuAction::GenerateHexMesh {
+                    cols,
+                    rows,
+                    spacing,
+                    stiffness,
+                    is_fixed,
+                } => {
+                    organisms::sandbox::generate_hex_mesh(
+                        &mut self.world.ecs,
+                        self.camera_pos,
+                        cols,
+                        rows,
+                        spacing,
+                        stiffness,
+                        is_fixed,
+                    );
+                }
+                ui::MenuAction::SpawnPaste => tracing::warn!("SpawnPaste not implemented"),
+                ui::MenuAction::JoinSelection => tracing::warn!("JoinSelection not implemented"),
+                ui::MenuAction::GrabSelection => tracing::warn!("GrabSelection not implemented"),
+                ui::MenuAction::GoToMainMenu => {
+                    self.app_state = ui::AppState::MainMenu;
+                }
+                ui::MenuAction::StartSimulation => {
+                    self.app_state = ui::AppState::Simulation;
+                    // Reset standard flags
+                    self.is_paused = false;
+                    self.show_about = false;
+                    self.show_docs = false;
+                }
+                ui::MenuAction::Quit => {
+                    info!("Quit action triggered from menu.");
+                    std::process::exit(0);
                 }
                 ui::MenuAction::LoadState => {
                     tracing::warn!("Load State not yet implemented fully.");
@@ -1338,6 +1513,8 @@ impl PhylonApp {
                         common::Vec2::new(0.0, 80.0),
                         ecology::Diet::Herbivore,
                         ecology::EcologicalCategory::None,
+                        0,
+                        0,
                     );
 
                     let fish_hox = genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]);
@@ -1352,6 +1529,8 @@ impl PhylonApp {
                         common::Vec2::new(0.0, 0.0),
                         ecology::Diet::Carnivore,
                         ecology::EcologicalCategory::None,
+                        0,
+                        0,
                     );
 
                     let branchy_genome = genetics::Genome::new_hox_driven(
@@ -1377,6 +1556,8 @@ impl PhylonApp {
                         common::Vec2::new(0.0, -90.0),
                         ecology::Diet::Producer,
                         ecology::EcologicalCategory::None,
+                        0,
+                        0,
                     );
 
                     let omnivore_hox = genetics::HoxSequence::fish(4, 1, [0.8, 0.2, 0.8]);
@@ -1391,6 +1572,8 @@ impl PhylonApp {
                         common::Vec2::new(-80.0, 0.0),
                         ecology::Diet::Omnivore,
                         ecology::EcologicalCategory::None,
+                        0,
+                        0,
                     );
 
                     let decomposer_hox = genetics::HoxSequence::worm(3, [0.4, 0.4, 0.4]);
@@ -1405,6 +1588,8 @@ impl PhylonApp {
                         common::Vec2::new(80.0, 0.0),
                         ecology::Diet::Decomposer,
                         ecology::EcologicalCategory::None,
+                        0,
+                        0,
                     );
                 }
                 ui::MenuAction::SelectAll => {
@@ -1439,6 +1624,8 @@ impl PhylonApp {
                         self.camera_pos,
                         ecology::Diet::Carnivore,
                         ecology::EcologicalCategory::None,
+                        0,
+                        0,
                     );
                 }
                 ui::MenuAction::ShowDocumentation => {
@@ -1555,6 +1742,30 @@ impl ApplicationHandler for PhylonApp {
                     | PhysicalKey::Code(KeyCode::NumpadSubtract) => {
                         self.camera_zoom /= 1.1;
                         self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
+                    }
+                    PhysicalKey::Code(KeyCode::KeyX) => {
+                        self.handle_menu_actions(vec![ui::MenuAction::DeleteSelection]);
+                    }
+                    PhysicalKey::Code(KeyCode::KeyC) => {
+                        self.handle_menu_actions(vec![ui::MenuAction::DuplicateSelection]);
+                    }
+                    PhysicalKey::Code(KeyCode::KeyV) => {
+                        self.handle_menu_actions(vec![ui::MenuAction::SpawnPaste]);
+                    }
+                    PhysicalKey::Code(KeyCode::KeyJ) => {
+                        self.handle_menu_actions(vec![ui::MenuAction::JoinSelection]);
+                    }
+                    PhysicalKey::Code(KeyCode::KeyF) => {
+                        self.handle_menu_actions(vec![ui::MenuAction::ToggleStationary]);
+                    }
+                    PhysicalKey::Code(KeyCode::KeyG) => {
+                        self.handle_menu_actions(vec![ui::MenuAction::GrabSelection]);
+                    }
+                    PhysicalKey::Code(KeyCode::KeyZ) if self.modifiers.control_key() => {
+                        self.handle_menu_actions(vec![ui::MenuAction::Undo]);
+                    }
+                    PhysicalKey::Code(KeyCode::KeyY) if self.modifiers.control_key() => {
+                        self.handle_menu_actions(vec![ui::MenuAction::Redo]);
                     }
                     _ => {}
                 }

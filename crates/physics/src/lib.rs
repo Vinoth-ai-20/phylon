@@ -52,6 +52,8 @@ pub struct ParticleNode {
     pub mass: f32,
     /// Segment type (0=Head, 1=Torso, 2=Muscle, 3=Tail, 4=Fin)
     pub segment_type: u32,
+    /// Whether the node is fixed in place.
+    pub is_fixed: bool,
 }
 
 impl ParticleNode {
@@ -63,6 +65,7 @@ impl ParticleNode {
             force: Vec2::ZERO,
             mass,
             segment_type,
+            is_fixed: false,
         }
     }
 }
@@ -112,6 +115,38 @@ pub struct Spring {
 pub struct PhysicsConfig {
     /// Time step delta t for integration.
     pub dt: f32,
+    /// Number of substeps per tick.
+    pub substep_count: u32,
+    /// Global dampening factor applied to velocity.
+    pub dampening: f32,
+    /// Pull towards the origin.
+    pub centering_force: f32,
+    /// Downward gravity force.
+    pub gravity: f32,
+    /// Repulsion strength during collisions.
+    pub collision_force: f32,
+    /// Inter-particle repulsion strength (non-colliding).
+    pub repel_force: f32,
+    /// Spring link strength multiplier.
+    pub links_force: f32,
+    /// Repulsion force from world bounds.
+    pub wall_force: f32,
+}
+
+impl Default for PhysicsConfig {
+    fn default() -> Self {
+        Self {
+            dt: 0.016,
+            substep_count: 1,
+            dampening: 0.99,
+            centering_force: 0.0,
+            gravity: 0.0,
+            collision_force: 1.0,
+            repel_force: 1.0,
+            links_force: 1.0,
+            wall_force: 1.0,
+        }
+    }
 }
 
 /// Computes the spring forces between nodes and adds them to `ParticleNode.force`.
@@ -173,7 +208,7 @@ pub fn spring_force_system(
 pub fn physics_integration_system(config: Res<PhysicsConfig>, mut query: Query<&mut ParticleNode>) {
     let dt = config.dt;
     for mut node in query.iter_mut() {
-        if node.mass > 0.0 {
+        if node.mass > 0.0 && !node.is_fixed {
             let acceleration = node.force / node.mass;
             // Symplectic Euler: update velocity first, then position.
             node.velocity += acceleration * dt;
@@ -200,5 +235,6 @@ mod tests {
         assert_eq!(node.force, Vec2::ZERO);
         assert_eq!(node.mass, 3.0);
         assert_eq!(node.segment_type, 1);
+        assert_eq!(node.is_fixed, false);
     }
 }
