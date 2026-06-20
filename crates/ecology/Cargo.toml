@@ -14,3 +14,4 @@ physics    = { workspace = true }
 metabolism = { workspace = true }
 fastrand   = "2.3"
 serde      = { workspace = true }
+environment = { version = "0.1.0", path = "../environment" }

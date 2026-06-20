@@ -10,3 +10,5 @@ world     = { workspace = true }
 spatial   = { workspace = true }
 serde     = { workspace = true }
 thiserror = { workspace = true }
+noise = "0.9.0"
+bevy_ecs.workspace = true

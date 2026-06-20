@@ -12,3 +12,4 @@ bevy_ecs  = { workspace = true }
 sensing   = { path = "../sensing" }
 brain     = { path = "../brain" }
 physics   = { path = "../physics" }
+environment = { version = "0.1.0", path = "../environment" }

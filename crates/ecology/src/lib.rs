@@ -91,18 +91,29 @@ impl Default for EcologyConfig {
 pub fn food_spawner_system(
     mut commands: Commands,
     config: Res<EcologyConfig>,
+    env: Res<environment::EnvironmentManager>,
     query: Query<(), With<FoodPellet>>,
 ) {
     let current_count = query.iter().count();
     if current_count < config.max_food_pellets {
-        // Spawn 1 pellet per tick if under cap
-        let x = (fastrand::f32() - 0.5) * 800.0; // Assume 800x600 logical bounds for now
-        let y = (fastrand::f32() - 0.5) * 600.0;
+        // Simple rejection sampling to favor fertile biomes
+        for _ in 0..10 {
+            // Max 10 attempts per tick
+            let x = (fastrand::f32() - 0.5) * env.width();
+            let y = (fastrand::f32() - 0.5) * env.height();
 
-        commands.spawn(FoodPellet {
-            position: Vec2::new(x, y),
-            energy_value: 50.0,
-        });
+            let biome = env.get_biome_at(x, y);
+            let fertility = biome.fertility();
+
+            // Rejection sampling: accept if random value is less than fertility
+            if fastrand::f32() * 1.5 < fertility {
+                commands.spawn(FoodPellet {
+                    position: Vec2::new(x, y),
+                    energy_value: 50.0,
+                });
+                break; // Successfully spawned 1 pellet
+            }
+        }
     }
 }
 

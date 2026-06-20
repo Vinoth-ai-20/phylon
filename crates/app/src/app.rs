@@ -172,6 +172,14 @@ impl PhylonApp {
             .insert_resource(bevy_ecs::event::Events::<reproduction::BirthRequest>::default());
         world.ecs.insert_resource(analytics::MetricsState::new());
 
+        let env_manager = environment::EnvironmentManager::new(
+            sim_config.simulation.rng_seed,
+            sim_config.simulation.toroidal_world,
+            2000.0, // World width for procedural generation
+            2000.0, // World height
+        );
+        world.ecs.insert_resource(env_manager);
+
         // ── Spawn three organisms with distinct Hox sequences ─────────────────
         // Organism 1: Simple worm — 6 muscle segments, no branching.
         let worm_hox = genetics::HoxSequence::worm(6, [0.85, 0.35, 0.35]);

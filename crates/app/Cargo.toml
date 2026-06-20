@@ -53,3 +53,4 @@ anyhow = { workspace = true }
 # Async block-on helper for wgpu initialization
 pollster = "0.3"
 egui-remixicon = "0.29.1"
+environment = { version = "0.1.0", path = "../environment" }
