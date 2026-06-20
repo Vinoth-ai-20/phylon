@@ -63,6 +63,10 @@ pub struct SdfSkinRenderer {
     composite_bind_group: wgpu::BindGroup,
     current_width: u32,
     current_height: u32,
+    // ── Highlight Composite pipeline ───────────────────────────────────────
+    highlight_composite_pipeline: wgpu::RenderPipeline,
+    highlight_color_buffer: wgpu::Buffer,
+    highlight_color_bind_group: wgpu::BindGroup,
 }
 
 /// The texture format used for the intermediate density accumulation target.
@@ -228,6 +232,79 @@ impl SdfSkinRenderer {
             cache: None,
         });
 
+        // ── Highlight Composite pipeline ───────────────────────────────────
+        let highlight_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("SdfHighlightShader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("sdf_highlight.wgsl").into()),
+        });
+
+        let highlight_color_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("HighlightColorBuffer"),
+            contents: bytemuck::cast_slice(&[0.0f32; 4]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let highlight_color_bgl =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("HighlightColorBGL"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let highlight_color_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("HighlightColorBindGroup"),
+            layout: &highlight_color_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: highlight_color_buffer.as_entire_binding(),
+            }],
+        });
+
+        let highlight_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("SdfHighlightPipelineLayout"),
+                bind_group_layouts: &[&composite_bgl, &highlight_color_bgl],
+                push_constant_ranges: &[],
+            });
+
+        let highlight_composite_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("SdfHighlightPipeline"),
+                layout: Some(&highlight_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &highlight_shader,
+                    entry_point: "vs_highlight",
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &highlight_shader,
+                    entry_point: "fs_highlight",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
         let accum_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("SdfAccumSampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -250,6 +327,9 @@ impl SdfSkinRenderer {
             accum_view,
             composite_bind_group,
             current_width: width,
+            highlight_composite_pipeline,
+            highlight_color_buffer,
+            highlight_color_bind_group,
             current_height: height,
         }
     }
@@ -411,6 +491,110 @@ impl SdfSkinRenderer {
 
             rpass.set_pipeline(&self.composite_pipeline);
             rpass.set_bind_group(0, &self.composite_bind_group, &[]);
+            rpass.draw(0..3, 0..1); // Full-screen triangle
+        }
+
+        queue.submit(Some(encoder.finish()));
+    }
+
+    /// Renders a highlight outline for the provided bones.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_highlight(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target_view: &wgpu::TextureView,
+        bones: &[SdfBoneInstance],
+        color: [f32; 4],
+        screen_size: [f32; 2],
+        camera_pos: common::Vec2,
+        camera_zoom: f32,
+        viewport: Option<[u32; 4]>,
+    ) {
+        if bones.is_empty() {
+            return;
+        }
+
+        // We assume the size has already been synchronized in the preceding `render` call.
+
+        // Update camera matrix
+        let w = screen_size[0] / 2.0 / camera_zoom;
+        let h = screen_size[1] / 2.0 / camera_zoom;
+        let mut proj = glam::Mat4::orthographic_rh(-w, w, -h, h, -1.0, 1.0);
+        proj *= glam::Mat4::from_translation(glam::Vec3::new(-camera_pos.x, -camera_pos.y, 0.0));
+        queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&proj.to_cols_array_2d()),
+        );
+
+        // Update highlight color
+        queue.write_buffer(
+            &self.highlight_color_buffer,
+            0,
+            bytemuck::cast_slice(&color),
+        );
+
+        let bone_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("SdfHighlightBoneBuffer"),
+            contents: bytemuck::cast_slice(bones),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("SdfHighlightEncoder"),
+        });
+
+        // ── Pass 1: accumulate density into offscreen texture ──────────────
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("SdfHighlightAccumPass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.accum_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), // Clear density to 0
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            rpass.set_pipeline(&self.accum_pipeline);
+            rpass.set_bind_group(0, &self.camera_bind_group, &[]);
+            rpass.set_vertex_buffer(0, bone_buffer.slice(..));
+            rpass.draw(0..4, 0..bones.len() as u32);
+        }
+
+        // ── Pass 2: composite highlight onto swapchain ──────────────────────
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("SdfHighlightCompositePass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load, // Composite onto existing frame
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            if let Some([vx, vy, vw, vh]) = viewport {
+                if vw > 0 && vh > 0 {
+                    rpass.set_viewport(vx as f32, vy as f32, vw as f32, vh as f32, 0.0, 1.0);
+                    rpass.set_scissor_rect(vx, vy, vw, vh);
+                }
+            }
+
+            rpass.set_pipeline(&self.highlight_composite_pipeline);
+            rpass.set_bind_group(0, &self.composite_bind_group, &[]);
+            rpass.set_bind_group(1, &self.highlight_color_bind_group, &[]);
             rpass.draw(0..3, 0..1); // Full-screen triangle
         }
 

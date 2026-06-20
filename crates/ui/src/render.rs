@@ -27,7 +27,7 @@ pub fn render_ui(
     show_about: &mut bool,
     show_docs: &mut bool,
     show_vision_cones: &mut bool,
-    hovered_entity: Option<bevy_ecs::entity::Entity>,
+    _hovered_entity: Option<bevy_ecs::entity::Entity>,
     quit_confirm_time: &mut Option<f64>,
     main_menu_confirm_time: &mut Option<f64>,
 ) -> (CanvasInteraction, Vec<MenuAction>) {
@@ -100,16 +100,22 @@ pub fn render_ui(
                 }
                 ui.add_space(10.0);
 
-                ui.menu_button(egui::RichText::new("Open Recent").size(24.0), |ui| {
-                    if ui.button("save_01.ron").clicked() {
-                        actions.push(MenuAction::LoadState);
-                        actions.push(MenuAction::StartSimulation);
-                    }
-                    if ui.button("save_02.ron").clicked() {
-                        actions.push(MenuAction::LoadState);
-                        actions.push(MenuAction::StartSimulation);
-                    }
-                });
+                ui.allocate_ui_with_layout(
+                    btn_size,
+                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                    |ui| {
+                        ui.menu_button(egui::RichText::new("Open Recent").size(24.0), |ui| {
+                            if ui.button("save_01.ron").clicked() {
+                                actions.push(MenuAction::LoadState);
+                                actions.push(MenuAction::StartSimulation);
+                            }
+                            if ui.button("save_02.ron").clicked() {
+                                actions.push(MenuAction::LoadState);
+                                actions.push(MenuAction::StartSimulation);
+                            }
+                        });
+                    },
+                );
                 ui.add_space(10.0);
 
                 if ui
@@ -1322,14 +1328,6 @@ pub fn render_ui(
 
     let selected_component = (*selected_entity).map(&mut get_connected_component);
 
-    let hovered_component = hovered_entity.and_then(|e| {
-        if Some(e) != *selected_entity {
-            Some(get_connected_component(e))
-        } else {
-            None
-        }
-    });
-
     // Render vision cones if enabled
     if *show_vision_cones {
         let mut query = world.ecs.query::<(
@@ -1382,148 +1380,6 @@ pub fn render_ui(
                     egui::Color32::from_rgba_premultiplied(0, 255, 255, 255),
                 ),
             ));
-        }
-    }
-
-    // Render highlights for hovered and selected entities
-    let mut highlight_painter = ctx.layer_painter(egui::LayerId::background());
-    highlight_painter.set_clip_rect(interact_response.rect);
-
-    if let Some(ref hover_comp) = hovered_component {
-        let stroke = egui::Stroke::new(0.5, egui::Color32::from_rgb(100, 255, 100));
-        let visual_padding_wu = stroke.width * (ppp / camera_zoom);
-
-        let mut query_springs = world.ecs.query::<&physics::Spring>();
-        let mut query_nodes = world.ecs.query::<&physics::ParticleNode>();
-        let mut query_food = world.ecs.query::<&ecology::FoodPellet>();
-        let mut query_mineral = world.ecs.query::<&ecology::MineralPellet>();
-        let mut query_corpse = world.ecs.query::<&ecology::Corpse>();
-
-        for spring in query_springs.iter(&world.ecs) {
-            if hover_comp.contains(&spring.node_a) && hover_comp.contains(&spring.node_b) {
-                if let (Ok(na), Ok(nb)) = (
-                    query_nodes.get(&world.ecs, spring.node_a),
-                    query_nodes.get(&world.ecs, spring.node_b),
-                ) {
-                    let radius_wu = if spring.constraint_type == physics::ConstraintType::Elastic {
-                        6.0
-                    } else {
-                        if spring.is_fin == 1 {
-                            4.0
-                        } else {
-                            8.0
-                        }
-                    };
-                    let points = capsule_points(
-                        na.position,
-                        nb.position,
-                        radius_wu + visual_padding_wu,
-                        to_screen,
-                    );
-                    highlight_painter.add(egui::Shape::closed_line(points, stroke));
-                }
-            }
-        }
-        for &node_ent in hover_comp {
-            if let Ok(node) = query_nodes.get(&world.ecs, node_ent) {
-                let r_wu = if node.segment_type == 4 { 3.0 } else { 5.0 };
-                let r_logical = r_wu * (camera_zoom / ppp);
-                highlight_painter.circle_stroke(
-                    to_screen(node.position),
-                    r_logical + stroke.width,
-                    stroke,
-                );
-            } else if let Ok(food) = query_food.get(&world.ecs, node_ent) {
-                let r_logical = 2.5 * (camera_zoom / ppp);
-                highlight_painter.circle_stroke(
-                    to_screen(food.position),
-                    r_logical + stroke.width,
-                    stroke,
-                );
-            } else if let Ok(mineral) = query_mineral.get(&world.ecs, node_ent) {
-                let r_logical = 2.0 * (camera_zoom / ppp);
-                highlight_painter.circle_stroke(
-                    to_screen(mineral.position),
-                    r_logical + stroke.width,
-                    stroke,
-                );
-            } else if let Ok(corpse) = query_corpse.get(&world.ecs, node_ent) {
-                let r_logical = 4.0 * (camera_zoom / ppp);
-                highlight_painter.circle_stroke(
-                    to_screen(corpse.position),
-                    r_logical + stroke.width,
-                    stroke,
-                );
-            }
-        }
-    }
-
-    if let Some(ref sel_comp) = selected_component {
-        let stroke = egui::Stroke::new(2.5, egui::Color32::YELLOW);
-        let visual_padding_wu = stroke.width * (ppp / camera_zoom);
-
-        let mut query_springs = world.ecs.query::<&physics::Spring>();
-        let mut query_nodes = world.ecs.query::<&physics::ParticleNode>();
-        let mut query_food = world.ecs.query::<&ecology::FoodPellet>();
-        let mut query_mineral = world.ecs.query::<&ecology::MineralPellet>();
-        let mut query_corpse = world.ecs.query::<&ecology::Corpse>();
-
-        for spring in query_springs.iter(&world.ecs) {
-            if sel_comp.contains(&spring.node_a) && sel_comp.contains(&spring.node_b) {
-                if let (Ok(na), Ok(nb)) = (
-                    query_nodes.get(&world.ecs, spring.node_a),
-                    query_nodes.get(&world.ecs, spring.node_b),
-                ) {
-                    let radius_wu = if spring.constraint_type == physics::ConstraintType::Elastic {
-                        6.0
-                    } else {
-                        if spring.is_fin == 1 {
-                            4.0
-                        } else {
-                            8.0
-                        }
-                    };
-                    let points = capsule_points(
-                        na.position,
-                        nb.position,
-                        radius_wu + visual_padding_wu,
-                        to_screen,
-                    );
-                    highlight_painter.add(egui::Shape::closed_line(points, stroke));
-                }
-            }
-        }
-        for &node_ent in sel_comp {
-            if let Ok(node) = query_nodes.get(&world.ecs, node_ent) {
-                let r_wu = if node.segment_type == 4 { 3.0 } else { 5.0 };
-                let r_logical = r_wu * (camera_zoom / ppp);
-                highlight_painter.circle_stroke(
-                    to_screen(node.position),
-                    r_logical + stroke.width,
-                    stroke,
-                );
-            } else if let Ok(food) = query_food.get(&world.ecs, node_ent) {
-                let r_logical = 2.5 * (camera_zoom / ppp);
-                highlight_painter.circle_stroke(
-                    to_screen(food.position),
-                    r_logical + stroke.width,
-                    stroke,
-                );
-            } else if let Ok(mineral) = query_mineral.get(&world.ecs, node_ent) {
-                let r_logical = 2.0 * (camera_zoom / ppp);
-                highlight_painter.circle_stroke(
-                    to_screen(mineral.position),
-                    r_logical + stroke.width,
-                    stroke,
-                );
-            } else if let Ok(corpse) = query_corpse.get(&world.ecs, node_ent) {
-                let r_logical = 4.0 * (camera_zoom / ppp);
-                highlight_painter.circle_stroke(
-                    to_screen(corpse.position),
-                    r_logical + stroke.width,
-                    stroke,
-                );
-            }
         }
     }
 

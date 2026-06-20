@@ -363,6 +363,8 @@ impl PhylonApp {
         // 6. Gather rendering instances
         let mut debug_instances = Vec::new();
         let mut sdf_bones = Vec::new();
+        let mut hover_bones = Vec::new();
+        let mut selected_bones = Vec::new();
 
         let mut get_connected_component = |entity: bevy_ecs::entity::Entity| {
             let mut adj: std::collections::HashMap<
@@ -393,6 +395,7 @@ impl PhylonApp {
         };
 
         let selected_component = self.selected_entity.map(&mut get_connected_component);
+        let hovered_component = self.hovered_entity.map(&mut get_connected_component);
 
         // Build node position lookup for bone endpoint resolution
         let mut node_positions: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 2]> =
@@ -458,6 +461,43 @@ impl PhylonApp {
             let is_in_selected = selected_component
                 .as_ref()
                 .is_some_and(|comp| comp.contains(&spring.node_a) && comp.contains(&spring.node_b));
+            let is_in_hovered = hovered_component
+                .as_ref()
+                .is_some_and(|comp| comp.contains(&spring.node_a) && comp.contains(&spring.node_b));
+
+            let mut highlight_radius = 8.0;
+            if spring.is_fin == 1 {
+                highlight_radius = 4.0;
+            }
+            if spring.constraint_type == physics::ConstraintType::Passive && spring.is_fin == 0 {
+                highlight_radius = 4.0;
+            }
+            if spring.constraint_type == physics::ConstraintType::Elastic {
+                highlight_radius = 6.0;
+            }
+
+            if let (Some(&pa), Some(&pb)) = (
+                node_positions.get(&spring.node_a),
+                node_positions.get(&spring.node_b),
+            ) {
+                if is_in_hovered {
+                    hover_bones.push(rendering::SdfBoneInstance {
+                        pos_a: pa,
+                        pos_b: pb,
+                        radius: highlight_radius,
+                        color: [0.0, 1.0, 0.0],
+                    });
+                }
+                if is_in_selected {
+                    selected_bones.push(rendering::SdfBoneInstance {
+                        pos_a: pa,
+                        pos_b: pb,
+                        radius: highlight_radius,
+                        color: [1.0, 1.0, 1.0],
+                    });
+                }
+            }
+
             let should_draw_debug =
                 self.debug_structural && (selected_component.is_none() || is_in_selected);
             let should_draw_sdf =
@@ -560,39 +600,171 @@ impl PhylonApp {
         }
 
         // Render food pellets (always shown in debug view)
-        let mut query_food = self.world.ecs.query::<&ecology::FoodPellet>();
-        for food in query_food.iter(&self.world.ecs) {
-            debug_instances.push(rendering::DebugInstance {
-                pos_a: [food.position.x, food.position.y],
-                pos_b: [food.position.x, food.position.y],
-                color: [1.0, 0.8, 0.0, 1.0],
-                radius: 2.5,
-                segment_type: 0,
-            });
+        let mut query_food = self
+            .world
+            .ecs
+            .query::<(bevy_ecs::entity::Entity, &ecology::FoodPellet)>();
+        for (entity, food) in query_food.iter(&self.world.ecs) {
+            let pos = [food.position.x, food.position.y];
+            let is_in_selected = selected_component
+                .as_ref()
+                .is_some_and(|c| c.contains(&entity));
+            let should_draw_debug =
+                self.debug_structural && (selected_component.is_none() || is_in_selected);
+            let should_draw_sdf =
+                !self.debug_structural || (selected_component.is_some() && !is_in_selected);
+
+            if should_draw_debug {
+                debug_instances.push(rendering::DebugInstance {
+                    pos_a: pos,
+                    pos_b: pos,
+                    color: [1.0, 0.8, 0.0, 1.0],
+                    radius: 2.5,
+                    segment_type: 0,
+                });
+            }
+            if should_draw_sdf {
+                sdf_bones.push(rendering::SdfBoneInstance {
+                    pos_a: pos,
+                    pos_b: pos,
+                    radius: 2.5,
+                    color: [1.0, 0.8, 0.0],
+                });
+            }
+            if hovered_component
+                .as_ref()
+                .is_some_and(|c| c.contains(&entity))
+            {
+                hover_bones.push(rendering::SdfBoneInstance {
+                    pos_a: pos,
+                    pos_b: pos,
+                    radius: 2.5,
+                    color: [0.0, 1.0, 0.0],
+                });
+            }
+            if selected_component
+                .as_ref()
+                .is_some_and(|c| c.contains(&entity))
+            {
+                selected_bones.push(rendering::SdfBoneInstance {
+                    pos_a: pos,
+                    pos_b: pos,
+                    radius: 2.5,
+                    color: [1.0, 1.0, 1.0],
+                });
+            }
         }
 
         // Render mineral pellets
-        let mut query_mineral = self.world.ecs.query::<&ecology::MineralPellet>();
-        for mineral in query_mineral.iter(&self.world.ecs) {
-            debug_instances.push(rendering::DebugInstance {
-                pos_a: [mineral.position.x, mineral.position.y],
-                pos_b: [mineral.position.x, mineral.position.y],
-                color: [1.0, 1.0, 1.0, 1.0], // Bright White
-                radius: 2.0,
-                segment_type: 0,
-            });
+        let mut query_mineral = self
+            .world
+            .ecs
+            .query::<(bevy_ecs::entity::Entity, &ecology::MineralPellet)>();
+        for (entity, mineral) in query_mineral.iter(&self.world.ecs) {
+            let pos = [mineral.position.x, mineral.position.y];
+            let is_in_selected = selected_component
+                .as_ref()
+                .is_some_and(|c| c.contains(&entity));
+            let should_draw_debug =
+                self.debug_structural && (selected_component.is_none() || is_in_selected);
+            let should_draw_sdf =
+                !self.debug_structural || (selected_component.is_some() && !is_in_selected);
+
+            if should_draw_debug {
+                debug_instances.push(rendering::DebugInstance {
+                    pos_a: pos,
+                    pos_b: pos,
+                    color: [1.0, 1.0, 1.0, 1.0], // Bright White
+                    radius: 2.0,
+                    segment_type: 0,
+                });
+            }
+            if should_draw_sdf {
+                sdf_bones.push(rendering::SdfBoneInstance {
+                    pos_a: pos,
+                    pos_b: pos,
+                    radius: 2.0,
+                    color: [1.0, 1.0, 1.0],
+                });
+            }
+            if hovered_component
+                .as_ref()
+                .is_some_and(|c| c.contains(&entity))
+            {
+                hover_bones.push(rendering::SdfBoneInstance {
+                    pos_a: pos,
+                    pos_b: pos,
+                    radius: 2.0,
+                    color: [0.0, 1.0, 0.0],
+                });
+            }
+            if selected_component
+                .as_ref()
+                .is_some_and(|c| c.contains(&entity))
+            {
+                selected_bones.push(rendering::SdfBoneInstance {
+                    pos_a: pos,
+                    pos_b: pos,
+                    radius: 2.0,
+                    color: [1.0, 1.0, 1.0],
+                });
+            }
         }
 
         // Render corpses
-        let mut query_corpse = self.world.ecs.query::<&ecology::Corpse>();
-        for corpse in query_corpse.iter(&self.world.ecs) {
-            debug_instances.push(rendering::DebugInstance {
-                pos_a: [corpse.position.x, corpse.position.y],
-                pos_b: [corpse.position.x, corpse.position.y],
-                color: [0.3, 0.3, 0.3, 1.0], // Dark Grey
-                radius: 4.0,
-                segment_type: 0,
-            });
+        let mut query_corpse = self
+            .world
+            .ecs
+            .query::<(bevy_ecs::entity::Entity, &ecology::Corpse)>();
+        for (entity, corpse) in query_corpse.iter(&self.world.ecs) {
+            let pos = [corpse.position.x, corpse.position.y];
+            let is_in_selected = selected_component
+                .as_ref()
+                .is_some_and(|c| c.contains(&entity));
+            let should_draw_debug =
+                self.debug_structural && (selected_component.is_none() || is_in_selected);
+            let should_draw_sdf =
+                !self.debug_structural || (selected_component.is_some() && !is_in_selected);
+
+            if should_draw_debug {
+                debug_instances.push(rendering::DebugInstance {
+                    pos_a: pos,
+                    pos_b: pos,
+                    color: [0.3, 0.3, 0.3, 1.0], // Dark Grey
+                    radius: 4.0,
+                    segment_type: 0,
+                });
+            }
+            if should_draw_sdf {
+                sdf_bones.push(rendering::SdfBoneInstance {
+                    pos_a: pos,
+                    pos_b: pos,
+                    radius: 4.0,
+                    color: [0.3, 0.3, 0.3],
+                });
+            }
+            if hovered_component
+                .as_ref()
+                .is_some_and(|c| c.contains(&entity))
+            {
+                hover_bones.push(rendering::SdfBoneInstance {
+                    pos_a: pos,
+                    pos_b: pos,
+                    radius: 4.0,
+                    color: [0.0, 1.0, 0.0],
+                });
+            }
+            if selected_component
+                .as_ref()
+                .is_some_and(|c| c.contains(&entity))
+            {
+                selected_bones.push(rendering::SdfBoneInstance {
+                    pos_a: pos,
+                    pos_b: pos,
+                    radius: 4.0,
+                    color: [1.0, 1.0, 1.0],
+                });
+            }
         }
 
         // Prepare render frame
@@ -747,6 +919,38 @@ impl PhylonApp {
             }
         }
 
+        if !hover_bones.is_empty() {
+            if let Some(sdf_renderer) = self.sdf_skin_renderer.as_mut() {
+                sdf_renderer.render_highlight(
+                    &gpu.device,
+                    &gpu.queue,
+                    &view,
+                    &hover_bones,
+                    [0.0, 1.0, 0.0, 1.0],
+                    [view_w, view_h],
+                    self.camera_pos,
+                    self.camera_zoom,
+                    central_rect_px,
+                );
+            }
+        }
+
+        if !selected_bones.is_empty() {
+            if let Some(sdf_renderer) = self.sdf_skin_renderer.as_mut() {
+                let pulse = 0.6 + 0.4 * (self.total_sim_time * 3.0).sin();
+                sdf_renderer.render_highlight(
+                    &gpu.device,
+                    &gpu.queue,
+                    &view,
+                    &selected_bones,
+                    [1.0, 1.0, 1.0, pulse],
+                    [view_w, view_h],
+                    self.camera_pos,
+                    self.camera_zoom,
+                    central_rect_px,
+                );
+            }
+        }
         if !debug_instances.is_empty() {
             if let Some(debug_renderer) = self.debug_renderer.as_mut() {
                 debug_renderer.render(

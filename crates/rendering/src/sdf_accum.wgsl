@@ -31,8 +31,9 @@ fn vs_accum(
     @builtin(vertex_index) vi: u32,
     inst: BoneInstance,
 ) -> VertexOutput {
-    // Build a quad that exactly covers the capsule AABB + 1px guard band
-    let pad   = inst.radius + 1.0;
+    // Build a quad that exactly covers the capsule AABB + extra padding for the highlight ring.
+    // The highlight ring extends outwards up to ~1.9x the radius (where density drops to 0.1).
+    let pad   = inst.radius * 2.0 + 1.0;
     let mn    = min(inst.pos_a, inst.pos_b) - vec2<f32>(pad, pad);
     let mx    = max(inst.pos_a, inst.pos_b) + vec2<f32>(pad, pad);
 
