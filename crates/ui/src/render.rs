@@ -1163,6 +1163,15 @@ pub fn render_ui(
         .exact_height(24.0)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
+                if *is_paused {
+                    ui.label(
+                        egui::RichText::new("⏸ PAUSED")
+                            .color(egui::Color32::from_rgb(255, 150, 50))
+                            .strong(),
+                    );
+                    ui.separator();
+                }
+
                 let entity_count = world.ecs.entities().len();
                 let fps = world
                     .ecs
@@ -1492,25 +1501,6 @@ pub fn render_ui(
             }
         }
     }
-
-    // ── Bottom status bar ──────────────────────────────────────────────────
-    egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
-        ui.horizontal(|ui| {
-            if *is_paused {
-                ui.label(
-                    egui::RichText::new("⏸ PAUSED")
-                        .color(egui::Color32::from_rgb(255, 150, 50))
-                        .strong(),
-                );
-                ui.separator();
-            }
-            ui.label("Status: Running");
-            ui.separator();
-            ui.label("FPS: --"); // Replaced by metrics later
-            ui.separator();
-            ui.label("Tick: --"); // Replaced by metrics later
-        });
-    });
 
     (
         CanvasInteraction {
