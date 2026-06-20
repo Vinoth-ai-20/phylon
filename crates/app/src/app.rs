@@ -406,6 +406,9 @@ impl PhylonApp {
         let brain_compute = gpu::brain_pipeline::BrainComputePipeline::new(&device);
 
         let egui_context = egui::Context::default();
+        let mut fonts = egui::FontDefinitions::default();
+        egui_remixicon::add_to_fonts(&mut fonts);
+        egui_context.set_fonts(fonts);
         egui_context.options_mut(|o| {
             o.zoom_with_keyboard = false;
         });

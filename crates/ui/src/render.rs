@@ -408,7 +408,10 @@ pub fn render_ui(
             ui.add_space(8.0);
             ui.vertical_centered(|ui| {
                 if ui
-                    .selectable_label(*active_tab == SidebarTab::Inspector, "🔍")
+                    .selectable_label(
+                        *active_tab == SidebarTab::Inspector,
+                        egui_remixicon::icons::SEARCH_LINE,
+                    )
                     .on_hover_text("Inspector")
                     .clicked()
                 {
@@ -416,7 +419,10 @@ pub fn render_ui(
                 }
                 ui.add_space(4.0);
                 if ui
-                    .selectable_label(*active_tab == SidebarTab::Genetics, "⚗")
+                    .selectable_label(
+                        *active_tab == SidebarTab::Genetics,
+                        egui_remixicon::icons::TEST_TUBE_LINE,
+                    )
                     .on_hover_text("Genetics")
                     .clicked()
                 {
@@ -424,7 +430,10 @@ pub fn render_ui(
                 }
                 ui.add_space(4.0);
                 if ui
-                    .selectable_label(*active_tab == SidebarTab::Analytics, "📈")
+                    .selectable_label(
+                        *active_tab == SidebarTab::Analytics,
+                        egui_remixicon::icons::LINE_CHART_LINE,
+                    )
                     .on_hover_text("Analytics")
                     .clicked()
                 {
@@ -440,7 +449,10 @@ pub fn render_ui(
                 }
                 ui.add_space(4.0);
                 if ui
-                    .selectable_label(*active_tab == SidebarTab::Tuning, "⚙")
+                    .selectable_label(
+                        *active_tab == SidebarTab::Tuning,
+                        egui_remixicon::icons::SETTINGS_3_LINE,
+                    )
                     .on_hover_text("Tuning")
                     .clicked()
                 {
@@ -472,7 +484,7 @@ pub fn render_ui(
         .show(ctx, |ui| {
             match active_tab {
                 SidebarTab::Inspector => {
-                    ui.heading("🔍 Inspector");
+                    ui.heading(format!("{} Inspector", egui_remixicon::icons::SEARCH_LINE));
                     ui.separator();
                     ui.checkbox(debug_structural, "🔲 Debug Structural View");
                     if *debug_structural {
@@ -699,7 +711,7 @@ pub fn render_ui(
                     }
                 }
                 SidebarTab::Genetics => {
-                    ui.heading("⚗ Genetics");
+                    ui.heading(format!("{} Genetics", egui_remixicon::icons::TEST_TUBE_LINE));
                     ui.separator();
                     if let Some(entity) = *selected_entity {
                         // Find the head node for this organism to get the genome
@@ -982,7 +994,7 @@ pub fn render_ui(
                     }
                 }
                 SidebarTab::Analytics => {
-                    ui.heading("📈 Analytics");
+                    ui.heading(format!("{} Analytics", egui_remixicon::icons::LINE_CHART_LINE));
                     ui.separator();
                     if let Some(metrics) = world.ecs.get_resource::<analytics::MetricsState>() {
                         ui.label(egui::RichText::new("Compute Profiling").strong());
@@ -1165,7 +1177,7 @@ pub fn render_ui(
             ui.horizontal(|ui| {
                 if *is_paused {
                     ui.label(
-                        egui::RichText::new("⏸ PAUSED")
+                        egui::RichText::new(format!("{} PAUSED", egui_remixicon::icons::PAUSE_LINE))
                             .color(egui::Color32::from_rgb(255, 150, 50))
                             .strong(),
                     );
@@ -1188,20 +1200,33 @@ pub fn render_ui(
 
                 ui.label(format!("⏱ Tick: {}", tick_count));
                 ui.separator();
-                ui.label(format!("⚡ FPS: {:.0}", fps));
+                ui.label(format!("{} FPS: {:.0}", egui_remixicon::icons::SPEED_LINE, fps));
                 ui.separator();
-                ui.label(format!("🦠 Entities: {}", entity_count));
+                ui.label(format!("{} Entities: {}", egui_remixicon::icons::BUG_LINE, entity_count));
                 ui.separator();
                 ui.label(if *debug_structural {
-                    "👁 Mode: Structural"
+                    format!("{} Mode: Structural", egui_remixicon::icons::EYE_LINE)
                 } else {
-                    "👁 Mode: SDF Skin"
+                    format!("{} Mode: SDF Skin", egui_remixicon::icons::EYE_LINE)
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label("Mem: <100MB"); // Placeholder, proper system memory integration later
+                    thread_local! {
+                        static SYS: std::cell::RefCell<sysinfo::System> = std::cell::RefCell::new(sysinfo::System::new());
+                    }
+                    let mem_mb = SYS.with(|sys_cell| {
+                        let mut sys = sys_cell.borrow_mut();
+                        if let Ok(pid) = sysinfo::get_current_pid() {
+                            sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+                            if let Some(process) = sys.process(pid) {
+                                return process.memory() / 1024 / 1024;
+                            }
+                        }
+                        0
+                    });
+                    ui.label(format!("Mem: {}MB", mem_mb));
                     ui.separator();
-                    ui.label("🟢 Engine Online");
+                    ui.label(egui::RichText::new(format!("{} Engine Online", egui_remixicon::icons::SERVER_LINE)).color(egui::Color32::GREEN));
                 });
             });
         });

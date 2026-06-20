@@ -45,30 +45,21 @@ physics     = { path = "crates/physics" }
 diffusion   = { path = "crates/diffusion" }
 organisms   = { path = "crates/organisms" }
 genetics    = { path = "crates/genetics" }
-evolution   = { path = "crates/evolution" }
 reproduction = { path = "crates/reproduction" }
-behavior    = { path = "crates/behavior" }
 metabolism  = { path = "crates/metabolism" }
 sensing     = { path = "crates/sensing" }
 brain       = { path = "crates/brain" }
-learning    = { path = "crates/learning" }
-environment = { path = "crates/environment" }
 ecology     = { path = "crates/ecology" }
 gpu         = { path = "crates/gpu" }
 rendering   = { path = "crates/rendering" }
 ui          = { path = "crates/ui" }
 analytics   = { path = "crates/analytics" }
-storage     = { path = "crates/storage" }
-research    = { path = "crates/research" }
-network     = { path = "crates/network" }
-plugins     = { path = "crates/plugins" }
 
 # --- Math ---
 glam        = { version = "0.29", features = ["serde"] }
 
 # --- Serialization ---
 serde       = { version = "1", features = ["derive"] }
-serde_json  = { version = "1" }
 bincode     = { version = "1" }
 ron         = { version = "0.8" }
 
@@ -79,11 +70,7 @@ anyhow      = { version = "1" }
 # --- Randomness ---
 rand        = { version = "0.8" }
 rand_chacha = { version = "0.3" }
-
-# --- Concurrency ---
-rayon       = { version = "1" }
 crossbeam   = { version = "0.8" }
-tokio       = { version = "1", features = ["full"] }
 
 # --- GPU / Windowing ---
 wgpu        = { version = "22" }
@@ -100,28 +87,12 @@ egui_dock   = { version = "0.14" }
 # --- Logging / Profiling ---
 tracing             = { version = "0.1" }
 tracing-subscriber  = { version = "0.3", features = ["env-filter", "fmt"] }
-puffin              = { version = "0.19" }
-
-# --- Persistence ---
-sqlx        = { version = "0.8", features = ["sqlite", "runtime-tokio", "macros"] }
 
 # --- ECS ---
 bevy_ecs    = { version = "0.14" }
 
-# --- ML ---
-burn        = { version = "0.15", features = ["wgpu"] }
-
-# --- Scripting ---
-rhai        = { version = "1" }
-
-# --- Network ---
-tokio-tungstenite = { version = "0.24" }
-
 # --- Benchmarks ---
 criterion   = { version = "0.5", features = ["html_reports"] }
-
-# --- Config loading ---
-config-crate = { package = "config", version = "0.14" }
 
 [profile.dev]
 opt-level = 1
