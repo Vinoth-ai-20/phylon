@@ -107,6 +107,9 @@ struct PhylonApp {
     /// Pending canvas click to be processed after the render pass
     pending_click: Option<common::Vec2>,
 
+    /// Current hover position in physical pixels
+    current_hover_pos: Option<common::Vec2>,
+
     /// The viewport dimensions of the simulation canvas (x, y, w, h) in physical pixels
     canvas_rect: Option<[u32; 4]>,
 
@@ -141,6 +144,8 @@ struct PhylonApp {
 
     /// If true, overlay vision cones on the simulation viewport.
     show_vision_cones: bool,
+    /// Currently hovered entity from mouse pos
+    hovered_entity: Option<bevy_ecs::entity::Entity>,
 }
 
 use bevy_ecs::prelude::*;
@@ -246,12 +251,56 @@ impl PhylonApp {
             ecology::EcologicalCategory::None,
         );
 
+        // Organism 4: Omnivore — purple fish
+        let omnivore_hox = genetics::HoxSequence::fish(4, 1, [0.8, 0.2, 0.8]);
+        let omnivore_genome = genetics::Genome::new_hox_driven(
+            genetics::GenomeId(4),
+            common::EntityId(0),
+            omnivore_hox,
+        );
+        organisms::spawn_organism(
+            &mut world.ecs,
+            &omnivore_genome,
+            common::Vec2::new(-80.0, 0.0),
+            ecology::Diet::Omnivore,
+            ecology::EcologicalCategory::None,
+        );
+
+        // Organism 5: Decomposer — small grey worm
+        let decomposer_hox = genetics::HoxSequence::worm(3, [0.4, 0.4, 0.4]);
+        let decomposer_genome = genetics::Genome::new_hox_driven(
+            genetics::GenomeId(5),
+            common::EntityId(0),
+            decomposer_hox,
+        );
+        organisms::spawn_organism(
+            &mut world.ecs,
+            &decomposer_genome,
+            common::Vec2::new(80.0, 0.0),
+            ecology::Diet::Decomposer,
+            ecology::EcologicalCategory::None,
+        );
+
         // Spawn a static food/nutrient emitter at the center
         world.ecs.spawn(diffusion::Emitter {
             position: common::Vec2::new(0.0, 0.0),
             value: 10.0,
             radius: 50.0,
         });
+
+        // Spawn initial mineral pellets for Producers
+        for i in 0..10 {
+            let t = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_micros() as f32;
+            let px = ((t + i as f32 * 123.4) % 400.0) - 200.0;
+            let py = ((t + i as f32 * 321.4) % 400.0) - 200.0;
+            world.ecs.spawn(ecology::MineralPellet {
+                position: common::Vec2::new(px, py),
+                energy_value: 50.0,
+            });
+        }
 
         Self {
             sim_config,
@@ -276,6 +325,7 @@ impl PhylonApp {
             active_tab: ui::SidebarTab::Inspector,
             modifiers: winit::keyboard::ModifiersState::empty(),
             pending_click: None,
+            current_hover_pos: None,
             canvas_rect: None,
             max_ticks_per_frame: 5,
             total_sim_time: 0.0,
@@ -285,6 +335,7 @@ impl PhylonApp {
             show_about: false,
             show_docs: false,
             show_vision_cones: false,
+            hovered_entity: None,
         }
     }
 
@@ -454,6 +505,42 @@ impl PhylonApp {
             .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
         for (entity, node) in query.iter(&self.world.ecs) {
             let dist = (node.position - world_pos).length();
+            if dist < best_dist {
+                best_dist = dist;
+                best = Some(entity);
+            }
+        }
+
+        let mut food_query = self
+            .world
+            .ecs
+            .query::<(bevy_ecs::entity::Entity, &ecology::FoodPellet)>();
+        for (entity, pellet) in food_query.iter(&self.world.ecs) {
+            let dist = (pellet.position - world_pos).length();
+            if dist < best_dist {
+                best_dist = dist;
+                best = Some(entity);
+            }
+        }
+
+        let mut mineral_query = self
+            .world
+            .ecs
+            .query::<(bevy_ecs::entity::Entity, &ecology::MineralPellet)>();
+        for (entity, mineral) in mineral_query.iter(&self.world.ecs) {
+            let dist = (mineral.position - world_pos).length();
+            if dist < best_dist {
+                best_dist = dist;
+                best = Some(entity);
+            }
+        }
+
+        let mut corpse_query = self
+            .world
+            .ecs
+            .query::<(bevy_ecs::entity::Entity, &ecology::Corpse)>();
+        for (entity, corpse) in corpse_query.iter(&self.world.ecs) {
+            let dist = (corpse.position - world_pos).length();
             if dist < best_dist {
                 best_dist = dist;
                 best = Some(entity);
@@ -754,6 +841,36 @@ impl PhylonApp {
         let mut debug_instances = Vec::new();
         let mut sdf_bones = Vec::new();
 
+        let mut get_connected_component = |entity: bevy_ecs::entity::Entity| {
+            let mut adj: std::collections::HashMap<
+                bevy_ecs::entity::Entity,
+                Vec<bevy_ecs::entity::Entity>,
+            > = std::collections::HashMap::new();
+            let mut query_springs = self.world.ecs.query::<&physics::Spring>();
+            for spring in query_springs.iter(&self.world.ecs) {
+                adj.entry(spring.node_a).or_default().push(spring.node_b);
+                adj.entry(spring.node_b).or_default().push(spring.node_a);
+            }
+
+            let mut queue = std::collections::VecDeque::new();
+            let mut visited = std::collections::HashSet::new();
+            queue.push_back(entity);
+            visited.insert(entity);
+
+            while let Some(curr) = queue.pop_front() {
+                if let Some(neighbors) = adj.get(&curr) {
+                    for neighbor in neighbors {
+                        if visited.insert(*neighbor) {
+                            queue.push_back(*neighbor);
+                        }
+                    }
+                }
+            }
+            visited
+        };
+
+        let selected_component = self.selected_entity.map(&mut get_connected_component);
+
         // Build node position lookup for bone endpoint resolution
         let mut node_positions: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 2]> =
             std::collections::HashMap::new();
@@ -765,56 +882,64 @@ impl PhylonApp {
         )>();
         for (entity, node, category) in query_nodes_render.iter(&self.world.ecs) {
             node_positions.insert(entity, [node.position.x, node.position.y]);
-            debug_instances.push(rendering::DebugInstance {
-                pos_a: [node.position.x, node.position.y],
-                pos_b: [node.position.x, node.position.y],
-                color: match node.segment_type {
-                    0 => [0.9, 0.3, 0.3, 1.0], // Head — red
-                    2 => [0.3, 0.5, 1.0, 1.0], // Muscle — blue
-                    3 => [0.6, 0.6, 0.3, 1.0], // Tail — yellow-green
-                    4 => [0.3, 0.9, 0.9, 1.0], // Fin — cyan
-                    _ => [0.5, 0.5, 0.5, 1.0], // Torso — grey
-                },
-                radius: if node.segment_type == 4 { 3.0 } else { 5.0 },
-                segment_type: node.segment_type,
-            });
 
-            // Draw category ring around head
-            if let Some(cat) = category {
-                let ring_color = match cat {
-                    ecology::EcologicalCategory::Keystone => Some([1.0, 0.84, 0.0, 1.0]), // Gold
-                    ecology::EcologicalCategory::Indicator => Some([0.0, 1.0, 1.0, 1.0]), // Cyan
-                    ecology::EcologicalCategory::Endemic => Some([0.0, 0.5, 0.5, 1.0]),   // Teal
-                    ecology::EcologicalCategory::Invasive => Some([1.0, 0.0, 1.0, 1.0]),  // Magenta
-                    _ => None,
-                };
-                if let Some(col) = ring_color {
-                    // We render a slightly larger circle with the category color.
-                    // To do an outline, we could rely on a new shader feature, or just render a bigger circle behind it.
-                    // Since it pushes sequentially, we just push it before the main circle, wait, the loop is already pushing.
-                    // We can just push it now; it's debug instances, order determines z-index (painters algorithm).
-                    // Let's push it after, it might overlay, but wait! We can just make segment_type=99 for transparency or something.
-                    // Actually, let's just push it.
-                    debug_instances.push(rendering::DebugInstance {
-                        pos_a: [node.position.x, node.position.y],
-                        pos_b: [node.position.x, node.position.y],
-                        color: [col[0], col[1], col[2], 0.3], // Semi-transparent
-                        radius: 12.0,                         // Larger radius
-                        segment_type: 99,
-                    });
+            let is_in_selected = selected_component
+                .as_ref()
+                .is_some_and(|comp| comp.contains(&entity));
+            let should_draw_debug =
+                self.debug_structural && (selected_component.is_none() || is_in_selected);
+
+            if should_draw_debug {
+                debug_instances.push(rendering::DebugInstance {
+                    pos_a: [node.position.x, node.position.y],
+                    pos_b: [node.position.x, node.position.y],
+                    color: match node.segment_type {
+                        0 => [0.9, 0.3, 0.3, 1.0], // Head — red
+                        2 => [0.3, 0.5, 1.0, 1.0], // Muscle — blue
+                        3 => [0.6, 0.6, 0.3, 1.0], // Tail — yellow-green
+                        4 => [0.3, 0.9, 0.9, 1.0], // Fin — cyan
+                        _ => [0.5, 0.5, 0.5, 1.0], // Torso — grey
+                    },
+                    radius: if node.segment_type == 4 { 3.0 } else { 5.0 },
+                    segment_type: node.segment_type,
+                });
+
+                // Draw category ring around head
+                if let Some(cat) = category {
+                    let ring_color = match cat {
+                        ecology::EcologicalCategory::Keystone => Some([1.0, 0.84, 0.0, 1.0]), // Gold
+                        ecology::EcologicalCategory::Indicator => Some([0.0, 1.0, 1.0, 1.0]), // Cyan
+                        ecology::EcologicalCategory::Endemic => Some([0.0, 0.5, 0.5, 1.0]), // Teal
+                        ecology::EcologicalCategory::Invasive => Some([1.0, 0.0, 1.0, 1.0]), // Magenta
+                        _ => None,
+                    };
+                    if let Some(col) = ring_color {
+                        debug_instances.push(rendering::DebugInstance {
+                            pos_a: [node.position.x, node.position.y],
+                            pos_b: [node.position.x, node.position.y],
+                            color: [col[0], col[1], col[2], 0.3], // Semi-transparent
+                            radius: 12.0,                         // Larger radius
+                            segment_type: 99,
+                        });
+                    }
                 }
             }
         }
 
         // Collect springs for SDF capsule rendering.
-        // Rigid + Rotational: drawn as full-weight skin bones.
-        // Elastic (muscle) + Passive (tail): drawn as thinner, slightly dimmer bones so
-        // the spine of muscle-only organisms (e.g. the worm) is visible in skin mode.
         let mut query_springs_render = self
             .world
             .ecs
             .query::<(&physics::Spring, Option<&organisms::OrganismColor>)>();
         for (spring, opt_color) in query_springs_render.iter(&self.world.ecs) {
+            let is_in_selected = selected_component
+                .as_ref()
+                .is_some_and(|comp| comp.contains(&spring.node_a) && comp.contains(&spring.node_b));
+            let should_draw_debug =
+                self.debug_structural && (selected_component.is_none() || is_in_selected);
+            let should_draw_sdf =
+                !self.debug_structural || (selected_component.is_some() && !is_in_selected);
+
             // Skip springs that have no associated organism color (e.g. broken/detached).
             if spring.constraint_type == physics::ConstraintType::Passive && spring.is_fin == 0 {
                 // Passive tail bones: thin and dimmed
@@ -828,13 +953,16 @@ impl PhylonApp {
                             [c[0] * 0.6, c[1] * 0.6, c[2] * 0.6]
                         })
                         .unwrap_or([0.4, 0.4, 0.4]);
-                    sdf_bones.push(rendering::SdfBoneInstance {
-                        pos_a: pa,
-                        pos_b: pb,
-                        radius: 4.0,
-                        color,
-                    });
-                    if self.debug_structural {
+
+                    if should_draw_sdf {
+                        sdf_bones.push(rendering::SdfBoneInstance {
+                            pos_a: pa,
+                            pos_b: pb,
+                            radius: 4.0,
+                            color,
+                        });
+                    }
+                    if should_draw_debug {
                         debug_instances.push(rendering::DebugInstance {
                             pos_a: pa,
                             pos_b: pb,
@@ -854,13 +982,15 @@ impl PhylonApp {
                     node_positions.get(&spring.node_b),
                 ) {
                     let color = opt_color.map(|c| c.0).unwrap_or([0.5, 0.5, 0.8]);
-                    sdf_bones.push(rendering::SdfBoneInstance {
-                        pos_a: pa,
-                        pos_b: pb,
-                        radius: 6.0,
-                        color,
-                    });
-                    if self.debug_structural {
+                    if should_draw_sdf {
+                        sdf_bones.push(rendering::SdfBoneInstance {
+                            pos_a: pa,
+                            pos_b: pb,
+                            radius: 6.0,
+                            color,
+                        });
+                    }
+                    if should_draw_debug {
                         debug_instances.push(rendering::DebugInstance {
                             pos_a: pa,
                             pos_b: pb,
@@ -882,21 +1012,23 @@ impl PhylonApp {
                 node_positions.get(&spring.node_a),
                 node_positions.get(&spring.node_b),
             ) {
-                let color = opt_color.map(|c| c.0).unwrap_or([0.8, 0.4, 0.4]);
-                let radius = if spring.is_fin == 1 { 5.0 } else { 8.0 };
-                sdf_bones.push(rendering::SdfBoneInstance {
-                    pos_a: pa,
-                    pos_b: pb,
-                    radius,
-                    color,
-                });
+                // Determine bone thickness
+                let radius = if spring.is_fin == 1 { 4.0 } else { 8.0 };
 
-                // Also draw a line for Debug Structural View
-                if self.debug_structural {
+                let color = opt_color.map(|c| c.0).unwrap_or([0.8, 0.8, 0.8]);
+                if should_draw_sdf {
+                    sdf_bones.push(rendering::SdfBoneInstance {
+                        pos_a: pa,
+                        pos_b: pb,
+                        radius,
+                        color,
+                    });
+                }
+                if should_draw_debug {
                     debug_instances.push(rendering::DebugInstance {
                         pos_a: pa,
                         pos_b: pb,
-                        color: [color[0], color[1], color[2], 0.7],
+                        color: [color[0], color[1], color[2], 0.8],
                         radius: self.bone_line_thickness,
                         segment_type: 99,
                     });
@@ -985,6 +1117,7 @@ impl PhylonApp {
                     &mut self.show_about,
                     &mut self.show_docs,
                     &mut self.show_vision_cones,
+                    self.hovered_entity,
                 );
                 interaction = interact;
                 ui_actions = acts;
@@ -1011,6 +1144,12 @@ impl PhylonApp {
             if w > 0 && h > 0 {
                 central_rect_px = Some([x, y, w, h]);
                 self.canvas_rect = central_rect_px;
+            }
+
+            if let Some(pos) = interaction.hover_pos {
+                self.current_hover_pos = Some(common::Vec2::new(pos.x * scale, pos.y * scale));
+            } else {
+                self.current_hover_pos = None;
             }
 
             full_output = Some(output);
@@ -1058,64 +1197,42 @@ impl PhylonApp {
             );
         }
 
+        // Submit the field renderer (which clears the screen and draws the background) BEFORE
+        // the other renderers, which rely on LoadOp::Load and submit their own encoders.
         gpu.queue.submit(std::iter::once(encoder.finish()));
 
-        let mut render_w = gpu.config.width as f32;
-        let mut render_h = gpu.config.height as f32;
-        if let Some([_, _, w, h]) = central_rect_px {
-            render_w = w as f32;
-            render_h = h as f32;
+        let (view_w, view_h) = central_rect_px
+            .map(|[_, _, w, h]| (w as f32, h as f32))
+            .unwrap_or((gpu.config.width as f32, gpu.config.height as f32));
+
+        // ── Organism rendering — always run sdf_renderer if there are bones ─────────
+        if !sdf_bones.is_empty() {
+            if let Some(sdf_renderer) = self.sdf_skin_renderer.as_mut() {
+                sdf_renderer.render(
+                    &gpu.device,
+                    &gpu.queue,
+                    &view,
+                    &sdf_bones,
+                    [view_w, view_h],
+                    self.camera_pos,
+                    self.camera_zoom,
+                    central_rect_px,
+                );
+            }
         }
 
-        // ── Organism rendering — branch on debug_structural toggle ─────────
-        if self.debug_structural {
-            // Structural view: raw physics circles + coloured segment dots
-            if let Some(debug_renderer) = self.debug_renderer.as_ref() {
+        if !debug_instances.is_empty() {
+            if let Some(debug_renderer) = self.debug_renderer.as_mut() {
                 debug_renderer.render(
                     &gpu.device,
                     &gpu.queue,
                     &view,
                     &debug_instances,
-                    [render_w, render_h],
+                    [view_w, view_h],
                     self.camera_pos,
                     self.camera_zoom,
                     central_rect_px,
                 );
-            }
-        } else {
-            // Organic skin: accumulate-then-threshold SDF capsule skin
-            if let Some(sdf) = self.sdf_skin_renderer.as_mut() {
-                sdf.render(
-                    &gpu.device,
-                    &gpu.queue,
-                    &view,
-                    &sdf_bones,
-                    [render_w, render_h],
-                    self.camera_pos,
-                    self.camera_zoom,
-                    central_rect_px,
-                );
-            }
-            // Always overlay food and food pellets as debug quads
-            if let Some(debug_renderer) = self.debug_renderer.as_ref() {
-                // Re-collect only food pellets for the overlay
-                let food_only: Vec<rendering::DebugInstance> = debug_instances
-                    .iter()
-                    .filter(|i| i.color == [1.0, 0.8, 0.0, 1.0_f32])
-                    .copied()
-                    .collect();
-                if !food_only.is_empty() {
-                    debug_renderer.render(
-                        &gpu.device,
-                        &gpu.queue,
-                        &view,
-                        &food_only,
-                        [render_w, render_h],
-                        self.camera_pos,
-                        self.camera_zoom,
-                        central_rect_px,
-                    );
-                }
             }
         }
 
@@ -1234,6 +1351,59 @@ impl PhylonApp {
                         &fish_genome,
                         common::Vec2::new(0.0, 0.0),
                         ecology::Diet::Carnivore,
+                        ecology::EcologicalCategory::None,
+                    );
+
+                    let branchy_genome = genetics::Genome::new_hox_driven(
+                        genetics::GenomeId(3),
+                        common::EntityId(0),
+                        genetics::HoxSequence::new(
+                            vec![
+                                genetics::HoxGene::head(),
+                                genetics::HoxGene::branching_torso(2.5, 0.0),
+                                genetics::HoxGene::muscle(1.2, 0.0),
+                                genetics::HoxGene::torso(),
+                                genetics::HoxGene::branching_torso(2.5, std::f32::consts::PI * 0.5),
+                                genetics::HoxGene::muscle(1.2, std::f32::consts::PI),
+                                genetics::HoxGene::muscle(1.2, std::f32::consts::PI * 1.5),
+                                genetics::HoxGene::tail(),
+                            ],
+                            [0.95, 0.75, 0.20],
+                        ),
+                    );
+                    organisms::spawn_organism(
+                        &mut self.world.ecs,
+                        &branchy_genome,
+                        common::Vec2::new(0.0, -90.0),
+                        ecology::Diet::Producer,
+                        ecology::EcologicalCategory::None,
+                    );
+
+                    let omnivore_hox = genetics::HoxSequence::fish(4, 1, [0.8, 0.2, 0.8]);
+                    let omnivore_genome = genetics::Genome::new_hox_driven(
+                        genetics::GenomeId(4),
+                        common::EntityId(0),
+                        omnivore_hox,
+                    );
+                    organisms::spawn_organism(
+                        &mut self.world.ecs,
+                        &omnivore_genome,
+                        common::Vec2::new(-80.0, 0.0),
+                        ecology::Diet::Omnivore,
+                        ecology::EcologicalCategory::None,
+                    );
+
+                    let decomposer_hox = genetics::HoxSequence::worm(3, [0.4, 0.4, 0.4]);
+                    let decomposer_genome = genetics::Genome::new_hox_driven(
+                        genetics::GenomeId(5),
+                        common::EntityId(0),
+                        decomposer_hox,
+                    );
+                    organisms::spawn_organism(
+                        &mut self.world.ecs,
+                        &decomposer_genome,
+                        common::Vec2::new(80.0, 0.0),
+                        ecology::Diet::Decomposer,
                         ecology::EcologicalCategory::None,
                     );
                 }
@@ -1441,6 +1611,18 @@ impl ApplicationHandler for PhylonApp {
                         let selected = self.pick_entity(click_pos, gpu_w, gpu_h);
                         self.selected_entity = selected;
                         self.tracked_entity = selected;
+                    }
+                }
+
+                let dims = self
+                    .gpu
+                    .as_ref()
+                    .map(|g| (g.config.width as f32, g.config.height as f32));
+                if let Some((gpu_w, gpu_h)) = dims {
+                    if let Some(pos) = self.current_hover_pos {
+                        self.hovered_entity = self.pick_entity(pos, gpu_w, gpu_h);
+                    } else {
+                        self.hovered_entity = None;
                     }
                 }
 

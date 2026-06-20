@@ -45,6 +45,8 @@ pub struct CanvasInteraction {
     pub clicked: bool,
     /// The screen-space coordinates of the tap/click, if `clicked` is true.
     pub click_pos: Option<egui::Pos2>,
+    /// The screen-space coordinates of the mouse hover, if any.
+    pub hover_pos: Option<egui::Pos2>,
     /// The screen-space delta for a pan/drag gesture this frame.
     pub drag_delta: egui::Vec2,
     /// The scale factor for a pinch-to-zoom or scroll-zoom gesture this frame (1.0 = no change).
@@ -57,6 +59,7 @@ impl Default for CanvasInteraction {
             rect: egui::Rect::NOTHING,
             clicked: false,
             click_pos: None,
+            hover_pos: None,
             drag_delta: egui::Vec2::ZERO,
             zoom_delta: 1.0,
         }
@@ -121,6 +124,7 @@ pub fn render_ui(
     show_about: &mut bool,
     show_docs: &mut bool,
     show_vision_cones: &mut bool,
+    hovered_entity: Option<bevy_ecs::entity::Entity>,
 ) -> (CanvasInteraction, Vec<MenuAction>) {
     let mut actions = Vec::new();
 
@@ -427,6 +431,10 @@ pub fn render_ui(
 
                         ui.separator(); // Physics node
                         let mut node_q = world.ecs.query::<&physics::ParticleNode>();
+                        let mut food_q = world.ecs.query::<&ecology::FoodPellet>();
+                        let mut mineral_q = world.ecs.query::<&ecology::MineralPellet>();
+                        let mut corpse_q = world.ecs.query::<&ecology::Corpse>();
+
                         if let Ok(node) = node_q.get(&world.ecs, entity) {
                             egui::CollapsingHeader::new("⚙ Physics Node")
                                 .default_open(true)
@@ -449,6 +457,28 @@ pub fn render_ui(
                                         node.velocity.x, node.velocity.y
                                     ));
                                     ui.label(format!("Mass     : {:.2}", node.mass));
+                                });
+                        } else if let Ok(food) = food_q.get(&world.ecs, entity) {
+                            egui::CollapsingHeader::new("🌿 Food Pellet")
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    ui.label(format!("Position: ({:.1}, {:.1})", food.position.x, food.position.y));
+                                    ui.label(format!("Energy: {:.1}", food.energy_value));
+                                });
+                        } else if let Ok(mineral) = mineral_q.get(&world.ecs, entity) {
+                            egui::CollapsingHeader::new("💎 Mineral Pellet")
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    ui.label(format!("Position: ({:.1}, {:.1})", mineral.position.x, mineral.position.y));
+                                    ui.label(format!("Energy: {:.1}", mineral.energy_value));
+                                });
+                        } else if let Ok(corpse) = corpse_q.get(&world.ecs, entity) {
+                            egui::CollapsingHeader::new("💀 Corpse")
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    ui.label(format!("Position: ({:.1}, {:.1})", corpse.position.x, corpse.position.y));
+                                    ui.label(format!("Energy: {:.1}", corpse.energy_value));
+                                    ui.label(format!("Decay: {} / {}", corpse.decay_timer, corpse.max_decay));
                                 });
                         }
 
@@ -976,27 +1006,86 @@ pub fn render_ui(
 
     let interact_response = central.inner;
     let zoom_delta = ctx.input(|i| i.zoom_delta());
+    let hover_pos = interact_response.hover_pos();
+
+    let screen_center = interact_response.rect.center();
+    let ppp = ctx.pixels_per_point();
+
+    let to_screen = |pos: common::Vec2| {
+        egui::pos2(
+            screen_center.x + (pos.x - camera_pos.x) * camera_zoom / ppp,
+            screen_center.y - (pos.y - camera_pos.y) * camera_zoom / ppp,
+        )
+    };
+
+    // We need get_connected_component earlier for vision cones
+    let mut get_connected_component = |entity: bevy_ecs::entity::Entity| {
+        let mut adj: std::collections::HashMap<
+            bevy_ecs::entity::Entity,
+            Vec<bevy_ecs::entity::Entity>,
+        > = std::collections::HashMap::new();
+        let mut query_springs = world.ecs.query::<&physics::Spring>();
+        for spring in query_springs.iter(&world.ecs) {
+            adj.entry(spring.node_a).or_default().push(spring.node_b);
+            adj.entry(spring.node_b).or_default().push(spring.node_a);
+        }
+
+        let mut queue = std::collections::VecDeque::new();
+        let mut visited = std::collections::HashSet::new();
+        queue.push_back(entity);
+        visited.insert(entity);
+
+        while let Some(curr) = queue.pop_front() {
+            if let Some(neighbors) = adj.get(&curr) {
+                for neighbor in neighbors {
+                    if visited.insert(*neighbor) {
+                        queue.push_back(*neighbor);
+                    }
+                }
+            }
+        }
+        visited
+    };
+
+    let selected_component = (*selected_entity).map(&mut get_connected_component);
+
+    let hovered_component = hovered_entity.and_then(|e| {
+        if Some(e) != *selected_entity {
+            Some(get_connected_component(e))
+        } else {
+            None
+        }
+    });
 
     // Render vision cones if enabled
     if *show_vision_cones {
-        let mut query = world
-            .ecs
-            .query::<(&physics::ParticleNode, &sensing::HeadVision)>();
+        let mut query = world.ecs.query::<(
+            bevy_ecs::entity::Entity,
+            &physics::ParticleNode,
+            &sensing::HeadVision,
+        )>();
         let mut painter = ctx.layer_painter(egui::LayerId::background());
         painter.set_clip_rect(interact_response.rect);
 
-        let screen_center = interact_response.rect.center();
-        let to_screen = |pos: common::Vec2| {
-            egui::pos2(
-                screen_center.x + (pos.x - camera_pos.x) * camera_zoom,
-                screen_center.y + (pos.y - camera_pos.y) * camera_zoom,
-            )
-        };
-
-        for (node, vision) in query.iter(&world.ecs) {
-            let origin = to_screen(node.position);
+        for (ent, node, vision) in query.iter(&world.ecs) {
+            // Contextual filtering: if an organism is selected, only show its vision cone.
+            if let Some(ref sel_comp) = selected_component {
+                if !sel_comp.contains(&ent) {
+                    continue;
+                }
+            }
 
             let fwd = vision.last_forward;
+
+            // Offset the cone's origin to the edge of the head
+            let head_radius = 12.0;
+            let origin_pos = common::Vec2::new(
+                node.position.x + fwd.x * head_radius,
+                node.position.y + fwd.y * head_radius,
+            );
+
+            let origin = to_screen(origin_pos);
+
             // Angle of the forward direction
             let base_angle = fwd.y.atan2(fwd.x);
             let half_fov = vision.fov / 2.0;
@@ -1008,24 +1097,169 @@ pub fn render_ui(
             for i in 0..=segments {
                 let t = i as f32 / segments as f32;
                 let angle = base_angle - half_fov + (vision.fov * t);
-                let x = node.position.x + angle.cos() * vision.range;
-                let y = node.position.y + angle.sin() * vision.range;
+                let x = origin_pos.x + angle.cos() * vision.range;
+                let y = origin_pos.y + angle.sin() * vision.range;
                 points.push(to_screen(common::Vec2::new(x, y)));
             }
 
-            painter.add(egui::Shape::convex_polygon(
+            painter.add(egui::Shape::closed_line(
                 points,
-                egui::Color32::from_rgba_premultiplied(0, 255, 255, 30),
-                egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(0, 255, 255, 80)),
+                egui::Stroke::new(
+                    2.0,
+                    egui::Color32::from_rgba_premultiplied(0, 255, 255, 255),
+                ),
             ));
+        }
+    }
+
+    // Render highlights for hovered and selected entities
+    let mut highlight_painter = ctx.layer_painter(egui::LayerId::background());
+    highlight_painter.set_clip_rect(interact_response.rect);
+
+    if let Some(ref hover_comp) = hovered_component {
+        let stroke = egui::Stroke::new(0.5, egui::Color32::from_rgb(100, 255, 100));
+        let visual_padding_wu = stroke.width * (ppp / camera_zoom);
+
+        let mut query_springs = world.ecs.query::<&physics::Spring>();
+        let mut query_nodes = world.ecs.query::<&physics::ParticleNode>();
+        let mut query_food = world.ecs.query::<&ecology::FoodPellet>();
+        let mut query_mineral = world.ecs.query::<&ecology::MineralPellet>();
+        let mut query_corpse = world.ecs.query::<&ecology::Corpse>();
+
+        for spring in query_springs.iter(&world.ecs) {
+            if hover_comp.contains(&spring.node_a) && hover_comp.contains(&spring.node_b) {
+                if let (Ok(na), Ok(nb)) = (
+                    query_nodes.get(&world.ecs, spring.node_a),
+                    query_nodes.get(&world.ecs, spring.node_b),
+                ) {
+                    let radius_wu = if spring.constraint_type == physics::ConstraintType::Elastic {
+                        6.0
+                    } else {
+                        if spring.is_fin == 1 {
+                            4.0
+                        } else {
+                            8.0
+                        }
+                    };
+                    let points = capsule_points(
+                        na.position,
+                        nb.position,
+                        radius_wu + visual_padding_wu,
+                        to_screen,
+                    );
+                    highlight_painter.add(egui::Shape::closed_line(points, stroke));
+                }
+            }
+        }
+        for &node_ent in hover_comp {
+            if let Ok(node) = query_nodes.get(&world.ecs, node_ent) {
+                let r_wu = if node.segment_type == 4 { 3.0 } else { 5.0 };
+                let r_logical = r_wu * (camera_zoom / ppp);
+                highlight_painter.circle_stroke(
+                    to_screen(node.position),
+                    r_logical + stroke.width,
+                    stroke,
+                );
+            } else if let Ok(food) = query_food.get(&world.ecs, node_ent) {
+                let r_logical = 2.5 * (camera_zoom / ppp);
+                highlight_painter.circle_stroke(
+                    to_screen(food.position),
+                    r_logical + stroke.width,
+                    stroke,
+                );
+            } else if let Ok(mineral) = query_mineral.get(&world.ecs, node_ent) {
+                let r_logical = 2.0 * (camera_zoom / ppp);
+                highlight_painter.circle_stroke(
+                    to_screen(mineral.position),
+                    r_logical + stroke.width,
+                    stroke,
+                );
+            } else if let Ok(corpse) = query_corpse.get(&world.ecs, node_ent) {
+                let r_logical = 4.0 * (camera_zoom / ppp);
+                highlight_painter.circle_stroke(
+                    to_screen(corpse.position),
+                    r_logical + stroke.width,
+                    stroke,
+                );
+            }
+        }
+    }
+
+    if let Some(ref sel_comp) = selected_component {
+        let stroke = egui::Stroke::new(2.5, egui::Color32::YELLOW);
+        let visual_padding_wu = stroke.width * (ppp / camera_zoom);
+
+        let mut query_springs = world.ecs.query::<&physics::Spring>();
+        let mut query_nodes = world.ecs.query::<&physics::ParticleNode>();
+        let mut query_food = world.ecs.query::<&ecology::FoodPellet>();
+        let mut query_mineral = world.ecs.query::<&ecology::MineralPellet>();
+        let mut query_corpse = world.ecs.query::<&ecology::Corpse>();
+
+        for spring in query_springs.iter(&world.ecs) {
+            if sel_comp.contains(&spring.node_a) && sel_comp.contains(&spring.node_b) {
+                if let (Ok(na), Ok(nb)) = (
+                    query_nodes.get(&world.ecs, spring.node_a),
+                    query_nodes.get(&world.ecs, spring.node_b),
+                ) {
+                    let radius_wu = if spring.constraint_type == physics::ConstraintType::Elastic {
+                        6.0
+                    } else {
+                        if spring.is_fin == 1 {
+                            4.0
+                        } else {
+                            8.0
+                        }
+                    };
+                    let points = capsule_points(
+                        na.position,
+                        nb.position,
+                        radius_wu + visual_padding_wu,
+                        to_screen,
+                    );
+                    highlight_painter.add(egui::Shape::closed_line(points, stroke));
+                }
+            }
+        }
+        for &node_ent in sel_comp {
+            if let Ok(node) = query_nodes.get(&world.ecs, node_ent) {
+                let r_wu = if node.segment_type == 4 { 3.0 } else { 5.0 };
+                let r_logical = r_wu * (camera_zoom / ppp);
+                highlight_painter.circle_stroke(
+                    to_screen(node.position),
+                    r_logical + stroke.width,
+                    stroke,
+                );
+            } else if let Ok(food) = query_food.get(&world.ecs, node_ent) {
+                let r_logical = 2.5 * (camera_zoom / ppp);
+                highlight_painter.circle_stroke(
+                    to_screen(food.position),
+                    r_logical + stroke.width,
+                    stroke,
+                );
+            } else if let Ok(mineral) = query_mineral.get(&world.ecs, node_ent) {
+                let r_logical = 2.0 * (camera_zoom / ppp);
+                highlight_painter.circle_stroke(
+                    to_screen(mineral.position),
+                    r_logical + stroke.width,
+                    stroke,
+                );
+            } else if let Ok(corpse) = query_corpse.get(&world.ecs, node_ent) {
+                let r_logical = 4.0 * (camera_zoom / ppp);
+                highlight_painter.circle_stroke(
+                    to_screen(corpse.position),
+                    r_logical + stroke.width,
+                    stroke,
+                );
+            }
         }
     }
 
     (
         CanvasInteraction {
-            rect: central.response.rect,
+            rect: interact_response.rect,
             clicked: interact_response.clicked(),
             click_pos: interact_response.interact_pointer_pos(),
+            hover_pos,
             drag_delta: interact_response.drag_delta(),
             zoom_delta,
         },
@@ -1117,4 +1351,46 @@ fn draw_segment_tree(
             *selected_entity = Some(current_node);
         }
     }
+}
+
+fn capsule_points(
+    pa: common::Vec2,
+    pb: common::Vec2,
+    radius: f32,
+    to_screen: impl Fn(common::Vec2) -> egui::Pos2,
+) -> Vec<egui::Pos2> {
+    let mut dir = pb - pa;
+    let len = dir.length();
+    let segments = 8;
+    let mut points = Vec::new();
+
+    if len < 0.001 {
+        for i in 0..(segments * 2) {
+            let t = std::f32::consts::TAU * (i as f32) / ((segments * 2) as f32);
+            let p = common::Vec2::new(pa.x + t.cos() * radius, pa.y + t.sin() * radius);
+            points.push(to_screen(p));
+        }
+        return points;
+    }
+    dir /= len;
+
+    // Semicircle around pb
+    let base_angle_pb = dir.y.atan2(dir.x);
+    for i in 0..=segments {
+        let a = base_angle_pb - std::f32::consts::FRAC_PI_2
+            + std::f32::consts::PI * (i as f32) / (segments as f32);
+        let p = common::Vec2::new(pb.x + a.cos() * radius, pb.y + a.sin() * radius);
+        points.push(to_screen(p));
+    }
+
+    // Semicircle around pa
+    let base_angle_pa = (-dir.y).atan2(-dir.x);
+    for i in 0..=segments {
+        let a = base_angle_pa - std::f32::consts::FRAC_PI_2
+            + std::f32::consts::PI * (i as f32) / (segments as f32);
+        let p = common::Vec2::new(pa.x + a.cos() * radius, pa.y + a.sin() * radius);
+        points.push(to_screen(p));
+    }
+
+    points
 }
