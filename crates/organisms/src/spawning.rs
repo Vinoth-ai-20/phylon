@@ -1,0 +1,237 @@
+use crate::components::{Generation, GrowthState, OrganismColor, SpawnTick};
+use common::Vec2;
+
+/// Spawns an organism's zygote based on its genome.
+pub fn spawn_organism(
+    world: &mut bevy_ecs::world::World,
+    genome: &genetics::Genome,
+    start_pos: Vec2,
+    diet: ecology::Diet,
+    category: ecology::EcologicalCategory,
+    generation: u32,
+    spawn_tick: u64,
+) {
+    use physics::ParticleNode;
+
+    let segment_length = 20.0;
+
+    // Determine color and initial head segment from HoxSequence when available.
+    let (color, head_seg_u32) = if let Some(hox) = genome.hox.as_ref() {
+        let seg_u32 = match hox.genes.first().map(|g| g.segment) {
+            Some(genetics::SegmentType::Head) => 0,
+            Some(genetics::SegmentType::Torso) => 1,
+            Some(genetics::SegmentType::Muscle) => 2,
+            Some(genetics::SegmentType::Tail) => 3,
+            _ => 0,
+        };
+        (hox.color, seg_u32)
+    } else {
+        ([0.8, 0.4, 0.4], 0u32)
+    };
+
+    // Spawn the head node at start_pos (gene index 0).
+    let head_node = world
+        .spawn((
+            ParticleNode::new(start_pos, 1.0, head_seg_u32),
+            OrganismColor(color),
+        ))
+        .id();
+
+    // Attach biology to the head node.
+    world.entity_mut(head_node).insert((
+        metabolism::Energy {
+            current: 100.0,
+            max: 200.0,
+        },
+        metabolism::Age {
+            ticks: 0,
+            max_lifespan: 10000,
+        },
+        metabolism::Metabolism {
+            mass: 10.0,
+            base_rate: 0.05,
+        },
+        Generation(generation),
+        SpawnTick(spawn_tick),
+        diet,
+        category,
+        reproduction::ReproductionStrategy {
+            energy_threshold: 180.0,
+            energy_cost: 100.0,
+            cooldown_ticks: 300,
+            current_cooldown: 0,
+            mode: reproduction::ReproductionMode::Asexual,
+            genome: genome.clone(),
+        },
+        // GrowthState starts at gene index 1; index 0 (Head) is already built.
+        GrowthState {
+            genome: genome.clone(),
+            next_segment_index: 1,
+            ticks_until_next_bud: 30, // ~0.5 s per segment bud at 60 Hz
+            base_bud_interval: 30,
+            parent_spine_node: Some(head_node),
+            current_pos: start_pos - Vec2::new(segment_length, 0.0),
+            segment_length,
+            effectors: Vec::new(),
+            color,
+        },
+        sensing::HeadVision {
+            range: 250.0,
+            fov: std::f32::consts::PI * 0.8, // ~144 degrees
+            last_forward: common::Vec2::X,
+            self_occlusion_radius: genome
+                .hox
+                .as_ref()
+                .map(|hox| hox.genes.len() as f32 * segment_length)
+                .unwrap_or(5.0 * segment_length)
+                * 1.5, // Add a 50% margin
+        },
+    ));
+}
+
+/// Spawns a deterministic "Proto-Fish" with an instant adult topology.
+///
+/// This **bypasses** the CPPN/[`GrowthState`] state machine entirely and is
+/// intended as a diagnostic fixture for iterating on physics and rendering.
+/// The topology is:
+///
+/// - 5-node rigid spine along the negative-X axis (head at `pos`, tail left).
+/// - 2 lateral fin nodes branching from spine node 2 (the middle segment).
+/// - Rotational fin springs with opposing actuation phases so the fins flap.
+///
+/// The head node carries [`metabolism::Energy`], [`metabolism::Age`], and
+/// [`metabolism::Metabolism`] components so the inspector sidebar can display
+/// biological metrics.
+///
+/// # CPPN branching backlog note
+///
+/// The CPPN's `branching_signal` (output index 5) threshold is too rarely
+/// exceeded in random genomes. A targeted tuning pass is required — see the
+/// Phase 5 implementation plan for details.
+pub fn spawn_proto_fish(
+    world: &mut bevy_ecs::world::World,
+    pos: Vec2,
+    diet: ecology::Diet,
+    category: ecology::EcologicalCategory,
+    generation: u32,
+    spawn_tick: u64,
+) {
+    use physics::{ConstraintType, ParticleNode, Spring};
+
+    // Geometry constants — all in world units
+    let segment_len: f32 = 20.0;
+    let fin_spread: f32 = 15.0;
+
+    // ── Spine (5 nodes along −X axis, head at pos, tail to the left) ──────
+    // Segment types: Head(0), Torso(1), Torso(1), Torso(1), Tail(3)
+    let spine_types: [u32; 5] = [0, 1, 1, 1, 3];
+    let proto_color = [0.15, 0.72, 0.45]; // The original green used for debug proto-fish
+
+    let spine_nodes: Vec<bevy_ecs::entity::Entity> = spine_types
+        .iter()
+        .enumerate()
+        .map(|(i, &seg_type)| {
+            let p = pos + Vec2::new(-(i as f32) * segment_len, 0.0);
+            world
+                .spawn((
+                    ParticleNode::new(p, 1.0, seg_type),
+                    OrganismColor(proto_color),
+                ))
+                .id()
+        })
+        .collect();
+
+    // Rigid bone springs connecting adjacent spine nodes
+    for i in 0..4 {
+        world.spawn((
+            Spring {
+                node_a: spine_nodes[i],
+                node_b: spine_nodes[i + 1],
+                constraint_type: ConstraintType::Rigid,
+                rest_length: segment_len,
+                base_length: segment_len,
+                stiffness: 20.0,
+                damping: 0.5,
+                actuation_amplitude: 0.0,
+                actuation_phase: 0.0,
+                breaking_strain: 5.0,
+                is_fin: 0,
+            },
+            OrganismColor(proto_color),
+        ));
+    }
+
+    // ── Lateral fins at spine node index 2 (centre of spine) ───────────────
+    let fin_root = spine_nodes[2];
+    let fin_root_pos = pos + Vec2::new(-2.0 * segment_len, 0.0);
+
+    let f_up_pos = fin_root_pos + Vec2::new(0.0, fin_spread);
+    let f_dn_pos = fin_root_pos + Vec2::new(0.0, -fin_spread);
+
+    let f_up = world
+        .spawn((
+            ParticleNode::new(f_up_pos, 0.5, 4),
+            OrganismColor(proto_color),
+        ))
+        .id();
+    let f_dn = world
+        .spawn((
+            ParticleNode::new(f_dn_pos, 0.5, 4),
+            OrganismColor(proto_color),
+        ))
+        .id();
+
+    // Rotational springs — opposing phases produce a flapping motion
+    world.spawn((
+        Spring {
+            node_a: fin_root,
+            node_b: f_up,
+            constraint_type: ConstraintType::Rotational,
+            rest_length: fin_spread,
+            base_length: fin_spread,
+            stiffness: 5.0,
+            damping: 0.3,
+            actuation_amplitude: 8.0,
+            actuation_phase: 0.0, // Phase 0
+            breaking_strain: 5.0,
+            is_fin: 1,
+        },
+        OrganismColor(proto_color),
+    ));
+    world.spawn((
+        Spring {
+            node_a: fin_root,
+            node_b: f_dn,
+            constraint_type: ConstraintType::Rotational,
+            rest_length: fin_spread,
+            base_length: fin_spread,
+            stiffness: 5.0,
+            damping: 0.3,
+            actuation_amplitude: 8.0,
+            actuation_phase: std::f32::consts::PI, // Opposing phase → flap
+            breaking_strain: 5.0,
+            is_fin: 1,
+        },
+        OrganismColor(proto_color),
+    ));
+
+    // ── Biological state on the head node ──────────────────────────────────
+    world.entity_mut(spine_nodes[0]).insert((
+        metabolism::Energy {
+            current: 100.0,
+            max: 200.0,
+        },
+        metabolism::Age {
+            ticks: 0,
+            max_lifespan: 10000,
+        },
+        metabolism::Metabolism {
+            mass: 15.0, // approx mass of 5 spine + 2 fin nodes
+            base_rate: 0.05,
+        },
+        Generation(generation),
+        SpawnTick(spawn_tick),
+        diet,
+        category,
+    ));
+}
