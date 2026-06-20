@@ -221,7 +221,8 @@ impl PhysicsComputePipeline {
     ) -> Vec<GpuParticleNode> {
         if nodes.is_empty() || springs.is_empty() {
             if let Some(qs) = query_set {
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                let mut encoder =
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
                 encoder.write_timestamp(qs, 0);
                 encoder.write_timestamp(qs, 1);
                 queue.submit(Some(encoder.finish()));

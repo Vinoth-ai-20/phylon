@@ -39,6 +39,8 @@ pub enum SidebarTab {
     Tuning,
     /// Environmental data and cell info
     Ecology,
+    /// Application Settings
+    Settings,
 }
 
 /// Contains the screen-space rect of the transparent canvas area and the
@@ -177,8 +179,8 @@ pub fn render_ui(
     show_docs: &mut bool,
     show_vision_cones: &mut bool,
     hovered_entity: Option<bevy_ecs::entity::Entity>,
-    show_confirm_quit: &mut bool,
-    show_confirm_main_menu: &mut bool,
+    quit_confirm_time: &mut Option<f64>,
+    main_menu_confirm_time: &mut Option<f64>,
 ) -> (CanvasInteraction, Vec<MenuAction>) {
     let mut actions = Vec::new();
 
@@ -220,17 +222,77 @@ pub fn render_ui(
     if *app_state == AppState::MainMenu {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space(ui.available_height() / 3.0);
-                ui.heading(egui::RichText::new("PHYLON").size(48.0).strong());
-                ui.add_space(20.0);
+                ui.add_space(ui.available_height() / 4.0);
+                ui.heading(egui::RichText::new("PHYLON").size(64.0).strong());
+                ui.add_space(40.0);
+
+                let btn_size = egui::vec2(200.0, 40.0);
+
                 if ui
-                    .button(egui::RichText::new("Start Simulation").size(24.0))
+                    .add_sized(
+                        btn_size,
+                        egui::Button::new(egui::RichText::new("New").size(24.0)),
+                    )
                     .clicked()
                 {
                     actions.push(MenuAction::StartSimulation);
                 }
                 ui.add_space(10.0);
-                if ui.button(egui::RichText::new("Quit").size(24.0)).clicked() {
+
+                if ui
+                    .add_sized(
+                        btn_size,
+                        egui::Button::new(egui::RichText::new("Continue").size(24.0)),
+                    )
+                    .clicked()
+                {
+                    // Placeholder for when Save/Load is fully implemented
+                    actions.push(MenuAction::StartSimulation);
+                }
+                ui.add_space(10.0);
+
+                ui.menu_button(egui::RichText::new("Open Recent").size(24.0), |ui| {
+                    if ui.button("save_01.ron").clicked() {
+                        actions.push(MenuAction::LoadState);
+                        actions.push(MenuAction::StartSimulation);
+                    }
+                    if ui.button("save_02.ron").clicked() {
+                        actions.push(MenuAction::LoadState);
+                        actions.push(MenuAction::StartSimulation);
+                    }
+                });
+                ui.add_space(10.0);
+
+                if ui
+                    .add_sized(
+                        btn_size,
+                        egui::Button::new(egui::RichText::new("Load").size(24.0)),
+                    )
+                    .clicked()
+                {
+                    actions.push(MenuAction::LoadState);
+                }
+                ui.add_space(10.0);
+
+                if ui
+                    .add_sized(
+                        btn_size,
+                        egui::Button::new(egui::RichText::new("Settings").size(24.0)),
+                    )
+                    .clicked()
+                {
+                    *active_tab = SidebarTab::Settings;
+                    actions.push(MenuAction::StartSimulation);
+                }
+                ui.add_space(10.0);
+
+                if ui
+                    .add_sized(
+                        btn_size,
+                        egui::Button::new(egui::RichText::new("Quit").size(24.0)),
+                    )
+                    .clicked()
+                {
                     actions.push(MenuAction::Quit);
                 }
             });
@@ -297,42 +359,6 @@ pub fn render_ui(
             ui.label("- Diffusion based metabolism");
         });
 
-    if *show_confirm_quit {
-        egui::Window::new("Confirm Quit")
-            .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.label("Are you sure? Unsaved progress will be lost.");
-                ui.horizontal(|ui| {
-                    if ui.button("Yes").clicked() {
-                        actions.push(MenuAction::Quit);
-                        *show_confirm_quit = false;
-                    }
-                    if ui.button("No").clicked() {
-                        *show_confirm_quit = false;
-                    }
-                });
-            });
-    }
-
-    if *show_confirm_main_menu {
-        egui::Window::new("Confirm Main Menu")
-            .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.label("Are you sure? Unsaved progress will be lost.");
-                ui.horizontal(|ui| {
-                    if ui.button("Yes").clicked() {
-                        actions.push(MenuAction::GoToMainMenu);
-                        *show_confirm_main_menu = false;
-                    }
-                    if ui.button("No").clicked() {
-                        *show_confirm_main_menu = false;
-                    }
-                });
-            });
-    }
-
     // ── Top menu bar ───────────────────────────────────────────────────────
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
         egui::menu::bar(ui, |ui| {
@@ -357,13 +383,45 @@ pub fn render_ui(
                 }
                 ui.separator();
                 if ui.button("Settings").clicked() {
-                    // Placeholder
+                    *active_tab = SidebarTab::Settings;
                 }
-                if ui.button("Main Menu").clicked() {
-                    *show_confirm_main_menu = true;
+
+                let current_time = ui.input(|i| i.time);
+
+                if let Some(t) = *main_menu_confirm_time {
+                    if current_time - t < 3.0 {
+                        if ui.button("Click again to confirm Main Menu").clicked() {
+                            actions.push(MenuAction::GoToMainMenu);
+                            *main_menu_confirm_time = None;
+                        }
+                    } else {
+                        *main_menu_confirm_time = None;
+                        if ui.button("Main Menu").clicked() {
+                            *main_menu_confirm_time = Some(current_time);
+                        }
+                    }
+                } else {
+                    if ui.button("Main Menu").clicked() {
+                        *main_menu_confirm_time = Some(current_time);
+                    }
                 }
-                if ui.button("Quit").clicked() {
-                    *show_confirm_quit = true;
+
+                if let Some(t) = *quit_confirm_time {
+                    if current_time - t < 3.0 {
+                        if ui.button("Click again to confirm Quit").clicked() {
+                            actions.push(MenuAction::Quit);
+                            *quit_confirm_time = None;
+                        }
+                    } else {
+                        *quit_confirm_time = None;
+                        if ui.button("Quit").clicked() {
+                            *quit_confirm_time = Some(current_time);
+                        }
+                    }
+                } else {
+                    if ui.button("Quit").clicked() {
+                        *quit_confirm_time = Some(current_time);
+                    }
                 }
             });
             ui.menu_button("Edit", |ui| {
@@ -522,6 +580,38 @@ pub fn render_ui(
                     .clicked()
                 {
                     *active_tab = SidebarTab::Analytics;
+                }
+                ui.add_space(4.0);
+                if ui
+                    .selectable_label(*active_tab == SidebarTab::Sandbox, "🛠")
+                    .on_hover_text("Sandbox")
+                    .clicked()
+                {
+                    *active_tab = SidebarTab::Sandbox;
+                }
+                ui.add_space(4.0);
+                if ui
+                    .selectable_label(*active_tab == SidebarTab::Tuning, "⚙")
+                    .on_hover_text("Tuning")
+                    .clicked()
+                {
+                    *active_tab = SidebarTab::Tuning;
+                }
+                ui.add_space(4.0);
+                if ui
+                    .selectable_label(*active_tab == SidebarTab::Ecology, "🌍")
+                    .on_hover_text("Ecology")
+                    .clicked()
+                {
+                    *active_tab = SidebarTab::Ecology;
+                }
+                ui.add_space(4.0);
+                if ui
+                    .selectable_label(*active_tab == SidebarTab::Settings, "🔧")
+                    .on_hover_text("Settings")
+                    .clicked()
+                {
+                    *active_tab = SidebarTab::Settings;
                 }
             });
         });
@@ -1200,6 +1290,21 @@ pub fn render_ui(
                     ui.label("Ambient CO2: 400 ppm");
                     ui.label("Soil Fertility: High");
                     ui.label("Temperature: 22°C");
+                }
+                SidebarTab::Settings => {
+                    ui.heading("🔧 Settings");
+                    ui.separator();
+                    ui.label("Application Settings");
+                    ui.add_space(10.0);
+                    // Add some dummy settings for now
+                    let mut dummy_vsync = true;
+                    ui.checkbox(&mut dummy_vsync, "VSync Enabled");
+                    let mut dummy_volume = 0.5;
+                    ui.add(egui::Slider::new(&mut dummy_volume, 0.0..=1.0).text("Master Volume"));
+                    ui.add_space(10.0);
+                    if ui.button("Reset Settings").clicked() {
+                        // Reset
+                    }
                 }
             }
         });

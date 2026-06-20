@@ -152,10 +152,10 @@ struct PhylonApp {
     show_vision_cones: bool,
     /// Currently hovered entity from mouse pos
     hovered_entity: Option<bevy_ecs::entity::Entity>,
-    /// If true, shows a confirmation modal for quitting
-    confirm_quit: bool,
-    /// If true, shows a confirmation modal for returning to the main menu
-    confirm_main_menu: bool,
+    /// Time when the user first clicked "Quit"
+    quit_confirm_time: Option<f64>,
+    /// Time when the user first clicked "Main Menu"
+    main_menu_confirm_time: Option<f64>,
 }
 
 use bevy_ecs::prelude::*;
@@ -366,8 +366,8 @@ impl PhylonApp {
             show_docs: false,
             show_vision_cones: false,
             hovered_entity: None,
-            confirm_quit: false,
-            confirm_main_menu: false,
+            quit_confirm_time: None,
+            main_menu_confirm_time: None,
         }
     }
 
@@ -1231,8 +1231,8 @@ impl PhylonApp {
                     &mut self.show_docs,
                     &mut self.show_vision_cones,
                     self.hovered_entity,
-                    &mut self.confirm_quit,
-                    &mut self.confirm_main_menu,
+                    &mut self.quit_confirm_time,
+                    &mut self.main_menu_confirm_time,
                 );
                 ui_actions.extend(acts);
                 interaction = canvas_interact;
