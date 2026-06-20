@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use scheduler::{SimulationScheduler, SystemOrder};
+use scheduler::SimulationScheduler;
 
 /// Benchmarks the scheduler's tick throughput with no registered systems.
 fn bench_empty_tick(c: &mut Criterion) {

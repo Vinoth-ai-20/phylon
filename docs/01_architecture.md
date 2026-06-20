@@ -15,7 +15,8 @@ Phylon is a research-grade Artificial Life Laboratory built entirely in Rust. It
 
 ## Organism Representation & Memory Layout
 
-Instead of monolithic structs, organisms in Phylon are represented as **ECS-Backed Dynamic Graphs**. 
+Instead of monolithic structs, organisms in Phylon are represented as **ECS-Backed Dynamic Graphs**.
+
 - **Nodes** are individual `bevy_ecs` entities (acting as cells or particles) possessing mass, energy, and biological components.
 - **Edges** are relational components linking nodes, acting as physical structures (particle-spring constraints for soft-body physics) or biological channels (energy/signal transfer).
 This allows organisms to be modular, destructible, and highly evolvable.

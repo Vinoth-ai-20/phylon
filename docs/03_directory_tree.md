@@ -2,7 +2,7 @@
 
 This represents the complete intended directory tree for the Phylon workspace.
 
-```
+```text
 phylon/
 ├── .github/
 │   └── workflows/
