@@ -177,14 +177,14 @@ pub fn render_ui(
     show_docs: &mut bool,
     show_vision_cones: &mut bool,
     hovered_entity: Option<bevy_ecs::entity::Entity>,
+    show_confirm_quit: &mut bool,
+    show_confirm_main_menu: &mut bool,
 ) -> (CanvasInteraction, Vec<MenuAction>) {
     let mut actions = Vec::new();
 
     let shortcut_save = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::S);
     let shortcut_load = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::O);
-    let shortcut_undo = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Z);
-    let shortcut_redo =
-        egui::KeyboardShortcut::new(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::Z);
+    // Undo/Redo are manually handled via key_pressed when focus is none
     let shortcut_play_pause = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Space);
     let shortcut_step = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::ArrowRight);
     let shortcut_reset = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::R);
@@ -197,12 +197,6 @@ pub fn render_ui(
     }
     if ctx.input_mut(|i| i.consume_shortcut(&shortcut_load)) {
         actions.push(MenuAction::LoadState);
-    }
-    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_undo)) {
-        actions.push(MenuAction::Undo);
-    }
-    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_redo)) {
-        actions.push(MenuAction::Redo);
     }
     if ctx.input_mut(|i| i.consume_shortcut(&shortcut_play_pause)) {
         *is_paused = !*is_paused;
@@ -246,6 +240,33 @@ pub fn render_ui(
         return (CanvasInteraction::default(), actions);
     }
 
+    if !ctx.wants_keyboard_input() {
+        if ctx.input(|i| i.key_pressed(egui::Key::Z)) {
+            actions.push(MenuAction::Undo);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Y)) {
+            actions.push(MenuAction::Redo);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::G)) {
+            actions.push(MenuAction::GrabSelection);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::X)) {
+            actions.push(MenuAction::DeleteSelection);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::C)) {
+            actions.push(MenuAction::DuplicateSelection);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::V)) {
+            actions.push(MenuAction::SpawnPaste);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::F)) {
+            actions.push(MenuAction::ToggleStationary);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::J)) {
+            actions.push(MenuAction::JoinSelection);
+        }
+    }
+
     // Hardcode camera zoom keys
     if ctx.input(|i| i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals)) {
         actions.push(MenuAction::CameraZoomIn);
@@ -276,6 +297,42 @@ pub fn render_ui(
             ui.label("- Diffusion based metabolism");
         });
 
+    if *show_confirm_quit {
+        egui::Window::new("Confirm Quit")
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("Are you sure? Unsaved progress will be lost.");
+                ui.horizontal(|ui| {
+                    if ui.button("Yes").clicked() {
+                        actions.push(MenuAction::Quit);
+                        *show_confirm_quit = false;
+                    }
+                    if ui.button("No").clicked() {
+                        *show_confirm_quit = false;
+                    }
+                });
+            });
+    }
+
+    if *show_confirm_main_menu {
+        egui::Window::new("Confirm Main Menu")
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("Are you sure? Unsaved progress will be lost.");
+                ui.horizontal(|ui| {
+                    if ui.button("Yes").clicked() {
+                        actions.push(MenuAction::GoToMainMenu);
+                        *show_confirm_main_menu = false;
+                    }
+                    if ui.button("No").clicked() {
+                        *show_confirm_main_menu = false;
+                    }
+                });
+            });
+    }
+
     // ── Top menu bar ───────────────────────────────────────────────────────
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
         egui::menu::bar(ui, |ui| {
@@ -303,27 +360,21 @@ pub fn render_ui(
                     // Placeholder
                 }
                 if ui.button("Main Menu").clicked() {
-                    actions.push(MenuAction::GoToMainMenu);
+                    *show_confirm_main_menu = true;
                 }
                 if ui.button("Quit").clicked() {
-                    actions.push(MenuAction::Quit);
+                    *show_confirm_quit = true;
                 }
             });
             ui.menu_button("Edit", |ui| {
                 if ui
-                    .add(
-                        egui::Button::new("Undo")
-                            .shortcut_text(ctx.format_shortcut(&shortcut_undo)),
-                    )
+                    .add(egui::Button::new("Undo").shortcut_text("Z"))
                     .clicked()
                 {
                     actions.push(MenuAction::Undo);
                 }
                 if ui
-                    .add(
-                        egui::Button::new("Redo")
-                            .shortcut_text(ctx.format_shortcut(&shortcut_redo)),
-                    )
+                    .add(egui::Button::new("Redo").shortcut_text("Y"))
                     .clicked()
                 {
                     actions.push(MenuAction::Redo);

@@ -45,6 +45,9 @@ struct GpuSurface {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    query_set: Option<wgpu::QuerySet>,
+    resolve_buffer: Option<wgpu::Buffer>,
+    readback_buffer: Option<wgpu::Buffer>,
 }
 
 /// Top-level application state, owned by the winit event handler.
@@ -149,6 +152,10 @@ struct PhylonApp {
     show_vision_cones: bool,
     /// Currently hovered entity from mouse pos
     hovered_entity: Option<bevy_ecs::entity::Entity>,
+    /// If true, shows a confirmation modal for quitting
+    confirm_quit: bool,
+    /// If true, shows a confirmation modal for returning to the main menu
+    confirm_main_menu: bool,
 }
 
 use bevy_ecs::prelude::*;
@@ -359,6 +366,8 @@ impl PhylonApp {
             show_docs: false,
             show_vision_cones: false,
             hovered_entity: None,
+            confirm_quit: false,
+            confirm_main_menu: false,
         }
     }
 
@@ -386,8 +395,15 @@ impl PhylonApp {
         .context("no suitable GPU adapter found")?;
 
         let mut required_features = wgpu::Features::FLOAT32_FILTERABLE;
-        if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+        let mut has_timestamp_query = false;
+        if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
+            && adapter
+                .features()
+                .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
+        {
             required_features |= wgpu::Features::TIMESTAMP_QUERY;
+            required_features |= wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+            has_timestamp_query = true;
         }
 
         let (device, queue) = pollster::block_on(adapter.request_device(
@@ -455,11 +471,37 @@ impl PhylonApp {
         );
         let egui_renderer = egui_wgpu::Renderer::new(&device, surface_format, None, 1, false);
 
+        let (query_set, resolve_buffer, readback_buffer) = if has_timestamp_query {
+            let qs = device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("GpuTimestamps"),
+                count: 4,
+                ty: wgpu::QueryType::Timestamp,
+            });
+            let rb = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("ResolveBuffer"),
+                size: 8 * 4,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let readback = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("ReadbackBuffer"),
+                size: 8 * 4,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            (Some(qs), Some(rb), Some(readback))
+        } else {
+            (None, None, None)
+        };
+
         self.gpu = Some(GpuSurface {
             surface,
             device,
             queue,
             config: surface_config,
+            query_set,
+            resolve_buffer,
+            readback_buffer,
         });
         self.debug_renderer = Some(debug_renderer);
         self.sdf_skin_renderer = Some(sdf_skin_renderer);
@@ -757,6 +799,7 @@ impl PhylonApp {
                 &gpu_springs,
                 0.016,
                 global_time,
+                gpu.query_set.as_ref(),
             );
             physics_duration_ms += physics_start.elapsed().as_secs_f64() * 1000.0;
 
@@ -835,7 +878,47 @@ impl PhylonApp {
                         emitter_count: gpu_emitters.len() as u32,
                     },
                     &gpu_emitters,
+                    gpu.query_set.as_ref(),
                 );
+
+                if let (Some(qs), Some(rb), Some(readback)) =
+                    (&gpu.query_set, &gpu.resolve_buffer, &gpu.readback_buffer)
+                {
+                    let mut encoder =
+                        gpu.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("Timestamps"),
+                            });
+                    encoder.resolve_query_set(qs, 0..4, rb, 0);
+                    encoder.copy_buffer_to_buffer(rb, 0, readback, 0, 32);
+                    gpu.queue.submit(Some(encoder.finish()));
+
+                    let slice = readback.slice(..);
+                    slice.map_async(wgpu::MapMode::Read, |_| {});
+                    gpu.device.poll(wgpu::Maintain::Wait);
+
+                    let data = slice.get_mapped_range();
+                    let byte_slice = data.as_ref();
+                    let mut timestamps = [0u64; 4];
+                    for i in 0..4 {
+                        let mut bytes = [0u8; 8];
+                        bytes.copy_from_slice(&byte_slice[i * 8..(i + 1) * 8]);
+                        timestamps[i] = u64::from_ne_bytes(bytes);
+                    }
+                    let period = gpu.queue.get_timestamp_period();
+
+                    if timestamps[1] > timestamps[0] {
+                        physics_duration_ms =
+                            (timestamps[1] - timestamps[0]) as f64 * period as f64 / 1_000_000.0;
+                    }
+                    if timestamps[3] > timestamps[2] {
+                        diffusion_duration_ms =
+                            (timestamps[3] - timestamps[2]) as f64 * period as f64 / 1_000_000.0;
+                    }
+
+                    drop(data);
+                    readback.unmap();
+                }
 
                 if let Some(field_data) = diffusion_compute.try_read_field(&gpu.device) {
                     let mut cpu_field = self.world.ecs.resource_mut::<diffusion::CpuFieldState>();
@@ -1148,6 +1231,8 @@ impl PhylonApp {
                     &mut self.show_docs,
                     &mut self.show_vision_cones,
                     self.hovered_entity,
+                    &mut self.confirm_quit,
+                    &mut self.confirm_main_menu,
                 );
                 ui_actions.extend(acts);
                 interaction = canvas_interact;
@@ -1742,30 +1827,6 @@ impl ApplicationHandler for PhylonApp {
                     | PhysicalKey::Code(KeyCode::NumpadSubtract) => {
                         self.camera_zoom /= 1.1;
                         self.camera_zoom = self.camera_zoom.clamp(0.1, 10.0);
-                    }
-                    PhysicalKey::Code(KeyCode::KeyX) => {
-                        self.handle_menu_actions(vec![ui::MenuAction::DeleteSelection]);
-                    }
-                    PhysicalKey::Code(KeyCode::KeyC) => {
-                        self.handle_menu_actions(vec![ui::MenuAction::DuplicateSelection]);
-                    }
-                    PhysicalKey::Code(KeyCode::KeyV) => {
-                        self.handle_menu_actions(vec![ui::MenuAction::SpawnPaste]);
-                    }
-                    PhysicalKey::Code(KeyCode::KeyJ) => {
-                        self.handle_menu_actions(vec![ui::MenuAction::JoinSelection]);
-                    }
-                    PhysicalKey::Code(KeyCode::KeyF) => {
-                        self.handle_menu_actions(vec![ui::MenuAction::ToggleStationary]);
-                    }
-                    PhysicalKey::Code(KeyCode::KeyG) => {
-                        self.handle_menu_actions(vec![ui::MenuAction::GrabSelection]);
-                    }
-                    PhysicalKey::Code(KeyCode::KeyZ) if self.modifiers.control_key() => {
-                        self.handle_menu_actions(vec![ui::MenuAction::Undo]);
-                    }
-                    PhysicalKey::Code(KeyCode::KeyY) if self.modifiers.control_key() => {
-                        self.handle_menu_actions(vec![ui::MenuAction::Redo]);
                     }
                     _ => {}
                 }

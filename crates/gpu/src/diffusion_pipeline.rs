@@ -277,6 +277,7 @@ impl DiffusionComputePipeline {
         queue: &wgpu::Queue,
         uniforms: DiffusionUniforms,
         emitters: &[GpuEmitter],
+        query_set: Option<&wgpu::QuerySet>,
     ) {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
@@ -353,6 +354,10 @@ impl DiffusionComputePipeline {
             label: Some("DiffusionComputeEncoder"),
         });
 
+        if let Some(qs) = query_set {
+            encoder.write_timestamp(qs, 2);
+        }
+
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("DiffusionComputePass"),
@@ -364,6 +369,10 @@ impl DiffusionComputePipeline {
             let workgroup_count_x = (self.width as f32 / 16.0).ceil() as u32;
             let workgroup_count_y = (self.height as f32 / 16.0).ceil() as u32;
             cpass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
+        }
+
+        if let Some(qs) = query_set {
+            encoder.write_timestamp(qs, 3);
         }
 
         // The compute pass wrote to the "other" texture (view_b if read_a, view_a if !read_a)

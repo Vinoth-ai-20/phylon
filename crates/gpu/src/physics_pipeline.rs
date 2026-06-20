@@ -208,6 +208,7 @@ impl PhysicsComputePipeline {
     /// 1. Force computation (Elastic + Passive springs)
     /// 2. Velocity / Position integration
     /// 3. Position-Based Dynamics projection for Rigid springs (3 iterations)
+    #[allow(clippy::too_many_arguments)]
     pub fn compute_step(
         &self,
         device: &wgpu::Device,
@@ -216,8 +217,15 @@ impl PhysicsComputePipeline {
         springs: &[GpuPhysicsSpring],
         dt: f32,
         global_time: f32,
+        query_set: Option<&wgpu::QuerySet>,
     ) -> Vec<GpuParticleNode> {
         if nodes.is_empty() || springs.is_empty() {
+            if let Some(qs) = query_set {
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                encoder.write_timestamp(qs, 0);
+                encoder.write_timestamp(qs, 1);
+                queue.submit(Some(encoder.finish()));
+            }
             return nodes.to_vec();
         }
 
@@ -301,6 +309,10 @@ impl PhysicsComputePipeline {
         let node_workgroups = ((nodes.len() as f32) / 64.0).ceil() as u32;
         let spring_workgroups = ((springs.len() as f32) / 64.0).ceil() as u32;
 
+        if let Some(qs) = query_set {
+            encoder.write_timestamp(qs, 0);
+        }
+
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("MuscleActuationPass"),
@@ -351,6 +363,10 @@ impl PhysicsComputePipeline {
                 cpass.set_bind_group(0, &bind_group, &[]);
                 cpass.dispatch_workgroups(node_workgroups, 1, 1);
             }
+        }
+
+        if let Some(qs) = query_set {
+            encoder.write_timestamp(qs, 1);
         }
 
         let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
