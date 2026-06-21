@@ -605,13 +605,13 @@ pub(crate) fn seed_ecosystem(
     let worm_genome = genetics::Genome::new_hox_driven(
         genetics::GenomeId(1),
         common::EntityId(0),
-        genetics::HoxSequence::worm(6, [0.937, 0.663, 0.522]), // #EFA985
+        genetics::HoxSequence::worm(6, [0.863, 0.397, 0.235]), // #EFA985
     );
 
     let fish_genome = genetics::Genome::new_hox_driven(
         genetics::GenomeId(2),
         common::EntityId(0),
-        genetics::HoxSequence::fish(5, 2, [0.941, 0.329, 0.329]), // #F05454
+        genetics::HoxSequence::fish(5, 2, [0.871, 0.089, 0.089]), // #F05454
     );
 
     let branchy_genome = genetics::Genome::new_hox_driven(
@@ -628,26 +628,26 @@ pub(crate) fn seed_ecosystem(
                 genetics::HoxGene::muscle(1.2, std::f32::consts::PI * 1.5),
                 genetics::HoxGene::tail(),
             ],
-            [0.282, 0.792, 0.894], // #48CAE4
+            [0.065, 0.591, 0.776], // #48CAE4
         ),
     );
 
     let omnivore_genome = genetics::Genome::new_hox_driven(
         genetics::GenomeId(4),
         common::EntityId(0),
-        genetics::HoxSequence::fish(4, 1, [0.702, 0.533, 0.922]), // #B388EB
+        genetics::HoxSequence::fish(4, 1, [0.451, 0.246, 0.831]), // #B388EB
     );
 
     let decomposer_genome = genetics::Genome::new_hox_driven(
         genetics::GenomeId(5),
         common::EntityId(0),
-        genetics::HoxSequence::worm(3, [0.831, 0.639, 0.451]), // #D4A373
+        genetics::HoxSequence::worm(3, [0.658, 0.366, 0.171]), // #D4A373
     );
 
     let producer_genome = genetics::Genome::new_hox_driven(
         genetics::GenomeId(6),
         common::EntityId(0),
-        genetics::HoxSequence::plant([0.290, 0.871, 0.502]), // #4ADE80
+        genetics::HoxSequence::plant([0.068, 0.730, 0.216]), // #4ADE80
     );
 
     // 2. Helper to spawn a population

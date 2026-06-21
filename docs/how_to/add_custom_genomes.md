@@ -31,6 +31,11 @@ When defining custom genomes, it is recommended to use the standard simulation p
 - **Omnivores**: `[0.702, 0.533, 0.922]` (#B388EB)
 - **Decomposers**: `[0.831, 0.639, 0.451]` (#D4A373)
 
+> [!NOTE]
+> Because Phylon's `wgpu` backend renders to an sRGB surface, it expects color arrays to be in **Linear RGB** color space, not standard sRGB floats.
+> To convert a standard HEX color into a Linear RGB float for the genome array, use the following formula per channel:
+> `c_linear = ((c_srgb / 255.0 + 0.055) / 1.055) ** 2.4`
+
 ## Step 2: Spawn the Population
 
 Once the base genome is defined, you need to spawn a population of individuals.
