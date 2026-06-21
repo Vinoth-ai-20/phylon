@@ -60,3 +60,4 @@ network = { path = "../network" }
 # Async runtime
 tokio = { workspace = true }
 rand = { workspace = true }
+sysinfo = "0.39.3"

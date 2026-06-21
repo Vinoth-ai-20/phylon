@@ -143,10 +143,51 @@ impl PhylonApp {
         let mut corpse_query = self.world.ecs.query::<&ecology::Corpse>();
         counts.corpses = corpse_query.iter(&self.world.ecs).count();
 
+        let mut env_sunlight = 0.0;
+        let mut env_o2 = 0.0;
+        let mut env_co2 = 0.0;
+        let mut env_temp = 22.0;
+        if let Some(atmosphere) = self
+            .world
+            .ecs
+            .get_resource::<metabolism::GlobalAtmosphere>()
+        {
+            env_sunlight = atmosphere.sunlight;
+            env_o2 = atmosphere.o2;
+            env_co2 = atmosphere.co2;
+            env_temp = atmosphere.temp;
+        }
+
         if let Some(mut metrics) = self.world.ecs.get_resource_mut::<analytics::MetricsState>() {
             let sim_dt = (ticks_to_run as f64) * f64::from(DT);
             let real_dt = f64::from(DT); // Fixed render step for now
             metrics.record_frame(counts, sim_dt, real_dt);
+
+            // Calculate TPS
+            let tps = if real_dt > 0.0 {
+                (ticks_to_run as f64) / real_dt
+            } else {
+                0.0
+            };
+
+            // Get memory
+            let mut memory_mb = 0.0;
+            let mut sys = sysinfo::System::new_all();
+            if let Ok(pid) = sysinfo::get_current_pid() {
+                sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+                if let Some(process) = sys.process(pid) {
+                    memory_mb = (process.memory() / 1024 / 1024) as f64;
+                }
+            }
+
+            metrics.record_env_perf(
+                tps,
+                memory_mb,
+                env_sunlight as f64,
+                env_o2 as f64,
+                env_co2 as f64,
+                env_temp as f64,
+            );
 
             if ticks_to_run > 0 {
                 metrics.compute_profiles = vec![

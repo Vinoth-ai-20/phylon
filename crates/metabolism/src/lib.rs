@@ -36,6 +36,8 @@ pub struct GlobalAtmosphere {
     pub co2: f32,
     /// Current normalized sunlight (0.0 to 1.0).
     pub sunlight: f32,
+    /// Global ambient temperature.
+    pub temp: f32,
     /// Absolute ticks elapsed. Used for the Day/Night cycle.
     pub ticks: u64,
 }
@@ -44,8 +46,9 @@ impl Default for GlobalAtmosphere {
     fn default() -> Self {
         Self {
             o2: 10_000_000.0, // Large starting pool to prevent immediate collapse
-            co2: 5_000_000.0,
+            co2: 400.0,
             sunlight: 1.0,
+            temp: 22.0,
             ticks: 0,
         }
     }

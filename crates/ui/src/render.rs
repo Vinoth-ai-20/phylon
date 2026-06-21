@@ -1033,7 +1033,27 @@ pub fn render_ui(
                                                 ui.layer_id(),
                                                 ui.id().with("tooltip"),
                                                 |ui| {
-                                                    ui.label(format!("Node {}", i));
+                                                    let is_input = node.layer == 0;
+                                                    let is_output = node.layer == max_layer;
+                                                    let label = if is_input {
+                                                        match i {
+                                                            0 => "Input: Source Node",
+                                                            1 => "Input: Target Node",
+                                                            _ => "Input: Hidden/Recurrent",
+                                                        }
+                                                    } else if is_output {
+                                                        match i {
+                                                            2 => "Output: Synapse Weight",
+                                                            3 => "Output: Node Bias",
+                                                            4 => "Output: Time Constant",
+                                                            _ => "Output",
+                                                        }
+                                                    } else {
+                                                        "Hidden Node"
+                                                    };
+
+                                                    ui.label(egui::RichText::new(label).strong());
+                                                    ui.label(format!("Node ID: {}", i));
                                                     ui.label(format!("Layer: {}", node.layer));
                                                     ui.label(format!(
                                                         "Activation: {:?}",
@@ -1375,15 +1395,6 @@ pub fn render_ui(
         .exact_height(24.0)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                if *is_paused {
-                    ui.label(
-                        egui::RichText::new(format!("{} PAUSED", egui_remixicon::icons::PAUSE_LINE))
-                            .color(egui::Color32::from_rgb(255, 150, 50))
-                            .strong(),
-                    );
-                    ui.separator();
-                }
-
                 let entity_count = world.ecs.entities().len();
                 let fps = world
                     .ecs
@@ -1490,8 +1501,13 @@ pub fn render_ui(
                         let min_pts = to_pts(&metrics.minerals_history);
                         let corp_pts = to_pts(&metrics.corpses_history);
 
-                        let fps_pts: egui_plot::PlotPoints =
-                            metrics.fps_history.iter().copied().collect();
+                        let fps_pts = to_pts(&metrics.fps_history);
+                        let tps_pts = to_pts(&metrics.tps_history);
+                        let mem_pts = to_pts(&metrics.memory_history);
+                        let sun_pts = to_pts(&metrics.sunlight_history);
+                        let o2_pts = to_pts(&metrics.o2_history);
+                        let co2_pts = to_pts(&metrics.co2_history);
+                        let temp_pts = to_pts(&metrics.temp_history);
 
                         ui.columns(2, |cols| {
                             // Column 1
@@ -1531,15 +1547,26 @@ pub fn render_ui(
 
                                 ui.add_space(8.0);
 
-                                ui.label("Performance (FPS)");
-                                egui_plot::Plot::new("fps_plot")
+                                ui.label("Performance (FPS, TPS, Mem)");
+                                egui_plot::Plot::new("perf_plot")
                                     .height(120.0)
+                                    .legend(egui_plot::Legend::default())
                                     .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
                                     .show(ui, |plot_ui| {
                                         plot_ui.line(
                                             egui_plot::Line::new(fps_pts)
-                                                .name("fps")
+                                                .name("FPS")
                                                 .color(egui::Color32::WHITE),
+                                        );
+                                        plot_ui.line(
+                                            egui_plot::Line::new(tps_pts)
+                                                .name("TPS")
+                                                .color(egui::Color32::LIGHT_GREEN),
+                                        );
+                                        plot_ui.line(
+                                            egui_plot::Line::new(mem_pts)
+                                                .name("Mem (MB)")
+                                                .color(egui::Color32::LIGHT_RED),
                                         );
                                     });
                             });
@@ -1566,6 +1593,26 @@ pub fn render_ui(
                                             egui_plot::Line::new(corp_pts)
                                                 .name("Corpses")
                                                 .color(egui::Color32::from_rgb(200, 100, 100)),
+                                        );
+                                        plot_ui.line(
+                                            egui_plot::Line::new(sun_pts)
+                                                .name("Sunlight")
+                                                .color(egui::Color32::YELLOW),
+                                        );
+                                        plot_ui.line(
+                                            egui_plot::Line::new(o2_pts)
+                                                .name("O2")
+                                                .color(egui::Color32::LIGHT_BLUE),
+                                        );
+                                        plot_ui.line(
+                                            egui_plot::Line::new(co2_pts)
+                                                .name("CO2")
+                                                .color(egui::Color32::GRAY),
+                                        );
+                                        plot_ui.line(
+                                            egui_plot::Line::new(temp_pts)
+                                                .name("Temp (°C)")
+                                                .color(egui::Color32::from_rgb(255, 165, 0)),
                                         );
                                     });
                             });

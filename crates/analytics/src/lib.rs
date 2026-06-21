@@ -109,10 +109,24 @@ pub struct MetricsState {
     pub corpses_history: std::collections::VecDeque<[f64; 2]>,
     /// Ring buffer of `[sim_time_s, fps]` points for the FPS plot.
     pub fps_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer for TPS (Ticks Per Second).
+    pub tps_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer for Memory usage (MB).
+    pub memory_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer for Sunlight.
+    pub sunlight_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer for O2.
+    pub o2_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer for CO2.
+    pub co2_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer for Temperature.
+    pub temp_history: std::collections::VecDeque<[f64; 2]>,
     /// Accumulated simulation time in seconds.
     pub sim_time: f64,
     /// Smoothed FPS estimate (exponential moving average).
     pub smoothed_fps: f64,
+    /// Smoothed TPS estimate.
+    pub smoothed_tps: f64,
     /// CPU-side timings for the most recent frame's compute passes.
     pub compute_profiles: Vec<PassTiming>,
 }
@@ -130,8 +144,15 @@ impl MetricsState {
             minerals_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
             corpses_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
             fps_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            tps_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            memory_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            sunlight_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            o2_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            co2_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            temp_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
             sim_time: 0.0,
             smoothed_fps: 60.0,
+            smoothed_tps: 60.0,
             compute_profiles: Vec::new(),
         }
     }
@@ -167,6 +188,33 @@ impl MetricsState {
         }
         self.fps_history
             .push_back([self.sim_time, self.smoothed_fps]);
+    }
+
+    /// Records additional environment and performance metrics.
+    pub fn record_env_perf(
+        &mut self,
+        tps: f64,
+        memory_mb: f64,
+        sunlight: f64,
+        o2: f64,
+        co2: f64,
+        temp: f64,
+    ) {
+        self.smoothed_tps = self.smoothed_tps * 0.95 + tps * 0.05;
+
+        let push_metric = |history: &mut std::collections::VecDeque<[f64; 2]>, value: f64| {
+            if history.len() >= METRICS_RING_CAPACITY {
+                history.pop_front();
+            }
+            history.push_back([self.sim_time, value]);
+        };
+
+        push_metric(&mut self.tps_history, self.smoothed_tps);
+        push_metric(&mut self.memory_history, memory_mb);
+        push_metric(&mut self.sunlight_history, sunlight);
+        push_metric(&mut self.o2_history, o2);
+        push_metric(&mut self.co2_history, co2);
+        push_metric(&mut self.temp_history, temp);
     }
 }
 

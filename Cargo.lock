@@ -146,6 +146,7 @@ dependencies = [
  "scheduler",
  "sensing",
  "storage",
+ "sysinfo",
  "tokio",
  "tracing",
  "tracing-subscriber",
