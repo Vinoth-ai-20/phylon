@@ -11,7 +11,7 @@ Phylon simulates massive populations of neural-driven organisms within a continu
 
 ## Architecture
 
-The simulation state is strictly partitioned between a CPU-authoritative logic layer and a GPU-accelerated compute layer. The core logic runs on a lock-free, multithreaded ECS driven by `hecs` and `rayon`, coordinating neural network inferences and behavioral systems across a bounded 2D or Toroidal topology. The physics layer implements a Symplectic Euler integrator, while environmental chemical diffusion is processed via discrete Laplacian operators dispatched to the GPU as WGSL compute passes. The workspace is divided into 29 decoupled crates forming a strict directed acyclic graph, ensuring rapid compilation and enforced boundary encapsulation between rendering, simulation, and data analytics.
+The simulation state is strictly partitioned between a CPU-authoritative logic layer and a GPU-accelerated compute layer. The core logic runs on a lock-free, multithreaded ECS driven by `hecs` and `rayon`, coordinating neural network inferences and behavioral systems across a bounded 2D or Toroidal topology. The physics layer implements a Symplectic Euler integrator, while environmental chemical diffusion is processed via discrete Laplacian operators dispatched to the GPU as WGSL compute passes. The workspace is divided into 30 decoupled crates forming a strict directed acyclic graph, ensuring rapid compilation and enforced boundary encapsulation between rendering, simulation, and data analytics.
 
 ## Performance Targets
 
@@ -47,7 +47,8 @@ cargo run --release --bin phylon
 
 ## Current Status
 
-Phase 5 is complete. The workspace features a decentralized, GPU-accelerated ecosystem. The simulation core uses `bevy_ecs` and a fixed-timestep `hecs` inspired model for topological soft-body physics. In recent phases we implemented procedural organism growth (topological plasticity via Hox sequences and CPPNs), a double-buffered wgpu staging ring for closed-loop chemical diffusion readbacks, collision-based sexual reproduction with genetic drift, and a 3-sector raycasting Vision sense. We have also fully integrated an `egui` frontend (Phase 5) providing a rich Inspector, population analytics, and global keyboard shortcuts. Furthermore, Phase 7's Dual-Mode rendering is active, featuring both structural physics primitives and a 2D distance field (SDF) skin for a fluid-like appearance.
+Phase 0 (Architecture & Bootstrap) is functionally complete. The workspace features the foundational skeletal infrastructure across 30 decoupled crates. The core simulation layer, data-oriented abstractions, strict fixed-timestep scheduler, event bus, and global configuration engine have been implemented. The overarching architecture and documentation blueprints for all future phases (physics, chemical diffusion, GPU integration, ML inference) are established. Currently, the overarching scaffolding is in place and successfully building, setting the stage for Phase 1 (Physics & Spatial Mapping).
+
 ## Documentation
 
 Comprehensive architectural design documents, crate dependency graphs, and technical specifications are available in the [`docs/`](docs/) directory.

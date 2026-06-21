@@ -164,6 +164,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn current_schema_version_is_nonzero() {
         assert!(SchemaVersion::CURRENT.0 > 0);
     }

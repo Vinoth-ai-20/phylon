@@ -235,6 +235,6 @@ mod tests {
         assert_eq!(node.force, Vec2::ZERO);
         assert_eq!(node.mass, 3.0);
         assert_eq!(node.segment_type, 1);
-        assert_eq!(node.is_fixed, false);
+        assert!(!node.is_fixed);
     }
 }

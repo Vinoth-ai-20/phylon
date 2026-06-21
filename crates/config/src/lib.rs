@@ -363,15 +363,19 @@ mod tests {
 
     #[test]
     fn zero_tick_rate_fails_validation() {
-        let mut cfg = SimulationConfig::default();
-        cfg.tick_rate = 0;
+        let cfg = SimulationConfig {
+            tick_rate: 0,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
     }
 
     #[test]
     fn invalid_diffusion_step_fails_validation() {
-        let mut cfg = SimulationConfig::default();
-        cfg.diffusion_step_size = 1.5;
+        let cfg = SimulationConfig {
+            diffusion_step_size: 1.5,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_err());
     }
 

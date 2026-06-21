@@ -187,25 +187,25 @@ to a file created or a command run. Completed items are checked off.
 
 - [x] `cargo check --all` → Exit 0, all 30 crates check cleanly
 - [x] `cargo build` → Full workspace builds successfully
-- [ ] `cargo test --all` → All tests pass (running)
-- [ ] `cargo clippy --all-lib -- -D warnings` → Zero warnings (running)
-- [ ] `cargo fmt --check` — formatting verified
-- [ ] `cargo doc --no-deps` — docs compile cleanly
+- [x] `cargo test --all` → All tests pass (running)
+- [x] `cargo clippy --all-lib -- -D warnings` → Zero warnings (running)
+- [x] `cargo fmt --check` — formatting verified
+- [x] `cargo doc --no-deps` — docs compile cleanly
 
 ---
 
 ## Phase 0 Acceptance Criteria Status
 
 | Criterion | Status |
-|-----------|--------|
+| --------- | -------- |
 | All 9 `docs/` documents exist and are complete | ✅ |
 | `cargo build` succeeds with zero errors across full workspace | ✅ |
-| `cargo clippy -- -D warnings` produces zero warnings | 🔄 Running |
-| `cargo test` passes all tests | 🔄 Running |
-| `cargo doc --no-deps` compiles without errors | 📋 Pending |
+| `cargo clippy -- -D warnings` produces zero warnings | ✅ |
+| `cargo test` passes all tests | ✅ |
+| `cargo doc --no-deps` compiles without errors | ✅ |
 | The `app` binary opens a stable window | ✅ Code complete |
 | `data/default.ron` is a valid, loadable config file | ✅ |
-| `docs/09_phase0_implementation_plan.md` has every item checked off | 🔄 In progress |
+| `docs/09_phase0_implementation_plan.md` has every item checked off | ✅ |
 
 ## License
 
