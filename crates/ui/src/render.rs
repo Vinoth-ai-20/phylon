@@ -24,6 +24,7 @@ pub fn render_ui(
     skin_thickness: &mut f32,
     node_radius: &mut f32,
     active_tab: &mut SidebarTab,
+    active_bottom_tab: &mut BottomTab,
     simulation_speed: &mut f32,
     is_paused: &mut bool,
     show_about: &mut bool,
@@ -221,208 +222,232 @@ pub fn render_ui(
     // ── Top menu bar ───────────────────────────────────────────────────────
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
         egui::menu::bar(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui
-                    .add(
-                        egui::Button::new("Save State")
-                            .shortcut_text(ctx.format_shortcut(&shortcut_save)),
-                    )
-                    .clicked()
-                {
-                    actions.push(MenuAction::SaveState);
-                }
-                if ui
-                    .add(
-                        egui::Button::new("Load State")
-                            .shortcut_text(ctx.format_shortcut(&shortcut_load)),
-                    )
-                    .clicked()
-                {
-                    actions.push(MenuAction::LoadState);
-                }
-                ui.separator();
-                if ui.button("Settings").clicked() {
-                    *active_tab = SidebarTab::Settings;
-                }
+            let bar_rect = ui.max_rect();
 
-                let current_time = ui.input(|i| i.time);
+            // Left Aligned Items (Menus, Speed, Sunlight)
+            ui.horizontal(|ui| {
+                ui.menu_button("File", |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new("Save State")
+                                .shortcut_text(ctx.format_shortcut(&shortcut_save)),
+                        )
+                        .clicked()
+                    {
+                        actions.push(MenuAction::SaveState);
+                    }
+                    if ui
+                        .add(
+                            egui::Button::new("Load State")
+                                .shortcut_text(ctx.format_shortcut(&shortcut_load)),
+                        )
+                        .clicked()
+                    {
+                        actions.push(MenuAction::LoadState);
+                    }
+                    ui.separator();
+                    if ui.button("Settings").clicked() {
+                        *active_tab = SidebarTab::Settings;
+                    }
 
-                if let Some(t) = *main_menu_confirm_time {
-                    if current_time - t < 3.0 {
-                        if ui.button("Click again to confirm Main Menu").clicked() {
-                            actions.push(MenuAction::GoToMainMenu);
+                    let current_time = ui.input(|i| i.time);
+
+                    if let Some(t) = *main_menu_confirm_time {
+                        if current_time - t < 3.0 {
+                            if ui.button("Click again to confirm Main Menu").clicked() {
+                                actions.push(MenuAction::GoToMainMenu);
+                                *main_menu_confirm_time = None;
+                            }
+                        } else {
                             *main_menu_confirm_time = None;
+                            if ui.button("Main Menu").clicked() {
+                                *main_menu_confirm_time = Some(current_time);
+                            }
                         }
                     } else {
-                        *main_menu_confirm_time = None;
                         if ui.button("Main Menu").clicked() {
                             *main_menu_confirm_time = Some(current_time);
                         }
                     }
-                } else {
-                    if ui.button("Main Menu").clicked() {
-                        *main_menu_confirm_time = Some(current_time);
-                    }
-                }
 
-                if let Some(t) = *quit_confirm_time {
-                    if current_time - t < 3.0 {
-                        if ui.button("Click again to confirm Quit").clicked() {
-                            actions.push(MenuAction::Quit);
+                    if let Some(t) = *quit_confirm_time {
+                        if current_time - t < 3.0 {
+                            if ui.button("Click again to confirm Quit").clicked() {
+                                actions.push(MenuAction::Quit);
+                                *quit_confirm_time = None;
+                            }
+                        } else {
                             *quit_confirm_time = None;
+                            if ui.button("Quit").clicked() {
+                                *quit_confirm_time = Some(current_time);
+                            }
                         }
                     } else {
-                        *quit_confirm_time = None;
                         if ui.button("Quit").clicked() {
                             *quit_confirm_time = Some(current_time);
                         }
                     }
-                } else {
-                    if ui.button("Quit").clicked() {
-                        *quit_confirm_time = Some(current_time);
+                });
+                ui.menu_button("Edit", |ui| {
+                    if ui
+                        .add(egui::Button::new("Undo").shortcut_text("Z"))
+                        .clicked()
+                    {
+                        actions.push(MenuAction::Undo);
                     }
+                    if ui
+                        .add(egui::Button::new("Redo").shortcut_text("Y"))
+                        .clicked()
+                    {
+                        actions.push(MenuAction::Redo);
+                    }
+                });
+                ui.menu_button("View", |ui| {
+                    ui.checkbox(debug_structural, "Debug Structural View");
+                    ui.checkbox(show_vision_cones, "Show Vision Cones");
+                });
+                ui.menu_button("Selection", |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new("Select All")
+                                .shortcut_text(ctx.format_shortcut(&shortcut_select_all)),
+                        )
+                        .clicked()
+                    {
+                        actions.push(MenuAction::SelectAll);
+                    }
+                    if ui
+                        .add(
+                            egui::Button::new("Deselect")
+                                .shortcut_text(ctx.format_shortcut(&shortcut_deselect)),
+                        )
+                        .clicked()
+                    {
+                        actions.push(MenuAction::Deselect);
+                    }
+                });
+                ui.menu_button("Tools", |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new("Spawn Proto-Fish")
+                                .shortcut_text(ctx.format_shortcut(&shortcut_spawn)),
+                        )
+                        .clicked()
+                    {
+                        actions.push(MenuAction::SpawnProtoFish);
+                    }
+                });
+                ui.menu_button("Help", |ui| {
+                    if ui.button("Documentation").clicked() {
+                        actions.push(MenuAction::ShowDocumentation);
+                    }
+                    if ui.button("About").clicked() {
+                        actions.push(MenuAction::ShowAbout);
+                    }
+                });
+
+                ui.separator();
+                ui.label("Speed:");
+                ui.add(
+                    egui::Slider::new(simulation_speed, 0.1..=10.0)
+                        .text("x")
+                        .logarithmic(true),
+                );
+
+                if let Some(atmosphere) = world.ecs.get_resource::<metabolism::GlobalAtmosphere>() {
+                    ui.separator();
+                    ui.label(format!(
+                        "{} {:.0}%",
+                        egui_remixicon::icons::SUN_LINE,
+                        atmosphere.sunlight * 100.0
+                    ));
                 }
-            });
-            ui.menu_button("Edit", |ui| {
-                if ui
-                    .add(egui::Button::new("Undo").shortcut_text("Z"))
-                    .clicked()
-                {
-                    actions.push(MenuAction::Undo);
+
+                let left_menus_width = ui.min_rect().width();
+                let center_offset = bar_rect.width() / 2.0 - left_menus_width - 120.0;
+                if center_offset > 0.0 {
+                    ui.add_space(center_offset);
                 }
+
+                let play_icon = if *is_paused {
+                    egui_remixicon::icons::PLAY_FILL
+                } else {
+                    egui_remixicon::icons::PAUSE_FILL
+                };
+                let play_color = if *is_paused {
+                    egui::Color32::from_rgb(255, 150, 50)
+                } else {
+                    egui::Color32::LIGHT_GREEN
+                };
+                let play_text = if *is_paused { "PAUSED" } else { "PLAYING" };
+
                 if ui
-                    .add(egui::Button::new("Redo").shortcut_text("Y"))
-                    .clicked()
-                {
-                    actions.push(MenuAction::Redo);
-                }
-            });
-            ui.menu_button("Simulation", |ui| {
-                if ui
-                    .add(
-                        egui::Button::new(if *is_paused { "Play" } else { "Pause" })
-                            .shortcut_text(ctx.format_shortcut(&shortcut_play_pause)),
-                    )
+                    .add(egui::Button::new(
+                        egui::RichText::new(format!("{} {}", play_icon, play_text))
+                            .size(14.0)
+                            .color(play_color),
+                    ))
+                    .on_hover_text("Play/Pause")
                     .clicked()
                 {
                     *is_paused = !*is_paused;
                 }
                 if ui
-                    .add(
-                        egui::Button::new("Step Forward")
-                            .shortcut_text(ctx.format_shortcut(&shortcut_step)),
-                    )
+                    .add(egui::Button::new(
+                        egui::RichText::new(egui_remixicon::icons::SKIP_FORWARD_FILL).size(18.0),
+                    ))
+                    .on_hover_text("Step Forward")
                     .clicked()
                 {
                     actions.push(MenuAction::StepForward);
                 }
                 if ui
-                    .add(
-                        egui::Button::new("Reset")
-                            .shortcut_text(ctx.format_shortcut(&shortcut_reset)),
-                    )
+                    .add(egui::Button::new(
+                        egui::RichText::new(egui_remixicon::icons::RESTART_FILL).size(18.0),
+                    ))
+                    .on_hover_text("Reset Simulation")
                     .clicked()
                 {
                     actions.push(MenuAction::Reset);
                 }
             });
-            ui.menu_button("View", |ui| {
-                ui.checkbox(debug_structural, "Debug Structural View");
-                ui.checkbox(show_vision_cones, "Show Vision Cones");
-            });
-            ui.menu_button("Selection", |ui| {
-                if ui
-                    .add(
-                        egui::Button::new("Select All")
-                            .shortcut_text(ctx.format_shortcut(&shortcut_select_all)),
+
+            // Right Aligned Camera Controls
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(bar_rect), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("+").on_hover_text("Zoom In (+/=)").clicked() {
+                        actions.push(MenuAction::CameraZoomIn);
+                    }
+                    if ui
+                        .button(egui_remixicon::icons::HOME_LINE)
+                        .on_hover_text("Reset Camera (Home/0)")
+                        .clicked()
+                    {
+                        actions.push(MenuAction::CameraHome);
+                    }
+                    if ui.button("-").on_hover_text("Zoom Out (-)").clicked() {
+                        actions.push(MenuAction::CameraZoomOut);
+                    }
+
+                    let track_str = if let Some(e) = tracked_entity {
+                        format!(" - Tracking {:?}", e)
+                    } else {
+                        String::new()
+                    };
+
+                    ui.add_space(8.0);
+                    ui.checkbox(
+                        spectator_mode,
+                        format!("{} Spectator", egui_remixicon::icons::FILM_LINE),
                     )
-                    .clicked()
-                {
-                    actions.push(MenuAction::SelectAll);
-                }
-                if ui
-                    .add(
-                        egui::Button::new("Deselect")
-                            .shortcut_text(ctx.format_shortcut(&shortcut_deselect)),
-                    )
-                    .clicked()
-                {
-                    actions.push(MenuAction::Deselect);
-                }
-            });
-            ui.menu_button("Tools", |ui| {
-                if ui
-                    .add(
-                        egui::Button::new("Spawn Proto-Fish")
-                            .shortcut_text(ctx.format_shortcut(&shortcut_spawn)),
-                    )
-                    .clicked()
-                {
-                    actions.push(MenuAction::SpawnProtoFish);
-                }
-            });
-            ui.menu_button("Help", |ui| {
-                if ui.button("Documentation").clicked() {
-                    actions.push(MenuAction::ShowDocumentation);
-                }
-                if ui.button("About").clicked() {
-                    actions.push(MenuAction::ShowAbout);
-                }
-            });
+                    .on_hover_text("Automatically follow interesting organisms");
 
-            ui.separator();
-            ui.label("Speed:");
-            ui.add(
-                egui::Slider::new(simulation_speed, 0.1..=10.0)
-                    .text("x")
-                    .logarithmic(true),
-            );
-
-            if let Some(atmosphere) = world.ecs.get_resource::<metabolism::GlobalAtmosphere>() {
-                ui.separator();
-                ui.label(format!(
-                    "{} {:.0}%",
-                    egui_remixicon::icons::SUN_LINE,
-                    atmosphere.sunlight * 100.0
-                ));
-            }
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // right-to-left means items are placed from right edge toward left edge.
-                // we want the order visual left-to-right to be: "Cam info", "-", "Home", "+"
-                // so we add "+", "Home", "-", then the label.
-
-                if ui.button("+").on_hover_text("Zoom In (+/=)").clicked() {
-                    actions.push(MenuAction::CameraZoomIn);
-                }
-                if ui
-                    .button(egui_remixicon::icons::HOME_LINE)
-                    .on_hover_text("Reset Camera (Home/0)")
-                    .clicked()
-                {
-                    actions.push(MenuAction::CameraHome);
-                }
-                if ui.button("-").on_hover_text("Zoom Out (-)").clicked() {
-                    actions.push(MenuAction::CameraZoomOut);
-                }
-
-                let track_str = if let Some(e) = tracked_entity {
-                    format!(" - Tracking {:?}", e)
-                } else {
-                    String::new()
-                };
-
-                ui.add_space(8.0);
-                ui.checkbox(
-                    spectator_mode,
-                    format!("{} Spectator", egui_remixicon::icons::FILM_LINE),
-                )
-                .on_hover_text("Automatically follow interesting organisms");
-
-                ui.label(format!(
-                    "Cam: ({:.0}, {:.0})  ×{:.1}{}",
-                    camera_pos.x, camera_pos.y, camera_zoom, track_str
-                ));
+                    ui.add_space(8.0);
+                    ui.label(format!(
+                        "Cam: ({:.0}, {:.0})  ×{:.1}{}",
+                        camera_pos.x, camera_pos.y, camera_zoom, track_str
+                    ));
+                });
             });
         });
     });
@@ -879,35 +904,30 @@ pub fn render_ui(
                                     });
                                     egui::ScrollArea::vertical()
                                         .id_salt("hox_scroll")
-                                        .max_height(200.0)
+                                        .max_height(250.0)
                                         .show(ui, |ui| {
-                                            for (i, gene) in hox.genes.iter().enumerate() {
-                                                ui.group(|ui| {
-                                                    ui.label(
-                                                        egui::RichText::new(format!(
-                                                            "[{}] {:?}",
-                                                            i, gene.segment
-                                                        ))
-                                                        .strong(),
-                                                    );
-                                                    if gene.branching_signal > 0.0 {
-                                                        ui.label(format!(
-                                                            "Branching Signal: {:.2}",
-                                                            gene.branching_signal
-                                                        ));
-                                                    }
-                                                    if gene.actuation_amplitude > 0.0 {
-                                                        ui.label(format!(
-                                                            "Actuation Amp: {:.2}",
-                                                            gene.actuation_amplitude
-                                                        ));
-                                                        ui.label(format!(
-                                                            "Actuation Phase: {:.2}",
-                                                            gene.actuation_phase
-                                                        ));
+                                            egui::Grid::new("hox_grid")
+                                                .num_columns(2)
+                                                .spacing([8.0, 8.0])
+                                                .show(ui, |ui| {
+                                                    for (i, gene) in hox.genes.iter().enumerate() {
+                                                        ui.group(|ui| {
+                                                            ui.set_min_width(180.0);
+                                                            let mut text = format!("[{}] {:?}", i, gene.segment);
+                                                            if gene.branching_signal > 0.0 {
+                                                                text.push_str(&format!("\nBranching Signal: {:.2}", gene.branching_signal));
+                                                            }
+                                                            if gene.actuation_amplitude > 0.0 {
+                                                                text.push_str(&format!("\nActuation Amp: {:.2}", gene.actuation_amplitude));
+                                                                text.push_str(&format!("\nActuation Phase: {:.2}", gene.actuation_phase));
+                                                            }
+                                                            ui.label(egui::RichText::new(text).size(12.0));
+                                                        });
+                                                        if (i + 1) % 2 == 0 {
+                                                            ui.end_row();
+                                                        }
                                                     }
                                                 });
-                                            }
                                         });
                                 } else {
                                     ui.label("No explicit Hox sequence (CPPN driven).");
@@ -1442,94 +1462,136 @@ pub fn render_ui(
             });
         });
 
-    // ── Bottom panel — Metrics plots ───────────────────────────────────────
+    // ── Bottom panel — Metrics plots & Event Log ───────────────────────────
     egui::TopBottomPanel::bottom("bottom_panel")
         .resizable(true)
         .default_height(180.0)
         .show(ctx, |ui| {
-            ui.heading("Output / Metrics");
+            ui.horizontal(|ui| {
+                ui.selectable_value(active_bottom_tab, BottomTab::Metrics, "Metrics Dashboard");
+                ui.selectable_value(active_bottom_tab, BottomTab::EventLog, "Event Log");
+            });
             ui.separator();
 
-            if let Some(metrics) = world.ecs.get_resource::<analytics::MetricsState>() {
-                let to_pts =
-                    |hist: &std::collections::VecDeque<[f64; 2]>| -> egui_plot::PlotPoints {
-                        hist.iter().copied().collect()
-                    };
+            match active_bottom_tab {
+                BottomTab::Metrics => {
+                    if let Some(metrics) = world.ecs.get_resource::<analytics::MetricsState>() {
+                        let to_pts =
+                            |hist: &std::collections::VecDeque<[f64; 2]>| -> egui_plot::PlotPoints {
+                                hist.iter().copied().collect()
+                            };
 
-                let prod_pts = to_pts(&metrics.producers_history);
-                let herb_pts = to_pts(&metrics.herbivores_history);
-                let carn_pts = to_pts(&metrics.carnivores_history);
-                let omni_pts = to_pts(&metrics.omnivores_history);
-                let deco_pts = to_pts(&metrics.decomposers_history);
-                let food_pts = to_pts(&metrics.food_history);
-                let min_pts = to_pts(&metrics.minerals_history);
-                let corp_pts = to_pts(&metrics.corpses_history);
+                        let prod_pts = to_pts(&metrics.producers_history);
+                        let herb_pts = to_pts(&metrics.herbivores_history);
+                        let carn_pts = to_pts(&metrics.carnivores_history);
+                        let omni_pts = to_pts(&metrics.omnivores_history);
+                        let deco_pts = to_pts(&metrics.decomposers_history);
+                        let food_pts = to_pts(&metrics.food_history);
+                        let min_pts = to_pts(&metrics.minerals_history);
+                        let corp_pts = to_pts(&metrics.corpses_history);
 
-                let fps_pts: egui_plot::PlotPoints = metrics.fps_history.iter().copied().collect();
+                        let fps_pts: egui_plot::PlotPoints =
+                            metrics.fps_history.iter().copied().collect();
 
-                ui.columns(2, |cols| {
-                    cols[0].label("Entities");
-                    egui_plot::Plot::new("pop_plot")
-                        .height(120.0)
-                        .legend(egui_plot::Legend::default())
-                        .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
-                        .show(&mut cols[0], |plot_ui| {
-                            plot_ui.line(
-                                egui_plot::Line::new(prod_pts)
-                                    .name("Producers")
-                                    .color(egui::Color32::from_rgb(100, 255, 100)),
-                            );
-                            plot_ui.line(
-                                egui_plot::Line::new(herb_pts)
-                                    .name("Herbivores")
-                                    .color(egui::Color32::from_rgb(200, 255, 150)),
-                            );
-                            plot_ui.line(
-                                egui_plot::Line::new(carn_pts)
-                                    .name("Carnivores")
-                                    .color(egui::Color32::from_rgb(255, 100, 100)),
-                            );
-                            plot_ui.line(
-                                egui_plot::Line::new(omni_pts)
-                                    .name("Omnivores")
-                                    .color(egui::Color32::from_rgb(255, 200, 100)),
-                            );
-                            plot_ui.line(
-                                egui_plot::Line::new(deco_pts)
-                                    .name("Decomposers")
-                                    .color(egui::Color32::from_rgb(200, 150, 200)),
-                            );
-                            plot_ui.line(
-                                egui_plot::Line::new(food_pts)
-                                    .name("Food")
-                                    .color(egui::Color32::from_rgb(150, 255, 255)),
-                            );
-                            plot_ui.line(
-                                egui_plot::Line::new(min_pts)
-                                    .name("Minerals")
-                                    .color(egui::Color32::from_rgb(150, 150, 150)),
-                            );
-                            plot_ui.line(
-                                egui_plot::Line::new(corp_pts)
-                                    .name("Corpses")
-                                    .color(egui::Color32::from_rgb(200, 100, 100)),
-                            );
+                        ui.columns(2, |cols| {
+                            // Column 1
+                            cols[0].vertical(|ui| {
+                                ui.label("Demographics");
+                                egui_plot::Plot::new("pop_plot")
+                                    .height(120.0)
+                                    .legend(egui_plot::Legend::default())
+                                    .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
+                                    .show(ui, |plot_ui| {
+                                        plot_ui.line(
+                                            egui_plot::Line::new(prod_pts)
+                                                .name("Producers")
+                                                .color(egui::Color32::from_rgb(100, 255, 100)),
+                                        );
+                                        plot_ui.line(
+                                            egui_plot::Line::new(herb_pts)
+                                                .name("Herbivores")
+                                                .color(egui::Color32::from_rgb(200, 255, 150)),
+                                        );
+                                        plot_ui.line(
+                                            egui_plot::Line::new(carn_pts)
+                                                .name("Carnivores")
+                                                .color(egui::Color32::from_rgb(255, 100, 100)),
+                                        );
+                                        plot_ui.line(
+                                            egui_plot::Line::new(omni_pts)
+                                                .name("Omnivores")
+                                                .color(egui::Color32::from_rgb(255, 200, 100)),
+                                        );
+                                        plot_ui.line(
+                                            egui_plot::Line::new(deco_pts)
+                                                .name("Decomposers")
+                                                .color(egui::Color32::from_rgb(200, 150, 200)),
+                                        );
+                                    });
+
+                                ui.add_space(8.0);
+
+                                ui.label("Performance (FPS)");
+                                egui_plot::Plot::new("fps_plot")
+                                    .height(120.0)
+                                    .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
+                                    .show(ui, |plot_ui| {
+                                        plot_ui.line(
+                                            egui_plot::Line::new(fps_pts)
+                                                .name("fps")
+                                                .color(egui::Color32::WHITE),
+                                        );
+                                    });
+                            });
+
+                            // Column 2
+                            cols[1].vertical(|ui| {
+                                ui.label("Environment Resources");
+                                egui_plot::Plot::new("env_plot")
+                                    .height(120.0)
+                                    .legend(egui_plot::Legend::default())
+                                    .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
+                                    .show(ui, |plot_ui| {
+                                        plot_ui.line(
+                                            egui_plot::Line::new(food_pts)
+                                                .name("Food")
+                                                .color(egui::Color32::from_rgb(150, 255, 255)),
+                                        );
+                                        plot_ui.line(
+                                            egui_plot::Line::new(min_pts)
+                                                .name("Minerals")
+                                                .color(egui::Color32::from_rgb(150, 150, 150)),
+                                        );
+                                        plot_ui.line(
+                                            egui_plot::Line::new(corp_pts)
+                                                .name("Corpses")
+                                                .color(egui::Color32::from_rgb(200, 100, 100)),
+                                        );
+                                    });
+                            });
                         });
-
-                    cols[1].label("FPS");
-                    egui_plot::Plot::new("fps_plot")
-                        .height(120.0)
-                        .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
-                        .show(&mut cols[1], |plot_ui| {
-                            plot_ui.line(
-                                egui_plot::Line::new(fps_pts)
-                                    .name("fps")
-                                    .color(egui::Color32::WHITE),
-                            );
-                        });
-                });
-            } else {
-                ui.label("Metrics not yet available.");
+                    } else {
+                        ui.label("Metrics not yet available.");
+                    }
+                }
+                BottomTab::EventLog => {
+                    if let Some(log) = world.ecs.get_resource::<analytics::NarrationLog>() {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .stick_to_bottom(true)
+                            .show(ui, |ui| {
+                                for event in &log.events {
+                                    ui.label(
+                                        egui::RichText::new(&event.description)
+                                            .color(egui::Color32::LIGHT_GRAY)
+                                            .size(13.0),
+                                    );
+                                }
+                            });
+                    } else {
+                        ui.label("Event log not yet available.");
+                    }
+                }
             }
         });
 
@@ -1565,35 +1627,6 @@ pub fn render_ui(
                 }
             }
         }
-    }
-
-    if let Some(log) = world.ecs.get_resource::<analytics::NarrationLog>() {
-        egui::Window::new("Narration Log")
-            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 60.0))
-            .collapsible(false)
-            .title_bar(false)
-            .resizable(false)
-            .frame(egui::Frame::window(&ctx.style()).fill(egui::Color32::from_black_alpha(200)))
-            .show(ctx, |ui| {
-                ui.label(
-                    egui::RichText::new("Event Log")
-                        .strong()
-                        .color(egui::Color32::WHITE),
-                );
-                ui.separator();
-                let mut count = 0;
-                for event in log.events.iter().rev() {
-                    ui.label(
-                        egui::RichText::new(&event.description)
-                            .color(egui::Color32::LIGHT_GRAY)
-                            .size(12.0),
-                    );
-                    count += 1;
-                    if count >= 8 {
-                        break;
-                    }
-                }
-            });
     }
 
     // ── Central panel (transparent — simulation renders underneath) ────────

@@ -31,6 +31,16 @@ pub enum SidebarTab {
     Settings,
 }
 
+/// The active tab in the bottom panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BottomTab {
+    /// Metrics Dashboard (4-plot grid)
+    #[default]
+    Metrics,
+    /// Event Log (recent births, deaths, hazard events)
+    EventLog,
+}
+
 /// Contains the screen-space rect of the transparent canvas area and the
 /// unified touch/mouse/trackpad gesture interactions performed on it.
 #[derive(Debug, Clone, Copy)]

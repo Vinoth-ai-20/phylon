@@ -622,6 +622,7 @@ impl PhylonApp {
                     &mut self.ui.skin_thickness,
                     &mut self.ui.node_radius,
                     &mut self.ui.active_tab,
+                    &mut self.ui.active_bottom_tab,
                     &mut self.simulation_speed,
                     &mut self.ui.is_paused,
                     &mut self.ui.show_about,
