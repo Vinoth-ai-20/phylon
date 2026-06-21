@@ -39,12 +39,14 @@ impl Default for BehaviorConfig {
 #[allow(clippy::type_complexity)]
 pub fn behavior_system(
     mut query: bevy_ecs::prelude::Query<(
+        bevy_ecs::entity::Entity,
         &physics::ParticleNode,
         &sensing::SensoryState,
         Option<&mut brain::Brain>,
         Option<&MotorSystem>,
         Option<&mut diffusion::SignalEmitter>,
         Option<&mut metabolism::Energy>,
+        Option<&metabolism::Age>,
     )>,
     mut springs: bevy_ecs::prelude::Query<&mut physics::Spring>,
     env: Option<bevy_ecs::prelude::Res<environment::EnvironmentManager>>,
@@ -52,12 +54,31 @@ pub fn behavior_system(
 ) {
     // Time step integration is now fully handled by the GPU compute pass
 
-    for (node, _sensory, mut brain_opt, motor_opt, mut emitter_opt, mut energy_opt) in
-        query.iter_mut()
+    for (
+        entity,
+        node,
+        _sensory,
+        mut brain_opt,
+        motor_opt,
+        mut emitter_opt,
+        mut energy_opt,
+        age_opt,
+    ) in query.iter_mut()
     {
         if let Some(brain) = brain_opt.as_mut() {
             // 1. Extract outputs (the integration happened globally on GPU)
             let outputs = brain.get_outputs();
+
+            if let Some(age) = age_opt {
+                if age.ticks == 50 || age.ticks == 450 {
+                    println!(
+                        "[DIAGNOSTIC] Age {}: Entity {} outputs = {:?}",
+                        age.ticks,
+                        entity.index(),
+                        outputs
+                    );
+                }
+            }
 
             // Calculate environmental efficiency based on local temperature
             let mut efficiency = 1.0;

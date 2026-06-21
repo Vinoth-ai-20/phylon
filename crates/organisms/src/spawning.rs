@@ -264,8 +264,8 @@ pub fn spawn_proto_fish(
     // ── Biological state on the head node ──────────────────────────────────
     world.entity_mut(spine_nodes[0]).insert((
         metabolism::Energy {
-            current: 100.0,
-            max: 200.0,
+            current: 100000.0,
+            max: 100000.0,
         },
         metabolism::Age {
             ticks: 0,

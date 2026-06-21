@@ -70,6 +70,6 @@ fn integrate_nodes(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Euler step
     let dy_dt = (1.0 / node.time_constant) * (-node.state + sum);
     
-    // Update node state
-    nodes[index].state += dy_dt * config.dt;
+    // Update node state, clamped to prevent mathematical explosion
+    nodes[index].state = clamp(nodes[index].state + dy_dt * config.dt, -10.0, 10.0);
 }

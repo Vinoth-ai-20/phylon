@@ -220,17 +220,15 @@ pub fn sensing_system(
             // 7. Internal Pacemaker (CPG)
             if idx < state.inputs.len() {
                 // Since this runs once per tick, local_tick corresponds to elapsed ticks.
-                // At 60 ticks/sec, * 0.1 gives ~1 Hz frequency.
-                let pacemaker_signal = (*local_tick as f32 * 0.1).sin();
+                // At 60 ticks/sec, * 0.2 gives ~2 Hz frequency.
+                let pacemaker_signal = (*local_tick as f32 * 0.2).sin();
                 state.inputs[idx] = pacemaker_signal;
             }
         }
-
-        // Advance the pacemaker tick
-        *local_tick += 1;
-
-        // Additional sensors could be added here
     }
+
+    // Advance the pacemaker tick globally once per frame
+    *local_tick += 1;
 }
 
 #[cfg(test)]

@@ -63,9 +63,9 @@ pub fn growth_system(
                         ];
                         let w_outputs = state.genome.evaluate(&w_inputs);
                         if w_outputs.len() >= 3 {
-                            bias = w_outputs[1] * 5.0;
-                            // Time constant must be strictly positive.
-                            time_constant = w_outputs[2].abs().clamp(0.01, 10.0);
+                            bias = w_outputs[1] * 1.5;
+                            // Time constant must be strictly positive and low enough to allow fast 2 Hz oscillations.
+                            time_constant = w_outputs[2].abs().clamp(0.1, 2.0);
                         }
                     }
                 }
@@ -108,7 +108,7 @@ pub fn growth_system(
                         ];
                         let w_outputs = state.genome.evaluate(&w_inputs);
                         if !w_outputs.is_empty() {
-                            weight += w_outputs[0] * 5.0;
+                            weight += w_outputs[0] * 1.5;
                         }
                     }
 
@@ -297,8 +297,8 @@ pub fn growth_system(
                         constraint_type: physics::ConstraintType::Elastic,
                         rest_length: muscle_rest_len,
                         base_length: muscle_rest_len,
-                        stiffness: 15.0,
-                        damping: 0.8,
+                        stiffness: 25.0,
+                        damping: 0.9,
                         actuation_amplitude: gene.actuation_amplitude,
                         actuation_phase: 0.0,
                         breaking_strain: 2.0,
@@ -317,8 +317,8 @@ pub fn growth_system(
                         constraint_type: physics::ConstraintType::Elastic,
                         rest_length: muscle_rest_len,
                         base_length: muscle_rest_len,
-                        stiffness: 15.0,
-                        damping: 0.8,
+                        stiffness: 25.0,
+                        damping: 0.9,
                         actuation_amplitude: gene.actuation_amplitude,
                         actuation_phase: std::f32::consts::PI, // Opposing phase → flap
                         breaking_strain: 2.0,

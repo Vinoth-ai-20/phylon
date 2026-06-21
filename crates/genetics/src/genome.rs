@@ -245,7 +245,8 @@ impl Genome {
         }
 
         // We assume nodes are topologically sorted by layer index.
-        for target_idx in 0..self.nodes.len() {
+        let start_idx = inputs.len();
+        for target_idx in start_idx..self.nodes.len() {
             let mut sum = self.nodes[target_idx].bias;
             for conn in &self.connections {
                 if conn.enabled && conn.target == target_idx {
