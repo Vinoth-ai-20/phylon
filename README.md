@@ -47,7 +47,7 @@ cargo run --release --bin phylon
 
 ## Current Status
 
-Phase 0 (Architecture & Bootstrap) is functionally complete. The workspace features the foundational skeletal infrastructure across 30 decoupled crates. The core simulation layer, data-oriented abstractions, strict fixed-timestep scheduler, event bus, and global configuration engine have been implemented. The overarching architecture and documentation blueprints for all future phases (physics, chemical diffusion, GPU integration, ML inference) are established. Currently, the overarching scaffolding is in place and successfully building, setting the stage for Phase 1 (Physics & Spatial Mapping).
+Phases 0 through 9 are functionally complete. The workspace features the foundational skeletal infrastructure across 30 decoupled crates, and complete implementations for decentralized soft-body physics, chemical diffusion fields, CPPN/HyperNEAT morphology, sexual recombination, CTRNN brains with learned gaits, a comprehensive UI & analytics suite, speciation persistence tools, procedural visuals, the application shell, and headless MARL networking. The simulation is now prepared for speculative phases like Emergent Signaling and Catastrophe Engines.
 
 ## Documentation
 

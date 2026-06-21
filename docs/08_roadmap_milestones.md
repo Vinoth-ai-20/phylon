@@ -9,19 +9,19 @@
 | Phase | Version | Theme | Status |
 | --- | --- | --- | --- |
 | 0 | v0.0.1 | Foundation | ✅ Complete |
-| 1 | v0.1 | Decentralized Physics & Debug Renderer | 📋 Planned |
-| 1.5 | v0.15 | Topological Plasticity | 📋 Planned |
-| 2 | v0.2 | Fields & Environment | 📋 Planned |
-| 2.5 | v0.25 | Closed-Loop Fields | 📋 Planned |
-| 3 | v0.3 | CPPN/HyperNEAT Morphology & Passive Ecology | 📋 Planned |
-| 3.5 | v0.35 | Sexual Recombination & Drift | 📋 Planned |
-| 4 | v0.4 | Actuation, Cognition & Behavior | 📋 Planned |
-| 4.5 | v0.45 | Learned Gaits | 📋 Planned |
-| 5 | v0.5 | UI & Analytics | 📋 Planned |
-| 6 | v0.6 | Persistence & Speciation Tools | 📋 Planned |
-| 7 | v0.7 | Procedural Visuals & Trails | 📋 Planned |
-| 8 | v0.8 | Application Shell | 📋 Planned |
-| 9 | v1.0 | Headless MARL & Network | 📋 Planned |
+| 1 | v0.1 | Decentralized Physics & Debug Renderer | ✅ Complete |
+| 1.5 | v0.15 | Topological Plasticity | ✅ Complete |
+| 2 | v0.2 | Fields & Environment | ✅ Complete |
+| 2.5 | v0.25 | Closed-Loop Fields | ✅ Complete |
+| 3 | v0.3 | CPPN/HyperNEAT Morphology & Passive Ecology | ✅ Complete |
+| 3.5 | v0.35 | Sexual Recombination & Drift | ✅ Complete |
+| 4 | v0.4 | Actuation, Cognition & Behavior | ✅ Complete |
+| 4.5 | v0.45 | Learned Gaits | ✅ Complete |
+| 5 | v0.5 | UI & Analytics | ✅ Complete |
+| 6 | v0.6 | Persistence & Speciation Tools | ✅ Complete |
+| 7 | v0.7 | Procedural Visuals & Trails | ✅ Complete |
+| 8 | v0.8 | Application Shell | ✅ Complete |
+| 9 | v1.0 | Headless MARL & Network | ✅ Complete |
 | 10 | v1.1 | Emergent Signaling | 💭 Speculative |
 | 11 | v1.2 | Catastrophe Engine | 💭 Speculative |
 | 12 | v1.3 | Spectator & Lineage Narration | 💭 Speculative |
@@ -34,26 +34,26 @@
 Workspace scaffolding, acyclic crate DAG, `bevy_ecs` + `wgpu` baseline, stable window,
 fixed-tick scheduler.
 
-## 📋 Phase 1 — Decentralized Physics & Debug Renderer (v0.1)
+## ✅ Phase 1 — Decentralized Physics & Debug Renderer (v0.1)
 
 Graph-based soft-body physics (nodes + spring-constraints), GPU flat-buffer allocation,
 instanced-quad rendering.
 
-### 📋 Phase 1.5 — Topological Plasticity (v0.15)
+### ✅ Phase 1.5 — Topological Plasticity (v0.15)
 
 Runtime-mutable graph topology.
 
-## 📋 Phase 2 — Fields & Environment (v0.2)
+## ✅ Phase 2 — Fields & Environment (v0.2)
 
 Diffusion fields (oxygen, pheromones, and the expanded set: Sunlight, CO2, Soil Fertility)
 via WGSL compute shaders.
 
-### 📋 Phase 2.5 — Closed-Loop Fields (v0.25)
+### ✅ Phase 2.5 — Closed-Loop Fields (v0.25)
 
 Closed-loop readback, environment background clear-color fixed, nutrient field rendering
 debugged and corrected.
 
-## 📋 Phase 3 — CPPN/HyperNEAT Morphology & Passive Ecology (v0.3)
+## ✅ Phase 3 — CPPN/HyperNEAT Morphology & Passive Ecology (v0.3)
 
 CPPN-driven Hox/branching morphology replacing the old fixed grid/mesh placeholder —
 spine + lateral fin/limb branching genuinely driven by genetics, verified across multiple
@@ -61,43 +61,43 @@ distinct organism topologies. Mineral/Corpse/Decomposer nutrient recycling loop 
 Ecological Category system (Keystone/Indicator/Endemic/Invasive) implemented, with
 genetics-driven color preserved as the authoritative organism color source.
 
-### 📋 Phase 3.5 — Sexual Recombination & Drift (v0.35)
+### ✅ Phase 3.5 — Sexual Recombination & Drift (v0.35)
 
 Crossover and mutation operators for Hox/CPPN genomes.
 
-## 📋 Phase 4 — Actuation, Cognition & Behavior (v0.4)
+## ✅ Phase 4 — Actuation, Cognition & Behavior (v0.4)
 
 CTRNN brain wired to `muscle_actuation.wgsl` via a CPG (Central Pattern Generator),
 confirmed working after the camera-desync bug that was masquerading as movement got fixed.
 Raycasting/vision-cone sensing implemented (Left/Center/Right inputs), with a
 body-scale-relative self-occlusion radius.
 
-### 📋 Phase 4.5 — Learned Gaits (v0.45)
+### ✅ Phase 4.5 — Learned Gaits (v0.45)
 
 Brain output drives actuation amplitude/phase directly per tick.
 
-## 📋 Phase 5 — UI & Analytics (v0.5)
+## ✅ Phase 5 — UI & Analytics (v0.5)
 
 Entity-graph inspection, global keyboard shortcuts, viewport pan/zoom/touch input,
 population/FPS analytics, Structural/Vision-Cone debug overlays, Genetics panel.
 
-## 📋 Phase 6 — Persistence & Speciation Tools (v0.6)
+## ✅ Phase 6 — Persistence & Speciation Tools (v0.6)
 
 Bincode/ron serialization, SQLite run-tracking, replay system, formal
 speciation clustering (Levenshtein distance on Hox sequences).
 
-## 📋 Phase 7 — Procedural Visuals & Trails (v0.7)
+## ✅ Phase 7 — Procedural Visuals & Trails (v0.7)
 
 Dual-mode rendering (Structural debug vs. SDF/Metaball organic skin), adjustable bone-line
 thickness, hard-edged hover/selection highlight outlines derived from the same SDF density
 union (not per-node strokes), extended to Food/Mineral pellets and Corpses.
 
-## 📋 Phase 8 — Application Shell (v0.8)
+## ✅ Phase 8 — Application Shell (v0.8)
 
 Persistent `TopBottomPanel` navigation, Main Menu/homepage with consistent
 button sizing, non-blocking pause state, File-menu-routed Save/Load/Settings/Quit.
 
-## 📋 Phase 9 — Headless MARL & Network (v1.0)
+## ✅ Phase 9 — Headless MARL & Network (v1.0)
 
 Not started — fully planned only.
 
