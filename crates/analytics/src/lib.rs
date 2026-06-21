@@ -64,14 +64,49 @@ impl Default for AnalyticsAccumulator {
 /// Maximum number of time-series samples to keep in the ring buffers.
 const METRICS_RING_CAPACITY: usize = 512;
 
+/// Current population counts for various entity types.
+#[derive(Debug, Clone, Default)]
+pub struct PopulationCounts {
+    /// Number of producers
+    pub producers: usize,
+    /// Number of herbivores
+    pub herbivores: usize,
+    /// Number of carnivores
+    pub carnivores: usize,
+    /// Number of omnivores
+    pub omnivores: usize,
+    /// Number of decomposers
+    pub decomposers: usize,
+    /// Number of food pellets
+    pub food_pellets: usize,
+    /// Number of mineral pellets
+    pub minerals: usize,
+    /// Number of corpses
+    pub corpses: usize,
+}
+
 /// Live simulation metrics resource, held in the ECS world and updated each frame.
 ///
 /// Data is stored as `[sim_time, value]` pairs suitable for direct use with
 /// `egui_plot::PlotPoints`.
 #[derive(bevy_ecs::prelude::Resource, Debug, Clone)]
 pub struct MetricsState {
-    /// Ring buffer of `[sim_time_s, entity_count]` points for the population plot.
-    pub population_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer of `[sim_time_s, value]` points for Producers.
+    pub producers_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer for Herbivores.
+    pub herbivores_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer for Carnivores.
+    pub carnivores_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer for Omnivores.
+    pub omnivores_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer for Decomposers.
+    pub decomposers_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer for FoodPellets.
+    pub food_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer for Minerals.
+    pub minerals_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer for Corpses.
+    pub corpses_history: std::collections::VecDeque<[f64; 2]>,
     /// Ring buffer of `[sim_time_s, fps]` points for the FPS plot.
     pub fps_history: std::collections::VecDeque<[f64; 2]>,
     /// Accumulated simulation time in seconds.
@@ -86,7 +121,14 @@ impl MetricsState {
     /// Creates a new, empty `MetricsState`.
     pub fn new() -> Self {
         Self {
-            population_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            producers_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            herbivores_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            carnivores_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            omnivores_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            decomposers_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            food_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            minerals_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            corpses_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
             fps_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
             sim_time: 0.0,
             smoothed_fps: 60.0,
@@ -94,21 +136,31 @@ impl MetricsState {
         }
     }
 
-    /// Records one simulation frame with the current entity count and frame delta time.
+    /// Records one simulation frame with the current population counts and frame delta time.
     ///
     /// `dt` is in seconds (typically 0.016 for 60 Hz).
-    pub fn record_frame(&mut self, entity_count: usize, sim_dt: f64, real_dt: f64) {
+    pub fn record_frame(&mut self, counts: PopulationCounts, sim_dt: f64, real_dt: f64) {
         self.sim_time += sim_dt;
 
         // Exponential moving average for FPS (α = 0.05)
         let raw_fps = if real_dt > 0.0 { 1.0 / real_dt } else { 60.0 };
         self.smoothed_fps = self.smoothed_fps * 0.95 + raw_fps * 0.05;
 
-        if self.population_history.len() >= METRICS_RING_CAPACITY {
-            self.population_history.pop_front();
-        }
-        self.population_history
-            .push_back([self.sim_time, entity_count as f64]);
+        let push_metric = |history: &mut std::collections::VecDeque<[f64; 2]>, value: usize| {
+            if history.len() >= METRICS_RING_CAPACITY {
+                history.pop_front();
+            }
+            history.push_back([self.sim_time, value as f64]);
+        };
+
+        push_metric(&mut self.producers_history, counts.producers);
+        push_metric(&mut self.herbivores_history, counts.herbivores);
+        push_metric(&mut self.carnivores_history, counts.carnivores);
+        push_metric(&mut self.omnivores_history, counts.omnivores);
+        push_metric(&mut self.decomposers_history, counts.decomposers);
+        push_metric(&mut self.food_history, counts.food_pellets);
+        push_metric(&mut self.minerals_history, counts.minerals);
+        push_metric(&mut self.corpses_history, counts.corpses);
 
         if self.fps_history.len() >= METRICS_RING_CAPACITY {
             self.fps_history.pop_front();
@@ -192,9 +244,9 @@ mod tests {
     fn metrics_state_ring_buffer_caps_at_max() {
         let mut m = MetricsState::new();
         for _ in 0..(METRICS_RING_CAPACITY + 10) {
-            m.record_frame(42, 0.016, 0.016);
+            m.record_frame(PopulationCounts::default(), 0.016, 0.016);
         }
-        assert_eq!(m.population_history.len(), METRICS_RING_CAPACITY);
+        assert_eq!(m.producers_history.len(), METRICS_RING_CAPACITY);
         assert_eq!(m.fps_history.len(), METRICS_RING_CAPACITY);
     }
 }

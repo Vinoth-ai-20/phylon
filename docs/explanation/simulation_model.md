@@ -22,3 +22,9 @@ Organisms possess a Metabolism component defining their ase_rate of energy cons
 - Energy is strictly conserved. An organism must consume entities matching its Diet (e.g., Herbivore eats FoodPellet) to gain Energy.
 - If Energy drops to zero, the organism dies and is converted into a Corpse.
 - Decomposer organisms eat Corpse entities, closing the ecological loop.
+
+## Data & Analytics
+
+The `analytics` module continuously monitors the ecosystem's health by tracking populations in a ring buffer.
+- Population histories are recorded for 8 distinct ecological roles (`Producers`, `Herbivores`, `Carnivores`, `Omnivores`, `Decomposers`, `Food`, `Minerals`, `Corpses`).
+- The user interface visualizes these demographic shifts over time via interactive graphs, enabling detailed observation of population crashes, predator-prey cycles, and carrying capacity limits.

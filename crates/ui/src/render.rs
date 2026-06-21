@@ -21,6 +21,8 @@ pub fn render_ui(
     tracked_entity: &mut Option<bevy_ecs::entity::Entity>,
     debug_structural: &mut bool,
     bone_line_thickness: &mut f32,
+    skin_thickness: &mut f32,
+    node_radius: &mut f32,
     active_tab: &mut SidebarTab,
     simulation_speed: &mut f32,
     is_paused: &mut bool,
@@ -544,6 +546,7 @@ pub fn render_ui(
                         let mut mineral_q = world.ecs.query::<&ecology::MineralPellet>();
                         let mut corpse_q = world.ecs.query::<&ecology::Corpse>();
 
+                        let mut find_head_for = None;
                         if let Ok(node) = node_q.get(&world.ecs, entity) {
                             egui::CollapsingHeader::new(format!("{} Physics Node", egui_remixicon::icons::SETTINGS_4_LINE))
                                 .default_open(true)
@@ -566,6 +569,12 @@ pub fn render_ui(
                                         node.velocity.x, node.velocity.y
                                     ));
                                     ui.label(format!("Mass     : {:.2}", node.mass));
+                                    if node.segment_type != 0 {
+                                        ui.add_space(5.0);
+                                        if ui.button(format!("{} Go to Head", egui_remixicon::icons::ARROW_UP_LINE)).clicked() {
+                                            find_head_for = Some(entity);
+                                        }
+                                    }
                                 });
                         } else if let Ok(food) = food_q.get(&world.ecs, entity) {
                             egui::CollapsingHeader::new(format!("{} Food Pellet", egui_remixicon::icons::LEAF_LINE))
@@ -589,6 +598,34 @@ pub fn render_ui(
                                     ui.label(format!("Energy: {:.1}", corpse.energy_value));
                                     ui.label(format!("Decay: {} / {}", corpse.decay_timer, corpse.max_decay));
                                 });
+                        }
+
+                        if let Some(target) = find_head_for {
+                            let mut head_entity = None;
+                            let mut visited = std::collections::HashSet::new();
+                            let mut queue = std::collections::VecDeque::new();
+                            queue.push_back(target);
+
+                            let mut spring_q = world.ecs.query::<&physics::Spring>();
+                            while let Some(curr) = queue.pop_front() {
+                                if !visited.insert(curr) { continue; }
+                                if let Ok(n) = node_q.get(&world.ecs, curr) {
+                                    if n.segment_type == 0 {
+                                        head_entity = Some(curr);
+                                        break;
+                                    }
+                                }
+                                for spring in spring_q.iter(&world.ecs) {
+                                    if spring.node_a == curr && !visited.contains(&spring.node_b) {
+                                        queue.push_back(spring.node_b);
+                                    } else if spring.node_b == curr && !visited.contains(&spring.node_a) {
+                                        queue.push_back(spring.node_a);
+                                    }
+                                }
+                            }
+                            if let Some(h) = head_entity {
+                                *selected_entity = Some(h);
+                            }
                         }
 
                         // Metabolism — Energy
@@ -1022,7 +1059,28 @@ pub fn render_ui(
 
                                         if resp.hover_pos().is_some_and(|h| h.distance(pos) < 8.0) {
                                             egui::show_tooltip(ctx, ui.layer_id(), ui.id().with(format!("brain_tt_{}", i)), |ui| {
-                                                ui.label(format!("CTRNN Node {}", i));
+                                                let is_in = i < brain.input_count;
+                                                let is_out = i >= brain.nodes.len() - brain.output_count;
+                                                let node_name = if is_in {
+                                                    match i {
+                                                        0 => "Olfaction".to_string(),
+                                                        1 => "Signals".to_string(),
+                                                        2 => "Hazards".to_string(),
+                                                        3 => "Energy".to_string(),
+                                                        4 => "Age".to_string(),
+                                                        5 => "Vision Left".to_string(),
+                                                        6 => "Vision Center".to_string(),
+                                                        7 => "Vision Right".to_string(),
+                                                        8 => "Pacemaker".to_string(),
+                                                        _ => format!("Input {}", i),
+                                                    }
+                                                } else if is_out {
+                                                    format!("Effector {}", i - (brain.nodes.len() - brain.output_count))
+                                                } else {
+                                                    format!("Hidden {}", i - brain.input_count)
+                                                };
+
+                                                ui.label(egui::RichText::new(node_name).strong());
                                                 ui.label(format!("State: {:.2}", node.state));
                                                 ui.label(format!("Activation: {:.2}", act));
                                                 ui.label(format!("Bias: {:.2}", node.bias));
@@ -1230,6 +1288,14 @@ pub fn render_ui(
                             ui.label("Bone Thickness");
                             ui.add(egui::Slider::new(bone_line_thickness, 1.0..=10.0));
                             ui.end_row();
+
+                            ui.label("Skin Thickness");
+                            ui.add(egui::Slider::new(skin_thickness, 0.5..=20.0));
+                            ui.end_row();
+
+                            ui.label("Node Radius");
+                            ui.add(egui::Slider::new(node_radius, 0.5..=10.0));
+                            ui.end_row();
                         });
                     } else {
                         ui.label("Physics resource not found.");
@@ -1369,23 +1435,81 @@ pub fn render_ui(
             ui.separator();
 
             if let Some(metrics) = world.ecs.get_resource::<analytics::MetricsState>() {
-                let pop_pts: egui_plot::PlotPoints =
-                    metrics.population_history.iter().copied().collect();
+                let to_pts =
+                    |hist: &std::collections::VecDeque<[f64; 2]>| -> egui_plot::PlotPoints {
+                        hist.iter().copied().collect()
+                    };
+
+                let prod_pts = to_pts(&metrics.producers_history);
+                let herb_pts = to_pts(&metrics.herbivores_history);
+                let carn_pts = to_pts(&metrics.carnivores_history);
+                let omni_pts = to_pts(&metrics.omnivores_history);
+                let deco_pts = to_pts(&metrics.decomposers_history);
+                let food_pts = to_pts(&metrics.food_history);
+                let min_pts = to_pts(&metrics.minerals_history);
+                let corp_pts = to_pts(&metrics.corpses_history);
+
                 let fps_pts: egui_plot::PlotPoints = metrics.fps_history.iter().copied().collect();
 
                 ui.columns(2, |cols| {
-                    cols[0].label("Population");
+                    cols[0].label("Entities");
                     egui_plot::Plot::new("pop_plot")
                         .height(120.0)
+                        .legend(egui_plot::Legend::default())
+                        .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
                         .show(&mut cols[0], |plot_ui| {
-                            plot_ui.line(egui_plot::Line::new(pop_pts).name("entities"));
+                            plot_ui.line(
+                                egui_plot::Line::new(prod_pts)
+                                    .name("Producers")
+                                    .color(egui::Color32::from_rgb(100, 255, 100)),
+                            );
+                            plot_ui.line(
+                                egui_plot::Line::new(herb_pts)
+                                    .name("Herbivores")
+                                    .color(egui::Color32::from_rgb(200, 255, 150)),
+                            );
+                            plot_ui.line(
+                                egui_plot::Line::new(carn_pts)
+                                    .name("Carnivores")
+                                    .color(egui::Color32::from_rgb(255, 100, 100)),
+                            );
+                            plot_ui.line(
+                                egui_plot::Line::new(omni_pts)
+                                    .name("Omnivores")
+                                    .color(egui::Color32::from_rgb(255, 200, 100)),
+                            );
+                            plot_ui.line(
+                                egui_plot::Line::new(deco_pts)
+                                    .name("Decomposers")
+                                    .color(egui::Color32::from_rgb(200, 150, 200)),
+                            );
+                            plot_ui.line(
+                                egui_plot::Line::new(food_pts)
+                                    .name("Food")
+                                    .color(egui::Color32::from_rgb(150, 255, 255)),
+                            );
+                            plot_ui.line(
+                                egui_plot::Line::new(min_pts)
+                                    .name("Minerals")
+                                    .color(egui::Color32::from_rgb(150, 150, 150)),
+                            );
+                            plot_ui.line(
+                                egui_plot::Line::new(corp_pts)
+                                    .name("Corpses")
+                                    .color(egui::Color32::from_rgb(200, 100, 100)),
+                            );
                         });
 
                     cols[1].label("FPS");
                     egui_plot::Plot::new("fps_plot")
                         .height(120.0)
+                        .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
                         .show(&mut cols[1], |plot_ui| {
-                            plot_ui.line(egui_plot::Line::new(fps_pts).name("fps"));
+                            plot_ui.line(
+                                egui_plot::Line::new(fps_pts)
+                                    .name("fps")
+                                    .color(egui::Color32::WHITE),
+                            );
                         });
                 });
             } else {

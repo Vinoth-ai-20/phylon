@@ -122,11 +122,31 @@ impl PhylonApp {
         }
 
         // Record analytics — read entity_count before mutably borrowing the resource
-        let entity_count = self.world.ecs.entities().len() as usize;
+        let mut counts = analytics::PopulationCounts::default();
+        let mut diet_query = self.world.ecs.query::<&ecology::Diet>();
+        for diet in diet_query.iter(&self.world.ecs) {
+            match diet {
+                ecology::Diet::Producer => counts.producers += 1,
+                ecology::Diet::Herbivore => counts.herbivores += 1,
+                ecology::Diet::Carnivore => counts.carnivores += 1,
+                ecology::Diet::Omnivore => counts.omnivores += 1,
+                ecology::Diet::Decomposer => counts.decomposers += 1,
+            }
+        }
+
+        let mut food_query = self.world.ecs.query::<&ecology::FoodPellet>();
+        counts.food_pellets = food_query.iter(&self.world.ecs).count();
+
+        let mut mineral_query = self.world.ecs.query::<&ecology::MineralPellet>();
+        counts.minerals = mineral_query.iter(&self.world.ecs).count();
+
+        let mut corpse_query = self.world.ecs.query::<&ecology::Corpse>();
+        counts.corpses = corpse_query.iter(&self.world.ecs).count();
+
         if let Some(mut metrics) = self.world.ecs.get_resource_mut::<analytics::MetricsState>() {
             let sim_dt = (ticks_to_run as f64) * f64::from(DT);
             let real_dt = f64::from(DT); // Fixed render step for now
-            metrics.record_frame(entity_count, sim_dt, real_dt);
+            metrics.record_frame(counts, sim_dt, real_dt);
 
             if ticks_to_run > 0 {
                 metrics.compute_profiles = vec![
@@ -208,7 +228,11 @@ impl PhylonApp {
                         4 => [0.3, 0.9, 0.9, 1.0], // Fin — cyan
                         _ => [0.5, 0.5, 0.5, 1.0], // Torso — grey
                     },
-                    radius: if node.segment_type == 4 { 3.0 } else { 5.0 },
+                    radius: if node.segment_type == 4 {
+                        3.0 * (self.ui.node_radius / 5.0)
+                    } else {
+                        self.ui.node_radius
+                    },
                     segment_type: node.segment_type,
                 });
 
@@ -226,7 +250,7 @@ impl PhylonApp {
                             pos_a: [node.position.x, node.position.y],
                             pos_b: [node.position.x, node.position.y],
                             color: [col[0], col[1], col[2], 0.3], // Semi-transparent
-                            radius: 12.0,                         // Larger radius
+                            radius: 12.0 * (self.ui.node_radius / 5.0), // Larger radius
                             segment_type: 99,
                         });
                     }
@@ -247,15 +271,15 @@ impl PhylonApp {
                 .as_ref()
                 .is_some_and(|comp| comp.contains(&spring.node_a) && comp.contains(&spring.node_b));
 
-            let mut highlight_radius = 8.0;
+            let mut highlight_radius = 8.0 * (self.ui.skin_thickness / 3.0);
             if spring.is_fin == 1 {
-                highlight_radius = 4.0;
+                highlight_radius = 4.0 * (self.ui.skin_thickness / 3.0);
             }
             if spring.constraint_type == physics::ConstraintType::Passive && spring.is_fin == 0 {
-                highlight_radius = 4.0;
+                highlight_radius = 4.0 * (self.ui.skin_thickness / 3.0);
             }
             if spring.constraint_type == physics::ConstraintType::Elastic {
-                highlight_radius = 6.0;
+                highlight_radius = 6.0 * (self.ui.skin_thickness / 3.0);
             }
 
             if let (Some(&pa), Some(&pb)) = (
@@ -303,7 +327,7 @@ impl PhylonApp {
                         sdf_bones.push(rendering::SdfBoneInstance {
                             pos_a: pa,
                             pos_b: pb,
-                            radius: 4.0,
+                            radius: 4.0 * (self.ui.skin_thickness / 3.0),
                             color,
                         });
                     }
@@ -331,7 +355,7 @@ impl PhylonApp {
                         sdf_bones.push(rendering::SdfBoneInstance {
                             pos_a: pa,
                             pos_b: pb,
-                            radius: 6.0,
+                            radius: 6.0 * (self.ui.skin_thickness / 3.0),
                             color,
                         });
                     }
@@ -358,7 +382,8 @@ impl PhylonApp {
                 node_positions.get(&spring.node_b),
             ) {
                 // Determine bone thickness
-                let radius = if spring.is_fin == 1 { 4.0 } else { 8.0 };
+                let radius =
+                    (if spring.is_fin == 1 { 4.0 } else { 8.0 }) * (self.ui.skin_thickness / 3.0);
 
                 let color = opt_color.map(|c| c.0).unwrap_or([0.8, 0.8, 0.8]);
                 if should_draw_sdf {
@@ -594,6 +619,8 @@ impl PhylonApp {
                     &mut self.ui.tracked_entity,
                     &mut self.ui.debug_structural,
                     &mut self.ui.bone_line_thickness,
+                    &mut self.ui.skin_thickness,
+                    &mut self.ui.node_radius,
                     &mut self.ui.active_tab,
                     &mut self.simulation_speed,
                     &mut self.ui.is_paused,

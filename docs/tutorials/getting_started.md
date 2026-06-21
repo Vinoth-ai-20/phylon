@@ -47,8 +47,11 @@ The application shell provides several interactive panels to inspect the simulat
 2. **Left Genetics Panel**: Displays the phylogenetic tree, tracking lineages and speciation events.
 3. **Right Inspector Panel**: Click on any organism in the viewport to open its inspector. Here you can view its:
    - **Metabolic State**: Current energy, age, and diet.
-   - **Neural Output**: Live visualization of its CTRNN node activations.
+   - **Neural Output**: Live visualization of its CTRNN node activations, complete with semantic labels (Olfaction, Vision Left/Right, Energy, etc.) for easy behavioral analysis.
    - **Genetic Blueprint**: The organism's Hox Sequence (body plan) and CPPN (brain wiring).
+   - **Go to Head**: A quick button in the physics node section that traverses the limb structure to instantly refocus the inspector on the organism's main head.
+
+4. **Settings Panel**: Offers visual adjustment sliders for `Skin Thickness`, `Node Radius`, and `Bone Thickness` to help declutter dense swarms.
 
 You can also trigger manual mutations on a selected organism using the `Mutate Weights`, `Mutate Add Node`, and `Mutate Add Connection` buttons.
 
