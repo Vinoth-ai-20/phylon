@@ -168,6 +168,9 @@ impl PhylonApp {
         }
 
         // 6. Run remaining biological systems
+        self.world
+            .ecs
+            .run_system_once(metabolism::day_night_cycle_system);
         self.world.ecs.run_system_once(ecology::food_spawner_system);
         self.world
             .ecs

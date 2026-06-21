@@ -36,6 +36,8 @@ pub struct GlobalAtmosphere {
     pub co2: f32,
     /// Current normalized sunlight (0.0 to 1.0).
     pub sunlight: f32,
+    /// Absolute ticks elapsed. Used for the Day/Night cycle.
+    pub ticks: u64,
 }
 
 impl Default for GlobalAtmosphere {
@@ -44,6 +46,7 @@ impl Default for GlobalAtmosphere {
             o2: 10_000_000.0, // Large starting pool to prevent immediate collapse
             co2: 5_000_000.0,
             sunlight: 1.0,
+            ticks: 0,
         }
     }
 }
@@ -140,3 +143,15 @@ pub fn metabolism_system(
 /// Marker component for dead organisms. App logic should catch this to clean up the physical body.
 #[derive(Component)]
 pub struct Dead;
+
+/// Evaluates the day/night cycle using a shifted cosine wave.
+/// A full cycle takes exactly 60 seconds (3600 ticks at 60 Hz).
+/// We start at High Noon (1.0) using a cosine function, as requested by the user.
+pub fn day_night_cycle_system(mut atmosphere: ResMut<GlobalAtmosphere>) {
+    atmosphere.ticks += 1;
+    // frequency = 2 * PI / 3600
+    let frequency = std::f32::consts::TAU / 3600.0;
+    // ((t * frequency).cos() + 1.0) / 2.0 starts at exactly 1.0 at tick 0
+    let t = atmosphere.ticks as f32;
+    atmosphere.sunlight = ((t * frequency).cos() + 1.0) / 2.0;
+}

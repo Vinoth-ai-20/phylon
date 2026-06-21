@@ -244,17 +244,8 @@ pub fn photosynthesis_system(
         &metabolism::Metabolism,
         &mut metabolism::ChemicalEconomy,
     )>,
-    diff_config: Res<diffusion::DiffusionConfig>,
 ) {
-    // Calculate global sunlight using a diurnal sine wave
-    // Time is in ticks. Let's make a full day/night cycle take 10000 ticks.
-    let cycle_length = 5000.0;
-    let time_rad = (diff_config.global_time / cycle_length) * std::f32::consts::TAU;
-    let mut sunlight = time_rad.sin();
-    if sunlight < 0.0 {
-        sunlight = 0.0; // Nighttime
-    }
-    atmosphere.sunlight = sunlight;
+    let sunlight = atmosphere.sunlight;
 
     for (diet, metabolism, mut chem) in query.iter_mut() {
         if *diet == Diet::Producer && chem.atp > 0.0 {

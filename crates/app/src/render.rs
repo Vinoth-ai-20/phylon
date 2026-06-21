@@ -222,11 +222,11 @@ impl PhylonApp {
                     pos_a: [node.position.x, node.position.y],
                     pos_b: [node.position.x, node.position.y],
                     color: match node.segment_type {
-                        0 => [0.9, 0.3, 0.3, 1.0], // Head — red
-                        2 => [0.3, 0.5, 1.0, 1.0], // Muscle — blue
-                        3 => [0.6, 0.6, 0.3, 1.0], // Tail — yellow-green
-                        4 => [0.3, 0.9, 0.9, 1.0], // Fin — cyan
-                        _ => [0.5, 0.5, 0.5, 1.0], // Torso — grey
+                        0 => [1.0, 1.0, 1.0, 1.0],   // Head - Absolute White #FFFFFF
+                        2 => [1.0, 0.2, 0.4, 1.0],   // Muscle - Actuation Pink #FF3366
+                        3 => [1.0, 0.6, 0.0, 1.0],   // Tail - Terminal Orange #FF9900
+                        4 => [0.0, 0.898, 1.0, 1.0], // Fin - Passive Cyan #00E5FF
+                        _ => [0.0, 0.898, 1.0, 1.0], // Torso - Passive Cyan #00E5FF
                     },
                     radius: if node.segment_type == 4 {
                         3.0 * (self.ui.node_radius / 5.0)
@@ -335,7 +335,7 @@ impl PhylonApp {
                         debug_instances.push(rendering::DebugInstance {
                             pos_a: pa,
                             pos_b: pb,
-                            color: [color[0], color[1], color[2], 0.5],
+                            color: [0.533, 0.573, 0.690, 0.4],
                             radius: self.ui.bone_line_thickness,
                             segment_type: 99,
                         });
@@ -363,7 +363,7 @@ impl PhylonApp {
                         debug_instances.push(rendering::DebugInstance {
                             pos_a: pa,
                             pos_b: pb,
-                            color: [color[0], color[1], color[2], 0.6],
+                            color: [0.533, 0.573, 0.690, 0.4],
                             radius: self.ui.bone_line_thickness,
                             segment_type: 99,
                         });
@@ -398,7 +398,7 @@ impl PhylonApp {
                     debug_instances.push(rendering::DebugInstance {
                         pos_a: pa,
                         pos_b: pb,
-                        color: [color[0], color[1], color[2], 0.8],
+                        color: [0.533, 0.573, 0.690, 0.4],
                         radius: self.ui.bone_line_thickness,
                         segment_type: 99,
                     });
@@ -425,7 +425,7 @@ impl PhylonApp {
                 debug_instances.push(rendering::DebugInstance {
                     pos_a: pos,
                     pos_b: pos,
-                    color: [1.0, 0.8, 0.0, 1.0],
+                    color: [1.0, 0.835, 0.310, 1.0], // #FFD54F
                     radius: 2.5,
                     segment_type: 0,
                 });
@@ -435,7 +435,7 @@ impl PhylonApp {
                     pos_a: pos,
                     pos_b: pos,
                     radius: 2.5,
-                    color: [1.0, 0.8, 0.0],
+                    color: [1.0, 0.835, 0.310], // #FFD54F
                 });
             }
             if hovered_component
@@ -481,7 +481,7 @@ impl PhylonApp {
                 debug_instances.push(rendering::DebugInstance {
                     pos_a: pos,
                     pos_b: pos,
-                    color: [1.0, 1.0, 1.0, 1.0], // Bright White
+                    color: [0.663, 0.761, 0.788, 1.0], // #A9C2C9
                     radius: 2.0,
                     segment_type: 0,
                 });
@@ -491,7 +491,7 @@ impl PhylonApp {
                     pos_a: pos,
                     pos_b: pos,
                     radius: 2.0,
-                    color: [1.0, 1.0, 1.0],
+                    color: [0.663, 0.761, 0.788], // #A9C2C9
                 });
             }
             if hovered_component
@@ -537,7 +537,7 @@ impl PhylonApp {
                 debug_instances.push(rendering::DebugInstance {
                     pos_a: pos,
                     pos_b: pos,
-                    color: [0.3, 0.3, 0.3, 1.0], // Dark Grey
+                    color: [0.427, 0.404, 0.431, 1.0], // #6D676E
                     radius: 4.0,
                     segment_type: 0,
                 });
@@ -547,7 +547,7 @@ impl PhylonApp {
                     pos_a: pos,
                     pos_b: pos,
                     radius: 4.0,
-                    color: [0.3, 0.3, 0.3],
+                    color: [0.427, 0.404, 0.431], // #6D676E
                 });
             }
             if hovered_component
@@ -715,9 +715,9 @@ impl PhylonApp {
 
         // Get sunlight for background color
         let mut clear_color = wgpu::Color {
-            r: 0.02,
-            g: 0.04,
-            b: 0.08,
+            r: 0.012,
+            g: 0.008,
+            b: 0.047,
             a: 1.0,
         };
         if let Some(atmosphere) = self
@@ -727,9 +727,9 @@ impl PhylonApp {
         {
             let s = atmosphere.sunlight as f64;
             clear_color = wgpu::Color {
-                r: 0.02 + s * 0.1,
-                g: 0.04 + s * 0.2,
-                b: 0.08 + s * 0.4,
+                r: 0.012 * (1.0 - s) + 0.102 * s,
+                g: 0.008 * (1.0 - s) + 0.294 * s,
+                b: 0.047 * (1.0 - s) + 0.467 * s,
                 a: 1.0,
             };
         }

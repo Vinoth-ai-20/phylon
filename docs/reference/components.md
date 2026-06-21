@@ -12,25 +12,30 @@ Every living organism in Phylon is an Entity composed of multiple distinct Compo
 
 The fundamental physical manifestation of an organism.
 
-- Tracks `position`, `velocity`, and `mass`.
+- Tracks `position`, `velocity`, `mass`, and `segment_type`.
 - Exists in the spatial grid for collision detection and vision querying.
 - Organisms are often composed of a primary "Head" node connected to child "Body" nodes via springs.
 
-### 2. `metabolism::Metabolism` & `metabolism::Energy`
+### 2. `metabolism::Metabolism` & `metabolism::ChemicalEconomy`
 
-The caloric engine of the organism.
+The caloric and chemical engine of the organism.
 
 - The `Metabolism` component defines the `base_rate` of energy burned passively per tick.
-- The `Energy` component tracks the current caloric reservoir. If this reaches zero, the organism despawns (dies) and spawns a Corpse entity in its place.
+- The `ChemicalEconomy` component tracks 4 metabolic pools: `Glucose`, `O2`, `CO2`, and `ATP`.
+- If `ATP` or `Glucose` reaches zero, the organism despawns (dies) and spawns a `Corpse` entity in its place.
 
-### 3. `ecology::Diet`
+### 3. `metabolism::Age`
 
-Determines what the organism can consume to replenish its `Energy`.
+Tracks the organism's lifespan in ticks. Used to cull organisms that survive too long to prevent stagnation in evolutionary fitness landscapes.
+
+### 4. `ecology::Diet`
+
+Determines what the organism can consume to replenish its `Glucose`.
 
 - Options include `Producer`, `Herbivore`, `Carnivore`, `Omnivore`, and `Decomposer`.
 - Checked during the `sensing_system` (to set visual targets) and the collision resolution phase (to trigger consumption).
 
-### 4. `brain::Brain` (CTRNN)
+### 5. `brain::Brain` (CTRNN)
 
 The neural controller of the organism.
 
@@ -38,17 +43,23 @@ The neural controller of the organism.
 - Reads the input vector from the `SensoryState` component.
 - Outputs activation values that the `behavior_system` translates into muscle actuation amplitudes.
 
-### 5. `genetics::Genome`
+### 6. `genetics::Genome`
 
 The inheritable blueprint of the organism.
 
-- Contains the `HoxSequence` governing the physical segment layout.
+- Contains the `HoxSequence` governing the physical segment layout (L-System grammar).
 - Contains the `CPPN` neural network governing the synaptic wiring of the `Brain`.
 - Passed down (and mutated) during events spawned by the `reproduction_system`.
 
-### 6. `sensing::SensoryState`
+### 7. `sensing::SensoryState`
 
 The organism's view of the world.
 
 - A flat float vector containing 9 normalized inputs: Olfaction, Signal Field, Hazard Field, Energy, Age, Vision (Left, Center, Right), and the Internal Pacemaker (CPG) clock.
 - Populated by the `sensing_system` and fed directly into the `Brain` component each tick.
+
+## Environmental Resources
+
+### `metabolism::GlobalAtmosphere`
+
+A singleton Resource that tracks global environmental parameters such as `ticks` and `sunlight_intensity` ($I_{sun}$), dictating the day/night cycle and driving producer photosynthesis rates.

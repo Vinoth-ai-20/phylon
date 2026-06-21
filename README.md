@@ -1,17 +1,33 @@
 # Phylon
 
-Phylon is a research-grade, high-performance artificial life laboratory built in Rust.
+Phylon is a research-grade, high-performance artificial life laboratory built in Rust. It specializes in simulating continuous-time morphological and neural evolution driven by metabolic constraints.
 
 ![CI](https://github.com/Vinoth-ai-20/phylon/actions/workflows/ci.yml/badge.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Rust 1.80+](https://img.shields.io/badge/rust-1.80+-lightgray.svg)](https://www.rust-lang.org)
 
-Phylon simulates massive populations of neural-driven organisms within a continuous, deterministic physics environment. It leverages a data-oriented Entity-Component-System (ECS) architecture tightly coupled with GPU compute shaders to solve chemical diffusion and rigid-body mechanics at scale. The system enforces bit-exact reproducibility across platforms by adhering to fixed-timestep updates and explicitly avoiding floating-point non-determinism in critical simulation paths.
+Phylon simulates massive populations of neural-driven organisms within a continuous, deterministic physics environment. It leverages a data-oriented Entity-Component-System (ECS) architecture tightly coupled with GPU compute shaders to solve chemical diffusion and rigid-body mechanics at scale. The system enforces **bit-exact reproducibility** across platforms by adhering to custom fixed-timestep updates and explicitly avoiding floating-point non-determinism in critical simulation paths.
 
-## Architecture
+![Placeholder: Day/Night Cycle transition from #080616 to #1A1953 with organisms hunting]
 
-The simulation state is strictly partitioned between a CPU-authoritative logic layer and a GPU-accelerated compute layer. The core logic runs on a lock-free, multithreaded ECS driven by `hecs` and `rayon`, coordinating neural network inferences and behavioral systems across a bounded 2D or Toroidal topology. The physics layer implements a Symplectic Euler integrator, while environmental chemical diffusion is processed via discrete Laplacian operators dispatched to the GPU as WGSL compute passes. The workspace is divided into 30 decoupled crates forming a strict directed acyclic graph, ensuring rapid compilation and enforced boundary encapsulation between rendering, simulation, and data analytics.
+## Architecture & Technology Stack
+
+The simulation state is strictly partitioned between a CPU-authoritative logic layer and a GPU-accelerated compute layer.
+
+- **Language**: Rust
+- **Concurrency**: Lock-free parallel processing via `rayon`.
+- **ECS**: A highly optimized Entity-Component-System implementation heavily influenced by `hecs` and `bevy_ecs`.
+- **Rendering & Compute**: Headless, cross-platform shader execution using `wgpu` (Vulkan/Metal/DX12).
+- **Workspace**: Divided into a strict 30-crate Directed Acyclic Graph (DAG) ensuring rapid compilation and boundary encapsulation between rendering, simulation, and data analytics.
+
+## Ecology & Simulation
+
+Phylon treats artificial organisms not just as neural networks, but as physical, metabolizing entities existing in a closed-loop chemical economy.
+
+- **Chemical Economy**: All entities trade Glucose, O2, CO2, and ATP. Producers undergo photosynthesis tied directly to the global daylight cycle, while predators rely on predation.
+- **Day/Night Cycles**: A deterministic, shifted cosine wave dictates sunlight intensity, creating harsh twilight phases that cull inefficient metabolisms.
+- **L-System Morphology**: Bodies (heads, muscles, tails, fins) grow fractally according to `HoxSequence` genetics.
 
 ## Performance Targets
 
@@ -39,42 +55,20 @@ To run the deterministic test suite:
 cargo test
 ```
 
-To run pre-commit checks:
-
-```bash
-cargo fmt;
-cargo fmt --all -- --check;
-cargo clippy --all-targets --all-features -- -D warnings;
-cargo test --workspace;
-cargo doc --no-deps --document-private-items;
-cargo build --all-targets;
-```
-
 ## Running the Simulation
-
-```bash
-cargo run --release --bin phylon
-```
-
-## Running the simulation in release mode
 
 ```bash
 cargo run -p app --release
 ```
 
-## Running the simulation in debug mode
-
-```bash
-cargo run -p app
-```
-
-## Current Status
-
-Phases 0 through 16 are functionally complete. The workspace features the foundational skeletal infrastructure across 30 decoupled crates, and complete implementations for decentralized soft-body physics, chemical diffusion fields, dual CPPN morphology (Domain 4 Morphological Evolution), sexual recombination, CTRNN brains with learned gaits, a comprehensive UI & analytics suite, speciation persistence tools, procedural visuals, the application shell, headless MARL networking, emergent signaling, and the catastrophe engine. The simulation is now prepared for speculative phases like Spectator & Lineage Narration.
-
 ## Documentation
 
 Comprehensive documentation, organized using the Diátaxis framework (Tutorials, How-to guides, Explanation, Reference), is available in the [`docs/`](docs/index.md) directory.
+
+- **[Tutorials](docs/tutorials/getting_started.md)**: Learning-oriented walk-throughs.
+- **[How-To Guides](docs/how_to/add_custom_genomes.md)**: Problem-oriented, step-by-step tasks.
+- **[Explanation](docs/explanation/architecture.md)**: Deep dives into the scientific and architectural models.
+- **[Reference](docs/reference/components.md)**: Technical lookups.
 
 For an exhaustive API reference, run:
 

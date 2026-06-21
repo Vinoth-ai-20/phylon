@@ -55,30 +55,19 @@ pub fn behavior_system(
     // Time step integration is now fully handled by the GPU compute pass
 
     for (
-        entity,
+        _entity,
         node,
         _sensory,
         mut brain_opt,
         motor_opt,
         mut emitter_opt,
         mut energy_opt,
-        age_opt,
+        _age_opt,
     ) in query.iter_mut()
     {
         if let Some(brain) = brain_opt.as_mut() {
             // 1. Extract outputs (the integration happened globally on GPU)
             let outputs = brain.get_outputs();
-
-            if let Some(age) = age_opt {
-                if age.ticks == 50 || age.ticks == 450 {
-                    println!(
-                        "[DIAGNOSTIC] Age {}: Entity {} outputs = {:?}",
-                        age.ticks,
-                        entity.index(),
-                        outputs
-                    );
-                }
-            }
 
             // Calculate environmental efficiency based on local temperature
             let mut efficiency = 1.0;
