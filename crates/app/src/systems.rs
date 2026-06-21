@@ -8,6 +8,7 @@ use physics;
 use reproduction;
 
 struct SpawnOrganismCommand {
+    parent_id: Option<bevy_ecs::entity::Entity>,
     genome: genetics::Genome,
     position: common::Vec2,
     diet: ecology::Diet,
@@ -16,15 +17,66 @@ struct SpawnOrganismCommand {
 
 impl bevy_ecs::world::Command for SpawnOrganismCommand {
     fn apply(self, world: &mut bevy_ecs::world::World) {
-        organisms::spawn_organism(
+        let (lineage_id, species_id, generation) = {
+            if let Some(parent_id) = self.parent_id {
+                if let Some(tracker) = world.get_resource::<evolution::LineageTracker>() {
+                    if let Some(parent_record) =
+                        tracker.get_record(common::EntityId(parent_id.to_bits()))
+                    {
+                        (
+                            parent_record.lineage,
+                            parent_record.species,
+                            parent_record.generation + 1,
+                        )
+                    } else {
+                        (evolution::LineageId(0), evolution::SpeciesId(0), 1)
+                    }
+                } else {
+                    (evolution::LineageId(0), evolution::SpeciesId(0), 1)
+                }
+            } else {
+                let mut tracker = world.get_resource_mut::<evolution::LineageTracker>();
+                if let Some(ref mut t) = tracker {
+                    (t.new_lineage_id(), evolution::SpeciesId(0), 0)
+                } else {
+                    (evolution::LineageId(0), evolution::SpeciesId(0), 0)
+                }
+            }
+        };
+
+        let entity = organisms::spawn_organism(
             world,
             &self.genome,
             self.position,
             self.diet,
             self.category,
-            0,
+            generation as u32,
             0,
         );
+
+        if let Some(mut tracker) = world.get_resource_mut::<evolution::LineageTracker>() {
+            tracker.register_birth(
+                common::EntityId(entity.to_bits()),
+                self.parent_id.map(|p| common::EntityId(p.to_bits())),
+                lineage_id,
+                species_id,
+                generation,
+                0, // TODO: Get actual tick
+            );
+        }
+
+        if generation > 0 && generation % 5 == 0 {
+            if let Some(mut log) = world.get_resource_mut::<analytics::NarrationLog>() {
+                log.push_event(
+                    0, // TODO: tick
+                    "Lineage",
+                    format!(
+                        "Lineage {} reached generation {}!",
+                        lineage_id.0, generation
+                    ),
+                );
+            }
+        }
     }
 }
 
@@ -34,11 +86,28 @@ pub fn process_births_system(
 ) {
     for event in events.read() {
         commands.add(SpawnOrganismCommand {
+            parent_id: event.parent_id,
             genome: event.genome.clone(),
             position: event.position,
             diet: event.diet.clone(),
             category: event.category.clone(),
         });
+    }
+}
+
+pub fn process_narrative_events_system(
+    mut hazard_events: EventReader<ecology::catastrophe::HazardSpawned>,
+    mut log: ResMut<analytics::NarrationLog>,
+) {
+    for event in hazard_events.read() {
+        log.push_event(
+            0, // TODO: tick
+            "Hazard",
+            format!(
+                "Toxic cloud emerged at ({:.1}, {:.1})",
+                event.0.x, event.0.y
+            ),
+        );
     }
 }
 
@@ -54,6 +123,7 @@ pub fn process_deaths_system(
         bevy_ecs::prelude::With<metabolism::Dead>,
     >,
     spring_q: bevy_ecs::prelude::Query<(bevy_ecs::entity::Entity, &physics::Spring)>,
+    mut tracker: Option<bevy_ecs::prelude::ResMut<evolution::LineageTracker>>,
 ) {
     if dead_q.is_empty() {
         return;
@@ -79,6 +149,11 @@ pub fn process_deaths_system(
     for (head, node, energy) in dead_q.iter() {
         if nodes_to_despawn.contains(&head) {
             continue;
+        }
+
+        if let Some(ref mut t) = tracker {
+            t.register_death(common::EntityId(head.to_bits()), 0, "Died".to_string());
+            // TODO: Get actual tick and cause
         }
 
         // Spawn a corpse entity at the position of the dead organism

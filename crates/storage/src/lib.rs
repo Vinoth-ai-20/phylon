@@ -89,6 +89,30 @@ impl StorageManager {
                 )",
                 [],
             );
+
+            let _ = db.execute(
+                "CREATE TABLE IF NOT EXISTS lineages (
+                    lineage_id INTEGER,
+                    species_id INTEGER,
+                    entity_id INTEGER PRIMARY KEY,
+                    parent_id INTEGER,
+                    generation INTEGER,
+                    birth_tick INTEGER,
+                    death_tick INTEGER,
+                    cause_of_death TEXT
+                )",
+                [],
+            );
+
+            let _ = db.execute(
+                "CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tick INTEGER NOT NULL,
+                    event_type TEXT NOT NULL,
+                    description TEXT NOT NULL
+                )",
+                [],
+            );
         }
         Self { run_db }
     }
@@ -143,6 +167,39 @@ impl StorageManager {
             let _ = db.execute(
                 "UPDATE runs SET end_time = ?1, ticks = ?2, final_population = ?3 WHERE id = ?4",
                 rusqlite::params![end_time, ticks as i64, final_population, run_id],
+            );
+        }
+    }
+
+    /// Flushes an extracted batch of completed lineage records to SQLite.
+    pub fn flush_lineages(&self, records: &[evolution::LineageRecord]) {
+        if let Some(db) = &self.run_db {
+            let mut stmt = db.prepare_cached(
+                "INSERT OR REPLACE INTO lineages (lineage_id, species_id, entity_id, parent_id, generation, birth_tick, death_tick, cause_of_death)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+            ).unwrap();
+
+            for r in records {
+                let _ = stmt.execute(rusqlite::params![
+                    r.lineage.0 as i64,
+                    r.species.0 as i64,
+                    r.entity.0 as i64,
+                    r.parent_id.map(|p| p.0 as i64),
+                    r.generation as i64,
+                    r.birth_tick as i64,
+                    r.death_tick.map(|t| t as i64),
+                    r.cause_of_death.clone(),
+                ]);
+            }
+        }
+    }
+
+    /// Logs a narrative event to SQLite.
+    pub fn log_event(&self, tick: u64, event_type: &str, description: &str) {
+        if let Some(db) = &self.run_db {
+            let _ = db.execute(
+                "INSERT INTO events (tick, event_type, description) VALUES (?1, ?2, ?3)",
+                rusqlite::params![tick as i64, event_type, description],
             );
         }
     }

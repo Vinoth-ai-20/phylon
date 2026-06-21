@@ -203,6 +203,7 @@ pub fn catastrophe_system(
     config: Res<catastrophe::CatastropheConfig>,
     mut hazard_field: ResMut<diffusion::CpuHazardFieldState>,
     env: Res<environment::EnvironmentManager>,
+    mut hazard_events: EventWriter<catastrophe::HazardSpawned>,
     mut organisms: Query<(&mut Energy, &physics::ParticleNode, Option<&mut Corpse>)>,
 ) {
     *local_tick += 1;
@@ -213,6 +214,7 @@ pub fn catastrophe_system(
         let x = (fastrand::f32() - 0.5) * env.width();
         let y = (fastrand::f32() - 0.5) * env.height();
         manager.spawn_hazard(tick, Vec2::new(x, y));
+        hazard_events.send(catastrophe::HazardSpawned(Vec2::new(x, y)));
     }
 
     hazard_field.clear();

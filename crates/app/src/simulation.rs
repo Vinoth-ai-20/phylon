@@ -179,12 +179,22 @@ impl PhylonApp {
         self.world.ecs.run_system_once(process_births_system);
         self.world.ecs.run_system_once(process_deaths_system);
         self.world.ecs.run_system_once(ecology::catastrophe_system);
+        self.world
+            .ecs
+            .run_system_once(process_narrative_events_system);
         if let Some(mut events) = self
             .world
             .ecs
             .get_resource_mut::<bevy_ecs::event::Events<reproduction::BirthRequest>>()
         {
             events.update();
+        }
+        if let Some(mut hazard_events) = self
+            .world
+            .ecs
+            .get_resource_mut::<bevy_ecs::event::Events<ecology::catastrophe::HazardSpawned>>()
+        {
+            hazard_events.update();
         }
 
         if let (Some(gpu), Some(diffusion_compute)) =
@@ -241,6 +251,18 @@ impl PhylonApp {
                 cpu_field.data = field_data;
             }
             diffusion_duration_ms += diffusion_start.elapsed().as_secs_f64() * 1000.0;
+        }
+
+        let mut completed_records = Vec::new();
+        if let Some(mut tracker) = self
+            .world
+            .ecs
+            .get_resource_mut::<evolution::LineageTracker>()
+        {
+            completed_records = tracker.extract_completed_records();
+        }
+        if !completed_records.is_empty() {
+            self.storage.flush_lineages(&completed_records);
         }
 
         (physics_duration_ms, diffusion_duration_ms)

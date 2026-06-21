@@ -30,6 +30,8 @@ pub fn render_ui(
     _hovered_entity: Option<bevy_ecs::entity::Entity>,
     quit_confirm_time: &mut Option<f64>,
     main_menu_confirm_time: &mut Option<f64>,
+    spectator_mode: &mut bool,
+    last_spectator_switch_time: &mut f64,
 ) -> (CanvasInteraction, Vec<MenuAction>) {
     let mut actions = Vec::new();
 
@@ -383,7 +385,7 @@ pub fn render_ui(
                     actions.push(MenuAction::CameraZoomIn);
                 }
                 if ui
-                    .button("🏠")
+                    .button(egui_remixicon::icons::HOME_LINE)
                     .on_hover_text("Reset Camera (Home/0)")
                     .clicked()
                 {
@@ -398,6 +400,14 @@ pub fn render_ui(
                 } else {
                     String::new()
                 };
+
+                ui.add_space(8.0);
+                ui.checkbox(
+                    spectator_mode,
+                    format!("{} Spectator", egui_remixicon::icons::FILM_LINE),
+                )
+                .on_hover_text("Automatically follow interesting organisms");
+
                 ui.label(format!(
                     "Cam: ({:.0}, {:.0})  ×{:.1}{}",
                     camera_pos.x, camera_pos.y, camera_zoom, track_str
@@ -447,7 +457,10 @@ pub fn render_ui(
                 }
                 ui.add_space(4.0);
                 if ui
-                    .selectable_label(*active_tab == SidebarTab::Sandbox, "🛠")
+                    .selectable_label(
+                        *active_tab == SidebarTab::Sandbox,
+                        egui_remixicon::icons::TOOLS_LINE,
+                    )
                     .on_hover_text("Sandbox")
                     .clicked()
                 {
@@ -466,7 +479,10 @@ pub fn render_ui(
                 }
                 ui.add_space(4.0);
                 if ui
-                    .selectable_label(*active_tab == SidebarTab::Ecology, "🌍")
+                    .selectable_label(
+                        *active_tab == SidebarTab::Ecology,
+                        egui_remixicon::icons::EARTH_LINE,
+                    )
                     .on_hover_text("Ecology")
                     .clicked()
                 {
@@ -474,7 +490,10 @@ pub fn render_ui(
                 }
                 ui.add_space(4.0);
                 if ui
-                    .selectable_label(*active_tab == SidebarTab::Settings, "🔧")
+                    .selectable_label(
+                        *active_tab == SidebarTab::Settings,
+                        egui_remixicon::icons::SETTINGS_3_LINE,
+                    )
                     .on_hover_text("Settings")
                     .clicked()
                 {
@@ -492,14 +511,14 @@ pub fn render_ui(
                 SidebarTab::Inspector => {
                     ui.heading(format!("{} Inspector", egui_remixicon::icons::SEARCH_LINE));
                     ui.separator();
-                    ui.checkbox(debug_structural, "🔲 Debug Structural View");
+                    ui.checkbox(debug_structural, format!("{} Debug Structural View", egui_remixicon::icons::SHAPE_LINE));
                     if *debug_structural {
                         ui.add(
                             egui::Slider::new(bone_line_thickness, 0.5..=5.0)
                                 .text("Bone Line Thickness"),
                         );
                     }
-                    ui.checkbox(show_vision_cones, "👁 Show Vision Cones");
+                    ui.checkbox(show_vision_cones, format!("{} Show Vision Cones", egui_remixicon::icons::EYE_LINE));
                     ui.separator();
                     if let Some(entity) = *selected_entity {
                         ui.label(
@@ -525,7 +544,7 @@ pub fn render_ui(
                         let mut corpse_q = world.ecs.query::<&ecology::Corpse>();
 
                         if let Ok(node) = node_q.get(&world.ecs, entity) {
-                            egui::CollapsingHeader::new("⚙ Physics Node")
+                            egui::CollapsingHeader::new(format!("{} Physics Node", egui_remixicon::icons::SETTINGS_4_LINE))
                                 .default_open(true)
                                 .show(ui, |ui| {
                                     let seg_name = match node.segment_type {
@@ -548,21 +567,21 @@ pub fn render_ui(
                                     ui.label(format!("Mass     : {:.2}", node.mass));
                                 });
                         } else if let Ok(food) = food_q.get(&world.ecs, entity) {
-                            egui::CollapsingHeader::new("🌿 Food Pellet")
+                            egui::CollapsingHeader::new(format!("{} Food Pellet", egui_remixicon::icons::LEAF_LINE))
                                 .default_open(true)
                                 .show(ui, |ui| {
                                     ui.label(format!("Position: ({:.1}, {:.1})", food.position.x, food.position.y));
                                     ui.label(format!("Energy: {:.1}", food.energy_value));
                                 });
                         } else if let Ok(mineral) = mineral_q.get(&world.ecs, entity) {
-                            egui::CollapsingHeader::new("💎 Mineral Pellet")
+                            egui::CollapsingHeader::new(format!("{} Mineral Pellet", egui_remixicon::icons::VIP_DIAMOND_LINE))
                                 .default_open(true)
                                 .show(ui, |ui| {
                                     ui.label(format!("Position: ({:.1}, {:.1})", mineral.position.x, mineral.position.y));
                                     ui.label(format!("Energy: {:.1}", mineral.energy_value));
                                 });
                         } else if let Ok(corpse) = corpse_q.get(&world.ecs, entity) {
-                            egui::CollapsingHeader::new("💀 Corpse")
+                            egui::CollapsingHeader::new(format!("{} Corpse", egui_remixicon::icons::SKULL_LINE))
                                 .default_open(true)
                                 .show(ui, |ui| {
                                     ui.label(format!("Position: ({:.1}, {:.1})", corpse.position.x, corpse.position.y));
@@ -578,7 +597,7 @@ pub fn render_ui(
                         let has_meta = energy_q.get(&world.ecs, entity).is_ok();
 
                         if has_meta {
-                            egui::CollapsingHeader::new("🔬 Biology")
+                            egui::CollapsingHeader::new(format!("{} Biology", egui_remixicon::icons::MICROSCOPE_LINE))
                                 .default_open(true)
                                 .show(ui, |ui| {
                                     if let Ok(en) = energy_q.get(&world.ecs, entity) {
@@ -627,7 +646,7 @@ pub fn render_ui(
 
                         let mut traits_q = world.ecs.query::<&organisms::SandboxTraits>();
                         if let Ok(traits) = traits_q.get(&world.ecs, entity) {
-                            egui::CollapsingHeader::new("🏷 Active Components")
+                            egui::CollapsingHeader::new(format!("{} Active Components", egui_remixicon::icons::PRICE_TAG_3_LINE))
                                 .default_open(true)
                                 .show(ui, |ui| {
                                     if traits.is_membrane_seed { ui.label("Membrane Seed"); }
@@ -648,7 +667,7 @@ pub fn render_ui(
                         }
 
                         // Entity Graph / Segment Tree
-                        egui::CollapsingHeader::new("🌳 Body Structure")
+                        egui::CollapsingHeader::new(format!("{} Body Structure", egui_remixicon::icons::TREE_LINE))
                             .default_open(true)
                             .show(ui, |ui| {
                                 // Build adjacency list from springs
@@ -779,18 +798,18 @@ pub fn render_ui(
                                 ui.add_space(8.0);
                                 if genome.hox.is_some() {
                                     ui.label(
-                                        egui::RichText::new("⚠ This organism's morphology and wiring is hardcoded by its Hox Sequence. CPPN mutations are disabled.")
+                                        egui::RichText::new(format!("{} This organism's morphology and wiring is hardcoded by its Hox Sequence. CPPN mutations are disabled.", egui_remixicon::icons::ERROR_WARNING_LINE))
                                             .color(egui::Color32::YELLOW),
                                     );
                                 } else {
                                     ui.horizontal(|ui| {
-                                        if ui.button("🎲 Mutate Add Node").clicked() {
+                                        if ui.button(format!("{} Mutate Add Node", egui_remixicon::icons::DICE_LINE)).clicked() {
                                             pending_mutation = Some("add_node");
                                         }
-                                        if ui.button("🎲 Mutate Add Connection").clicked() {
+                                        if ui.button(format!("{} Mutate Add Connection", egui_remixicon::icons::DICE_LINE)).clicked() {
                                             pending_mutation = Some("add_conn");
                                         }
-                                        if ui.button("🎲 Mutate Weights").clicked() {
+                                        if ui.button(format!("{} Mutate Weights", egui_remixicon::icons::DICE_LINE)).clicked() {
                                             pending_mutation = Some("mutate_weight");
                                         }
                                     });
@@ -1050,7 +1069,7 @@ pub fn render_ui(
                     }
                 }
                 SidebarTab::Sandbox => {
-                    ui.heading("🛠 Sandbox & Presets");
+                    ui.heading(format!("{} Sandbox & Presets", egui_remixicon::icons::TOOLS_LINE));
                     ui.separator();
 
                     egui::CollapsingHeader::new("Entity Presets")
@@ -1106,7 +1125,7 @@ pub fn render_ui(
                         });
                 }
                 SidebarTab::Tuning => {
-                    ui.heading("⚙ Physics Tuning");
+                    ui.heading(format!("{} Physics Tuning", egui_remixicon::icons::SETTINGS_4_LINE));
                     ui.separator();
                     if let Some(mut phys) = world.ecs.get_resource_mut::<physics::PhysicsConfig>() {
                         egui::Grid::new("tuning_grid").num_columns(2).show(ui, |ui| {
@@ -1151,7 +1170,7 @@ pub fn render_ui(
                     }
                 }
                 SidebarTab::Ecology => {
-                    ui.heading("🌍 Ecology & Environment");
+                    ui.heading(format!("{} Ecology & Environment", egui_remixicon::icons::EARTH_LINE));
                     ui.separator();
                     ui.label("Global Sunlight: 100%");
                     ui.label("Ambient CO2: 400 ppm");
@@ -1165,7 +1184,7 @@ pub fn render_ui(
                     }
                 }
                 SidebarTab::Settings => {
-                    ui.heading("🔧 Settings");
+                    ui.heading(format!("{} Settings", egui_remixicon::icons::SETTINGS_3_LINE));
                     ui.separator();
                     ui.label("Application Settings");
                     ui.add_space(10.0);
@@ -1210,7 +1229,7 @@ pub fn render_ui(
                     .unwrap_or(0.0);
                 let tick_count = (sim_time / 0.016).round() as u64;
 
-                ui.label(format!("⏱ Tick: {}", tick_count));
+                ui.label(format!("{} Tick: {}", egui_remixicon::icons::TIMER_LINE, tick_count));
                 ui.separator();
                 ui.label(format!("{} FPS: {:.0}", egui_remixicon::icons::SPEED_LINE, fps));
                 ui.separator();
@@ -1275,6 +1294,69 @@ pub fn render_ui(
                 ui.label("Metrics not yet available.");
             }
         });
+
+    if *spectator_mode {
+        let current_time = ctx.input(|i| i.time);
+
+        let is_tracked_dead = tracked_entity.is_none_or(|e| world.ecs.get_entity(e).is_none());
+
+        if is_tracked_dead || current_time - *last_spectator_switch_time > 15.0 {
+            // Find most "interesting" organism (e.g. oldest alive or highest generation)
+            let mut best_entity = None;
+            let mut highest_generation = 0;
+            let mut query = world
+                .ecs
+                .query::<(bevy_ecs::entity::Entity, &organisms::OrganismColor)>();
+            if let Some(tracker) = world.ecs.get_resource::<evolution::LineageTracker>() {
+                for (entity, _) in query.iter(&world.ecs) {
+                    if let Some(record) = tracker.get_record(common::EntityId(entity.to_bits())) {
+                        if record.generation >= highest_generation {
+                            highest_generation = record.generation;
+                            best_entity = Some(entity);
+                        }
+                    } else if best_entity.is_none() {
+                        best_entity = Some(entity); // fallback
+                    }
+                }
+            }
+
+            if let Some(new_target) = best_entity {
+                if tracked_entity.is_none() || new_target != tracked_entity.unwrap() {
+                    *tracked_entity = Some(new_target);
+                    *last_spectator_switch_time = current_time;
+                }
+            }
+        }
+    }
+
+    if let Some(log) = world.ecs.get_resource::<analytics::NarrationLog>() {
+        egui::Window::new("Narration Log")
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
+            .collapsible(false)
+            .title_bar(false)
+            .resizable(false)
+            .frame(egui::Frame::window(&ctx.style()).fill(egui::Color32::from_black_alpha(200)))
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new("Event Log")
+                        .strong()
+                        .color(egui::Color32::WHITE),
+                );
+                ui.separator();
+                let mut count = 0;
+                for event in log.events.iter().rev() {
+                    ui.label(
+                        egui::RichText::new(&event.description)
+                            .color(egui::Color32::LIGHT_GRAY)
+                            .size(12.0),
+                    );
+                    count += 1;
+                    if count >= 8 {
+                        break;
+                    }
+                }
+            });
+    }
 
     // ── Central panel (transparent — simulation renders underneath) ────────
     let central = egui::CentralPanel::default()

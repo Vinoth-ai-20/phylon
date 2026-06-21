@@ -10,7 +10,7 @@ pub fn spawn_organism(
     category: ecology::EcologicalCategory,
     generation: u32,
     spawn_tick: u64,
-) {
+) -> bevy_ecs::entity::Entity {
     use physics::ParticleNode;
 
     let segment_length = 20.0;
@@ -87,6 +87,8 @@ pub fn spawn_organism(
                 * 1.5, // Add a 50% margin
         },
     ));
+
+    head_node
 }
 
 /// Spawns a deterministic "Proto-Fish" with an instant adult topology.

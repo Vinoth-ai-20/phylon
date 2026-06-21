@@ -37,6 +37,8 @@ pub struct ReproductionStrategy {
 /// Event triggered when an organism successfully reproduces.
 #[derive(Event, Debug, Clone)]
 pub struct BirthRequest {
+    /// The parent entity, if any.
+    pub parent_id: Option<bevy_ecs::entity::Entity>,
     /// The genome for the new child.
     pub genome: Genome,
     /// The position to spawn the child.
@@ -102,6 +104,7 @@ pub fn reproduction_system(
                 );
 
                 birth_events.send(BirthRequest {
+                    parent_id: Some(entity),
                     genome: child_genome,
                     position: node.position + offset,
                     diet: diet.clone(),
@@ -158,6 +161,7 @@ pub fn reproduction_system(
                     offset_pos.y += (rng.gen::<f32>() - 0.5) * 50.0;
 
                     birth_events.send(BirthRequest {
+                        parent_id: Some(*e1),
                         genome: child_genome,
                         position: offset_pos,
                         diet: d1.clone(),

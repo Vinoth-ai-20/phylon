@@ -22,6 +22,7 @@ brain      = { workspace = true }
 rendering = { workspace = true }
 gpu       = { workspace = true }
 genetics  = { workspace = true }
+evolution = { version = "0.1.0", path = "../evolution" }
 organisms = { workspace = true }
 diffusion = { workspace = true }
 metabolism = { workspace = true }

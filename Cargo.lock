@@ -132,6 +132,7 @@ dependencies = [
  "egui-winit",
  "environment",
  "events",
+ "evolution",
  "genetics",
  "gpu",
  "metabolism",
@@ -1206,8 +1207,10 @@ dependencies = [
 name = "evolution"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "common",
  "genetics",
+ "serde",
  "thiserror 2.0.18",
  "world",
 ]
@@ -3433,12 +3436,14 @@ dependencies = [
  "chrono",
  "common",
  "ecology",
+ "evolution",
  "genetics",
  "organisms",
  "physics",
  "reproduction",
  "rusqlite",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "world",
 ]
@@ -3817,6 +3822,7 @@ dependencies = [
  "egui_dock",
  "egui_plot",
  "events",
+ "evolution",
  "genetics",
  "metabolism",
  "organisms",

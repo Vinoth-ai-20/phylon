@@ -58,9 +58,13 @@ pub(crate) fn draw_segment_tree(
 
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new(format!("↳ {}", constraint_name))
-                            .small()
-                            .color(egui::Color32::GRAY),
+                        egui::RichText::new(format!(
+                            "{} {}",
+                            egui_remixicon::icons::CORNER_DOWN_RIGHT_LINE,
+                            constraint_name
+                        ))
+                        .small()
+                        .color(egui::Color32::GRAY),
                     );
                     if spring.actuation_amplitude > 0.0 {
                         ui.label(

@@ -9,3 +9,5 @@ common    = { workspace = true }
 genetics  = { workspace = true }
 world     = { workspace = true }
 thiserror = { workspace = true }
+serde     = { workspace = true }
+bevy_ecs  = { workspace = true }

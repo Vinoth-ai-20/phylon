@@ -60,6 +60,8 @@ pub(crate) struct PhylonUIState {
     pub(crate) quit_confirm_time: Option<f64>,
     pub(crate) main_menu_confirm_time: Option<f64>,
     pub(crate) active_toast: Option<(String, f32)>, // (message, progress 0..1)
+    pub(crate) spectator_mode: bool,
+    pub(crate) last_spectator_switch_time: f64,
 }
 
 impl Default for PhylonUIState {
@@ -85,6 +87,8 @@ impl Default for PhylonUIState {
             quit_confirm_time: None,
             main_menu_confirm_time: None,
             active_toast: None,
+            spectator_mode: false,
+            last_spectator_switch_time: 0.0,
         }
     }
 }
@@ -191,10 +195,16 @@ impl PhylonApp {
         world
             .ecs
             .insert_resource(bevy_ecs::event::Events::<reproduction::BirthRequest>::default());
+        world.ecs.insert_resource(
+            bevy_ecs::event::Events::<ecology::catastrophe::HazardSpawned>::default(),
+        );
         world.ecs.insert_resource(analytics::MetricsState::new());
+        world.ecs.insert_resource(analytics::NarrationLog::new(100));
         world.ecs.insert_resource(behavior::BehaviorConfig {
             signal_energy_cost_per_unit: sim_config.simulation.signal_energy_cost_per_unit,
         });
+
+        let mut lineage_tracker = evolution::LineageTracker::new();
 
         let env_manager = environment::EnvironmentManager::new(
             sim_config.simulation.rng_seed,
@@ -209,7 +219,7 @@ impl PhylonApp {
         let worm_hox = genetics::HoxSequence::worm(6, [0.85, 0.35, 0.35]);
         let worm_genome =
             genetics::Genome::new_hox_driven(genetics::GenomeId(1), common::EntityId(0), worm_hox);
-        organisms::spawn_organism(
+        let e1 = organisms::spawn_organism(
             &mut world.ecs,
             &worm_genome,
             common::Vec2::new(0.0, 80.0),
@@ -218,17 +228,35 @@ impl PhylonApp {
             0,
             0,
         );
+        let l1 = lineage_tracker.new_lineage_id();
+        lineage_tracker.register_birth(
+            common::EntityId(e1.to_bits()),
+            None,
+            l1,
+            evolution::SpeciesId(0),
+            0,
+            0,
+        );
 
         // Organism 2: Fish — 5 segments, fin pair at segment index 2.
         let fish_hox = genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]);
         let fish_genome =
             genetics::Genome::new_hox_driven(genetics::GenomeId(2), common::EntityId(0), fish_hox);
-        organisms::spawn_organism(
+        let e2 = organisms::spawn_organism(
             &mut world.ecs,
             &fish_genome,
             common::Vec2::new(0.0, 0.0),
             ecology::Diet::Carnivore,
             ecology::EcologicalCategory::None,
+            0,
+            0,
+        );
+        let l2 = lineage_tracker.new_lineage_id();
+        lineage_tracker.register_birth(
+            common::EntityId(e2.to_bits()),
+            None,
+            l2,
+            evolution::SpeciesId(0),
             0,
             0,
         );
@@ -248,15 +276,24 @@ impl PhylonApp {
                     genetics::HoxGene::muscle(1.2, std::f32::consts::PI * 1.5),
                     genetics::HoxGene::tail(),
                 ],
-                [0.95, 0.75, 0.20],
+                [0.4, 0.8, 0.4],
             ),
         );
-        organisms::spawn_organism(
+        let e3 = organisms::spawn_organism(
             &mut world.ecs,
             &branchy_genome,
-            common::Vec2::new(0.0, -90.0),
-            ecology::Diet::Producer,
+            common::Vec2::new(0.0, -80.0),
+            ecology::Diet::Herbivore,
             ecology::EcologicalCategory::None,
+            0,
+            0,
+        );
+        let l3 = lineage_tracker.new_lineage_id();
+        lineage_tracker.register_birth(
+            common::EntityId(e3.to_bits()),
+            None,
+            l3,
+            evolution::SpeciesId(0),
             0,
             0,
         );
@@ -268,12 +305,21 @@ impl PhylonApp {
             common::EntityId(0),
             omnivore_hox,
         );
-        organisms::spawn_organism(
+        let e4 = organisms::spawn_organism(
             &mut world.ecs,
             &omnivore_genome,
             common::Vec2::new(-80.0, 0.0),
             ecology::Diet::Omnivore,
             ecology::EcologicalCategory::None,
+            0,
+            0,
+        );
+        let l4 = lineage_tracker.new_lineage_id();
+        lineage_tracker.register_birth(
+            common::EntityId(e4.to_bits()),
+            None,
+            l4,
+            evolution::SpeciesId(0),
             0,
             0,
         );
@@ -285,7 +331,7 @@ impl PhylonApp {
             common::EntityId(0),
             decomposer_hox,
         );
-        organisms::spawn_organism(
+        let e5 = organisms::spawn_organism(
             &mut world.ecs,
             &decomposer_genome,
             common::Vec2::new(80.0, 0.0),
@@ -294,6 +340,17 @@ impl PhylonApp {
             0,
             0,
         );
+        let l5 = lineage_tracker.new_lineage_id();
+        lineage_tracker.register_birth(
+            common::EntityId(e5.to_bits()),
+            None,
+            l5,
+            evolution::SpeciesId(0),
+            0,
+            0,
+        );
+
+        world.ecs.insert_resource(lineage_tracker);
 
         // Spawn a static food/nutrient emitter at the center
         world.ecs.spawn(diffusion::Emitter {

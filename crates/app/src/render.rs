@@ -608,6 +608,8 @@ impl PhylonApp {
                     self.ui.hovered_entity,
                     &mut self.ui.quit_confirm_time,
                     &mut self.ui.main_menu_confirm_time,
+                    &mut self.ui.spectator_mode,
+                    &mut self.ui.last_spectator_switch_time,
                 );
                 ui_actions.extend(acts);
                 interaction = canvas_interact;
