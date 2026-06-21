@@ -11,6 +11,7 @@ genetics  = { workspace = true }
 serde     = { workspace = true }
 thiserror    = { workspace = true }
 bevy_ecs     = { workspace = true }
+rand         = { workspace = true }
 metabolism   = { workspace = true }
 ecology      = { workspace = true }
 reproduction = { workspace = true }

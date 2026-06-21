@@ -59,3 +59,4 @@ network = { path = "../network" }
 
 # Async runtime
 tokio = { workspace = true }
+rand = { workspace = true }

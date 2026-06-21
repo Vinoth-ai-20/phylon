@@ -44,19 +44,33 @@ impl Genome {
         }
     }
 
-    /// Creates a genome driven entirely by an explicit [`HoxSequence`].
-    ///
-    /// The CPPN fields are left empty; the growth system will use `hox`
-    /// exclusively for body-plan decisions.  Neural wiring is still derived
-    /// from the empty CPPN (identity mapping) as a placeholder.
+    /// Creates a deterministic genome with a pre-defined Hox sequence.
+    /// The CPPN is initialized with 3 disconnected nodes (2 inputs, 1 output)
+    /// so it can be mutated later.
     pub fn new_hox_driven(id: GenomeId, origin: EntityId, hox: HoxSequence) -> Self {
         Self {
             schema_version: 1,
             id,
             origin,
             ploidy: Ploidy::Haploid,
-            nodes: Vec::new(),
-            connections: Vec::new(),
+            nodes: vec![
+                CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 0,
+                }, // Input: Source Node Coord
+                CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 0,
+                }, // Input: Target Node Coord
+                CppnNode {
+                    activation: brain::ActivationFn::Tanh,
+                    bias: 0.0,
+                    layer: 1,
+                }, // Output: Connection Weight
+            ],
+            connections: vec![],
             hox: Some(hox),
         }
     }
@@ -226,17 +240,16 @@ impl Genome {
             };
         }
 
-        values
+        // Return the last node's value as the output
+        vec![values.last().copied().unwrap_or(0.0)]
     }
 
     /// Performs a simple crossover with another genome.
     pub fn crossover<R: rand::Rng>(&self, _other: &Genome, new_id: GenomeId, _rng: &mut R) -> Self {
-        // TODO(phase-5): Full NEAT crossover based on historical innovation numbers.
-        // For Phase 4, we just clone self (asexual drift).
         Self {
             schema_version: self.schema_version,
             id: new_id,
-            origin: self.origin, // Caller must update
+            origin: self.origin,
             ploidy: self.ploidy,
             nodes: self.nodes.clone(),
             connections: self.connections.clone(),
@@ -246,11 +259,35 @@ impl Genome {
 
     /// Mutates the genome in place.
     pub fn mutate<R: rand::Rng>(&mut self, mutation_rate: f32, rng: &mut R) {
-        // TODO(phase-5): Add/Remove nodes and connections, perturb weights.
         if rng.gen::<f32>() < mutation_rate {
+            // Structural mutation: Add Node
+            if rng.gen::<f32>() < 0.05 {
+                let mut dummy_innov = self
+                    .connections
+                    .iter()
+                    .map(|c| c.innovation)
+                    .max()
+                    .unwrap_or(0)
+                    + 1;
+                self.mutate_add_node(&mut dummy_innov);
+            }
+
+            // Structural mutation: Add Connection
+            if rng.gen::<f32>() < 0.10 {
+                let mut dummy_innov = self
+                    .connections
+                    .iter()
+                    .map(|c| c.innovation)
+                    .max()
+                    .unwrap_or(0)
+                    + 1;
+                self.mutate_add_connection(&mut dummy_innov);
+            }
+
+            // Weight perturbation
             for conn in &mut self.connections {
-                if rng.gen::<f32>() < 0.1 {
-                    conn.weight += rng.gen_range(-0.5..0.5);
+                if rng.gen::<f32>() < 0.2 {
+                    conn.weight += rng.gen_range(-1.0..1.0);
                 }
             }
         }

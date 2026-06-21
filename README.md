@@ -39,10 +39,32 @@ To run the deterministic test suite:
 cargo test
 ```
 
+To run pre-commit checks:
+
+```bash
+cargo fmt --all -- --check;
+cargo clippy --all-targets --all-features -- -D warnings;
+cargo test --workspace;
+cargo doc --no-deps --document-private-items;
+cargo build --all-targets;
+```
+
 ## Running the Simulation
 
 ```bash
 cargo run --release --bin phylon
+```
+
+## Running the simulation in release mode
+
+```bash
+cargo run -p app --release
+```
+
+## Running the simulation in debug mode
+
+```bash
+cargo run -p app
 ```
 
 ## Current Status

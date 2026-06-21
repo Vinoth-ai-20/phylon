@@ -83,17 +83,13 @@ pub fn behavior_system(
 
                             // Map the [-1.0, 1.0] neural output to an actuation amplitude
                             // For Rotational or Elastic muscles, we can modulate rest_length or amplitude
-                            spring.actuation_amplitude = effective_actuation * 2.0;
+                            spring.actuation_amplitude = effective_actuation * 8.0;
 
                             // For simple immediate swimming, we can just oscillate it here
                             // if we don't have a CPG built in. But the brain IS a CTRNN, so it should oscillate!
                             if spring.constraint_type == physics::ConstraintType::Elastic {
                                 spring.rest_length = spring.base_length
                                     + (effective_actuation * spring.base_length * 0.5);
-                            } else if spring.constraint_type == physics::ConstraintType::Rotational
-                            {
-                                spring.actuation_phase = effective_actuation * std::f32::consts::PI;
-                                // torque angle
                             }
                         }
                     }

@@ -24,7 +24,7 @@
 | 9 | v1.0 | Headless MARL & Network | ✅ Complete |
 | 10 | v1.1 | Emergent Signaling | ✅ Complete |
 | 11 | v1.2 | Catastrophe Engine | ✅ Complete |
-| 12 | v1.3 | Spectator & Lineage Narration | 💭 Speculative |
+| 12 | v1.3 | Spectator & Lineage Narration | ✅ Complete |
 | — | Unscheduled | Future Scope | 💭 Conceptual |
 
 ---
@@ -119,7 +119,15 @@ Not started — fully planned only.
 - [x] **Sensory Processing**: Impending doom sensing via new `Hazard` modality.
 - [x] **Metabolic Impact**: Rapid energy drain during active hazards.
 
-## 💭 Phase 12 — Spectator & Lineage Narration (v1.3)
+## ✅ Phase 12 — Spectator & Lineage Narration (v1.3)
+
+**Goal**: Spectator mode to view the simulation and lineage narration to view the history of the simulation.
+
+- [x] **Implement Spectator Overlay UI**: New UI components to overlay information about the tracked entity in real-time.
+- [x] **Implement Lineage Tracking**: Add genetic lineage tracking (parent -> child) to the `organisms` and `evolution` crates.
+- [x] **Implement World Lineage View**: Add UI to visualize the lineage of a specific entity, including its ancestors and descendants.
+- [x] **Implement World Generation Statistics**: Add UI to display statistics about the world, such as the number of entities, species, and total ticks.
+- [x] **Implement Time Control**: Add UI to control the simulation time (play, pause, step, fast-forward, slow-motion).
 
 ## 💭 Future Scope (Unscheduled)
 

@@ -758,6 +758,7 @@ pub fn render_ui(
 
                         let mut repro_q = world.ecs.query::<&reproduction::ReproductionStrategy>();
                         let mut growth_q = world.ecs.query::<&organisms::GrowthState>();
+                        let mut brain_q = world.ecs.query::<&brain::Brain>();
 
                         while let Some(curr) = queue.pop_front() {
                             if repro_q.get(&world.ecs, curr).is_ok()
@@ -973,11 +974,71 @@ pub fn render_ui(
                                 }
                             }
 
+                            if let Ok(brain) = brain_q.get(&world.ecs, head) {
+                                ui.add_space(10.0);
+                                ui.separator();
+                                ui.heading("CTRNN Topology (Live Brain)");
+                                ui.label(format!("Nodes: {}", brain.nodes.len()));
+                                ui.label(format!("Synapses: {}", brain.synapses.len()));
+
+                                let (resp, p) = ui.allocate_painter(egui::vec2(ui.available_width(), 300.0), egui::Sense::hover());
+                                p.rect_filled(resp.rect, 4.0, egui::Color32::from_black_alpha(50));
+
+                                let mut b_pos = std::collections::HashMap::new();
+                                for (i, _node) in brain.nodes.iter().enumerate() {
+                                    let is_in = i < brain.input_count;
+                                    let is_out = i >= brain.nodes.len() - brain.output_count;
+                                    let x = if is_in { resp.rect.left() + 20.0 } else if is_out { resp.rect.right() - 20.0 } else { resp.rect.center().x };
+
+                                    let (idx, total) = if is_in {
+                                        (i, brain.input_count)
+                                    } else if is_out {
+                                        (i - (brain.nodes.len() - brain.output_count), brain.output_count)
+                                    } else {
+                                        let hidden_count = brain.nodes.len() - brain.input_count - brain.output_count;
+                                        (i - brain.input_count, hidden_count)
+                                    };
+
+                                    let y = if total <= 1 {
+                                        resp.rect.center().y
+                                    } else {
+                                        resp.rect.top() + 20.0 + (resp.rect.height() - 40.0) * (idx as f32 / (total - 1) as f32)
+                                    };
+                                    b_pos.insert(i, egui::pos2(x, y));
+                                }
+
+                                for syn in &brain.synapses {
+                                    if let (Some(&p1), Some(&p2)) = (b_pos.get(&(syn.source as usize)), b_pos.get(&(syn.target as usize))) {
+                                        let c = if syn.weight > 0.0 { egui::Color32::from_rgba_premultiplied(0,255,0,100) } else { egui::Color32::from_rgba_premultiplied(255,0,0,100) };
+                                        p.line_segment([p1, p2], ((syn.weight.abs() * 2.0).clamp(1.0, 5.0), c));
+                                    }
+                                }
+
+                                for (i, node) in brain.nodes.iter().enumerate() {
+                                    if let Some(&pos) = b_pos.get(&i) {
+                                        let act = brain::Brain::apply_activation(node.state + node.bias, node.activation);
+                                        let intensity = ((act + 1.0) / 2.0).clamp(0.0, 1.0) * 255.0;
+                                        p.circle_filled(pos, 8.0, egui::Color32::from_rgb(intensity as u8, intensity as u8, 255));
+
+                                        if resp.hover_pos().is_some_and(|h| h.distance(pos) < 8.0) {
+                                            egui::show_tooltip(ctx, ui.layer_id(), ui.id().with(format!("brain_tt_{}", i)), |ui| {
+                                                ui.label(format!("CTRNN Node {}", i));
+                                                ui.label(format!("State: {:.2}", node.state));
+                                                ui.label(format!("Activation: {:.2}", act));
+                                                ui.label(format!("Bias: {:.2}", node.bias));
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+
+
                             // Apply pending mutation
                             if let Some(action) = pending_mutation {
                                 drop(repro_q);
                                 drop(growth_q);
                                 drop(spring_q);
+                                drop(brain_q);
 
                                 let mut repro_mut =
                                     world.ecs.query::<&mut reproduction::ReproductionStrategy>();
@@ -1081,6 +1142,11 @@ pub fn render_ui(
                                 if ui.button(&preset.name).clicked() {
                                     actions.push(MenuAction::SpawnPreset(preset.name.clone()));
                                 }
+                            }
+
+                            ui.separator();
+                            if ui.button(format!("{} Re-seed Ecosystem", egui_remixicon::icons::SEEDLING_LINE)).clicked() {
+                                actions.push(MenuAction::ReseedEcosystem);
                             }
                         });
 
@@ -1331,7 +1397,7 @@ pub fn render_ui(
 
     if let Some(log) = world.ecs.get_resource::<analytics::NarrationLog>() {
         egui::Window::new("Narration Log")
-            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 60.0))
             .collapsible(false)
             .title_bar(false)
             .resizable(false)

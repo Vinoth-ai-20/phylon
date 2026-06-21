@@ -87,6 +87,8 @@ pub enum MenuAction {
     StepForward,
     /// Reset the simulation to default organisms.
     Reset,
+    /// Reseed the entire ecosystem
+    ReseedEcosystem,
     /// Select all or cycle through organisms.
     SelectAll,
     /// Clear the current selection.

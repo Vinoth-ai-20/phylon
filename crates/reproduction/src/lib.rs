@@ -93,9 +93,9 @@ pub fn reproduction_system(
                 energy.current -= actual_cost;
                 strategy.current_cooldown = strategy.cooldown_ticks;
 
-                let child_genome = strategy.genome.clone();
-                // Introduce slight random mutation (placeholder)
-                // In Phase 5, call proper `mutate()`
+                let mut child_genome = strategy.genome.clone();
+                // Introduce structural mutation
+                child_genome.mutate(0.2, &mut rand::thread_rng());
 
                 // Spawn child slightly offset
                 let offset = Vec2::new(

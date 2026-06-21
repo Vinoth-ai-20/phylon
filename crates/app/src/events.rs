@@ -223,104 +223,30 @@ impl PhylonApp {
                 ui::MenuAction::StepForward => {
                     self.accumulated_time += 1.0;
                 }
-                ui::MenuAction::Reset => {
+                ui::MenuAction::Reset | ui::MenuAction::ReseedEcosystem => {
                     // Despawn all entities
                     let entities: Vec<_> = self.world.ecs.iter_entities().map(|e| e.id()).collect();
                     for entity in entities {
                         self.world.ecs.despawn(entity);
                     }
 
+                    // Reset tracking
+                    self.ui.selected_entity = None;
+                    self.ui.tracked_entity = None;
+
+                    // Clear lineage tracker
+                    if let Some(mut tracker) = self
+                        .world
+                        .ecs
+                        .get_resource_mut::<evolution::LineageTracker>()
+                    {
+                        *tracker = evolution::LineageTracker::new();
+                    }
+
                     // Respawn defaults
-                    let worm_hox = genetics::HoxSequence::worm(6, [0.85, 0.35, 0.35]);
-                    let worm_genome = genetics::Genome::new_hox_driven(
-                        genetics::GenomeId(1),
-                        common::EntityId(0),
-                        worm_hox,
-                    );
-                    organisms::spawn_organism(
-                        &mut self.world.ecs,
-                        &worm_genome,
-                        common::Vec2::new(0.0, 80.0),
-                        ecology::Diet::Herbivore,
-                        ecology::EcologicalCategory::None,
-                        0,
-                        0,
-                    );
-
-                    let fish_hox = genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]);
-                    let fish_genome = genetics::Genome::new_hox_driven(
-                        genetics::GenomeId(2),
-                        common::EntityId(0),
-                        fish_hox,
-                    );
-                    organisms::spawn_organism(
-                        &mut self.world.ecs,
-                        &fish_genome,
-                        common::Vec2::new(0.0, 0.0),
-                        ecology::Diet::Carnivore,
-                        ecology::EcologicalCategory::None,
-                        0,
-                        0,
-                    );
-
-                    let branchy_genome = genetics::Genome::new_hox_driven(
-                        genetics::GenomeId(3),
-                        common::EntityId(0),
-                        genetics::HoxSequence::new(
-                            vec![
-                                genetics::HoxGene::head(),
-                                genetics::HoxGene::branching_torso(2.5, 0.0),
-                                genetics::HoxGene::muscle(1.2, 0.0),
-                                genetics::HoxGene::torso(),
-                                genetics::HoxGene::branching_torso(2.5, std::f32::consts::PI * 0.5),
-                                genetics::HoxGene::muscle(1.2, std::f32::consts::PI),
-                                genetics::HoxGene::muscle(1.2, std::f32::consts::PI * 1.5),
-                                genetics::HoxGene::tail(),
-                            ],
-                            [0.95, 0.75, 0.20],
-                        ),
-                    );
-                    organisms::spawn_organism(
-                        &mut self.world.ecs,
-                        &branchy_genome,
-                        common::Vec2::new(0.0, -90.0),
-                        ecology::Diet::Producer,
-                        ecology::EcologicalCategory::None,
-                        0,
-                        0,
-                    );
-
-                    let omnivore_hox = genetics::HoxSequence::fish(4, 1, [0.8, 0.2, 0.8]);
-                    let omnivore_genome = genetics::Genome::new_hox_driven(
-                        genetics::GenomeId(4),
-                        common::EntityId(0),
-                        omnivore_hox,
-                    );
-                    organisms::spawn_organism(
-                        &mut self.world.ecs,
-                        &omnivore_genome,
-                        common::Vec2::new(-80.0, 0.0),
-                        ecology::Diet::Omnivore,
-                        ecology::EcologicalCategory::None,
-                        0,
-                        0,
-                    );
-
-                    let decomposer_hox = genetics::HoxSequence::worm(3, [0.4, 0.4, 0.4]);
-                    let decomposer_genome = genetics::Genome::new_hox_driven(
-                        genetics::GenomeId(5),
-                        common::EntityId(0),
-                        decomposer_hox,
-                    );
-                    organisms::spawn_organism(
-                        &mut self.world.ecs,
-                        &decomposer_genome,
-                        common::Vec2::new(80.0, 0.0),
-                        ecology::Diet::Decomposer,
-                        ecology::EcologicalCategory::None,
-                        0,
-                        0,
-                    );
+                    let mut tracker = evolution::LineageTracker::new();
+                    crate::app::seed_ecosystem(&mut self.world.ecs, &mut tracker);
+                    self.world.ecs.insert_resource(tracker);
                 }
                 ui::MenuAction::SelectAll => {
                     // Just select the first head we find

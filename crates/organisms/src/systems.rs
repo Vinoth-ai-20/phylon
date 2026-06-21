@@ -13,6 +13,7 @@ pub fn growth_system(
     mut commands: Commands,
     mut query: Query<(Entity, &mut GrowthState)>,
     node_query: Query<&physics::ParticleNode>,
+    spring_query: Query<&physics::Spring>,
 ) {
     use genetics::SegmentType;
     use physics::{ParticleNode, Spring};
@@ -39,6 +40,9 @@ pub fn growth_system(
             // effectors + 1 SignalEmitter output
             let output_count = state.effectors.len() + 1;
 
+            let hidden_count = 4;
+            let total_nodes = input_count + hidden_count + output_count;
+
             let mut nodes = Vec::new();
             let mut synapses = Vec::new();
 
@@ -48,6 +52,16 @@ pub fn growth_system(
                     time_constant: 1.0,
                     bias: 0.0,
                     activation: 7, // Linear
+                    first_synapse: 0,
+                    synapse_count: 0,
+                });
+            }
+            for _ in 0..hidden_count {
+                nodes.push(brain::CtrnnNode {
+                    state: 0.0,
+                    time_constant: 0.5,
+                    bias: 0.0,
+                    activation: 1, // Tanh [-1, 1]
                     first_synapse: 0,
                     synapse_count: 0,
                 });
@@ -62,24 +76,81 @@ pub fn growth_system(
                     synapse_count: 0,
                 });
             }
-            for i in 0..input_count {
-                for j in 0..output_count {
-                    let w_inputs = [
-                        (i as f32) / (input_count as f32),
-                        (j as f32) / (output_count as f32),
-                    ];
-                    let w_outputs = state.genome.evaluate(&w_inputs);
-                    let weight = if !w_outputs.is_empty() {
-                        w_outputs[0] * 5.0
+
+            // Find fins for Braitenberg wiring
+            let mut left_fin_idx = None;
+            let mut right_fin_idx = None;
+            for (out_idx, &effector_entity) in state.effectors.iter().enumerate() {
+                if let Ok(spring) = spring_query.get(effector_entity) {
+                    if spring.is_fin == 1 {
+                        if left_fin_idx.is_none() {
+                            left_fin_idx = Some(input_count + hidden_count + out_idx);
+                        } else if right_fin_idx.is_none() {
+                            right_fin_idx = Some(input_count + hidden_count + out_idx);
+                        }
+                    }
+                }
+            }
+
+            for i in 0..total_nodes {
+                // Connections can only target hidden and output nodes (not inputs)
+                for j in input_count..total_nodes {
+                    let mut weight = 0.0;
+
+                    // 1. Neocortex: Evolved CPPN Weights
+                    if !state.genome.nodes.is_empty() {
+                        let w_inputs = [
+                            (i as f32) / (total_nodes as f32),
+                            (j as f32) / (total_nodes as f32),
+                        ];
+                        let w_outputs = state.genome.evaluate(&w_inputs);
+                        if !w_outputs.is_empty() {
+                            weight += w_outputs[0] * 5.0;
+                        }
+                    }
+
+                    // 2. Reptilian Brain: Hardcoded Braitenberg Instincts
+                    let mut b_weight = 0.0;
+                    if let (Some(lf), Some(rf)) = (left_fin_idx, right_fin_idx) {
+                        if i == 5 && j == rf {
+                            b_weight = 2.0;
+                        } // VisL -> Right Fin
+                        if i == 7 && j == lf {
+                            b_weight = 2.0;
+                        } // VisR -> Left Fin
+                        if i == 6 && (j == lf || j == rf) {
+                            b_weight = 2.0;
+                        } // VisC -> Both
+                        if i == 2 && (j == lf || j == rf) {
+                            b_weight = 4.0;
+                        } // Hazard -> Both
+                        if i == 0 && (j == lf || j == rf) {
+                            b_weight = 1.0;
+                        } // Chem -> Both
                     } else {
-                        0.5
-                    };
-                    synapses.push(brain::CtrnnSynapse {
-                        source: i as u32,
-                        target: (input_count + j) as u32,
-                        weight,
-                        _padding: 0,
-                    });
+                        if j >= input_count + hidden_count {
+                            if i == 6 {
+                                b_weight = 2.0;
+                            }
+                            if i == 2 {
+                                b_weight = 4.0;
+                            }
+                            if i == 0 {
+                                b_weight = 1.0;
+                            }
+                        }
+                    }
+
+                    weight += b_weight;
+
+                    if weight.abs() > 0.01 {
+                        synapses.push(brain::CtrnnSynapse {
+                            source: i as u32,
+                            target: j as u32,
+                            weight,
+                            _padding: 0,
+                        });
+                    }
                 }
             }
 
@@ -126,9 +197,10 @@ pub fn growth_system(
         // force and preventing the instability that caused fly-off.
         let spawn_pos = if let Some(prev_entity) = state.parent_spine_node {
             if let Ok(parent_node) = node_query.get(prev_entity) {
-                // Step one segment_length in the -X direction from where the
+                // Step one segment_length in the heading direction from where the
                 // parent node actually is right now.
-                parent_node.position - Vec2::new(state.segment_length, 0.0)
+                parent_node.position
+                    + Vec2::new(state.heading.cos(), state.heading.sin()) * -state.segment_length
             } else {
                 state.current_pos
             }
@@ -188,11 +260,13 @@ pub fn growth_system(
         // ── Branch: sprout bilateral fin pair if branching_signal > 0 ────────
         // Only Torso and Muscle segments can branch (not Head or Tail).
         let can_branch = matches!(gene.segment, SegmentType::Torso | SegmentType::Muscle);
-        if can_branch && gene.branching_signal > 0.0 {
+        if can_branch && gene.branching_signal > 0.0 && state.parent_spine_node.is_some() {
             let fin_spread = state.segment_length * 0.75;
+            let dir = Vec2::new(state.heading.cos(), state.heading.sin());
+            let perp = Vec2::new(-dir.y, dir.x);
 
-            let f_up_pos = spawn_pos + Vec2::new(0.0, fin_spread);
-            let f_dn_pos = spawn_pos + Vec2::new(0.0, -fin_spread);
+            let f_up_pos = spawn_pos + perp * fin_spread;
+            let f_dn_pos = spawn_pos + perp * -fin_spread;
 
             let f_up = commands
                 .spawn((
@@ -207,21 +281,59 @@ pub fn growth_system(
                 ))
                 .id();
 
-            // Attach fins via Rotational hinges — no cross-links back to spine
+            // Attach fins via Rigid hinges to the spine
+            commands.spawn((
+                Spring {
+                    node_a: spine_node,
+                    node_b: f_up,
+                    constraint_type: physics::ConstraintType::Rigid,
+                    rest_length: fin_spread,
+                    base_length: fin_spread,
+                    stiffness: 20.0,
+                    damping: 0.5,
+                    actuation_amplitude: 0.0,
+                    actuation_phase: 0.0,
+                    breaking_strain: 2.0,
+                    is_fin: 1,
+                },
+                OrganismColor(state.color),
+            ));
+            commands.spawn((
+                Spring {
+                    node_a: spine_node,
+                    node_b: f_dn,
+                    constraint_type: physics::ConstraintType::Rigid,
+                    rest_length: fin_spread,
+                    base_length: fin_spread,
+                    stiffness: 20.0,
+                    damping: 0.5,
+                    actuation_amplitude: 0.0,
+                    actuation_phase: 0.0,
+                    breaking_strain: 2.0,
+                    is_fin: 1,
+                },
+                OrganismColor(state.color),
+            ));
+
+            // Attach Elastic muscle to the previous spine node
+            let prev_spine = state.parent_spine_node.unwrap();
+            let muscle_rest_len =
+                (state.segment_length * state.segment_length + fin_spread * fin_spread).sqrt();
+
             let sf_up = commands
                 .spawn((
                     Spring {
-                        node_a: spine_node,
+                        node_a: prev_spine,
                         node_b: f_up,
-                        constraint_type: physics::ConstraintType::Rotational,
-                        rest_length: fin_spread,
-                        base_length: fin_spread,
+                        constraint_type: physics::ConstraintType::Elastic,
+                        rest_length: muscle_rest_len,
+                        base_length: muscle_rest_len,
                         stiffness: 5.0,
                         damping: 0.3,
                         actuation_amplitude: gene.actuation_amplitude,
                         actuation_phase: 0.0,
                         breaking_strain: 2.0,
-                        is_fin: 1,
+                        is_fin: 0,
                     },
                     OrganismColor(state.color),
                 ))
@@ -231,17 +343,17 @@ pub fn growth_system(
             let sf_dn = commands
                 .spawn((
                     Spring {
-                        node_a: spine_node,
+                        node_a: prev_spine,
                         node_b: f_dn,
-                        constraint_type: physics::ConstraintType::Rotational,
-                        rest_length: fin_spread,
-                        base_length: fin_spread,
+                        constraint_type: physics::ConstraintType::Elastic,
+                        rest_length: muscle_rest_len,
+                        base_length: muscle_rest_len,
                         stiffness: 5.0,
                         damping: 0.3,
                         actuation_amplitude: gene.actuation_amplitude,
                         actuation_phase: std::f32::consts::PI, // Opposing phase → flap
                         breaking_strain: 2.0,
-                        is_fin: 1,
+                        is_fin: 0,
                     },
                     OrganismColor(state.color),
                 ))
@@ -251,7 +363,8 @@ pub fn growth_system(
 
         // Advance state — current_pos still updated as a fallback reference.
         state.parent_spine_node = Some(spine_node);
-        state.current_pos.x -= state.segment_length;
+        let offset = Vec2::new(state.heading.cos(), state.heading.sin()) * -state.segment_length;
+        state.current_pos += offset;
         state.next_segment_index += 1;
         state.ticks_until_next_bud = state.base_bud_interval;
     }

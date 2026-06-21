@@ -125,7 +125,7 @@ impl Brain {
         }
     }
 
-    fn apply_activation(x: f32, act_id: u32) -> f32 {
+    pub fn apply_activation(x: f32, act_id: u32) -> f32 {
         match act_id {
             0 => 1.0 / (1.0 + (-x).exp()), // Sigmoid
             1 => x.tanh(),                 // Tanh

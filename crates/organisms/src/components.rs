@@ -64,4 +64,6 @@ pub struct GrowthState {
     pub effectors: Vec<bevy_ecs::entity::Entity>,
     /// Skin colour for this organism.
     pub color: [f32; 3],
+    /// Heading angle at which this organism spawns.
+    pub heading: f32,
 }

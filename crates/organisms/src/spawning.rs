@@ -12,8 +12,10 @@ pub fn spawn_organism(
     spawn_tick: u64,
 ) -> bevy_ecs::entity::Entity {
     use physics::ParticleNode;
+    use rand::Rng;
 
     let segment_length = 20.0;
+    let heading = rand::thread_rng().gen_range(0.0..std::f32::consts::TAU);
 
     // Determine color and initial head segment from HoxSequence when available.
     let (color, head_seg_u32) = if let Some(hox) = genome.hox.as_ref() {
@@ -40,8 +42,8 @@ pub fn spawn_organism(
     // Attach biology to the head node.
     world.entity_mut(head_node).insert((
         metabolism::Energy {
-            current: 100.0,
-            max: 200.0,
+            current: 800.0,
+            max: 1000.0,
         },
         metabolism::Age {
             ticks: 0,
@@ -49,15 +51,15 @@ pub fn spawn_organism(
         },
         metabolism::Metabolism {
             mass: 10.0,
-            base_rate: 0.05,
+            base_rate: 0.005,
         },
         Generation(generation),
         SpawnTick(spawn_tick),
         diet,
         category,
         reproduction::ReproductionStrategy {
-            energy_threshold: 180.0,
-            energy_cost: 100.0,
+            energy_threshold: 900.0,
+            energy_cost: 500.0,
             cooldown_ticks: 300,
             current_cooldown: 0,
             mode: reproduction::ReproductionMode::Asexual,
@@ -70,10 +72,11 @@ pub fn spawn_organism(
             ticks_until_next_bud: 30, // ~0.5 s per segment bud at 60 Hz
             base_bud_interval: 30,
             parent_spine_node: Some(head_node),
-            current_pos: start_pos - Vec2::new(segment_length, 0.0),
+            current_pos: start_pos + Vec2::new(heading.cos(), heading.sin()) * -segment_length,
             segment_length,
             effectors: Vec::new(),
             color,
+            heading,
         },
         sensing::HeadVision {
             range: 250.0,
@@ -119,10 +122,13 @@ pub fn spawn_proto_fish(
     spawn_tick: u64,
 ) {
     use physics::{ConstraintType, ParticleNode, Spring};
+    use rand::Rng;
 
     // Geometry constants — all in world units
     let segment_len: f32 = 20.0;
     let fin_spread: f32 = 15.0;
+    let heading: f32 = rand::thread_rng().gen_range(0.0..std::f32::consts::TAU);
+    let dir = Vec2::new(heading.cos(), heading.sin());
 
     // ── Spine (5 nodes along −X axis, head at pos, tail to the left) ──────
     // Segment types: Head(0), Torso(1), Torso(1), Torso(1), Tail(3)
@@ -133,7 +139,7 @@ pub fn spawn_proto_fish(
         .iter()
         .enumerate()
         .map(|(i, &seg_type)| {
-            let p = pos + Vec2::new(-(i as f32) * segment_len, 0.0);
+            let p = pos + dir * (-(i as f32) * segment_len);
             world
                 .spawn((
                     ParticleNode::new(p, 1.0, seg_type),
@@ -165,10 +171,11 @@ pub fn spawn_proto_fish(
 
     // ── Lateral fins at spine node index 2 (centre of spine) ───────────────
     let fin_root = spine_nodes[2];
-    let fin_root_pos = pos + Vec2::new(-2.0 * segment_len, 0.0);
+    let fin_root_pos = pos + dir * (-2.0 * segment_len);
 
-    let f_up_pos = fin_root_pos + Vec2::new(0.0, fin_spread);
-    let f_dn_pos = fin_root_pos + Vec2::new(0.0, -fin_spread);
+    let perp = Vec2::new(-dir.y, dir.x);
+    let f_up_pos = fin_root_pos + perp * fin_spread;
+    let f_dn_pos = fin_root_pos + perp * -fin_spread;
 
     let f_up = world
         .spawn((
@@ -183,18 +190,18 @@ pub fn spawn_proto_fish(
         ))
         .id();
 
-    // Rotational springs — opposing phases produce a flapping motion
+    // Hinge (Rigid bone)
     world.spawn((
         Spring {
             node_a: fin_root,
             node_b: f_up,
-            constraint_type: ConstraintType::Rotational,
+            constraint_type: ConstraintType::Rigid,
             rest_length: fin_spread,
             base_length: fin_spread,
-            stiffness: 5.0,
-            damping: 0.3,
-            actuation_amplitude: 8.0,
-            actuation_phase: 0.0, // Phase 0
+            stiffness: 20.0,
+            damping: 0.5,
+            actuation_amplitude: 0.0,
+            actuation_phase: 0.0,
             breaking_strain: 5.0,
             is_fin: 1,
         },
@@ -204,15 +211,52 @@ pub fn spawn_proto_fish(
         Spring {
             node_a: fin_root,
             node_b: f_dn,
-            constraint_type: ConstraintType::Rotational,
+            constraint_type: ConstraintType::Rigid,
             rest_length: fin_spread,
             base_length: fin_spread,
+            stiffness: 20.0,
+            damping: 0.5,
+            actuation_amplitude: 0.0,
+            actuation_phase: 0.0,
+            breaking_strain: 5.0,
+            is_fin: 1,
+        },
+        OrganismColor(proto_color),
+    ));
+
+    // Muscle (Elastic actuator) connecting to previous spine node
+    let prev_spine = spine_nodes[1];
+    let muscle_rest_len = (segment_len * segment_len + fin_spread * fin_spread).sqrt();
+
+    world.spawn((
+        Spring {
+            node_a: prev_spine,
+            node_b: f_up,
+            constraint_type: ConstraintType::Elastic,
+            rest_length: muscle_rest_len,
+            base_length: muscle_rest_len,
+            stiffness: 5.0,
+            damping: 0.3,
+            actuation_amplitude: 8.0,
+            actuation_phase: 0.0, // Phase 0
+            breaking_strain: 5.0,
+            is_fin: 0,
+        },
+        OrganismColor(proto_color),
+    ));
+    world.spawn((
+        Spring {
+            node_a: prev_spine,
+            node_b: f_dn,
+            constraint_type: ConstraintType::Elastic,
+            rest_length: muscle_rest_len,
+            base_length: muscle_rest_len,
             stiffness: 5.0,
             damping: 0.3,
             actuation_amplitude: 8.0,
             actuation_phase: std::f32::consts::PI, // Opposing phase → flap
             breaking_strain: 5.0,
-            is_fin: 1,
+            is_fin: 0,
         },
         OrganismColor(proto_color),
     ));

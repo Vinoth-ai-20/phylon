@@ -214,164 +214,8 @@ impl PhylonApp {
         );
         world.ecs.insert_resource(env_manager);
 
-        // ── Spawn three organisms with distinct Hox sequences ─────────────────
-        // Organism 1: Simple worm — 6 muscle segments, no branching.
-        let worm_hox = genetics::HoxSequence::worm(6, [0.85, 0.35, 0.35]);
-        let worm_genome =
-            genetics::Genome::new_hox_driven(genetics::GenomeId(1), common::EntityId(0), worm_hox);
-        let e1 = organisms::spawn_organism(
-            &mut world.ecs,
-            &worm_genome,
-            common::Vec2::new(0.0, 80.0),
-            ecology::Diet::Herbivore,
-            ecology::EcologicalCategory::None,
-            0,
-            0,
-        );
-        let l1 = lineage_tracker.new_lineage_id();
-        lineage_tracker.register_birth(
-            common::EntityId(e1.to_bits()),
-            None,
-            l1,
-            evolution::SpeciesId(0),
-            0,
-            0,
-        );
-
-        // Organism 2: Fish — 5 segments, fin pair at segment index 2.
-        let fish_hox = genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]);
-        let fish_genome =
-            genetics::Genome::new_hox_driven(genetics::GenomeId(2), common::EntityId(0), fish_hox);
-        let e2 = organisms::spawn_organism(
-            &mut world.ecs,
-            &fish_genome,
-            common::Vec2::new(0.0, 0.0),
-            ecology::Diet::Carnivore,
-            ecology::EcologicalCategory::None,
-            0,
-            0,
-        );
-        let l2 = lineage_tracker.new_lineage_id();
-        lineage_tracker.register_birth(
-            common::EntityId(e2.to_bits()),
-            None,
-            l2,
-            evolution::SpeciesId(0),
-            0,
-            0,
-        );
-
-        // Organism 3: Multi-fin — 8 segments, bilateral fins at positions 1 and 4.
-        let branchy_genome = genetics::Genome::new_hox_driven(
-            genetics::GenomeId(3),
-            common::EntityId(0),
-            genetics::HoxSequence::new(
-                vec![
-                    genetics::HoxGene::head(),
-                    genetics::HoxGene::branching_torso(2.5, 0.0),
-                    genetics::HoxGene::muscle(1.2, 0.0),
-                    genetics::HoxGene::torso(),
-                    genetics::HoxGene::branching_torso(2.5, std::f32::consts::PI * 0.5),
-                    genetics::HoxGene::muscle(1.2, std::f32::consts::PI),
-                    genetics::HoxGene::muscle(1.2, std::f32::consts::PI * 1.5),
-                    genetics::HoxGene::tail(),
-                ],
-                [0.4, 0.8, 0.4],
-            ),
-        );
-        let e3 = organisms::spawn_organism(
-            &mut world.ecs,
-            &branchy_genome,
-            common::Vec2::new(0.0, -80.0),
-            ecology::Diet::Herbivore,
-            ecology::EcologicalCategory::None,
-            0,
-            0,
-        );
-        let l3 = lineage_tracker.new_lineage_id();
-        lineage_tracker.register_birth(
-            common::EntityId(e3.to_bits()),
-            None,
-            l3,
-            evolution::SpeciesId(0),
-            0,
-            0,
-        );
-
-        // Organism 4: Omnivore — purple fish
-        let omnivore_hox = genetics::HoxSequence::fish(4, 1, [0.8, 0.2, 0.8]);
-        let omnivore_genome = genetics::Genome::new_hox_driven(
-            genetics::GenomeId(4),
-            common::EntityId(0),
-            omnivore_hox,
-        );
-        let e4 = organisms::spawn_organism(
-            &mut world.ecs,
-            &omnivore_genome,
-            common::Vec2::new(-80.0, 0.0),
-            ecology::Diet::Omnivore,
-            ecology::EcologicalCategory::None,
-            0,
-            0,
-        );
-        let l4 = lineage_tracker.new_lineage_id();
-        lineage_tracker.register_birth(
-            common::EntityId(e4.to_bits()),
-            None,
-            l4,
-            evolution::SpeciesId(0),
-            0,
-            0,
-        );
-
-        // Organism 5: Decomposer — small grey worm
-        let decomposer_hox = genetics::HoxSequence::worm(3, [0.4, 0.4, 0.4]);
-        let decomposer_genome = genetics::Genome::new_hox_driven(
-            genetics::GenomeId(5),
-            common::EntityId(0),
-            decomposer_hox,
-        );
-        let e5 = organisms::spawn_organism(
-            &mut world.ecs,
-            &decomposer_genome,
-            common::Vec2::new(80.0, 0.0),
-            ecology::Diet::Decomposer,
-            ecology::EcologicalCategory::None,
-            0,
-            0,
-        );
-        let l5 = lineage_tracker.new_lineage_id();
-        lineage_tracker.register_birth(
-            common::EntityId(e5.to_bits()),
-            None,
-            l5,
-            evolution::SpeciesId(0),
-            0,
-            0,
-        );
-
+        seed_ecosystem(&mut world.ecs, &mut lineage_tracker);
         world.ecs.insert_resource(lineage_tracker);
-
-        // Spawn a static food/nutrient emitter at the center
-        world.ecs.spawn(diffusion::Emitter {
-            position: common::Vec2::new(0.0, 0.0),
-            value: 10.0,
-            radius: 50.0,
-        });
-
-        // Spawn initial mineral pellets for Producers
-        for i in 0..10 {
-            let t = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .subsec_micros() as f32;
-            let px = ((t + i as f32 * 123.4) % 400.0) - 200.0;
-            let py = ((t + i as f32 * 321.4) % 400.0) - 200.0;
-            world.ecs.spawn(ecology::MineralPellet {
-                position: common::Vec2::new(px, py),
-                energy_value: 50.0,
-            });
-        }
 
         let (task_tx, task_rx) = std::sync::mpsc::channel();
         let storage = storage::StorageManager::new();
@@ -737,5 +581,120 @@ impl PhylonApp {
         }
 
         best
+    }
+}
+
+pub(crate) fn seed_ecosystem(
+    world: &mut bevy_ecs::world::World,
+    lineage_tracker: &mut evolution::LineageTracker,
+) {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+
+    // 1. Define Prototypes
+    let worm_genome = genetics::Genome::new_hox_driven(
+        genetics::GenomeId(1),
+        common::EntityId(0),
+        genetics::HoxSequence::worm(6, [0.85, 0.35, 0.35]),
+    );
+
+    let fish_genome = genetics::Genome::new_hox_driven(
+        genetics::GenomeId(2),
+        common::EntityId(0),
+        genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]),
+    );
+
+    let branchy_genome = genetics::Genome::new_hox_driven(
+        genetics::GenomeId(3),
+        common::EntityId(0),
+        genetics::HoxSequence::new(
+            vec![
+                genetics::HoxGene::head(),
+                genetics::HoxGene::branching_torso(2.5, 0.0),
+                genetics::HoxGene::muscle(1.2, 0.0),
+                genetics::HoxGene::torso(),
+                genetics::HoxGene::branching_torso(2.5, std::f32::consts::PI * 0.5),
+                genetics::HoxGene::muscle(1.2, std::f32::consts::PI),
+                genetics::HoxGene::muscle(1.2, std::f32::consts::PI * 1.5),
+                genetics::HoxGene::tail(),
+            ],
+            [0.4, 0.8, 0.4],
+        ),
+    );
+
+    let omnivore_genome = genetics::Genome::new_hox_driven(
+        genetics::GenomeId(4),
+        common::EntityId(0),
+        genetics::HoxSequence::fish(4, 1, [0.8, 0.2, 0.8]),
+    );
+
+    let decomposer_genome = genetics::Genome::new_hox_driven(
+        genetics::GenomeId(5),
+        common::EntityId(0),
+        genetics::HoxSequence::worm(3, [0.4, 0.4, 0.4]),
+    );
+
+    // 2. Helper to spawn a population
+    let mut spawn_pop = |genome: &genetics::Genome, diet: ecology::Diet, count: usize| {
+        let lineage_id = lineage_tracker.new_lineage_id();
+        for _ in 0..count {
+            let px = rng.gen_range(-1000.0..1000.0);
+            let py = rng.gen_range(-1000.0..1000.0);
+            let e = organisms::spawn_organism(
+                world,
+                genome,
+                common::Vec2::new(px, py),
+                diet.clone(),
+                ecology::EcologicalCategory::None,
+                0,
+                0,
+            );
+            lineage_tracker.register_birth(
+                common::EntityId(e.to_bits()),
+                None,
+                lineage_id,
+                evolution::SpeciesId(0),
+                0,
+                0,
+            );
+        }
+    };
+
+    // 3. Spawn Populations
+    spawn_pop(&worm_genome, ecology::Diet::Herbivore, 150);
+    spawn_pop(&branchy_genome, ecology::Diet::Herbivore, 150);
+    spawn_pop(&omnivore_genome, ecology::Diet::Omnivore, 40);
+    spawn_pop(&decomposer_genome, ecology::Diet::Decomposer, 50);
+    spawn_pop(&fish_genome, ecology::Diet::Carnivore, 20);
+
+    // 4. Spawn Resource Hotspots
+    for _ in 0..20 {
+        let px = rng.gen_range(-1000.0..1000.0);
+        let py = rng.gen_range(-1000.0..1000.0);
+        world.spawn(diffusion::Emitter {
+            position: common::Vec2::new(px, py),
+            value: rng.gen_range(5.0..20.0),
+            radius: rng.gen_range(50.0..150.0),
+        });
+    }
+
+    // 5. Spawn Initial Minerals
+    for _ in 0..300 {
+        let px = rng.gen_range(-1000.0..1000.0);
+        let py = rng.gen_range(-1000.0..1000.0);
+        world.spawn(ecology::MineralPellet {
+            position: common::Vec2::new(px, py),
+            energy_value: 50.0,
+        });
+    }
+
+    // 6. Spawn Initial Food
+    for _ in 0..300 {
+        let px = rng.gen_range(-1000.0..1000.0);
+        let py = rng.gen_range(-1000.0..1000.0);
+        world.spawn(ecology::FoodPellet {
+            position: common::Vec2::new(px, py),
+            energy_value: 50.0,
+        });
     }
 }

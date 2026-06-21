@@ -48,11 +48,6 @@ impl PhylonApp {
             }
         }
 
-        if self.total_sim_time > 1.0 && !self.ui.is_paused {
-            println!("SIMULATING PAUSE");
-            self.ui.is_paused = true;
-        }
-
         // Only step simulation if we're in the simulation state and not paused
         if self.ui.app_state == ui::AppState::Simulation && !self.ui.is_paused {
             self.accumulated_time += self.simulation_speed;
@@ -843,12 +838,6 @@ impl PhylonApp {
 
         output.present();
 
-        if self.ui.is_paused && self.total_sim_time > 1.0 {
-            println!("SIMULATING SAVE WHILE PAUSED");
-            ui_actions.push(ui::MenuAction::SaveState);
-            // also exit after one test so we don't spam
-            self.total_sim_time = -100.0;
-        }
         self.handle_menu_actions(ui_actions);
 
         Ok(())
