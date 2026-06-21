@@ -19,10 +19,46 @@ pub fn growth_system(
     use physics::{ParticleNode, Spring};
 
     for (entity, mut state) in query.iter_mut() {
-        // Retrieve Hox sequence; fall back to an empty one if none exists.
+        // Retrieve Hox sequence; fall back to generating one via Morph CPPN if none exists.
         let hox_genes = match state.genome.hox.as_ref() {
             Some(h) => h.genes.clone(),
-            None => vec![genetics::HoxGene::head(), genetics::HoxGene::tail()],
+            None => {
+                let mut generated = vec![genetics::HoxGene::head()];
+                let max_segments = 15;
+                for i in 1..max_segments {
+                    let parent_type = match generated.last().unwrap().segment {
+                        genetics::SegmentType::Head => 0.0,
+                        genetics::SegmentType::Torso => 1.0,
+                        genetics::SegmentType::Muscle => 2.0,
+                        genetics::SegmentType::Tail => 3.0,
+                        genetics::SegmentType::Fin => 4.0,
+                    };
+                    let inputs = [i as f32 / max_segments as f32, parent_type];
+                    let outputs = state.genome.morph_cppn.evaluate(&inputs);
+                    if outputs.len() >= 3 {
+                        let type_val = outputs[0];
+                        let branching = outputs[1];
+                        let phase = outputs[2] * std::f32::consts::PI;
+
+                        if type_val < -0.2 {
+                            generated.push(genetics::HoxGene::muscle(1.2, phase));
+                        } else if type_val > 0.2 {
+                            if branching > 0.0 {
+                                generated.push(genetics::HoxGene::branching_torso(2.5, phase));
+                            } else {
+                                generated.push(genetics::HoxGene::torso());
+                            }
+                        } else {
+                            // Stop signal
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                generated.push(genetics::HoxGene::tail());
+                generated
+            }
         };
 
         // Check if we've processed all genes.
@@ -55,13 +91,13 @@ pub fn growth_system(
                     time_constant = 1.0;
                     activation = 7; // Linear
                 } else {
-                    // Evolve node properties via CPPN
-                    if !state.genome.nodes.is_empty() {
+                    // Evolve node properties via Brain CPPN
+                    if !state.genome.brain_cppn.nodes.is_empty() {
                         let w_inputs = [
                             (i as f32) / (total_nodes as f32),
                             (i as f32) / (total_nodes as f32),
                         ];
-                        let w_outputs = state.genome.evaluate(&w_inputs);
+                        let w_outputs = state.genome.brain_cppn.evaluate(&w_inputs);
                         if w_outputs.len() >= 3 {
                             bias = w_outputs[1] * 1.5;
                             // Time constant must be strictly positive and low enough to allow fast 2 Hz oscillations.
@@ -101,12 +137,12 @@ pub fn growth_system(
                     let mut weight = 0.0;
 
                     // Neocortex: Evolved CPPN Weights
-                    if !state.genome.nodes.is_empty() {
+                    if !state.genome.brain_cppn.nodes.is_empty() {
                         let w_inputs = [
                             (i as f32) / (total_nodes as f32),
                             (j as f32) / (total_nodes as f32),
                         ];
-                        let w_outputs = state.genome.evaluate(&w_inputs);
+                        let w_outputs = state.genome.brain_cppn.evaluate(&w_inputs);
                         if !w_outputs.is_empty() {
                             weight += w_outputs[0] * 1.5;
                         }
@@ -336,5 +372,93 @@ pub fn growth_system(
         state.current_pos += offset;
         state.next_segment_index += 1;
         state.ticks_until_next_bud = state.base_bud_interval;
+    }
+}
+
+/// System that handles physical growth/branching for Producers.
+pub fn producer_growth_system(
+    mut commands: Commands,
+    mut query: Query<(
+        Entity,
+        &ecology::Diet,
+        &mut metabolism::ChemicalEconomy,
+        &mut metabolism::Metabolism,
+        &physics::ParticleNode,
+    )>,
+    spring_q: Query<&physics::Spring>,
+) {
+    // Threshold to grow a new node
+    let growth_cost = 5000.0;
+
+    // We need adjacency map to find all nodes of an organism starting from head.
+    let mut adj: std::collections::HashMap<Entity, Vec<Entity>> = std::collections::HashMap::new();
+    for spring in spring_q.iter() {
+        adj.entry(spring.node_a).or_default().push(spring.node_b);
+        adj.entry(spring.node_b).or_default().push(spring.node_a);
+    }
+
+    for (head_entity, diet, mut chem, mut metabolism, head_node) in query.iter_mut() {
+        if *diet == ecology::Diet::Producer
+            && chem.glucose > chem.max_glucose * 0.8
+            && chem.glucose >= growth_cost
+        {
+            chem.glucose -= growth_cost;
+            metabolism.mass += 5.0; // Increase mass
+            chem.max_glucose += 2000.0;
+            chem.max_o2 += 1000.0;
+            chem.max_atp += 2000.0;
+            chem.max_co2 += 1000.0;
+
+            // Find a random node to attach to
+            let mut all_nodes = vec![head_entity];
+            let mut queue = std::collections::VecDeque::new();
+            let mut visited = std::collections::HashSet::new();
+
+            queue.push_back(head_entity);
+            visited.insert(head_entity);
+
+            while let Some(curr) = queue.pop_front() {
+                if let Some(neighbors) = adj.get(&curr) {
+                    for &n in neighbors {
+                        if visited.insert(n) {
+                            queue.push_back(n);
+                            all_nodes.push(n);
+                        }
+                    }
+                }
+            }
+
+            // Pick a random node from the plant body
+            let target_node = all_nodes[fastrand::usize(..all_nodes.len())];
+
+            let offset = common::Vec2::new(
+                (fastrand::f32() - 0.5) * 20.0,
+                fastrand::f32() * 20.0 + 5.0, // Upward bias
+            );
+
+            let new_node_id = commands
+                .spawn((
+                    physics::ParticleNode::new(head_node.position + offset, 1.0, 1),
+                    crate::components::OrganismColor([0.2, 0.9, 0.2]), // Bright green new leaf
+                ))
+                .id();
+
+            commands.spawn((
+                physics::Spring {
+                    node_a: target_node,
+                    node_b: new_node_id,
+                    constraint_type: physics::ConstraintType::Elastic,
+                    rest_length: 20.0,
+                    base_length: 20.0,
+                    stiffness: 10.0,
+                    damping: 0.5,
+                    actuation_amplitude: 0.0,
+                    actuation_phase: 0.0,
+                    breaking_strain: 5.0,
+                    is_fin: 0,
+                },
+                crate::components::OrganismColor([0.2, 0.9, 0.2]),
+            ));
+        }
     }
 }

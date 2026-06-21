@@ -20,3 +20,4 @@ brain     = { path = "../brain" }
 behavior  = { path = "../behavior" }
 sensing   = { path = "../sensing" }
 diffusion = { path = "../diffusion" }
+fastrand = "2.4.1"

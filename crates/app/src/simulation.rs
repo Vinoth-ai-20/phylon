@@ -169,6 +169,12 @@ impl PhylonApp {
 
         // 6. Run remaining biological systems
         self.world.ecs.run_system_once(ecology::food_spawner_system);
+        self.world
+            .ecs
+            .run_system_once(ecology::photosynthesis_system);
+        self.world
+            .ecs
+            .run_system_once(organisms::systems::producer_growth_system);
         self.world.ecs.run_system_once(ecology::foraging_system);
         self.world
             .ecs

@@ -41,9 +41,15 @@ pub fn spawn_organism(
 
     // Attach biology to the head node.
     world.entity_mut(head_node).insert((
-        metabolism::Energy {
-            current: 800.0,
-            max: 1000.0,
+        metabolism::ChemicalEconomy {
+            glucose: 50000.0,
+            o2: 10000.0,
+            co2: 0.0,
+            atp: 50000.0,
+            max_glucose: 100000.0,
+            max_o2: 10000.0,
+            max_co2: 10000.0,
+            max_atp: 100000.0,
         },
         metabolism::Age {
             ticks: 0,
@@ -104,7 +110,7 @@ pub fn spawn_organism(
 /// - 2 lateral fin nodes branching from spine node 2 (the middle segment).
 /// - Rotational fin springs with opposing actuation phases so the fins flap.
 ///
-/// The head node carries [`metabolism::Energy`], [`metabolism::Age`], and
+/// The head node carries [`metabolism::ChemicalEconomy`], [`metabolism::Age`], and
 /// [`metabolism::Metabolism`] components so the inspector sidebar can display
 /// biological metrics.
 ///
@@ -263,9 +269,15 @@ pub fn spawn_proto_fish(
 
     // ── Biological state on the head node ──────────────────────────────────
     world.entity_mut(spine_nodes[0]).insert((
-        metabolism::Energy {
-            current: 100000.0,
-            max: 100000.0,
+        metabolism::ChemicalEconomy {
+            glucose: 10000.0,
+            o2: 10000.0,
+            co2: 0.0,
+            atp: 10000.0,
+            max_glucose: 100000.0,
+            max_o2: 10000.0,
+            max_co2: 10000.0,
+            max_atp: 100000.0,
         },
         metabolism::Age {
             ticks: 0,

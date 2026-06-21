@@ -173,9 +173,15 @@ pub fn generate_hex_mesh(
                         ..Default::default()
                     },
                     // Biological components for inspector
-                    metabolism::Energy {
-                        current: 100.0,
-                        max: 100.0,
+                    metabolism::ChemicalEconomy {
+                        glucose: 10000.0,
+                        o2: 10000.0,
+                        co2: 0.0,
+                        atp: 10000.0,
+                        max_glucose: 100000.0,
+                        max_o2: 10000.0,
+                        max_co2: 10000.0,
+                        max_atp: 100000.0,
                     },
                     metabolism::Age {
                         ticks: 0,

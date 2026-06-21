@@ -1376,6 +1376,7 @@ dependencies = [
 name = "genetics"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "brain",
  "common",
  "rand 0.8.6",
@@ -2554,6 +2555,7 @@ dependencies = [
  "common",
  "diffusion",
  "ecology",
+ "fastrand",
  "genetics",
  "metabolism",
  "physics",

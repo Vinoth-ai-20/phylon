@@ -182,6 +182,9 @@ impl PhylonApp {
         }); // 60hz tick
         world
             .ecs
+            .insert_resource(metabolism::GlobalAtmosphere::default());
+        world
+            .ecs
             .insert_resource(diffusion::DiffusionConfig::default());
         world
             .ecs
@@ -218,8 +221,10 @@ impl PhylonApp {
         );
         world.ecs.insert_resource(env_manager);
 
-        seed_ecosystem(&mut world.ecs, &mut lineage_tracker);
+        let mut tracker = genetics::GlobalInnovationTracker::default();
+        seed_ecosystem(&mut world.ecs, &mut lineage_tracker, &mut tracker);
         world.ecs.insert_resource(lineage_tracker);
+        world.ecs.insert_resource(tracker);
 
         let (task_tx, task_rx) = std::sync::mpsc::channel();
         let storage = storage::StorageManager::new();
@@ -591,6 +596,7 @@ impl PhylonApp {
 pub(crate) fn seed_ecosystem(
     world: &mut bevy_ecs::world::World,
     lineage_tracker: &mut evolution::LineageTracker,
+    tracker: &mut genetics::GlobalInnovationTracker,
 ) {
     use rand::Rng;
     let mut rng = rand::thread_rng();
@@ -655,7 +661,7 @@ pub(crate) fn seed_ecosystem(
             let mut ind_genome = genome.clone();
             if diet != ecology::Diet::Producer {
                 for _ in 0..10 {
-                    ind_genome.mutate(1.0, &mut rng);
+                    ind_genome.mutate(1.0, &mut rng, tracker);
                 }
             }
 

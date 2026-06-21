@@ -378,6 +378,15 @@ pub fn render_ui(
                     .logarithmic(true),
             );
 
+            if let Some(atmosphere) = world.ecs.get_resource::<metabolism::GlobalAtmosphere>() {
+                ui.separator();
+                ui.label(format!(
+                    "{} {:.0}%",
+                    egui_remixicon::icons::SUN_LINE,
+                    atmosphere.sunlight * 100.0
+                ));
+            }
+
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // right-to-left means items are placed from right edge toward left edge.
                 // we want the order visual left-to-right to be: "Cam info", "-", "Home", "+"
@@ -628,26 +637,33 @@ pub fn render_ui(
                             }
                         }
 
-                        // Metabolism — Energy
-                        let mut energy_q = world.ecs.query::<&metabolism::Energy>();
+                        // Metabolism — Chemistry
+                        let mut chem_q = world.ecs.query::<&metabolism::ChemicalEconomy>();
                         let mut age_q = world.ecs.query::<&metabolism::Age>();
                         let mut meta_q = world.ecs.query::<&metabolism::Metabolism>();
-                        let has_meta = energy_q.get(&world.ecs, entity).is_ok();
+                        let has_meta = chem_q.get(&world.ecs, entity).is_ok();
 
                         if has_meta {
                             egui::CollapsingHeader::new(format!("{} Biology", egui_remixicon::icons::MICROSCOPE_LINE))
                                 .default_open(true)
                                 .show(ui, |ui| {
-                                    if let Ok(en) = energy_q.get(&world.ecs, entity) {
-                                        let pct = en.current / en.max;
-                                        ui.label(format!(
-                                            "Energy : {:.1} / {:.1}",
-                                            en.current, en.max
-                                        ));
-                                        ui.add(
-                                            egui::ProgressBar::new(pct)
-                                                .text(format!("{:.0}%", pct * 100.0)),
-                                        );
+                                    if let Ok(chem) = chem_q.get(&world.ecs, entity) {
+                                        let gluc_pct = chem.glucose / chem.max_glucose;
+                                        let atp_pct = chem.atp / chem.max_atp;
+                                        let o2_pct = chem.o2 / chem.max_o2;
+                                        let co2_pct = chem.co2 / chem.max_co2;
+
+                                        ui.label(format!("Glucose: {:.0} / {:.0}", chem.glucose, chem.max_glucose));
+                                        ui.add(egui::ProgressBar::new(gluc_pct).text("Glucose"));
+
+                                        ui.label(format!("ATP: {:.0} / {:.0}", chem.atp, chem.max_atp));
+                                        ui.add(egui::ProgressBar::new(atp_pct).text("ATP").fill(egui::Color32::from_rgb(255, 150, 50)));
+
+                                        ui.label(format!("O2: {:.0} / {:.0}", chem.o2, chem.max_o2));
+                                        ui.add(egui::ProgressBar::new(o2_pct).text("O2").fill(egui::Color32::from_rgb(100, 150, 255)));
+
+                                        ui.label(format!("CO2: {:.0} / {:.0}", chem.co2, chem.max_co2));
+                                        ui.add(egui::ProgressBar::new(co2_pct).text("CO2").fill(egui::Color32::from_rgb(150, 150, 150)));
                                     }
                                     if let Ok(age) = age_q.get(&world.ecs, entity) {
                                         ui.label(format!(
@@ -899,8 +915,8 @@ pub fn render_ui(
 
                                 ui.separator();
                                 ui.heading("CPPN Topology");
-                                ui.label(format!("Nodes: {}", genome.nodes.len()));
-                                ui.label(format!("Connections: {}", genome.connections.len()));
+                                ui.label(format!("Nodes: {}", genome.brain_cppn.nodes.len()));
+                                ui.label(format!("Connections: {}", genome.brain_cppn.connections.len()));
 
                                 // Draw CPPN Graph
                                 let (response, painter) = ui.allocate_painter(
@@ -912,19 +928,19 @@ pub fn render_ui(
 
                                 // Find max layer
                                 let max_layer =
-                                    genome.nodes.iter().map(|n| n.layer).max().unwrap_or(0);
+                                    genome.brain_cppn.nodes.iter().map(|n| n.layer).max().unwrap_or(0);
 
                                 // Group nodes by layer
                                 let mut layer_counts = std::collections::HashMap::new();
                                 let mut node_positions = std::collections::HashMap::new();
 
-                                for n in &genome.nodes {
+                                for n in &genome.brain_cppn.nodes {
                                     *layer_counts.entry(n.layer).or_insert(0) += 1;
                                 }
 
                                 let mut current_layer_idx = std::collections::HashMap::new();
 
-                                for (i, node) in genome.nodes.iter().enumerate() {
+                                for (i, node) in genome.brain_cppn.nodes.iter().enumerate() {
                                     let layer_idx =
                                         *current_layer_idx.entry(node.layer).or_insert(0);
                                     let count = *layer_counts.get(&node.layer).unwrap();
@@ -952,7 +968,7 @@ pub fn render_ui(
                                 }
 
                                 // Draw edges
-                                for conn in &genome.connections {
+                                for conn in &genome.brain_cppn.connections {
                                     if !conn.enabled {
                                         continue;
                                     }
@@ -971,7 +987,7 @@ pub fn render_ui(
                                 }
 
                                 // Draw nodes
-                                for (i, node) in genome.nodes.iter().enumerate() {
+                                for (i, node) in genome.brain_cppn.nodes.iter().enumerate() {
                                     if let Some(&pos) = node_positions.get(&i) {
                                         let fill = if node.layer == 0 {
                                             egui::Color32::LIGHT_BLUE
@@ -1104,23 +1120,23 @@ pub fn render_ui(
                                     world.ecs.query::<&mut organisms::GrowthState>();
 
                                 if let Ok(mut r) = repro_mut.get_mut(&mut world.ecs, head) {
-                                    let mut next_innov = r.genome.connections.len() * 100;
+                                    let mut next_innov = r.genome.brain_cppn.connections.len() * 100;
                                     match action {
-                                        "add_node" => r.genome.mutate_add_node(&mut next_innov),
+                                        "add_node" => r.genome.brain_cppn.mutate_add_node(&mut next_innov),
                                         "add_conn" => {
-                                            r.genome.mutate_add_connection(&mut next_innov)
+                                            r.genome.brain_cppn.mutate_add_connection(&mut next_innov)
                                         }
-                                        "mutate_weight" => r.genome.mutate_weight(),
+                                        "mutate_weight" => r.genome.brain_cppn.mutate_weight(),
                                         _ => {}
                                     }
                                 } else if let Ok(mut g) = growth_mut.get_mut(&mut world.ecs, head) {
-                                    let mut next_innov = g.genome.connections.len() * 100;
+                                    let mut next_innov = g.genome.brain_cppn.connections.len() * 100;
                                     match action {
-                                        "add_node" => g.genome.mutate_add_node(&mut next_innov),
+                                        "add_node" => g.genome.brain_cppn.mutate_add_node(&mut next_innov),
                                         "add_conn" => {
-                                            g.genome.mutate_add_connection(&mut next_innov)
+                                            g.genome.brain_cppn.mutate_add_connection(&mut next_innov)
                                         }
-                                        "mutate_weight" => g.genome.mutate_weight(),
+                                        "mutate_weight" => g.genome.brain_cppn.mutate_weight(),
                                         _ => {}
                                     }
                                 }

@@ -6,7 +6,7 @@
 use bevy_ecs::prelude::*;
 use common::Vec2;
 use genetics::Genome;
-use metabolism::Energy;
+use metabolism::ChemicalEconomy;
 
 /// Reproduction mode.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,13 +53,14 @@ pub struct BirthRequest {
 pub fn reproduction_system(
     mut query: Query<(
         Entity,
-        &mut Energy,
+        &mut ChemicalEconomy,
         &mut ReproductionStrategy,
         &physics::ParticleNode,
         &ecology::Diet,
         &ecology::EcologicalCategory,
     )>,
     config: Res<ecology::EcologyConfig>,
+    mut tracker: ResMut<genetics::GlobalInnovationTracker>,
     all_organisms: Query<(), With<ReproductionStrategy>>,
     mut birth_events: EventWriter<BirthRequest>,
 ) {
@@ -69,7 +70,7 @@ pub fn reproduction_system(
     let mut ready_sexuals = Vec::new();
 
     // First pass: asexual + gather sexuals
-    for (entity, mut energy, mut strategy, node, diet, category) in query.iter_mut() {
+    for (entity, mut chem, mut strategy, node, diet, category) in query.iter_mut() {
         if strategy.current_cooldown > 0 {
             strategy.current_cooldown -= 1;
         }
@@ -84,18 +85,22 @@ pub fn reproduction_system(
             actual_threshold *= 0.5; // Also reproduce sooner
         }
 
-        if energy.current >= actual_threshold && strategy.current_cooldown == 0 {
+        if chem.glucose >= actual_threshold
+            && chem.atp >= actual_threshold
+            && strategy.current_cooldown == 0
+        {
             // Asexual clone
             if strategy.mode == ReproductionMode::Asexual {
                 if current_population + pending_births >= config.max_organisms {
                     continue;
                 }
-                energy.current -= actual_cost;
+                chem.glucose -= actual_cost;
+                chem.atp -= actual_cost;
                 strategy.current_cooldown = strategy.cooldown_ticks;
 
                 let mut child_genome = strategy.genome.clone();
                 // Introduce structural mutation
-                child_genome.mutate(0.2, &mut rand::thread_rng());
+                child_genome.mutate(0.2, &mut rand::thread_rng(), &mut tracker);
 
                 // Spawn child slightly offset
                 let offset = Vec2::new(
@@ -142,7 +147,7 @@ pub fn reproduction_system(
             // Distance check (collision radius approx 50.0)
             if p1.distance(*p2) < 50.0 {
                 // Compatibility check: roughly same node count
-                if g1.nodes.len() == g2.nodes.len() {
+                if g1.brain_cppn.nodes.len() == g2.brain_cppn.nodes.len() {
                     if current_population + pending_births >= config.max_organisms {
                         break;
                     }
@@ -154,7 +159,7 @@ pub fn reproduction_system(
                     use rand::Rng;
                     let mut child_genome =
                         g1.crossover(g2, genetics::GenomeId(rng.gen()), &mut rng);
-                    child_genome.mutate(0.1, &mut rng);
+                    child_genome.mutate(0.1, &mut rng, &mut tracker);
 
                     let mut offset_pos = *p1;
                     offset_pos.x += (rng.gen::<f32>() - 0.5) * 50.0;
@@ -175,9 +180,10 @@ pub fn reproduction_system(
     }
 
     // Deduct energy for those who mated sexually
-    for (entity, mut energy, mut strategy, _, _, _) in query.iter_mut() {
+    for (entity, mut chem, mut strategy, _, _, _) in query.iter_mut() {
         if mated.contains(&entity) {
-            energy.current -= strategy.energy_cost;
+            chem.glucose -= strategy.energy_cost;
+            chem.atp -= strategy.energy_cost;
             strategy.current_cooldown = strategy.cooldown_ticks;
         }
     }

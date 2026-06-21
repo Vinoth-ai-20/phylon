@@ -67,7 +67,7 @@ pub fn sensing_system(
         &mut SensoryState,
         &physics::ParticleNode,
         Option<&mut HeadVision>,
-        Option<&metabolism::Energy>,
+        Option<&metabolism::ChemicalEconomy>,
         Option<&metabolism::Age>,
         Option<&ecology::Diet>,
     )>,
@@ -115,10 +115,10 @@ pub fn sensing_system(
             }
         }
 
-        // 2. Proprioception (Energy level)
-        if let Some(energy) = energy_opt {
+        // 2. Proprioception (ATP level)
+        if let Some(chem) = energy_opt {
             if idx < state.inputs.len() {
-                state.inputs[idx] = energy.current / energy.max.max(1.0);
+                state.inputs[idx] = chem.atp / chem.max_atp.max(1.0);
                 idx += 1;
             }
         }

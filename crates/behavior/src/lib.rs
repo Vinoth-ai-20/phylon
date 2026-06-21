@@ -45,7 +45,7 @@ pub fn behavior_system(
         Option<&mut brain::Brain>,
         Option<&MotorSystem>,
         Option<&mut diffusion::SignalEmitter>,
-        Option<&mut metabolism::Energy>,
+        Option<&mut metabolism::ChemicalEconomy>,
         Option<&metabolism::Age>,
     )>,
     mut springs: bevy_ecs::prelude::Query<&mut physics::Spring>,
@@ -113,10 +113,10 @@ pub fn behavior_system(
                                     + (effective_actuation * spring.base_length * 0.5);
                             }
 
-                            // Punish rigidity: if the muscle is locked at high actuation, drain a small amount of energy
+                            // Punish rigidity: if the muscle is locked at high actuation, drain a small amount of ATP
                             if actuation.abs() > 0.9 {
-                                if let Some(ref mut energy) = energy_opt {
-                                    energy.current = (energy.current - 0.05).max(0.0);
+                                if let Some(ref mut chem) = energy_opt {
+                                    chem.atp = (chem.atp - 0.05).max(0.0);
                                 }
                             }
                         }
@@ -139,14 +139,14 @@ pub fn behavior_system(
                 let emission = signal_output.clamp(0.0, 1.0);
                 emitter.value = emission;
 
-                // Drain energy
+                // Drain ATP
                 if emission > 0.0 {
-                    if let Some(energy) = energy_opt.as_mut() {
+                    if let Some(chem) = energy_opt.as_mut() {
                         let cost_per_unit = config
                             .as_ref()
                             .map_or(0.01, |c| c.signal_energy_cost_per_unit);
                         let cost = emission * cost_per_unit;
-                        energy.current = (energy.current - cost).max(0.0);
+                        chem.atp = (chem.atp - cost).max(0.0);
                     }
                 }
             }

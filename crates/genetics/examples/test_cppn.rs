@@ -19,7 +19,7 @@ fn main() {
                 (i as f32) / (total_nodes as f32),
                 (j as f32) / (total_nodes as f32),
             ];
-            let w_outputs = genome.evaluate(&w_inputs);
+            let w_outputs = genome.brain_cppn.evaluate(&w_inputs);
             if i == 0 && j == 1 {
                 println!("Output for 0->1: {:?}", w_outputs);
             }

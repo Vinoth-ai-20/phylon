@@ -147,9 +147,15 @@ impl PhylonApp {
 
                             // Attach biological components so Inspector can view it
                             self.world.ecs.entity_mut(entity).insert((
-                                metabolism::Energy {
-                                    current: 100.0,
-                                    max: 200.0,
+                                metabolism::ChemicalEconomy {
+                                    glucose: 10000.0,
+                                    o2: 10000.0,
+                                    co2: 0.0,
+                                    atp: 10000.0,
+                                    max_glucose: 100000.0,
+                                    max_o2: 10000.0,
+                                    max_co2: 10000.0,
+                                    max_atp: 100000.0,
                                 },
                                 metabolism::Age {
                                     ticks: 0,
@@ -245,8 +251,14 @@ impl PhylonApp {
 
                     // Respawn defaults
                     let mut tracker = evolution::LineageTracker::new();
-                    crate::app::seed_ecosystem(&mut self.world.ecs, &mut tracker);
+                    let mut global_tracker = genetics::GlobalInnovationTracker::default();
+                    crate::app::seed_ecosystem(
+                        &mut self.world.ecs,
+                        &mut tracker,
+                        &mut global_tracker,
+                    );
                     self.world.ecs.insert_resource(tracker);
+                    self.world.ecs.insert_resource(global_tracker);
                 }
                 ui::MenuAction::SelectAll => {
                     // Just select the first head we find

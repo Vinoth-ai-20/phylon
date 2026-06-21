@@ -5,7 +5,7 @@
 
 use bevy_ecs::prelude::*;
 use common::Vec2;
-use metabolism::Energy;
+
 use serde::{Deserialize, Serialize};
 
 /// Subsystem for random and manual environmental catastrophes.
@@ -72,6 +72,10 @@ pub struct Corpse {
     pub max_decay: u32,
 }
 
+/// Marker component indicating an organism's biomass was entirely consumed by a predator.
+#[derive(Component)]
+pub struct Eaten;
+
 /// Config for the food spawner.
 #[derive(Resource, Debug, Clone)]
 pub struct EcologyConfig {
@@ -123,25 +127,73 @@ pub fn food_spawner_system(
 /// System that handles collision eating based on ecological roles.
 pub fn foraging_system(
     mut commands: Commands,
-    mut organism_query: Query<(Entity, &mut Energy, &Diet, &physics::ParticleNode)>,
+    mut organism_query: Query<(
+        Entity,
+        &mut metabolism::ChemicalEconomy,
+        &Diet,
+        &physics::ParticleNode,
+    )>,
     food_query: Query<(Entity, &FoodPellet)>,
     mineral_query: Query<(Entity, &MineralPellet)>,
     corpse_query: Query<(Entity, &Corpse)>,
 ) {
-    // We will do interactions by iterating organisms and then checking the environment queries.
-    // For Carnivores eating Herbivores, we need to iterate pairs, which requires a nested query or `iter_combinations_mut`.
-    // Since Bevy 0.14 `iter_combinations_mut` requires equal components.
-    // We will leave Carnivore eating Herbivore for the physics system or handle it safely here.
+    // Phase 1: Organism vs Organism predation
+    let organism_eat_radius = 40.0;
+    let mut combos = organism_query.iter_combinations_mut();
+    while let Some([(e1, mut chem1, diet1, node1), (e2, mut chem2, diet2, node2)]) =
+        combos.fetch_next()
+    {
+        if chem1.atp <= 0.0 || chem2.atp <= 0.0 {
+            continue;
+        }
 
+        let dist = node1.position.distance(node2.position);
+        if dist <= organism_eat_radius {
+            let one_eats_two = matches!(
+                (diet1, diet2),
+                (Diet::Carnivore, Diet::Herbivore | Diet::Omnivore)
+                    | (Diet::Herbivore | Diet::Omnivore, Diet::Producer)
+            );
+            let two_eats_one = matches!(
+                (diet2, diet1),
+                (Diet::Carnivore, Diet::Herbivore | Diet::Omnivore)
+                    | (Diet::Herbivore | Diet::Omnivore, Diet::Producer)
+            );
+
+            if one_eats_two {
+                chem1.glucose =
+                    (chem1.glucose + chem2.max_glucose + chem2.max_atp).min(chem1.max_glucose);
+                chem2.glucose = 0.0;
+                chem2.atp = 0.0;
+                if let Some(mut entity_cmds) = commands.get_entity(e2) {
+                    entity_cmds.insert(Eaten);
+                }
+            } else if two_eats_one {
+                chem2.glucose =
+                    (chem2.glucose + chem1.max_glucose + chem1.max_atp).min(chem2.max_glucose);
+                chem1.glucose = 0.0;
+                chem1.atp = 0.0;
+                if let Some(mut entity_cmds) = commands.get_entity(e1) {
+                    entity_cmds.insert(Eaten);
+                }
+            }
+        }
+    }
+
+    // Phase 2: Organism vs Environment (Pellets, Minerals, Corpses)
     let eat_radius = 20.0;
 
-    for (_entity, mut energy, diet, node) in organism_query.iter_mut() {
+    for (_entity, mut chem, diet, node) in organism_query.iter_mut() {
+        if chem.atp <= 0.0 {
+            continue;
+        }
+
         match diet {
             Diet::Producer => {
-                // Producers eat Minerals
+                // Producers eat Minerals for structural growth
                 for (mineral_entity, mineral) in mineral_query.iter() {
                     if node.position.distance(mineral.position) <= eat_radius {
-                        energy.current = (energy.current + mineral.energy_value).min(energy.max);
+                        chem.glucose = (chem.glucose + mineral.energy_value).min(chem.max_glucose);
                         if let Some(mut e) = commands.get_entity(mineral_entity) {
                             e.despawn();
                         }
@@ -153,7 +205,7 @@ pub fn foraging_system(
                 // Herbivores eat FoodPellets
                 for (food_entity, food) in food_query.iter() {
                     if node.position.distance(food.position) <= eat_radius {
-                        energy.current = (energy.current + food.energy_value).min(energy.max);
+                        chem.glucose = (chem.glucose + food.energy_value).min(chem.max_glucose);
                         if let Some(mut e) = commands.get_entity(food_entity) {
                             e.despawn();
                         }
@@ -165,7 +217,7 @@ pub fn foraging_system(
                 // Decomposers eat Corpses and spawn Minerals
                 for (corpse_entity, corpse) in corpse_query.iter() {
                     if node.position.distance(corpse.position) <= eat_radius {
-                        energy.current = (energy.current + corpse.energy_value).min(energy.max);
+                        chem.glucose = (chem.glucose + corpse.energy_value).min(chem.max_glucose);
                         if let Some(mut e) = commands.get_entity(corpse_entity) {
                             e.despawn();
                         }
@@ -179,8 +231,42 @@ pub fn foraging_system(
                     }
                 }
             }
-            Diet::Carnivore => {
-                // To be implemented: Carnivore vs Herbivore predation
+            Diet::Carnivore => {}
+        }
+    }
+}
+
+/// System that handles photosynthesis for Producers.
+pub fn photosynthesis_system(
+    mut atmosphere: ResMut<metabolism::GlobalAtmosphere>,
+    mut query: Query<(
+        &Diet,
+        &metabolism::Metabolism,
+        &mut metabolism::ChemicalEconomy,
+    )>,
+    diff_config: Res<diffusion::DiffusionConfig>,
+) {
+    // Calculate global sunlight using a diurnal sine wave
+    // Time is in ticks. Let's make a full day/night cycle take 10000 ticks.
+    let cycle_length = 5000.0;
+    let time_rad = (diff_config.global_time / cycle_length) * std::f32::consts::TAU;
+    let mut sunlight = time_rad.sin();
+    if sunlight < 0.0 {
+        sunlight = 0.0; // Nighttime
+    }
+    atmosphere.sunlight = sunlight;
+
+    for (diet, metabolism, mut chem) in query.iter_mut() {
+        if *diet == Diet::Producer && chem.atp > 0.0 {
+            // Plants consume CO2 and Sunlight to make Glucose and O2
+            let co2_needed = 4.0 * metabolism.mass * sunlight;
+
+            if atmosphere.co2 >= co2_needed {
+                atmosphere.co2 -= co2_needed;
+
+                // 1 CO2 -> 1 Glucose + 1 O2 (simplified)
+                chem.glucose = (chem.glucose + co2_needed).min(chem.max_glucose);
+                chem.o2 = (chem.o2 + co2_needed).min(chem.max_o2);
             }
         }
     }
@@ -212,7 +298,11 @@ pub fn catastrophe_system(
     mut hazard_field: ResMut<diffusion::CpuHazardFieldState>,
     env: Res<environment::EnvironmentManager>,
     mut hazard_events: EventWriter<catastrophe::HazardSpawned>,
-    mut organisms: Query<(&mut Energy, &physics::ParticleNode, Option<&mut Corpse>)>,
+    mut organisms: Query<(
+        &mut metabolism::ChemicalEconomy,
+        &physics::ParticleNode,
+        Option<&mut Corpse>,
+    )>,
 ) {
     *local_tick += 1;
     let tick = common::Tick(*local_tick);
@@ -260,7 +350,7 @@ pub fn catastrophe_system(
     });
 
     // Apply energy drain to organisms in active hazards
-    for (mut energy, node, mut corpse_opt) in organisms.iter_mut() {
+    for (mut chem, node, mut corpse_opt) in organisms.iter_mut() {
         let mut in_hazard = false;
         for (center, radius) in &active_hazards {
             if node.position.distance(*center) <= *radius {
@@ -270,7 +360,7 @@ pub fn catastrophe_system(
         }
 
         if in_hazard {
-            energy.current = (energy.current - config.energy_drain_rate).max(0.0);
+            chem.atp = (chem.atp - config.energy_drain_rate).max(0.0);
 
             // If they died from catastrophe, maybe accelerate decay if they are already a corpse
             if let Some(corpse) = corpse_opt.as_mut() {

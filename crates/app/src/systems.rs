@@ -118,7 +118,8 @@ pub fn process_deaths_system(
         (
             bevy_ecs::entity::Entity,
             &physics::ParticleNode,
-            &metabolism::Energy,
+            &metabolism::ChemicalEconomy,
+            Option<&ecology::Eaten>,
         ),
         bevy_ecs::prelude::With<metabolism::Dead>,
     >,
@@ -146,7 +147,7 @@ pub fn process_deaths_system(
     let mut nodes_to_despawn = std::collections::HashSet::new();
     let mut springs_to_despawn = std::collections::HashSet::new();
 
-    for (head, node, energy) in dead_q.iter() {
+    for (head, node, chem, eaten) in dead_q.iter() {
         if nodes_to_despawn.contains(&head) {
             continue;
         }
@@ -156,13 +157,15 @@ pub fn process_deaths_system(
             // TODO: Get actual tick and cause
         }
 
-        // Spawn a corpse entity at the position of the dead organism
-        commands.spawn(ecology::Corpse {
-            position: node.position,
-            energy_value: energy.max, // Corpse yields the organism's max potential energy
-            decay_timer: 1800,        // About 30 seconds at 60 FPS
-            max_decay: 1800,
-        });
+        // Spawn a corpse entity at the position of the dead organism, unless it was eaten whole
+        if eaten.is_none() {
+            commands.spawn(ecology::Corpse {
+                position: node.position,
+                energy_value: chem.max_glucose + chem.max_atp, // Corpse yields the organism's max potential energy
+                decay_timer: 1800,                             // About 30 seconds at 60 FPS
+                max_decay: 1800,
+            });
+        }
 
         let mut queue = std::collections::VecDeque::new();
         queue.push_back(head);

@@ -26,7 +26,7 @@ pub use hox::{HoxGene, HoxSequence};
 
 /// Compositional Pattern Producing Network representation.
 pub mod cppn;
-pub use cppn::{CppnConnection, CppnNode};
+pub use cppn::{Cppn, CppnConnection, CppnNode, GlobalInnovationTracker};
 
 /// The primary Genome container and operations.
 pub mod genome;
@@ -40,8 +40,8 @@ mod tests {
     #[test]
     fn new_genome_is_empty() {
         let g = Genome::new_minimal(GenomeId(1), EntityId(0));
-        assert_eq!(g.nodes.len(), 0);
-        assert_eq!(g.connections.len(), 0);
+        assert_eq!(g.brain_cppn.nodes.len(), 0);
+        assert_eq!(g.brain_cppn.connections.len(), 0);
     }
 
     #[test]

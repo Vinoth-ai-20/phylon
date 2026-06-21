@@ -25,3 +25,194 @@ pub struct CppnConnection {
     /// Innovation number (for NEAT crossover).
     pub innovation: usize,
 }
+
+/// A complete Compositional Pattern Producing Network (CPPN).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Cppn {
+    /// The nodes in the CPPN.
+    pub nodes: Vec<CppnNode>,
+    /// The connections in the CPPN.
+    pub connections: Vec<CppnConnection>,
+}
+
+impl Cppn {
+    /// Creates a new empty CPPN.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Evaluates the CPPN for a given set of inputs.
+    pub fn evaluate(&self, inputs: &[f32]) -> Vec<f32> {
+        if self.nodes.is_empty() {
+            return Vec::new();
+        }
+
+        let mut values = vec![0.0; self.nodes.len()];
+        for (i, &val) in inputs.iter().enumerate() {
+            if i < values.len() {
+                values[i] = val;
+            }
+        }
+
+        let start_idx = inputs.len();
+        for target_idx in start_idx..self.nodes.len() {
+            let mut sum = self.nodes[target_idx].bias;
+            for conn in &self.connections {
+                if conn.enabled && conn.target == target_idx {
+                    sum += values[conn.source] * conn.weight;
+                }
+            }
+
+            values[target_idx] = match self.nodes[target_idx].activation {
+                brain::ActivationFn::Sigmoid => 1.0 / (1.0 + (-sum).exp()),
+                brain::ActivationFn::Tanh => sum.tanh(),
+                brain::ActivationFn::ReLU => sum.max(0.0),
+                brain::ActivationFn::LeakyReLU => {
+                    if sum > 0.0 {
+                        sum
+                    } else {
+                        0.01 * sum
+                    }
+                }
+                brain::ActivationFn::Sine => sum.sin(),
+                brain::ActivationFn::Gaussian => (-sum * sum).exp(),
+                brain::ActivationFn::Abs => sum.abs(),
+                brain::ActivationFn::Linear => sum,
+                brain::ActivationFn::Step => {
+                    if sum > 0.0 {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+            };
+        }
+
+        let mut outputs = Vec::new();
+        for (node_idx, node) in self.nodes.iter().enumerate() {
+            if node.layer == 1 {
+                outputs.push(values[node_idx]);
+            }
+        }
+        outputs
+    }
+
+    /// Mutates a random existing connection's weight.
+    pub fn mutate_weight(&mut self) {
+        if self.connections.is_empty() {
+            return;
+        }
+        let idx = rand::random::<usize>() % self.connections.len();
+        let delta = rand::random::<f32>() - 0.5;
+        self.connections[idx].weight += delta;
+    }
+
+    /// Adds a random connection between two unconnected nodes.
+    pub fn mutate_add_connection(&mut self, next_innovation: &mut usize) {
+        if self.nodes.len() < 2 {
+            return;
+        }
+
+        for _ in 0..10 {
+            let src = rand::random::<usize>() % self.nodes.len();
+            let tgt = rand::random::<usize>() % self.nodes.len();
+
+            if self.nodes[src].layer >= self.nodes[tgt].layer {
+                continue;
+            }
+
+            let exists = self
+                .connections
+                .iter()
+                .any(|c| c.source == src && c.target == tgt);
+            if !exists {
+                self.connections.push(CppnConnection {
+                    source: src,
+                    target: tgt,
+                    weight: (rand::random::<f32>() - 0.5) * 2.0,
+                    enabled: true,
+                    innovation: *next_innovation,
+                });
+                *next_innovation += 1;
+                break;
+            }
+        }
+    }
+
+    /// Splits a connection and inserts a new hidden node.
+    pub fn mutate_add_node(&mut self, next_innovation: &mut usize) {
+        if self.connections.is_empty() {
+            return;
+        }
+
+        let mut enabled_indices = Vec::new();
+        for (i, c) in self.connections.iter().enumerate() {
+            if c.enabled {
+                enabled_indices.push(i);
+            }
+        }
+
+        if enabled_indices.is_empty() {
+            return;
+        }
+
+        let idx = enabled_indices[rand::random::<usize>() % enabled_indices.len()];
+        let conn = self.connections[idx].clone();
+
+        self.connections[idx].enabled = false;
+
+        let src_layer = self.nodes[conn.source].layer;
+        let tgt_layer = self.nodes[conn.target].layer;
+
+        let new_layer = if tgt_layer > src_layer + 1 {
+            src_layer + 1
+        } else {
+            for n in &mut self.nodes {
+                if n.layer >= tgt_layer {
+                    n.layer += 1;
+                }
+            }
+            src_layer + 1
+        };
+
+        let new_node_idx = self.nodes.len();
+        self.nodes.push(CppnNode {
+            activation: brain::ActivationFn::Tanh,
+            bias: 0.0,
+            layer: new_layer,
+        });
+
+        self.connections.push(CppnConnection {
+            source: conn.source,
+            target: new_node_idx,
+            weight: 1.0,
+            enabled: true,
+            innovation: *next_innovation,
+        });
+        *next_innovation += 1;
+
+        self.connections.push(CppnConnection {
+            source: new_node_idx,
+            target: conn.target,
+            weight: conn.weight,
+            enabled: true,
+            innovation: *next_innovation,
+        });
+        *next_innovation += 1;
+    }
+}
+
+/// Global tracking of NEAT innovation numbers.
+#[derive(bevy_ecs::prelude::Resource, Debug, Clone, Serialize, Deserialize)]
+pub struct GlobalInnovationTracker {
+    /// The next available innovation number for a new structural mutation.
+    pub next_innovation: usize,
+}
+
+impl Default for GlobalInnovationTracker {
+    fn default() -> Self {
+        Self {
+            next_innovation: 100, // Reserve 0-99 for initial topologies
+        }
+    }
+}

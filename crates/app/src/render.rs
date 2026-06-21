@@ -713,6 +713,27 @@ impl PhylonApp {
                 label: Some("Frame"),
             });
 
+        // Get sunlight for background color
+        let mut clear_color = wgpu::Color {
+            r: 0.02,
+            g: 0.04,
+            b: 0.08,
+            a: 1.0,
+        };
+        if let Some(atmosphere) = self
+            .world
+            .ecs
+            .get_resource::<metabolism::GlobalAtmosphere>()
+        {
+            let s = atmosphere.sunlight as f64;
+            clear_color = wgpu::Color {
+                r: 0.02 + s * 0.1,
+                g: 0.04 + s * 0.2,
+                b: 0.08 + s * 0.4,
+                a: 1.0,
+            };
+        }
+
         // Render the continuous diffusion field as the background (clearing the screen)
         if let (Some(field_renderer), Some(diffusion_compute)) = (
             self.field_renderer.as_ref(),
@@ -724,6 +745,7 @@ impl PhylonApp {
                 &view,
                 diffusion_compute.current_texture_view(),
                 central_rect_px,
+                clear_color,
             );
         }
 
