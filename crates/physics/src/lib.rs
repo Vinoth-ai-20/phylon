@@ -192,7 +192,9 @@ pub fn spring_force_system(
     }
 
     for entity in springs_to_break {
-        commands.entity(entity).despawn();
+        if let Some(mut e) = commands.get_entity(entity) {
+            e.despawn();
+        }
     }
 
     // Apply forces

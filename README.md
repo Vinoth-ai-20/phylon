@@ -42,6 +42,7 @@ cargo test
 To run pre-commit checks:
 
 ```bash
+cargo fmt;
 cargo fmt --all -- --check;
 cargo clippy --all-targets --all-features -- -D warnings;
 cargo test --workspace;

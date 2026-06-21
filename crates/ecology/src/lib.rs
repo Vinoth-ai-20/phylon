@@ -142,7 +142,9 @@ pub fn foraging_system(
                 for (mineral_entity, mineral) in mineral_query.iter() {
                     if node.position.distance(mineral.position) <= eat_radius {
                         energy.current = (energy.current + mineral.energy_value).min(energy.max);
-                        commands.entity(mineral_entity).despawn();
+                        if let Some(mut e) = commands.get_entity(mineral_entity) {
+                            e.despawn();
+                        }
                         break;
                     }
                 }
@@ -152,7 +154,9 @@ pub fn foraging_system(
                 for (food_entity, food) in food_query.iter() {
                     if node.position.distance(food.position) <= eat_radius {
                         energy.current = (energy.current + food.energy_value).min(energy.max);
-                        commands.entity(food_entity).despawn();
+                        if let Some(mut e) = commands.get_entity(food_entity) {
+                            e.despawn();
+                        }
                         break;
                     }
                 }
@@ -162,7 +166,9 @@ pub fn foraging_system(
                 for (corpse_entity, corpse) in corpse_query.iter() {
                     if node.position.distance(corpse.position) <= eat_radius {
                         energy.current = (energy.current + corpse.energy_value).min(energy.max);
-                        commands.entity(corpse_entity).despawn();
+                        if let Some(mut e) = commands.get_entity(corpse_entity) {
+                            e.despawn();
+                        }
 
                         // Recycle into mineral
                         commands.spawn(MineralPellet {
@@ -191,7 +197,9 @@ pub fn corpse_decay_system(mut commands: Commands, mut corpse_query: Query<(Enti
                 position: corpse.position,
                 energy_value: corpse.energy_value * 0.5, // 50% energy lost to environment if not eaten directly
             });
-            commands.entity(entity).despawn();
+            if let Some(mut e) = commands.get_entity(entity) {
+                e.despawn();
+            }
         }
     }
 }

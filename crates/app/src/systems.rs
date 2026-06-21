@@ -181,9 +181,13 @@ pub fn process_deaths_system(
     }
 
     for n in nodes_to_despawn {
-        commands.entity(n).despawn();
+        if let Some(mut e) = commands.get_entity(n) {
+            e.despawn();
+        }
     }
     for s in springs_to_despawn {
-        commands.entity(s).despawn();
+        if let Some(mut e) = commands.get_entity(s) {
+            e.despawn();
+        }
     }
 }
