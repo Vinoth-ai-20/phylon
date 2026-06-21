@@ -170,15 +170,20 @@ impl PhylonApp {
                 0.0
             };
 
-            // Get memory
-            let mut memory_mb = 0.0;
-            let mut sys = sysinfo::System::new_all();
-            if let Ok(pid) = sysinfo::get_current_pid() {
-                sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
-                if let Some(process) = sys.process(pid) {
-                    memory_mb = (process.memory() / 1024 / 1024) as f64;
-                }
+            // Get memory (cached to avoid extreme lag)
+            thread_local! {
+                static SYS: std::cell::RefCell<sysinfo::System> = std::cell::RefCell::new(sysinfo::System::new_all());
             }
+            let memory_mb = SYS.with(|sys_cell| {
+                let mut sys = sys_cell.borrow_mut();
+                if let Ok(pid) = sysinfo::get_current_pid() {
+                    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+                    if let Some(process) = sys.process(pid) {
+                        return (process.memory() / 1024 / 1024) as f64;
+                    }
+                }
+                0.0
+            });
 
             metrics.record_env_perf(
                 tps,

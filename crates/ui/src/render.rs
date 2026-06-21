@@ -1573,8 +1573,8 @@ pub fn render_ui(
 
                             // Column 2
                             cols[1].vertical(|ui| {
-                                ui.label("Environment Resources");
-                                egui_plot::Plot::new("env_plot")
+                                ui.label("Resources");
+                                egui_plot::Plot::new("res_plot")
                                     .height(120.0)
                                     .legend(egui_plot::Legend::default())
                                     .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
@@ -1594,6 +1594,16 @@ pub fn render_ui(
                                                 .name("Corpses")
                                                 .color(egui::Color32::from_rgb(200, 100, 100)),
                                         );
+                                    });
+
+                                ui.add_space(8.0);
+
+                                ui.label("Environment");
+                                egui_plot::Plot::new("env_plot")
+                                    .height(120.0)
+                                    .legend(egui_plot::Legend::default())
+                                    .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
+                                    .show(ui, |plot_ui| {
                                         plot_ui.line(
                                             egui_plot::Line::new(sun_pts)
                                                 .name("Sunlight")
