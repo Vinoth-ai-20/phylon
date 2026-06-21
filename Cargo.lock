@@ -3182,6 +3182,7 @@ dependencies = [
  "bevy_ecs",
  "common",
  "diffusion",
+ "ecology",
  "metabolism",
  "physics",
  "spatial",

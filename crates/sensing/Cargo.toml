@@ -13,3 +13,4 @@ bevy_ecs  = { workspace = true }
 physics   = { path = "../physics" }
 metabolism = { path = "../metabolism" }
 diffusion = { path = "../diffusion" }
+ecology   = { workspace = true }

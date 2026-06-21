@@ -6,10 +6,10 @@
 //!
 //! 1. Parse CLI arguments and locate the config file.
 //! 2. Initialise structured logging via `tracing_subscriber`.
-//! 3. Load [`PhylonConfig`] from `data/default.ron` (falls back to defaults).
-//! 4. Create a `winit` [`EventLoop`] and application window.
+//! 3. Load `PhylonConfig` from `data/default.ron` (falls back to defaults).
+//! 4. Create a `winit` `EventLoop` and application window.
 //! 5. Initialise a `wgpu` surface on the window.
-//! 6. Create a [`SimulationScheduler`].
+//! 6. Create a `SimulationScheduler`.
 //! 7. Run the event loop — advancing the scheduler on each `AboutToWait` and
 //!    presenting a cleared frame on each `RedrawRequested`.
 //!

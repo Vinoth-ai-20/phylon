@@ -61,6 +61,7 @@ pub struct HeadVision {
 
 /// System that gathers sensory data from the environment and biology.
 #[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 pub fn sensing_system(
     mut query: bevy_ecs::prelude::Query<(
         &mut SensoryState,
@@ -68,13 +69,17 @@ pub fn sensing_system(
         Option<&mut HeadVision>,
         Option<&metabolism::Energy>,
         Option<&metabolism::Age>,
+        Option<&ecology::Diet>,
     )>,
     node_query: bevy_ecs::prelude::Query<&physics::ParticleNode>,
+    food_query: bevy_ecs::prelude::Query<&ecology::FoodPellet>,
+    mineral_query: bevy_ecs::prelude::Query<&ecology::MineralPellet>,
+    corpse_query: bevy_ecs::prelude::Query<&ecology::Corpse>,
     cpu_field: Option<bevy_ecs::prelude::Res<diffusion::CpuFieldState>>,
     cpu_signal_field: Option<bevy_ecs::prelude::Res<diffusion::CpuSignalFieldState>>,
     cpu_hazard_field: Option<bevy_ecs::prelude::Res<diffusion::CpuHazardFieldState>>,
 ) {
-    for (mut state, node, mut vision_opt, energy_opt, age_opt) in query.iter_mut() {
+    for (mut state, node, mut vision_opt, energy_opt, age_opt, diet_opt) in query.iter_mut() {
         if state.inputs.is_empty() {
             continue;
         }
@@ -139,13 +144,13 @@ pub fn sensing_system(
             let mut center_val = 0.0f32;
             let mut right_val = 0.0f32;
 
-            for other_node in node_query.iter() {
-                let diff = other_node.position - node.position;
+            let mut process_vision_target = |target_pos: common::Vec2| {
+                let diff = target_pos - node.position;
                 let dist = diff.length();
 
                 // Ignore self (heuristic), very close nodes, or nodes beyond range
                 if dist < vision.self_occlusion_radius || dist > vision.range {
-                    continue;
+                    return;
                 }
 
                 let dir = diff / dist;
@@ -165,6 +170,35 @@ pub fn sensing_system(
                         right_val = right_val.max(strength);
                     } else {
                         center_val = center_val.max(strength);
+                    }
+                }
+            };
+
+            // 1. See other organisms (mating, collision avoidance, predation)
+            for other_node in node_query.iter() {
+                process_vision_target(other_node.position);
+            }
+
+            // 2. Diet-specific target vision
+            if let Some(diet) = diet_opt {
+                match diet {
+                    ecology::Diet::Producer => {
+                        for mineral in mineral_query.iter() {
+                            process_vision_target(mineral.position);
+                        }
+                    }
+                    ecology::Diet::Herbivore | ecology::Diet::Omnivore => {
+                        for food in food_query.iter() {
+                            process_vision_target(food.position);
+                        }
+                    }
+                    ecology::Diet::Decomposer => {
+                        for corpse in corpse_query.iter() {
+                            process_vision_target(corpse.position);
+                        }
+                    }
+                    ecology::Diet::Carnivore => {
+                        // Carnivores look at other organisms which is already done above.
                     }
                 }
             }

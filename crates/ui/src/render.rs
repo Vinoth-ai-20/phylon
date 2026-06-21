@@ -507,8 +507,9 @@ pub fn render_ui(
         .resizable(true)
         .default_width(260.0)
         .show(ctx, |ui| {
-            match active_tab {
-                SidebarTab::Inspector => {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                match active_tab {
+                    SidebarTab::Inspector => {
                     ui.heading(format!("{} Inspector", egui_remixicon::icons::SEARCH_LINE));
                     ui.separator();
                     ui.checkbox(debug_structural, format!("{} Debug Structural View", egui_remixicon::icons::SHAPE_LINE));
@@ -1265,6 +1266,7 @@ pub fn render_ui(
                     }
                 }
             }
+            });
         });
 
     // ── Status bar (bottom strip) ──────────────────────────────────────────
@@ -1306,6 +1308,37 @@ pub fn render_ui(
                 } else {
                     format!("{} Mode: SDF Skin", egui_remixicon::icons::EYE_LINE)
                 });
+                ui.separator();
+
+                let food_count = world.ecs.query::<&ecology::FoodPellet>().iter(&world.ecs).count();
+                let mineral_count = world.ecs.query::<&ecology::MineralPellet>().iter(&world.ecs).count();
+                let corpse_count = world.ecs.query::<&ecology::Corpse>().iter(&world.ecs).count();
+
+                let mut prod_count = 0;
+                let mut herb_count = 0;
+                let mut carn_count = 0;
+                let mut omni_count = 0;
+                let mut deco_count = 0;
+
+                for diet in world.ecs.query::<&ecology::Diet>().iter(&world.ecs) {
+                    match diet {
+                        ecology::Diet::Producer => prod_count += 1,
+                        ecology::Diet::Herbivore => herb_count += 1,
+                        ecology::Diet::Carnivore => carn_count += 1,
+                        ecology::Diet::Omnivore => omni_count += 1,
+                        ecology::Diet::Decomposer => deco_count += 1,
+                    }
+                }
+
+                ui.label(format!("{} Food: {}", egui_remixicon::icons::LEAF_LINE, food_count));
+                ui.label(format!("{} Min: {}", egui_remixicon::icons::VIP_DIAMOND_LINE, mineral_count));
+                ui.label(format!("{} Corpse: {}", egui_remixicon::icons::SKULL_LINE, corpse_count));
+                ui.separator();
+                ui.label(format!("{} Prod: {}", egui_remixicon::icons::SEEDLING_LINE, prod_count));
+                ui.label(format!("{} Herb: {}", egui_remixicon::icons::BUG_LINE, herb_count));
+                ui.label(format!("{} Carn: {}", egui_remixicon::icons::ALIENS_LINE, carn_count));
+                ui.label(format!("{} Omni: {}", egui_remixicon::icons::BEAR_SMILE_LINE, omni_count));
+                ui.label(format!("{} Deco: {}", egui_remixicon::icons::RECYCLE_LINE, deco_count));
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     thread_local! {

@@ -3,7 +3,7 @@
 //! Organism archetype definitions, ECS component bundles, and lifecycle types.
 //!
 //! Every simulated organism is a set of ECS components. This crate defines
-//! the canonical component bundles and the [`DietType`] enum that governs
+//! the canonical component bundles and the `Diet` enum that governs
 //! ecological interactions.
 //!
 //! ## Phase 0 scope
