@@ -35,8 +35,8 @@ pub fn growth_system(
 
         if is_finished {
             // ── Wire the brain once the body is fully grown ──────────────────
-            // 6 standard inputs + 1 Signal input + 1 Hazard input
-            let input_count = 8;
+            // 6 standard inputs + 1 Signal input + 1 Hazard input + 1 Pacemaker
+            let input_count = 9;
             // effectors + 1 SignalEmitter output
             let output_count = state.effectors.len() + 1;
 
@@ -297,8 +297,8 @@ pub fn growth_system(
                         constraint_type: physics::ConstraintType::Elastic,
                         rest_length: muscle_rest_len,
                         base_length: muscle_rest_len,
-                        stiffness: 5.0,
-                        damping: 0.3,
+                        stiffness: 15.0,
+                        damping: 0.8,
                         actuation_amplitude: gene.actuation_amplitude,
                         actuation_phase: 0.0,
                         breaking_strain: 2.0,
@@ -317,8 +317,8 @@ pub fn growth_system(
                         constraint_type: physics::ConstraintType::Elastic,
                         rest_length: muscle_rest_len,
                         base_length: muscle_rest_len,
-                        stiffness: 5.0,
-                        damping: 0.3,
+                        stiffness: 15.0,
+                        damping: 0.8,
                         actuation_amplitude: gene.actuation_amplitude,
                         actuation_phase: std::f32::consts::PI, // Opposing phase → flap
                         breaking_strain: 2.0,

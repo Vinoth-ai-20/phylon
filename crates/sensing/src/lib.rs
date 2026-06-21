@@ -78,6 +78,7 @@ pub fn sensing_system(
     cpu_field: Option<bevy_ecs::prelude::Res<diffusion::CpuFieldState>>,
     cpu_signal_field: Option<bevy_ecs::prelude::Res<diffusion::CpuSignalFieldState>>,
     cpu_hazard_field: Option<bevy_ecs::prelude::Res<diffusion::CpuHazardFieldState>>,
+    mut local_tick: bevy_ecs::prelude::Local<u64>,
 ) {
     for (mut state, node, mut vision_opt, energy_opt, age_opt, diet_opt) in query.iter_mut() {
         if state.inputs.is_empty() {
@@ -213,8 +214,20 @@ pub fn sensing_system(
             }
             if idx < state.inputs.len() {
                 state.inputs[idx] = right_val;
+                idx += 1;
+            }
+
+            // 7. Internal Pacemaker (CPG)
+            if idx < state.inputs.len() {
+                // Since this runs once per tick, local_tick corresponds to elapsed ticks.
+                // At 60 ticks/sec, * 0.1 gives ~1 Hz frequency.
+                let pacemaker_signal = (*local_tick as f32 * 0.1).sin();
+                state.inputs[idx] = pacemaker_signal;
             }
         }
+
+        // Advance the pacemaker tick
+        *local_tick += 1;
 
         // Additional sensors could be added here
     }

@@ -16,6 +16,13 @@ Phylon relies heavily on `wgpu` and Vulkan for its compute shaders.
 - **Cause**: The application window was resized to an invalid dimension (e.g., minimized to 0x0) while the GPU was attempting to present a frame.
 - **Solution**: Restart the application. Avoid minimizing the window during heavy compute phases.
 
+## ECS Despawn Errors
+
+**Error:** `error[B0003]: Could not despawn entity Entity ... because it doesn't exist in this World.`
+
+- **Cause**: In highly concurrent physics simulations, two systems (e.g., predator eating prey, and prey starving simultaneously) might attempt to despawn the same entity in the same tick. Bevy's ECS logs this warning when it encounters a double-despawn.
+- **Solution**: This is a harmless warning. To minimize it, Phylon utilizes `commands.get_entity(entity)` checks before calling `.despawn()`. If you still see this, it simply means an entity died exactly as something else interacted with it (e.g., during collision resolution).
+
 ## Simulation Stuttering or Freezing
 
 **Issue:** The simulation runs at 5 FPS instead of the target 60 FPS.

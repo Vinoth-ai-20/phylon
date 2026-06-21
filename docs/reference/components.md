@@ -50,5 +50,5 @@ The inheritable blueprint of the organism.
 
 The organism's view of the world.
 
-- A flat float vector containing normalized readings from vision cones, chemical diffusion sensors, and internal proprioception (Energy, Age, CPG clocks).
+- A flat float vector containing 9 normalized inputs: Olfaction, Signal Field, Hazard Field, Energy, Age, Vision (Left, Center, Right), and the Internal Pacemaker (CPG) clock.
 - Populated by the `sensing_system` and fed directly into the `Brain` component each tick.
