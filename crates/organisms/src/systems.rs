@@ -35,8 +35,8 @@ pub fn growth_system(
 
         if is_finished {
             // ── Wire the brain once the body is fully grown ──────────────────
-            // 6 standard inputs + 1 Signal input + 1 Hazard input
-            let input_count = 8;
+            // 6 standard inputs + 1 Signal input + 1 Hazard input + 1 CPG input
+            let input_count = 9;
             // effectors + 1 SignalEmitter output
             let output_count = state.effectors.len() + 1;
 
@@ -97,7 +97,7 @@ pub fn growth_system(
                 for j in input_count..total_nodes {
                     let mut weight = 0.0;
 
-                    // 1. Neocortex: Evolved CPPN Weights
+                    // Neocortex: Evolved CPPN Weights
                     if !state.genome.nodes.is_empty() {
                         let w_inputs = [
                             (i as f32) / (total_nodes as f32),
@@ -108,40 +108,6 @@ pub fn growth_system(
                             weight += w_outputs[0] * 5.0;
                         }
                     }
-
-                    // 2. Reptilian Brain: Hardcoded Braitenberg Instincts
-                    let mut b_weight = 0.0;
-                    if let (Some(lf), Some(rf)) = (left_fin_idx, right_fin_idx) {
-                        if i == 5 && j == rf {
-                            b_weight = 2.0;
-                        } // VisL -> Right Fin
-                        if i == 7 && j == lf {
-                            b_weight = 2.0;
-                        } // VisR -> Left Fin
-                        if i == 6 && (j == lf || j == rf) {
-                            b_weight = 2.0;
-                        } // VisC -> Both
-                        if i == 2 && (j == lf || j == rf) {
-                            b_weight = 4.0;
-                        } // Hazard -> Both
-                        if i == 0 && (j == lf || j == rf) {
-                            b_weight = 1.0;
-                        } // Chem -> Both
-                    } else {
-                        if j >= input_count + hidden_count {
-                            if i == 6 {
-                                b_weight = 2.0;
-                            }
-                            if i == 2 {
-                                b_weight = 4.0;
-                            }
-                            if i == 0 {
-                                b_weight = 1.0;
-                            }
-                        }
-                    }
-
-                    weight += b_weight;
 
                     if weight.abs() > 0.01 {
                         synapses.push(brain::CtrnnSynapse {

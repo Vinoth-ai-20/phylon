@@ -70,7 +70,22 @@ impl Genome {
                     layer: 1,
                 }, // Output: Connection Weight
             ],
-            connections: vec![],
+            connections: vec![
+                CppnConnection {
+                    source: 0,
+                    target: 2,
+                    weight: 2.0,
+                    enabled: true,
+                    innovation: 1,
+                },
+                CppnConnection {
+                    source: 1,
+                    target: 2,
+                    weight: -1.0,
+                    enabled: true,
+                    innovation: 2,
+                },
+            ],
             hox: Some(hox),
         }
     }

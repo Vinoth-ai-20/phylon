@@ -73,7 +73,13 @@ Phases 0 through 11 are functionally complete. The workspace features the founda
 
 ## Documentation
 
-Comprehensive architectural design documents, crate dependency graphs, and technical specifications are available in the [`docs/`](docs/) directory.
+Comprehensive documentation, organized using the Diátaxis framework (Tutorials, How-to guides, Explanation, Reference), is available in the [`docs/`](docs/index.md) directory.
+
+For an exhaustive API reference, run:
+
+```bash
+cargo doc --open
+```
 
 ## Contributing
 

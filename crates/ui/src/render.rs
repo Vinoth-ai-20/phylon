@@ -800,22 +800,21 @@ pub fn render_ui(
                                 ui.add_space(8.0);
                                 if genome.hox.is_some() {
                                     ui.label(
-                                        egui::RichText::new(format!("{} This organism's morphology and wiring is hardcoded by its Hox Sequence. CPPN mutations are disabled.", egui_remixicon::icons::ERROR_WARNING_LINE))
-                                            .color(egui::Color32::YELLOW),
+                                        egui::RichText::new(format!("{} This organism's morphology is hardcoded by its Hox Sequence, but its brain is wired by the evolving CPPN.", egui_remixicon::icons::INFORMATION_LINE))
+                                            .color(egui::Color32::LIGHT_BLUE),
                                     );
-                                } else {
-                                    ui.horizontal(|ui| {
-                                        if ui.button(format!("{} Mutate Add Node", egui_remixicon::icons::DICE_LINE)).clicked() {
-                                            pending_mutation = Some("add_node");
-                                        }
-                                        if ui.button(format!("{} Mutate Add Connection", egui_remixicon::icons::DICE_LINE)).clicked() {
-                                            pending_mutation = Some("add_conn");
-                                        }
-                                        if ui.button(format!("{} Mutate Weights", egui_remixicon::icons::DICE_LINE)).clicked() {
-                                            pending_mutation = Some("mutate_weight");
-                                        }
-                                    });
                                 }
+                                ui.horizontal(|ui| {
+                                    if ui.button(format!("{} Mutate Add Node", egui_remixicon::icons::DICE_LINE)).clicked() {
+                                        pending_mutation = Some("add_node");
+                                    }
+                                    if ui.button(format!("{} Mutate Add Connection", egui_remixicon::icons::DICE_LINE)).clicked() {
+                                        pending_mutation = Some("add_conn");
+                                    }
+                                    if ui.button(format!("{} Mutate Weights", egui_remixicon::icons::DICE_LINE)).clicked() {
+                                        pending_mutation = Some("mutate_weight");
+                                    }
+                                });
                                 ui.separator();
 
                                 if let Some(hox) = &genome.hox {

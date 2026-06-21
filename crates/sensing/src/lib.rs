@@ -213,6 +213,15 @@ pub fn sensing_system(
             }
             if idx < state.inputs.len() {
                 state.inputs[idx] = right_val;
+                idx += 1;
+            }
+        }
+
+        // 7. Central Pattern Generator (CPG) Clock
+        if let Some(age) = age_opt {
+            if idx < state.inputs.len() {
+                // Creates a rhythmic oscillating signal (frequency ~0.1 rad/tick)
+                state.inputs[idx] = (age.ticks as f32 * 0.1).sin();
             }
         }
 

@@ -634,15 +634,30 @@ pub(crate) fn seed_ecosystem(
         genetics::HoxSequence::worm(3, [0.4, 0.4, 0.4]),
     );
 
+    let producer_genome = genetics::Genome::new_hox_driven(
+        genetics::GenomeId(6),
+        common::EntityId(0),
+        genetics::HoxSequence::plant([0.1, 0.8, 0.1]),
+    );
+
     // 2. Helper to spawn a population
     let mut spawn_pop = |genome: &genetics::Genome, diet: ecology::Diet, count: usize| {
         let lineage_id = lineage_tracker.new_lineage_id();
         for _ in 0..count {
             let px = rng.gen_range(-1000.0..1000.0);
             let py = rng.gen_range(-1000.0..1000.0);
+
+            // Give each individual a unique randomized brain if they are not producers
+            let mut ind_genome = genome.clone();
+            if diet != ecology::Diet::Producer {
+                for _ in 0..10 {
+                    ind_genome.mutate(1.0, &mut rng);
+                }
+            }
+
             let e = organisms::spawn_organism(
                 world,
-                genome,
+                &ind_genome,
                 common::Vec2::new(px, py),
                 diet.clone(),
                 ecology::EcologicalCategory::None,
@@ -661,6 +676,7 @@ pub(crate) fn seed_ecosystem(
     };
 
     // 3. Spawn Populations
+    spawn_pop(&producer_genome, ecology::Diet::Producer, 260);
     spawn_pop(&worm_genome, ecology::Diet::Herbivore, 150);
     spawn_pop(&branchy_genome, ecology::Diet::Herbivore, 150);
     spawn_pop(&omnivore_genome, ecology::Diet::Omnivore, 40);

@@ -120,4 +120,9 @@ impl HoxSequence {
         genes.push(HoxGene::tail());
         Self::new(genes, color)
     }
+
+    /// A static, non-actuated plant organism.
+    pub fn plant(color: [f32; 3]) -> Self {
+        Self::new(vec![HoxGene::head(), HoxGene::torso()], color)
+    }
 }
