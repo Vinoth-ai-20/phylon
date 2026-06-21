@@ -26,6 +26,7 @@ pub enum SensorModality {
     Electroreception,
     Magnetoreception,
     Nociception,
+    Signal,
 }
 
 /// A component holding the current sensory inputs for an organism.
@@ -69,6 +70,7 @@ pub fn sensing_system(
     )>,
     node_query: bevy_ecs::prelude::Query<&physics::ParticleNode>,
     cpu_field: Option<bevy_ecs::prelude::Res<diffusion::CpuFieldState>>,
+    cpu_signal_field: Option<bevy_ecs::prelude::Res<diffusion::CpuSignalFieldState>>,
 ) {
     for (mut state, node, mut vision_opt, energy_opt, age_opt) in query.iter_mut() {
         if state.inputs.is_empty() {
@@ -80,6 +82,15 @@ pub fn sensing_system(
         // 1. Chemical sensor (Olfaction) - reads diffusion field
         if let Some(field) = &cpu_field {
             // Very basic: read the exact cell concentration
+            let val = field.sample(node.position);
+            if idx < state.inputs.len() {
+                state.inputs[idx] = val;
+                idx += 1;
+            }
+        }
+
+        // 1.5. Signal sensor - reads emergent signal field
+        if let Some(field) = &cpu_signal_field {
             let val = field.sample(node.position);
             if idx < state.inputs.len() {
                 state.inputs[idx] = val;

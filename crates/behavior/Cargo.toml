@@ -13,3 +13,6 @@ sensing   = { path = "../sensing" }
 brain     = { path = "../brain" }
 physics   = { path = "../physics" }
 environment = { version = "0.1.0", path = "../environment" }
+diffusion   = { path = "../diffusion" }
+metabolism  = { path = "../metabolism" }
+config      = { path = "../config" }

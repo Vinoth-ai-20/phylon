@@ -138,6 +138,14 @@ pub struct SimulationConfig {
 
     /// Physics integrator selection. Default: [`PhysicsIntegrator::SymplecticEuler`].
     pub physics_integrator: PhysicsIntegrator,
+
+    /// Energy cost per unit of signal emission amplitude.
+    #[serde(default = "default_signal_energy_cost")]
+    pub signal_energy_cost_per_unit: f32,
+}
+
+fn default_signal_energy_cost() -> f32 {
+    0.01
 }
 
 impl Default for SimulationConfig {
@@ -151,6 +159,7 @@ impl Default for SimulationConfig {
             target_organism_count: 1_000,
             diffusion_step_size: 1.0,
             physics_integrator: PhysicsIntegrator::default(),
+            signal_energy_cost_per_unit: default_signal_energy_cost(),
         }
     }
 }

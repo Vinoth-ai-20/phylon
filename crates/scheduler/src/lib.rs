@@ -178,7 +178,7 @@ pub type SystemFn = Box<dyn FnMut(Tick, &EventBus) -> Result<(), String> + Send>
 /// registered system callbacks. Drives the simulation forward by advancing the
 /// tick counter and invoking all registered systems in [`SystemOrder`].
 pub struct SimulationScheduler {
-    /// The current tick (starts at zero, incremented by [`advance`]).
+    /// The current tick (starts at zero, incremented by [`SimulationScheduler::advance`]).
     current_tick: Tick,
 
     /// The fixed duration of one simulation tick (derived from `tick_rate`).
@@ -188,7 +188,7 @@ pub struct SimulationScheduler {
     /// Used to implement a fixed-timestep accumulator.
     accumulator: Duration,
 
-    /// Timestamp of the last call to [`advance`] (for accumulator updates).
+    /// Timestamp of the last call to [`SimulationScheduler::advance`] (for accumulator updates).
     last_advance: Instant,
 
     /// The event bus shared between all systems.
@@ -205,7 +205,7 @@ impl SimulationScheduler {
     /// Creates a new scheduler from a loaded configuration.
     ///
     /// The scheduler starts at [`Tick::ZERO`] with an empty accumulator.
-    /// Systems must be registered via [`register`] before calling [`advance`].
+    /// Systems must be registered via [`SimulationScheduler::register`] before calling [`SimulationScheduler::advance`].
     pub fn new(config: &PhylonConfig) -> Self {
         let tick_duration = config.tick_duration();
         let event_bus = EventBus::new(4096);

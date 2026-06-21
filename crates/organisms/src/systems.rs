@@ -34,8 +34,10 @@ pub fn growth_system(
 
         if is_finished {
             // ── Wire the brain once the body is fully grown ──────────────────
-            let input_count = 6;
-            let output_count = state.effectors.len();
+            // 6 standard inputs + 1 Signal input
+            let input_count = 7;
+            // effectors + 1 SignalEmitter output
+            let output_count = state.effectors.len() + 1;
 
             let mut nodes = Vec::new();
             let mut synapses = Vec::new();
@@ -93,6 +95,7 @@ pub fn growth_system(
                 behavior::MotorSystem {
                     effectors: state.effectors.clone(),
                 },
+                diffusion::SignalEmitter::default(),
             ));
             commands.entity(entity).remove::<GrowthState>();
             continue;

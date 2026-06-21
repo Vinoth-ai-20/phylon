@@ -101,7 +101,14 @@ button sizing, non-blocking pause state, File-menu-routed Save/Load/Settings/Qui
 
 Not started — fully planned only.
 
-## 💭 Phase 10 — Emergent Signaling (v1.1)
+### Phase 10: Emergent Signaling ✅
+
+**Goal**: Allow organisms to emit signals into the environment.
+
+- [x] **Signaling System**: Add `SignalEmitter` component to `diffusion` crate.
+- [x] **Sensory Processing**: Add `Signal` modality to `sensing` crate.
+- [x] **Behavior Output**: Link `behavior` crate to output nodes.
+- [x] **Cost Mechanism**: Deduct `metabolism::Energy` based on signal intensity to avoid "cheap talk."
 
 ## 💭 Phase 11 — Catastrophe Engine (v1.2)
 

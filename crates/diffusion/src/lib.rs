@@ -80,3 +80,61 @@ pub struct Emitter {
     /// The radius of emission (world space)
     pub radius: f32,
 }
+
+/// The latest state of the signal diffusion field read back from the GPU.
+#[derive(Resource, Clone, Debug)]
+pub struct CpuSignalFieldState {
+    /// The 2D grid data (e.g., 256x256)
+    pub data: Vec<f32>,
+    /// The width of the grid
+    pub width: u32,
+    /// The height of the grid
+    pub height: u32,
+}
+
+impl Default for CpuSignalFieldState {
+    fn default() -> Self {
+        Self {
+            data: vec![0.0; 256 * 256],
+            width: 256,
+            height: 256,
+        }
+    }
+}
+
+impl CpuSignalFieldState {
+    /// Samples the field at a given world position.
+    pub fn sample(&self, pos: Vec2) -> f32 {
+        let gx = (pos.x / 10.0) + (self.width as f32 / 2.0);
+        let gy = (pos.y / 10.0) + (self.height as f32 / 2.0);
+
+        let ix = gx.floor() as i32;
+        let iy = gy.floor() as i32;
+
+        if ix >= 0 && ix < self.width as i32 && iy >= 0 && iy < self.height as i32 {
+            let idx = (iy * self.width as i32 + ix) as usize;
+            if idx < self.data.len() {
+                return self.data[idx];
+            }
+        }
+        0.0
+    }
+}
+
+/// A biological signal emitter that adds a quantity to the signal field per tick.
+#[derive(Component, Clone, Debug)]
+pub struct SignalEmitter {
+    /// The value to add per tick. Typically driven by a brain output node.
+    pub value: f32,
+    /// The radius of emission (world space).
+    pub radius: f32,
+}
+
+impl Default for SignalEmitter {
+    fn default() -> Self {
+        Self {
+            value: 0.0,
+            radius: 10.0,
+        }
+    }
+}

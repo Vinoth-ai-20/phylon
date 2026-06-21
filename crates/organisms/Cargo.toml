@@ -18,3 +18,4 @@ physics   = { workspace = true }
 brain     = { path = "../brain" }
 behavior  = { path = "../behavior" }
 sensing   = { path = "../sensing" }
+diffusion = { path = "../diffusion" }

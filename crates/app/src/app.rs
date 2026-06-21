@@ -74,7 +74,7 @@ impl Default for PhylonUIState {
             current_hover_pos: None,
             canvas_rect: None,
             debug_structural: false,
-            bone_line_thickness: 2.0,
+            bone_line_thickness: 1.0,
             active_tab: ui::SidebarTab::Inspector,
             app_state: ui::AppState::MainMenu,
             is_paused: false,
@@ -183,6 +183,9 @@ impl PhylonApp {
             .ecs
             .insert_resource(bevy_ecs::event::Events::<reproduction::BirthRequest>::default());
         world.ecs.insert_resource(analytics::MetricsState::new());
+        world.ecs.insert_resource(behavior::BehaviorConfig {
+            signal_energy_cost_per_unit: sim_config.simulation.signal_energy_cost_per_unit,
+        });
 
         let env_manager = environment::EnvironmentManager::new(
             sim_config.simulation.rng_seed,

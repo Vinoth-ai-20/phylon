@@ -20,20 +20,41 @@ pub struct MotorSystem {
     pub effectors: Vec<bevy_ecs::entity::Entity>,
 }
 
+/// Configuration parameters for the behavior system.
+#[derive(bevy_ecs::prelude::Resource, Debug, Clone)]
+pub struct BehaviorConfig {
+    /// Energy cost per unit of signal emission amplitude.
+    pub signal_energy_cost_per_unit: f32,
+}
+
+impl Default for BehaviorConfig {
+    fn default() -> Self {
+        Self {
+            signal_energy_cost_per_unit: 0.01,
+        }
+    }
+}
+
 /// System that runs the CTRNN brain and maps output to muscles.
+#[allow(clippy::type_complexity)]
 pub fn behavior_system(
     mut query: bevy_ecs::prelude::Query<(
         &physics::ParticleNode,
         &sensing::SensoryState,
         Option<&mut brain::Brain>,
         Option<&MotorSystem>,
+        Option<&mut diffusion::SignalEmitter>,
+        Option<&mut metabolism::Energy>,
     )>,
     mut springs: bevy_ecs::prelude::Query<&mut physics::Spring>,
     env: Option<bevy_ecs::prelude::Res<environment::EnvironmentManager>>,
+    config: Option<bevy_ecs::prelude::Res<BehaviorConfig>>,
 ) {
     // Time step integration is now fully handled by the GPU compute pass
 
-    for (node, _sensory, mut brain_opt, motor_opt) in query.iter_mut() {
+    for (node, _sensory, mut brain_opt, motor_opt, mut emitter_opt, mut energy_opt) in
+        query.iter_mut()
+    {
         if let Some(brain) = brain_opt.as_mut() {
             // 1. Extract outputs (the integration happened globally on GPU)
             let outputs = brain.get_outputs();
@@ -75,6 +96,33 @@ pub fn behavior_system(
                                 // torque angle
                             }
                         }
+                    }
+                }
+            }
+
+            // 3. Route to signal emitter if present
+            let mut signal_output: f32 = 0.0;
+            if let Some(motor) = motor_opt {
+                if motor.effectors.len() < outputs.len() {
+                    signal_output = outputs[motor.effectors.len()];
+                }
+            } else if !outputs.is_empty() {
+                signal_output = outputs[0];
+            }
+
+            if let Some(emitter) = emitter_opt.as_mut() {
+                // Ensure value is positive for emission strength
+                let emission = signal_output.clamp(0.0, 1.0);
+                emitter.value = emission;
+
+                // Drain energy
+                if emission > 0.0 {
+                    if let Some(energy) = energy_opt.as_mut() {
+                        let cost_per_unit = config
+                            .as_ref()
+                            .map_or(0.01, |c| c.signal_energy_cost_per_unit);
+                        let cost = emission * cost_per_unit;
+                        energy.current = (energy.current - cost).max(0.0);
                     }
                 }
             }
