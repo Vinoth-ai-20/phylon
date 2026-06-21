@@ -69,6 +69,16 @@ impl Genome {
                     bias: 0.0,
                     layer: 1,
                 }, // Output: Connection Weight
+                CppnNode {
+                    activation: brain::ActivationFn::Tanh,
+                    bias: 0.0,
+                    layer: 1,
+                }, // Output: Bias
+                CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 1,
+                }, // Output: Time Constant
             ],
             connections: vec![
                 CppnConnection {
@@ -84,6 +94,20 @@ impl Genome {
                     weight: -1.0,
                     enabled: true,
                     innovation: 2,
+                },
+                CppnConnection {
+                    source: 1,
+                    target: 3,
+                    weight: 1.0,
+                    enabled: true,
+                    innovation: 3,
+                },
+                CppnConnection {
+                    source: 1,
+                    target: 4,
+                    weight: 0.5,
+                    enabled: true,
+                    innovation: 4,
                 },
             ],
             hox: Some(hox),
@@ -255,8 +279,14 @@ impl Genome {
             };
         }
 
-        // Return the last node's value as the output
-        vec![values.last().copied().unwrap_or(0.0)]
+        // Return all nodes on layer 1 (Output layer)
+        let mut outputs = Vec::new();
+        for (node_idx, node) in self.nodes.iter().enumerate() {
+            if node.layer == 1 {
+                outputs.push(values[node_idx]);
+            }
+        }
+        outputs
     }
 
     /// Performs a simple crossover with another genome.

@@ -35,8 +35,8 @@ pub fn growth_system(
 
         if is_finished {
             // ── Wire the brain once the body is fully grown ──────────────────
-            // 6 standard inputs + 1 Signal input + 1 Hazard input + 1 CPG input
-            let input_count = 9;
+            // 6 standard inputs + 1 Signal input + 1 Hazard input
+            let input_count = 8;
             // effectors + 1 SignalEmitter output
             let output_count = state.effectors.len() + 1;
 
@@ -46,32 +46,35 @@ pub fn growth_system(
             let mut nodes = Vec::new();
             let mut synapses = Vec::new();
 
-            for _ in 0..input_count {
+            for i in 0..total_nodes {
+                let mut bias = 0.0;
+                let mut time_constant = 0.5;
+                let mut activation = 1; // Tanh
+
+                if i < input_count {
+                    time_constant = 1.0;
+                    activation = 7; // Linear
+                } else {
+                    // Evolve node properties via CPPN
+                    if !state.genome.nodes.is_empty() {
+                        let w_inputs = [
+                            (i as f32) / (total_nodes as f32),
+                            (i as f32) / (total_nodes as f32),
+                        ];
+                        let w_outputs = state.genome.evaluate(&w_inputs);
+                        if w_outputs.len() >= 3 {
+                            bias = w_outputs[1] * 5.0;
+                            // Time constant must be strictly positive.
+                            time_constant = w_outputs[2].abs().clamp(0.01, 10.0);
+                        }
+                    }
+                }
+
                 nodes.push(brain::CtrnnNode {
                     state: 0.0,
-                    time_constant: 1.0,
-                    bias: 0.0,
-                    activation: 7, // Linear
-                    first_synapse: 0,
-                    synapse_count: 0,
-                });
-            }
-            for _ in 0..hidden_count {
-                nodes.push(brain::CtrnnNode {
-                    state: 0.0,
-                    time_constant: 0.5,
-                    bias: 0.0,
-                    activation: 1, // Tanh [-1, 1]
-                    first_synapse: 0,
-                    synapse_count: 0,
-                });
-            }
-            for _ in 0..output_count {
-                nodes.push(brain::CtrnnNode {
-                    state: 0.0,
-                    time_constant: 0.5,
-                    bias: 0.0,
-                    activation: 1, // Tanh [-1, 1]
+                    time_constant,
+                    bias,
+                    activation,
                     first_synapse: 0,
                     synapse_count: 0,
                 });

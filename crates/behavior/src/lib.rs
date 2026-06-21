@@ -91,6 +91,13 @@ pub fn behavior_system(
                                 spring.rest_length = spring.base_length
                                     + (effective_actuation * spring.base_length * 0.5);
                             }
+
+                            // Punish rigidity: if the muscle is locked at high actuation, drain a small amount of energy
+                            if actuation.abs() > 0.9 {
+                                if let Some(ref mut energy) = energy_opt {
+                                    energy.current = (energy.current - 0.05).max(0.0);
+                                }
+                            }
                         }
                     }
                 }
