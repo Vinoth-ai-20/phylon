@@ -22,8 +22,8 @@
 | 7 | v0.7 | Procedural Visuals & Trails | ✅ Complete |
 | 8 | v0.8 | Application Shell | ✅ Complete |
 | 9 | v1.0 | Headless MARL & Network | ✅ Complete |
-| 10 | v1.1 | Emergent Signaling | 💭 Speculative |
-| 11 | v1.2 | Catastrophe Engine | 💭 Speculative |
+| 10 | v1.1 | Emergent Signaling | ✅ Complete |
+| 11 | v1.2 | Catastrophe Engine | ✅ Complete |
 | 12 | v1.3 | Spectator & Lineage Narration | 💭 Speculative |
 | — | Unscheduled | Future Scope | 💭 Conceptual |
 
@@ -101,7 +101,7 @@ button sizing, non-blocking pause state, File-menu-routed Save/Load/Settings/Qui
 
 Not started — fully planned only.
 
-### Phase 10: Emergent Signaling ✅
+### ✅ Phase 10: Emergent Signaling
 
 **Goal**: Allow organisms to emit signals into the environment.
 
@@ -110,7 +110,14 @@ Not started — fully planned only.
 - [x] **Behavior Output**: Link `behavior` crate to output nodes.
 - [x] **Cost Mechanism**: Deduct `metabolism::Energy` based on signal intensity to avoid "cheap talk."
 
-## 💭 Phase 11 — Catastrophe Engine (v1.2)
+## ✅ Phase 11 — Catastrophe Engine (v1.2)
+
+**Goal**: Test organism resilience through randomized environmental hazards.
+
+- [x] **Hazard Fields**: Add spatial hazard map to `diffusion` crate.
+- [x] **Catastrophe Manager**: Spatiotemporal lifecycle tracking (Impending -> Active).
+- [x] **Sensory Processing**: Impending doom sensing via new `Hazard` modality.
+- [x] **Metabolic Impact**: Rapid energy drain during active hazards.
 
 ## 💭 Phase 12 — Spectator & Lineage Narration (v1.3)
 

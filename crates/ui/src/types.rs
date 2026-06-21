@@ -138,4 +138,6 @@ pub enum MenuAction {
     JoinSelection,
     /// Enter drag mode for the selected entity.
     GrabSelection,
+    /// Spawn a localized catastrophe hazard.
+    SpawnManualHazard,
 }

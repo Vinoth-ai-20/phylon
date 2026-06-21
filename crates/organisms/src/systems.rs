@@ -34,8 +34,8 @@ pub fn growth_system(
 
         if is_finished {
             // ── Wire the brain once the body is fully grown ──────────────────
-            // 6 standard inputs + 1 Signal input
-            let input_count = 7;
+            // 6 standard inputs + 1 Signal input + 1 Hazard input
+            let input_count = 8;
             // effectors + 1 SignalEmitter output
             let output_count = state.effectors.len() + 1;
 

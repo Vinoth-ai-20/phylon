@@ -47,7 +47,7 @@ cargo run --release --bin phylon
 
 ## Current Status
 
-Phases 0 through 9 are functionally complete. The workspace features the foundational skeletal infrastructure across 30 decoupled crates, and complete implementations for decentralized soft-body physics, chemical diffusion fields, CPPN/HyperNEAT morphology, sexual recombination, CTRNN brains with learned gaits, a comprehensive UI & analytics suite, speciation persistence tools, procedural visuals, the application shell, and headless MARL networking. The simulation is now prepared for speculative phases like Emergent Signaling and Catastrophe Engines.
+Phases 0 through 11 are functionally complete. The workspace features the foundational skeletal infrastructure across 30 decoupled crates, and complete implementations for decentralized soft-body physics, chemical diffusion fields, CPPN/HyperNEAT morphology, sexual recombination, CTRNN brains with learned gaits, a comprehensive UI & analytics suite, speciation persistence tools, procedural visuals, the application shell, headless MARL networking, emergent signaling, and the catastrophe engine. The simulation is now prepared for speculative phases like Spectator & Lineage Narration.
 
 ## Documentation
 

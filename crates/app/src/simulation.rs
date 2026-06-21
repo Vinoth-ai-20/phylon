@@ -178,6 +178,7 @@ impl PhylonApp {
             .run_system_once(reproduction::reproduction_system);
         self.world.ecs.run_system_once(process_births_system);
         self.world.ecs.run_system_once(process_deaths_system);
+        self.world.ecs.run_system_once(ecology::catastrophe_system);
         if let Some(mut events) = self
             .world
             .ecs

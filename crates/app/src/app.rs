@@ -178,7 +178,16 @@ impl PhylonApp {
         world
             .ecs
             .insert_resource(diffusion::CpuFieldState::default());
+        world
+            .ecs
+            .insert_resource(diffusion::CpuHazardFieldState::default());
         world.ecs.insert_resource(ecology::EcologyConfig::default());
+        world
+            .ecs
+            .insert_resource(ecology::catastrophe::CatastropheConfig::default());
+        world
+            .ecs
+            .insert_resource(ecology::catastrophe::CatastropheManager::default());
         world
             .ecs
             .insert_resource(bevy_ecs::event::Events::<reproduction::BirthRequest>::default());

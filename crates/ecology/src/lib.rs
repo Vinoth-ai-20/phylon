@@ -8,6 +8,9 @@ use common::Vec2;
 use metabolism::Energy;
 use serde::{Deserialize, Serialize};
 
+/// Subsystem for random and manual environmental catastrophes.
+pub mod catastrophe;
+
 /// Indicates the diet of an organism.
 #[derive(Component, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Diet {
@@ -189,6 +192,80 @@ pub fn corpse_decay_system(mut commands: Commands, mut corpse_query: Query<(Enti
                 energy_value: corpse.energy_value * 0.5, // 50% energy lost to environment if not eaten directly
             });
             commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// System that manages catastrophes, updates the hazard field, and drains energy from organisms in active hazards.
+pub fn catastrophe_system(
+    mut local_tick: Local<u64>,
+    mut manager: ResMut<catastrophe::CatastropheManager>,
+    config: Res<catastrophe::CatastropheConfig>,
+    mut hazard_field: ResMut<diffusion::CpuHazardFieldState>,
+    env: Res<environment::EnvironmentManager>,
+    mut organisms: Query<(&mut Energy, &physics::ParticleNode, Option<&mut Corpse>)>,
+) {
+    *local_tick += 1;
+    let tick = common::Tick(*local_tick);
+
+    // Spawn random hazards
+    if fastrand::f32() < config.spawn_probability {
+        let x = (fastrand::f32() - 0.5) * env.width();
+        let y = (fastrand::f32() - 0.5) * env.height();
+        manager.spawn_hazard(tick, Vec2::new(x, y));
+    }
+
+    hazard_field.clear();
+
+    let mut active_hazards = Vec::new();
+
+    // Update hazards and splat to field
+    manager.hazards.retain_mut(|hazard| {
+        match hazard.state {
+            catastrophe::HazardState::Impending { start_tick } => {
+                let elapsed = tick.0.saturating_sub(start_tick.0);
+                if elapsed >= config.impending_duration as u64 {
+                    hazard.state = catastrophe::HazardState::Active { start_tick: tick };
+                    // splat with active severity
+                    hazard_field.splat(hazard.center, config.hazard_radius, 1.0);
+                    active_hazards.push((hazard.center, config.hazard_radius));
+                } else {
+                    // Splat impending severity (grows over time)
+                    let severity = elapsed as f32 / config.impending_duration as f32;
+                    hazard_field.splat(hazard.center, config.hazard_radius, severity);
+                }
+                true
+            }
+            catastrophe::HazardState::Active { start_tick } => {
+                let elapsed = tick.0.saturating_sub(start_tick.0);
+                if elapsed >= config.active_duration as u64 {
+                    false // Remove hazard
+                } else {
+                    hazard_field.splat(hazard.center, config.hazard_radius, 1.0);
+                    active_hazards.push((hazard.center, config.hazard_radius));
+                    true
+                }
+            }
+        }
+    });
+
+    // Apply energy drain to organisms in active hazards
+    for (mut energy, node, mut corpse_opt) in organisms.iter_mut() {
+        let mut in_hazard = false;
+        for (center, radius) in &active_hazards {
+            if node.position.distance(*center) <= *radius {
+                in_hazard = true;
+                break;
+            }
+        }
+
+        if in_hazard {
+            energy.current = (energy.current - config.energy_drain_rate).max(0.0);
+
+            // If they died from catastrophe, maybe accelerate decay if they are already a corpse
+            if let Some(corpse) = corpse_opt.as_mut() {
+                corpse.energy_value = (corpse.energy_value - config.energy_drain_rate).max(0.0);
+            }
         }
     }
 }

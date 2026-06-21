@@ -3,11 +3,11 @@
 //! Spatial indexing structures for efficient entity neighbourhood queries.
 //!
 //! Three complementary indexing strategies are provided, all sharing a common
-//! [`SpatialQuery`] interface:
+//! `SpatialQuery` interface:
 //!
 //! - **[`UniformGrid`]** — O(1) insert and radius query for dense, uniformly
 //!   distributed entities. The primary structure for active chunks.
-//! - **[`SpatialHash`]** — same asymptotic complexity as the uniform grid but
+//! - **`SpatialHash`** — same asymptotic complexity as the uniform grid but
 //!   with dynamic bucketing; preferred when entity density is uneven.
 //! - **Quadtree** — sparse, logarithmic-depth structure for long-range queries
 //!   on static or slow-moving objects. Implemented in Phase 2.

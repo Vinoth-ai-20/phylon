@@ -1157,6 +1157,12 @@ pub fn render_ui(
                     ui.label("Ambient CO2: 400 ppm");
                     ui.label("Soil Fertility: High");
                     ui.label("Temperature: 22°C");
+                    ui.add_space(16.0);
+                    ui.heading("Catastrophes");
+                    ui.label("Trigger a localized spatial hazard to test organism resilience.");
+                    if ui.button(format!("{} Spawn Local Hazard", egui_remixicon::icons::ERROR_WARNING_LINE)).clicked() {
+                        actions.push(MenuAction::SpawnManualHazard);
+                    }
                 }
                 SidebarTab::Settings => {
                     ui.heading("🔧 Settings");

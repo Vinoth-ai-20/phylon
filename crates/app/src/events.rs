@@ -176,6 +176,15 @@ impl PhylonApp {
                         is_fixed,
                     );
                 }
+                ui::MenuAction::SpawnManualHazard => {
+                    let pos = self.ui.camera_pos;
+                    let tick = (self.total_sim_time / 0.016).round() as u64;
+                    let mut manager = self
+                        .world
+                        .ecs
+                        .resource_mut::<ecology::catastrophe::CatastropheManager>();
+                    manager.spawn_hazard(common::Tick(tick), pos);
+                }
                 ui::MenuAction::SpawnPaste => tracing::warn!("SpawnPaste not implemented"),
                 ui::MenuAction::JoinSelection => tracing::warn!("JoinSelection not implemented"),
                 ui::MenuAction::GrabSelection => tracing::warn!("GrabSelection not implemented"),

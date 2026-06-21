@@ -138,3 +138,74 @@ impl Default for SignalEmitter {
         }
     }
 }
+
+/// The latest state of the hazard diffusion field read back from the GPU.
+#[derive(Resource, Clone, Debug)]
+pub struct CpuHazardFieldState {
+    /// The 2D grid data (e.g., 256x256)
+    pub data: Vec<f32>,
+    /// The width of the grid
+    pub width: u32,
+    /// The height of the grid
+    pub height: u32,
+}
+
+impl Default for CpuHazardFieldState {
+    fn default() -> Self {
+        Self {
+            data: vec![0.0; 256 * 256],
+            width: 256,
+            height: 256,
+        }
+    }
+}
+
+impl CpuHazardFieldState {
+    /// Samples the field at a given world position.
+    pub fn sample(&self, pos: Vec2) -> f32 {
+        let gx = (pos.x / 10.0) + (self.width as f32 / 2.0);
+        let gy = (pos.y / 10.0) + (self.height as f32 / 2.0);
+
+        let ix = gx.floor() as i32;
+        let iy = gy.floor() as i32;
+
+        if ix >= 0 && ix < self.width as i32 && iy >= 0 && iy < self.height as i32 {
+            let idx = (iy * self.width as i32 + ix) as usize;
+            if idx < self.data.len() {
+                return self.data[idx];
+            }
+        }
+        0.0
+    }
+
+    /// Splats a radial value onto the grid.
+    pub fn splat(&mut self, pos: Vec2, radius: f32, max_val: f32) {
+        let gx = (pos.x / 10.0) + (self.width as f32 / 2.0);
+        let gy = (pos.y / 10.0) + (self.height as f32 / 2.0);
+
+        let r_cells = (radius / 10.0).ceil() as i32;
+
+        for dy in -r_cells..=r_cells {
+            for dx in -r_cells..=r_cells {
+                let ix = gx as i32 + dx;
+                let iy = gy as i32 + dy;
+
+                if ix >= 0 && ix < self.width as i32 && iy >= 0 && iy < self.height as i32 {
+                    let d = ((dx as f32).powi(2) + (dy as f32).powi(2)).sqrt();
+                    if d <= r_cells as f32 {
+                        let intensity = (1.0 - (d / r_cells as f32)).max(0.0) * max_val;
+                        let idx = (iy * self.width as i32 + ix) as usize;
+                        if idx < self.data.len() {
+                            self.data[idx] = self.data[idx].max(intensity);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Clears the hazard field.
+    pub fn clear(&mut self) {
+        self.data.fill(0.0);
+    }
+}
