@@ -95,7 +95,6 @@ impl StorageManager {
 
     /// Serializes the given snapshot to a binary file using bincode.
     pub fn save_simulation_state(
-        &self,
         snapshot: &SimulationSnapshot,
         path: &Path,
     ) -> Result<(), StorageError> {
@@ -106,7 +105,7 @@ impl StorageManager {
     }
 
     /// Deserializes a binary snapshot from a file.
-    pub fn load_simulation_state(&self, path: &Path) -> Result<SimulationSnapshot, StorageError> {
+    pub fn load_simulation_state(path: &Path) -> Result<SimulationSnapshot, StorageError> {
         let mut file = File::open(path)?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;

@@ -54,3 +54,7 @@ anyhow = { workspace = true }
 pollster = "0.3"
 egui-remixicon = "0.29.1"
 environment = { version = "0.1.0", path = "../environment" }
+network = { path = "../network" }
+
+# Async runtime
+tokio = { workspace = true }

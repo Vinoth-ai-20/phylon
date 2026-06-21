@@ -42,13 +42,16 @@ impl PhylonApp {
                         self.sim_config.simulation.rng_seed,
                         self.total_sim_time,
                     );
-                    if let Err(e) = self
-                        .storage
-                        .save_simulation_state(&snapshot, std::path::Path::new("data/autosave.bin"))
-                    {
-                        tracing::error!("Failed to save state: {}", e);
-                    } else {
-                        tracing::info!("Saved state to data/autosave.bin");
+                    self.ui.active_toast = Some(("Saving...".to_string(), 0.0));
+                    if let Some(tx) = &self.task_tx {
+                        let tx = tx.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let path = std::path::Path::new("data/autosave.bin");
+                            let res =
+                                storage::StorageManager::save_simulation_state(&snapshot, path)
+                                    .map_err(|e| e.to_string());
+                            let _ = tx.send(crate::app::BackgroundTaskResult::SaveComplete(res));
+                        });
                     }
                 }
                 ui::MenuAction::DeleteSelection => {
@@ -191,17 +194,15 @@ impl PhylonApp {
                     std::process::exit(0);
                 }
                 ui::MenuAction::LoadState => {
-                    match self
-                        .storage
-                        .load_simulation_state(std::path::Path::new("data/autosave.bin"))
-                    {
-                        Ok(snapshot) => {
-                            snapshot.restore_world(&mut self.world.ecs);
-                            tracing::info!("Loaded state from data/autosave.bin");
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to load state: {}", e);
-                        }
+                    self.ui.active_toast = Some(("Loading...".to_string(), 0.0));
+                    if let Some(tx) = &self.task_tx {
+                        let tx = tx.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let path = std::path::Path::new("data/autosave.bin");
+                            let res = storage::StorageManager::load_simulation_state(path)
+                                .map_err(|e| e.to_string());
+                            let _ = tx.send(crate::app::BackgroundTaskResult::LoadComplete(res));
+                        });
                     }
                 }
                 ui::MenuAction::Undo => {
@@ -513,7 +514,8 @@ impl ApplicationHandler for PhylonApp {
                     let dims = self
                         .gpu
                         .as_ref()
-                        .map(|g| (g.config.width as f32, g.config.height as f32));
+                        .and_then(|g| g.config.as_ref())
+                        .map(|c| (c.width as f32, c.height as f32));
                     if let Some((gpu_w, gpu_h)) = dims {
                         let selected = self.pick_entity(click_pos, gpu_w, gpu_h);
                         self.ui.selected_entity = selected;
@@ -524,7 +526,8 @@ impl ApplicationHandler for PhylonApp {
                 let dims = self
                     .gpu
                     .as_ref()
-                    .map(|g| (g.config.width as f32, g.config.height as f32));
+                    .and_then(|g| g.config.as_ref())
+                    .map(|c| (c.width as f32, c.height as f32));
                 if let Some((gpu_w, gpu_h)) = dims {
                     if let Some(pos) = self.ui.current_hover_pos {
                         self.ui.hovered_entity = self.pick_entity(pos, gpu_w, gpu_h);
@@ -543,6 +546,30 @@ impl ApplicationHandler for PhylonApp {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(rx) = &self.task_rx {
+            while let Ok(res) = rx.try_recv() {
+                match res {
+                    crate::app::BackgroundTaskResult::SaveComplete(Ok(())) => {
+                        self.ui.active_toast = None;
+                        tracing::info!("Saved state to data/autosave.bin");
+                    }
+                    crate::app::BackgroundTaskResult::SaveComplete(Err(e)) => {
+                        self.ui.active_toast = None;
+                        tracing::error!("Failed to save state: {}", e);
+                    }
+                    crate::app::BackgroundTaskResult::LoadComplete(Ok(snapshot)) => {
+                        snapshot.restore_world(&mut self.world.ecs);
+                        self.ui.active_toast = None;
+                        tracing::info!("Loaded state from data/autosave.bin");
+                    }
+                    crate::app::BackgroundTaskResult::LoadComplete(Err(e)) => {
+                        self.ui.active_toast = None;
+                        tracing::error!("Failed to load state: {}", e);
+                    }
+                }
+            }
+        }
+
         // Request a redraw every time the event loop is about to go idle
         // so the simulation keeps ticking even without user input.
         if let Some(window) = &self.window {

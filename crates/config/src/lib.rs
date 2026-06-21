@@ -241,17 +241,28 @@ pub struct ResearchConfig {
     /// Default: `false`.
     pub headless: bool,
 
+    /// If `true` while in `headless` mode, the simulation speed is capped to match
+    /// the real-time `tick_rate`. If `false`, it runs as fast as possible (uncapped).
+    /// Default: `false`.
+    pub realtime_lock: bool,
+
     /// Maximum number of ticks to simulate before halting (0 = unlimited).
     pub max_ticks: u64,
+
+    /// Optional port for the headless MARL WebSocket server. If `Some`, the
+    /// server is started and the simulation acts as an RL environment.
+    pub network_port: Option<u16>,
 }
 
 impl Default for ResearchConfig {
     fn default() -> Self {
         Self {
-            experiment_id: "default".into(),
+            experiment_id: "default-experiment".into(),
             autosave_interval_ticks: 3600,
             headless: false,
+            realtime_lock: false,
             max_ticks: 0,
+            network_port: None,
         }
     }
 }

@@ -94,6 +94,11 @@ bevy_ecs    = { version = "0.14" }
 # --- Benchmarks ---
 criterion   = { version = "0.5", features = ["html_reports"] }
 
+# --- Async / Network ---
+tokio       = { version = "1.0", features = ["full"] }
+tokio-tungstenite = { version = "0.26" }
+futures-util = { version = "0.3" }
+
 [profile.dev]
 opt-level = 1
 

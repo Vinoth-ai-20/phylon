@@ -28,11 +28,11 @@ use winit::window::Window;
 use config::PhylonConfig;
 use scheduler::SimulationScheduler;
 
-pub struct GpuSurface {
-    pub(crate) surface: wgpu::Surface<'static>,
+pub struct GpuContext {
+    pub(crate) surface: Option<wgpu::Surface<'static>>,
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
-    pub(crate) config: wgpu::SurfaceConfiguration,
+    pub(crate) config: Option<wgpu::SurfaceConfiguration>,
     pub(crate) query_set: Option<wgpu::QuerySet>,
     pub(crate) resolve_buffer: Option<wgpu::Buffer>,
     pub(crate) readback_buffer: Option<wgpu::Buffer>,
@@ -100,8 +100,8 @@ pub(crate) struct PhylonApp {
     /// Central ECS World holding all entities and global resources
     pub(crate) world: world::World,
 
-    /// Retained wgpu surface and device info
-    pub(crate) gpu: Option<GpuSurface>,
+    /// Retained wgpu context (device, queue, optional surface)
+    pub(crate) gpu: Option<GpuContext>,
 
     /// Compute pipeline for physics constraint resolution
     pub(crate) physics_compute: Option<gpu::physics_pipeline::PhysicsComputePipeline>,
@@ -146,7 +146,19 @@ pub(crate) struct PhylonApp {
     pub(crate) accumulated_time: f32,
 
     /// Storage manager for snapshots and database logs
+    #[allow(dead_code)]
     pub(crate) storage: storage::StorageManager,
+
+    /// Channel for receiving background task results (like async save/load)
+    pub(crate) task_rx: Option<std::sync::mpsc::Receiver<BackgroundTaskResult>>,
+
+    /// Channel for sending background task results
+    pub(crate) task_tx: Option<std::sync::mpsc::Sender<BackgroundTaskResult>>,
+}
+
+pub(crate) enum BackgroundTaskResult {
+    SaveComplete(Result<(), String>),
+    LoadComplete(Result<storage::snapshot::SimulationSnapshot, String>),
 }
 
 impl PhylonApp {
@@ -292,6 +304,9 @@ impl PhylonApp {
             });
         }
 
+        let (task_tx, task_rx) = std::sync::mpsc::channel();
+        let storage = storage::StorageManager::new();
+
         Self {
             sim_config,
             scheduler,
@@ -307,11 +322,13 @@ impl PhylonApp {
             egui_state: None,
             egui_renderer: None,
             ui: PhylonUIState::default(),
-            max_ticks_per_frame: 10,
+            max_ticks_per_frame: 50,
             total_sim_time: 0.0,
             simulation_speed: 1.0,
             accumulated_time: 0.0,
-            storage: storage::StorageManager::new(),
+            storage,
+            task_rx: Some(task_rx),
+            task_tx: Some(task_tx),
         }
     }
 
@@ -441,11 +458,11 @@ impl PhylonApp {
             (None, None, None)
         };
 
-        self.gpu = Some(GpuSurface {
-            surface,
+        self.gpu = Some(GpuContext {
+            surface: Some(surface),
             device,
             queue,
-            config: surface_config,
+            config: Some(surface_config),
             query_set,
             resolve_buffer,
             readback_buffer,
@@ -464,15 +481,103 @@ impl PhylonApp {
         Ok(())
     }
 
+    /// Initialises the wgpu instance, adapter, and device for headless mode.
+    /// No surface or rendering pipeline is created.
+    pub(crate) fn init_gpu_headless(&mut self) -> Result<()> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .context("no suitable GPU adapter found for headless mode")?;
+
+        let mut required_features = wgpu::Features::empty();
+        let mut has_timestamp_query = false;
+        if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
+            && adapter
+                .features()
+                .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
+        {
+            required_features |= wgpu::Features::TIMESTAMP_QUERY;
+            required_features |= wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+            has_timestamp_query = true;
+        }
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("PhylonDevice_Headless"),
+                required_features,
+                required_limits: wgpu::Limits::default(),
+                memory_hints: wgpu::MemoryHints::default(),
+            },
+            None,
+        ))
+        .context("failed to create wgpu device for headless")?;
+
+        let physics_compute = gpu::physics_pipeline::PhysicsComputePipeline::new(&device);
+        let diffusion_compute =
+            gpu::diffusion_pipeline::DiffusionComputePipeline::new(&device, 256, 256);
+        let brain_compute = gpu::brain_pipeline::BrainComputePipeline::new(&device);
+
+        let (query_set, resolve_buffer, readback_buffer) = if has_timestamp_query {
+            let qs = device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("GpuTimestamps"),
+                count: 4,
+                ty: wgpu::QueryType::Timestamp,
+            });
+            let rb = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("ResolveBuffer"),
+                size: 8 * 4,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let readback = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("ReadbackBuffer"),
+                size: 8 * 4,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            (Some(qs), Some(rb), Some(readback))
+        } else {
+            (None, None, None)
+        };
+
+        self.gpu = Some(GpuContext {
+            surface: None,
+            device,
+            queue,
+            config: None,
+            query_set,
+            resolve_buffer,
+            readback_buffer,
+        });
+
+        self.physics_compute = Some(physics_compute);
+        self.diffusion_compute = Some(diffusion_compute);
+        self.brain_compute = Some(brain_compute);
+
+        info!("GPU headless mode initialised");
+        Ok(())
+    }
+
     /// Reconfigures the surface after a window resize.
     pub(crate) fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         let Some(gpu) = self.gpu.as_mut() else { return };
         if new_size.width == 0 || new_size.height == 0 {
             return;
         }
-        gpu.config.width = new_size.width;
-        gpu.config.height = new_size.height;
-        gpu.surface.configure(&gpu.device, &gpu.config);
+        if let Some(config) = &mut gpu.config {
+            config.width = new_size.width;
+            config.height = new_size.height;
+            if let Some(surface) = &gpu.surface {
+                surface.configure(&gpu.device, config);
+            }
+        }
         if let Some(sdf) = self.sdf_skin_renderer.as_mut() {
             sdf.resize(&gpu.device, new_size.width, new_size.height);
         }
