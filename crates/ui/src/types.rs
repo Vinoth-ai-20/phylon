@@ -19,6 +19,8 @@ pub enum SidebarTab {
     Inspector,
     /// View neural networks and genotypes
     Genetics,
+    /// Diffusion heatmaps and environmental overlays
+    Environment,
     /// Global metrics and population charts
     Analytics,
     /// Entity Presets and Structure Generator
@@ -95,8 +97,6 @@ pub enum MenuAction {
     Redo,
     /// Advance the simulation by one tick while paused.
     StepForward,
-    /// Reset the simulation to default organisms.
-    Reset,
     /// Reseed the entire ecosystem
     ReseedEcosystem,
     /// Select all or cycle through organisms.
@@ -152,4 +152,48 @@ pub enum MenuAction {
     GrabSelection,
     /// Spawn a localized catastrophe hazard.
     SpawnManualHazard,
+}
+
+/// The currently active heatmap overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ActiveHeatmap {
+    /// No heatmap overlay.
+    #[default]
+    None,
+    /// Glucose heatmap (splatted).
+    Glucose,
+    /// ATP heatmap (splatted).
+    ATP,
+    /// Pheromones heatmap (from diffusion grid).
+    Pheromones,
+    /// Energy Density heatmap (from diffusion grid).
+    EnergyDensity,
+    /// O2 concentration.
+    O2,
+    /// CO2 concentration.
+    CO2,
+}
+
+/// ECS Resource storing the state of the heatmap UI and shader.
+#[derive(bevy_ecs::prelude::Resource, Debug, Clone)]
+pub struct HeatmapState {
+    /// The currently selected heatmap.
+    pub active: ActiveHeatmap,
+    /// The global minimum value found in the active grid.
+    pub min_val: f32,
+    /// The global maximum value found in the active grid.
+    pub max_val: f32,
+    /// The index of the color mapping to use.
+    pub colormap: u32,
+}
+
+impl Default for HeatmapState {
+    fn default() -> Self {
+        Self {
+            active: ActiveHeatmap::None,
+            min_val: 0.0,
+            max_val: 1.0,
+            colormap: 0,
+        }
+    }
 }

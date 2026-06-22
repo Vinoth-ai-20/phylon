@@ -2048,6 +2048,8 @@ version = "0.1.0"
 dependencies = [
  "bevy_ecs",
  "common",
+ "diffusion",
+ "physics",
  "thiserror 2.0.18",
  "world",
 ]

@@ -781,19 +781,121 @@ impl PhylonApp {
             };
         }
 
-        // Render the continuous diffusion field as the background (clearing the screen)
-        if let (Some(field_renderer), Some(diffusion_compute)) = (
-            self.field_renderer.as_ref(),
-            self.diffusion_compute.as_ref(),
-        ) {
+        let heatmap_state = self
+            .world
+            .ecs
+            .get_resource::<ui::HeatmapState>()
+            .cloned()
+            .unwrap_or_default();
+        let mut field_view_to_render: Option<&wgpu::TextureView> = None;
+
+        let screen_w = gpu.config.as_ref().map(|c| c.width).unwrap_or(1280) as f32;
+        let screen_h = gpu.config.as_ref().map(|c| c.height).unwrap_or(720) as f32;
+
+        if heatmap_state.active != ui::ActiveHeatmap::None {
+            match heatmap_state.active {
+                ui::ActiveHeatmap::Pheromones => {
+                    if let Some(diffusion) = self.diffusion_compute.as_ref() {
+                        field_view_to_render = Some(diffusion.current_layer_view(0));
+                    }
+                }
+                ui::ActiveHeatmap::EnergyDensity => {
+                    if let Some(diffusion) = self.diffusion_compute.as_ref() {
+                        field_view_to_render = Some(diffusion.current_layer_view(1));
+                    }
+                }
+                ui::ActiveHeatmap::O2 => {
+                    if let Some(diffusion) = self.diffusion_compute.as_ref() {
+                        field_view_to_render = Some(diffusion.current_layer_view(2));
+                    }
+                }
+                ui::ActiveHeatmap::CO2 => {
+                    if let Some(diffusion) = self.diffusion_compute.as_ref() {
+                        field_view_to_render = Some(diffusion.current_layer_view(3));
+                    }
+                }
+                ui::ActiveHeatmap::Glucose | ui::ActiveHeatmap::ATP => {
+                    if let Some(splat_compute) = self.splat_compute.as_mut() {
+                        let mut splats = Vec::new();
+                        let mut query = self
+                            .world
+                            .ecs
+                            .query::<(&physics::ParticleNode, &metabolism::ChemicalEconomy)>();
+                        for (node, chem) in query.iter(&self.world.ecs) {
+                            let value = if heatmap_state.active == ui::ActiveHeatmap::Glucose {
+                                chem.glucose
+                            } else {
+                                chem.atp
+                            };
+
+                            // Map world space to grid space
+                            let grid_x = (node.position.x / (screen_w * 0.5)) * 128.0 + 128.0;
+                            let grid_y = (-node.position.y / (screen_h * 0.5)) * 128.0 + 128.0;
+
+                            splats.push(rendering::GpuSplat {
+                                grid_pos: [grid_x, grid_y],
+                                value,
+                                grid_radius: 8.0,
+                            });
+                        }
+                        splat_compute.step(&gpu.device, &gpu.queue, &splats);
+                        field_view_to_render = Some(&splat_compute.view);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let (Some(field_renderer), Some(view_to_render)) =
+            (self.field_renderer.as_ref(), field_view_to_render)
+        {
+            field_renderer.update_config(
+                &gpu.queue,
+                rendering::FieldConfig {
+                    min_val: heatmap_state.min_val,
+                    max_val: heatmap_state.max_val,
+                    camera_pos: [self.ui.camera_pos.x, self.ui.camera_pos.y],
+                    camera_zoom: self.ui.camera_zoom,
+                    _pad0: 0,
+                    screen_size: [screen_w, screen_h],
+                    colormap: heatmap_state.colormap,
+                    _pad: 0,
+                },
+            );
+
             field_renderer.render(
                 &gpu.device,
                 &mut encoder,
                 &view,
-                diffusion_compute.current_texture_view(),
+                view_to_render,
                 central_rect_px,
                 clear_color,
             );
+        } else if let Some(field_renderer) = self.field_renderer.as_ref() {
+            // Render nothing but clear the screen
+            field_renderer.update_config(
+                &gpu.queue,
+                rendering::FieldConfig {
+                    min_val: 0.0,
+                    max_val: -1.0, // Ensures range < 0.0001, alpha = 0.0
+                    camera_pos: [self.ui.camera_pos.x, self.ui.camera_pos.y],
+                    camera_zoom: self.ui.camera_zoom,
+                    _pad0: 0,
+                    screen_size: [screen_w, screen_h],
+                    colormap: heatmap_state.colormap,
+                    _pad: 0,
+                },
+            );
+            if let Some(diffusion) = self.diffusion_compute.as_ref() {
+                field_renderer.render(
+                    &gpu.device,
+                    &mut encoder,
+                    &view,
+                    diffusion.current_layer_view(0),
+                    central_rect_px,
+                    clear_color,
+                );
+            }
         }
 
         // Submit the field renderer (which clears the screen and draws the background) BEFORE

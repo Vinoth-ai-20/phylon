@@ -119,6 +119,8 @@ pub(crate) struct PhylonApp {
     /// Compute pipeline for reaction-diffusion fields (pheromones)
     pub(crate) diffusion_compute: Option<gpu::diffusion_pipeline::DiffusionComputePipeline>,
 
+    pub(crate) splat_compute: Option<rendering::SplatComputePipeline>,
+
     pub(crate) brain_compute: Option<gpu::brain_pipeline::BrainComputePipeline>,
 
     /// Rendering pipeline for structural/debug view
@@ -209,6 +211,9 @@ impl PhylonApp {
         );
         world.ecs.insert_resource(analytics::MetricsState::new());
         world.ecs.insert_resource(analytics::NarrationLog::new(100));
+        world
+            .ecs
+            .insert_resource(ui::types::HeatmapState::default());
         world.ecs.insert_resource(behavior::BehaviorConfig {
             signal_energy_cost_per_unit: sim_config.simulation.signal_energy_cost_per_unit,
         });
@@ -238,6 +243,7 @@ impl PhylonApp {
             gpu: None,
             physics_compute: None,
             diffusion_compute: None,
+            splat_compute: None,
             brain_compute: None,
             debug_renderer: None,
             sdf_skin_renderer: None,
@@ -339,6 +345,7 @@ impl PhylonApp {
         let physics_compute = gpu::physics_pipeline::PhysicsComputePipeline::new(&device);
         let diffusion_compute =
             gpu::diffusion_pipeline::DiffusionComputePipeline::new(&device, 256, 256);
+        let splat_compute = rendering::SplatComputePipeline::new(&device, 256, 256);
         let brain_compute = gpu::brain_pipeline::BrainComputePipeline::new(&device);
 
         let egui_context = egui::Context::default();
@@ -396,6 +403,7 @@ impl PhylonApp {
         self.field_renderer = Some(field_renderer);
         self.physics_compute = Some(physics_compute);
         self.diffusion_compute = Some(diffusion_compute);
+        self.splat_compute = Some(splat_compute);
         self.brain_compute = Some(brain_compute);
         self.egui_state = Some(egui_state);
         self.egui_renderer = Some(egui_renderer);
@@ -446,6 +454,7 @@ impl PhylonApp {
         let physics_compute = gpu::physics_pipeline::PhysicsComputePipeline::new(&device);
         let diffusion_compute =
             gpu::diffusion_pipeline::DiffusionComputePipeline::new(&device, 256, 256);
+        let splat_compute = rendering::SplatComputePipeline::new(&device, 256, 256);
         let brain_compute = gpu::brain_pipeline::BrainComputePipeline::new(&device);
 
         let (query_set, resolve_buffer, readback_buffer) = if has_timestamp_query {
@@ -483,6 +492,7 @@ impl PhylonApp {
 
         self.physics_compute = Some(physics_compute);
         self.diffusion_compute = Some(diffusion_compute);
+        self.splat_compute = Some(splat_compute);
         self.brain_compute = Some(brain_compute);
 
         info!("GPU headless mode initialised");
@@ -703,6 +713,7 @@ pub(crate) fn seed_ecosystem(
             position: common::Vec2::new(px, py),
             value: rng.gen_range(5.0..20.0),
             radius: rng.gen_range(50.0..150.0),
+            layer: diffusion::FieldLayer::Energy,
         });
     }
 

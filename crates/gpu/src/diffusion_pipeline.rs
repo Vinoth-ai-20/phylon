@@ -2,18 +2,34 @@
 
 use wgpu::util::DeviceExt;
 
-/// Uniforms for the diffusion compute shader.
+/// Configuration for a single diffusion layer (e.g. Pheromones, Energy, O2, CO2).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct DiffusionUniforms {
+pub struct LayerConfig {
     /// Diffusion rate (D)
     pub diffusion_rate: f32,
     /// Decay rate (λ)
     pub decay_rate: f32,
+    /// Number of active emitters for this layer
+    pub emitter_count: u32,
+    /// Offset into the global emitter buffer for this layer
+    pub emitter_offset: u32,
+}
+
+/// Uniforms for the diffusion compute shader.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct DiffusionUniforms {
     /// Timestep
     pub dt: f32,
-    /// Number of active emitters
-    pub emitter_count: u32,
+    /// Padding for alignment.
+    pub _pad1: u32,
+    /// Padding for alignment.
+    pub _pad2: u32,
+    /// Padding for alignment.
+    pub _pad3: u32,
+    /// Config for each of the 4 layers: Pheromones, Energy, O2, CO2
+    pub layers: [LayerConfig; 4],
 }
 
 /// GPU representation of a spatial emitter.
@@ -38,6 +54,9 @@ pub struct DiffusionComputePipeline {
     texture_b: wgpu::Texture,
     view_a: wgpu::TextureView,
     view_b: wgpu::TextureView,
+    /// Pre-created 2D views for each layer of the current read texture.
+    layer_views_a: Vec<wgpu::TextureView>,
+    layer_views_b: Vec<wgpu::TextureView>,
     #[allow(dead_code)]
     bind_group_a: wgpu::BindGroup,
     #[allow(dead_code)]
@@ -73,7 +92,7 @@ impl DiffusionComputePipeline {
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
                         multisampled: false,
                     },
                     count: None,
@@ -85,7 +104,7 @@ impl DiffusionComputePipeline {
                     ty: wgpu::BindingType::StorageTexture {
                         access: wgpu::StorageTextureAccess::WriteOnly,
                         format: wgpu::TextureFormat::R32Float,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
                     },
                     count: None,
                 },
@@ -134,7 +153,7 @@ impl DiffusionComputePipeline {
             size: wgpu::Extent3d {
                 width,
                 height,
-                depth_or_array_layers: 1,
+                depth_or_array_layers: 4,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -154,8 +173,25 @@ impl DiffusionComputePipeline {
             label: Some("DiffusionTextureB"),
             ..texture_desc
         });
-        let view_a = texture_a.create_view(&wgpu::TextureViewDescriptor::default());
-        let view_b = texture_b.create_view(&wgpu::TextureViewDescriptor::default());
+        let view_desc = wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        };
+        let view_a = texture_a.create_view(&view_desc);
+        let view_b = texture_b.create_view(&view_desc);
+
+        let mut layer_views_a = Vec::with_capacity(4);
+        let mut layer_views_b = Vec::with_capacity(4);
+        for i in 0..4 {
+            let layer_desc = wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_array_layer: i,
+                array_layer_count: Some(1),
+                ..Default::default()
+            };
+            layer_views_a.push(texture_a.create_view(&layer_desc));
+            layer_views_b.push(texture_b.create_view(&layer_desc));
+        }
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("DiffusionUniforms"),
@@ -222,7 +258,7 @@ impl DiffusionComputePipeline {
             ],
         });
 
-        let staging_buffer_size = (width * height * 4) as wgpu::BufferAddress;
+        let staging_buffer_size = (width * height * 4 * 4) as wgpu::BufferAddress;
         let staging_buffers = [
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("DiffusionStagingBuffer0"),
@@ -247,6 +283,8 @@ impl DiffusionComputePipeline {
             texture_b,
             view_a,
             view_b,
+            layer_views_a,
+            layer_views_b,
             bind_group_a,
             bind_group_b,
             uniform_buffer,
@@ -261,12 +299,13 @@ impl DiffusionComputePipeline {
         }
     }
 
-    /// Returns the view of the texture that holds the *current* stable field state.
-    pub fn current_texture_view(&self) -> &wgpu::TextureView {
+    /// Returns the active texture view for rendering a specific layer (field).
+    pub fn current_layer_view(&self, layer: u32) -> &wgpu::TextureView {
+        let index = layer as usize;
         if self.read_a {
-            &self.view_a
+            &self.layer_views_a[index]
         } else {
-            &self.view_b
+            &self.layer_views_b[index]
         }
     }
 
@@ -366,9 +405,7 @@ impl DiffusionComputePipeline {
             cpass.set_pipeline(&self.pipeline);
             cpass.set_bind_group(0, &active_bind_group, &[]);
 
-            let workgroup_count_x = (self.width as f32 / 16.0).ceil() as u32;
-            let workgroup_count_y = (self.height as f32 / 16.0).ceil() as u32;
-            cpass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
+            cpass.dispatch_workgroups(self.width / 16, self.height / 16, 4);
         }
 
         if let Some(qs) = query_set {
@@ -406,7 +443,7 @@ impl DiffusionComputePipeline {
             wgpu::Extent3d {
                 width: self.width,
                 height: self.height,
-                depth_or_array_layers: 1,
+                depth_or_array_layers: 4,
             },
         );
 

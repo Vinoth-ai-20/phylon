@@ -378,6 +378,7 @@ pub fn growth_system(
 /// System that handles physical growth/branching for Producers.
 pub fn producer_growth_system(
     mut commands: Commands,
+    atmosphere: bevy_ecs::prelude::Res<metabolism::GlobalAtmosphere>,
     mut query: Query<(
         Entity,
         &ecology::Diet,
@@ -389,6 +390,7 @@ pub fn producer_growth_system(
 ) {
     // Threshold to grow a new node
     let growth_cost = 5000.0;
+    let branch_cost_atp = 2000.0;
 
     // We need adjacency map to find all nodes of an organism starting from head.
     let mut adj: std::collections::HashMap<Entity, Vec<Entity>> = std::collections::HashMap::new();
@@ -401,8 +403,11 @@ pub fn producer_growth_system(
         if *diet == ecology::Diet::Producer
             && chem.glucose > chem.max_glucose * 0.8
             && chem.glucose >= growth_cost
+            && chem.atp > branch_cost_atp + 500.0
+            && atmosphere.co2 > 50.0
         {
             chem.glucose -= growth_cost;
+            chem.atp -= branch_cost_atp;
             metabolism.mass += 5.0; // Increase mass
             chem.max_glucose += 2000.0;
             chem.max_o2 += 1000.0;

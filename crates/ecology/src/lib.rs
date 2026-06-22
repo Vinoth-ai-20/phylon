@@ -133,10 +133,21 @@ pub fn foraging_system(
         &Diet,
         &physics::ParticleNode,
     )>,
+    node_query: Query<&physics::ParticleNode>,
     food_query: Query<(Entity, &FoodPellet)>,
     mineral_query: Query<(Entity, &MineralPellet)>,
     corpse_query: Query<(Entity, &Corpse)>,
 ) {
+    // Collect all nodes per organism to allow eating any segment
+    let mut organism_nodes: std::collections::HashMap<u32, Vec<common::Vec2>> =
+        std::collections::HashMap::new();
+    for node in node_query.iter() {
+        organism_nodes
+            .entry(node.organism_id)
+            .or_default()
+            .push(node.position);
+    }
+
     // Phase 1: Organism vs Organism predation
     let organism_eat_radius = 40.0;
     let mut combos = organism_query.iter_combinations_mut();
@@ -147,7 +158,19 @@ pub fn foraging_system(
             continue;
         }
 
-        let dist = node1.position.distance(node2.position);
+        let mut dist = node1.position.distance(node2.position);
+
+        if let Some(nodes2) = organism_nodes.get(&e2.index()) {
+            for pos in nodes2 {
+                dist = dist.min(node1.position.distance(*pos));
+            }
+        }
+        if let Some(nodes1) = organism_nodes.get(&e1.index()) {
+            for pos in nodes1 {
+                dist = dist.min(node2.position.distance(*pos));
+            }
+        }
+
         if dist <= organism_eat_radius {
             let one_eats_two = matches!(
                 (diet1, diet2),
@@ -250,30 +273,44 @@ pub fn photosynthesis_system(
     for (diet, metabolism, mut chem) in query.iter_mut() {
         if *diet == Diet::Producer && chem.atp > 0.0 {
             // Plants consume CO2 and Sunlight to make Glucose and O2
-            let co2_needed = 4.0 * metabolism.mass * sunlight;
+            let mut co2_needed = 4.0 * metabolism.mass * sunlight;
 
-            if atmosphere.co2 >= co2_needed {
-                atmosphere.co2 -= co2_needed;
+            // Phase 3: Stop the Carbon Leak
+            // Do not absorb CO2 if the Glucose tank is full, otherwise the carbon is deleted.
+            let glucose_room = (chem.max_glucose - chem.glucose).max(0.0);
+            co2_needed = co2_needed.min(glucose_room);
 
-                // 1 CO2 -> 1 Glucose + 1 O2 (simplified)
-                chem.glucose = (chem.glucose + co2_needed).min(chem.max_glucose);
-                chem.o2 = (chem.o2 + co2_needed).min(chem.max_o2);
-            }
+            let actual_co2 = atmosphere.co2.min(co2_needed);
+            atmosphere.co2 -= actual_co2;
+
+            // 1 CO2 -> 1 Glucose + 1 O2 (simplified)
+            chem.glucose = (chem.glucose + actual_co2).min(chem.max_glucose);
+            chem.o2 = (chem.o2 + actual_co2).min(chem.max_o2);
         }
     }
 }
 
 /// System that decays Corpses into MineralPellets over time.
-pub fn corpse_decay_system(mut commands: Commands, mut corpse_query: Query<(Entity, &mut Corpse)>) {
+pub fn corpse_decay_system(
+    mut commands: Commands,
+    mut atmosphere: ResMut<metabolism::GlobalAtmosphere>,
+    mut corpse_query: Query<(Entity, &mut Corpse)>,
+) {
     for (entity, mut corpse) in corpse_query.iter_mut() {
         if corpse.decay_timer > 0 {
             corpse.decay_timer -= 1;
+            // Phase 3: Corpse Outgassing
+            // Slowly release CO2 back into the atmosphere as the corpse decays.
+            atmosphere.co2 += corpse.energy_value * 0.0001;
         } else {
             // Decay into mineral
             commands.spawn(MineralPellet {
                 position: corpse.position,
                 energy_value: corpse.energy_value * 0.5, // 50% energy lost to environment if not eaten directly
             });
+            // Final burst of CO2 upon complete decay
+            atmosphere.co2 += corpse.energy_value * 0.1;
+
             if let Some(mut e) = commands.get_entity(entity) {
                 e.despawn();
             }

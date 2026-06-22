@@ -61,7 +61,7 @@ pub fn render_ui(
         actions.push(MenuAction::StepForward);
     }
     if ctx.input_mut(|i| i.consume_shortcut(&shortcut_reset)) {
-        actions.push(MenuAction::Reset);
+        actions.push(MenuAction::ReseedEcosystem);
     }
     if ctx.input_mut(|i| i.consume_shortcut(&shortcut_select_all)) {
         actions.push(MenuAction::SelectAll);
@@ -408,7 +408,7 @@ pub fn render_ui(
                     .on_hover_text("Reset Simulation")
                     .clicked()
                 {
-                    actions.push(MenuAction::Reset);
+                    actions.push(MenuAction::ReseedEcosystem);
                 }
             });
 
@@ -1357,6 +1357,36 @@ pub fn render_ui(
                         ui.label("Physics resource not found.");
                     }
                 }
+                SidebarTab::Environment => {
+                    ui.heading(format!("{} Heatmaps & Overlays", egui_remixicon::icons::MAP_PIN_LINE));
+                    ui.separator();
+                    if let Some(mut heatmap_state) = world.ecs.get_resource_mut::<HeatmapState>() {
+                        ui.label("Select Active Heatmap:");
+                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::None, "None");
+                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::Glucose, "Glucose (Splatted)");
+                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::ATP, "ATP (Splatted)");
+                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::Pheromones, "Pheromones (Grid)");
+                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::EnergyDensity, "Energy Density (Grid)");
+                        if heatmap_state.active != ActiveHeatmap::None {
+                            ui.add_space(16.0);
+                            ui.heading("Legend");
+                            ui.label(format!("Min: {:.2}", heatmap_state.min_val));
+                            ui.label(format!("Max: {:.2}", heatmap_state.max_val));
+                            // Draw a basic gradient rect for the colormap
+                            let rect = ui.allocate_space(egui::vec2(ui.available_width(), 20.0)).1;
+                            if ui.is_rect_visible(rect) {
+                                ui.painter().rect_filled(rect, 4.0, egui::Color32::from_rgb(100, 100, 200));
+                                let galley = ui.painter().layout_no_wrap(
+                                    "Viridis Gradient".to_owned(),
+                                    egui::FontId::proportional(14.0),
+                                    egui::Color32::WHITE,
+                                );
+                                let text_pos = rect.center() - galley.size() / 2.0;
+                                ui.painter().galley(text_pos, galley, egui::Color32::WHITE);
+                            }
+                        }
+                    }
+                }
                 SidebarTab::Ecology => {
                     ui.heading(format!("{} Ecology & Environment", egui_remixicon::icons::EARTH_LINE));
                     ui.separator();
@@ -1364,6 +1394,92 @@ pub fn render_ui(
                     ui.label("Ambient CO2: 400 ppm");
                     ui.label("Soil Fertility: High");
                     ui.label("Temperature: 22°C");
+                    ui.add_space(16.0);
+
+                    // Heatmap Overlay Controls
+                    ui.heading("Field Analytics");
+                    ui.label("Toggle specialized biological field overlays:");
+                    ui.add_space(8.0);
+                    let mut heatmap_state = world.ecs.get_resource_mut::<HeatmapState>().unwrap();
+
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::None, "None");
+                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::Pheromones, "Pheromones");
+                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::EnergyDensity, "Energy Density");
+                    });
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::O2, "O2");
+                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::CO2, "CO2");
+                    });
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::ATP, "ATP Biomass");
+                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::Glucose, "Glucose Biomass");
+                    });
+
+                    if heatmap_state.active != ActiveHeatmap::None {
+                        ui.add_space(8.0);
+                        egui::ComboBox::from_label("Colormap")
+                            .selected_text(match heatmap_state.colormap {
+                                0 => "Viridis",
+                                1 => "Magma",
+                                2 => "Plasma",
+                                3 => "Inferno",
+                                4 => "Turbo",
+                                _ => "Unknown",
+                            })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut heatmap_state.colormap, 0, "Viridis");
+                                ui.selectable_value(&mut heatmap_state.colormap, 1, "Magma");
+                                ui.selectable_value(&mut heatmap_state.colormap, 2, "Plasma");
+                                ui.selectable_value(&mut heatmap_state.colormap, 3, "Inferno");
+                                ui.selectable_value(&mut heatmap_state.colormap, 4, "Turbo");
+                            });
+
+                        // Gradient Legend
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            ui.label(format!("{:.1}", heatmap_state.min_val));
+                            // Draw the gradient
+                            let (rect, _response) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width() - 40.0, 16.0),
+                                egui::Sense::hover(),
+                            );
+                            // Simple multi-stop gradient based on colormap (Viridis approximation)
+                            let (c0, c1, c2, c3, c4) = match heatmap_state.colormap {
+                                // Just a simple approximation for the UI legend
+                                1 => (
+                                    egui::Color32::from_rgb(0, 0, 4),
+                                    egui::Color32::from_rgb(59, 15, 112),
+                                    egui::Color32::from_rgb(140, 41, 129),
+                                    egui::Color32::from_rgb(222, 73, 104),
+                                    egui::Color32::from_rgb(253, 231, 37),
+                                ), // Magma roughly
+                                _ => (
+                                    egui::Color32::from_rgb(68, 1, 84),
+                                    egui::Color32::from_rgb(59, 82, 139),
+                                    egui::Color32::from_rgb(33, 145, 140),
+                                    egui::Color32::from_rgb(94, 201, 98),
+                                    egui::Color32::from_rgb(253, 231, 37),
+                                ), // Viridis roughly
+                            };
+                            let mut mesh = egui::Mesh::default();
+                            let w = rect.width() / 4.0;
+                            for (i, (ca, cb)) in [(c0, c1), (c1, c2), (c2, c3), (c3, c4)].iter().enumerate() {
+                                let x0 = rect.left() + w * (i as f32);
+                                let x1 = x0 + w;
+                                let y0 = rect.top();
+                                let y1 = rect.bottom();
+                                let idx = mesh.vertices.len() as u32;
+                                mesh.vertices.push(egui::epaint::Vertex { pos: egui::pos2(x0, y0), uv: egui::pos2(0.0, 0.0), color: *ca });
+                                mesh.vertices.push(egui::epaint::Vertex { pos: egui::pos2(x1, y0), uv: egui::pos2(0.0, 0.0), color: *cb });
+                                mesh.vertices.push(egui::epaint::Vertex { pos: egui::pos2(x1, y1), uv: egui::pos2(0.0, 0.0), color: *cb });
+                                mesh.vertices.push(egui::epaint::Vertex { pos: egui::pos2(x0, y1), uv: egui::pos2(0.0, 0.0), color: *ca });
+                                mesh.indices.extend_from_slice(&[idx, idx+1, idx+2, idx, idx+2, idx+3]);
+                            }
+                            ui.painter().add(egui::Shape::mesh(mesh));
+                            ui.label(format!("{:.1}", heatmap_state.max_val));
+                        });
+                    }
                     ui.add_space(16.0);
                     ui.heading("Catastrophes");
                     ui.label("Trigger a localized spatial hazard to test organism resilience.");

@@ -222,34 +222,128 @@ impl PhylonApp {
 
                 (diffusion_config.diffusion_rate, diffusion_config.decay_rate)
             };
-            let mut query_emitters = self.world.ecs.query::<&diffusion::Emitter>();
             let mut gpu_emitters = Vec::new();
 
-            let screen_w = gpu.config.as_ref().map(|c| c.width).unwrap_or(1280) as f32;
-            let screen_h = gpu.config.as_ref().map(|c| c.height).unwrap_or(720) as f32;
+            // We use a fixed logical bound instead of screen width, so scaling works correctly
+            let bounds_extents = 1500.0;
+            let to_grid = |pos: common::Vec2, radius: f32| -> (f32, f32, f32) {
+                let grid_x = (pos.x / bounds_extents) * 128.0 + 128.0;
+                let grid_y = (-pos.y / bounds_extents) * 128.0 + 128.0;
+                let grid_radius = (radius / bounds_extents) * 128.0;
+                (grid_x, grid_y, grid_radius)
+            };
 
-            for emitter in query_emitters.iter(&self.world.ecs) {
-                // Map world space to 256x256 grid space
-                let grid_x = (emitter.position.x / (screen_w * 0.5)) * 128.0 + 128.0;
-                let grid_y = (-emitter.position.y / (screen_h * 0.5)) * 128.0 + 128.0;
-                let grid_radius = (emitter.radius / (screen_w * 0.5)) * 128.0;
-
+            // Layer 0: Pheromones
+            let pheromones_offset = gpu_emitters.len() as u32;
+            let mut query_signals = self
+                .world
+                .ecs
+                .query::<(&physics::ParticleNode, &diffusion::SignalEmitter)>();
+            for (node, signal) in query_signals.iter(&self.world.ecs) {
+                let (gx, gy, gr) = to_grid(node.position, signal.radius);
                 gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
-                    grid_pos: [grid_x, grid_y],
-                    value: emitter.value,
-                    grid_radius,
+                    grid_pos: [gx, gy],
+                    value: signal.value,
+                    grid_radius: gr,
                 });
             }
+            let pheromones_count = gpu_emitters.len() as u32 - pheromones_offset;
+
+            // Layer 1: Energy
+            let energy_offset = gpu_emitters.len() as u32;
+            let mut query_emitters = self.world.ecs.query::<&diffusion::Emitter>();
+            for emitter in query_emitters.iter(&self.world.ecs) {
+                if emitter.layer == diffusion::FieldLayer::Energy {
+                    let (gx, gy, gr) = to_grid(emitter.position, emitter.radius);
+                    gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
+                        grid_pos: [gx, gy],
+                        value: emitter.value,
+                        grid_radius: gr,
+                    });
+                }
+            }
+            let energy_count = gpu_emitters.len() as u32 - energy_offset;
+
+            // Layer 2: O2
+            let o2_offset = gpu_emitters.len() as u32;
+            let mut query_chem = self.world.ecs.query::<(
+                &physics::ParticleNode,
+                &metabolism::ChemicalEconomy,
+                &metabolism::Metabolism,
+            )>();
+            for (node, _chem, meta) in query_chem.iter(&self.world.ecs) {
+                let (gx, gy, gr) = to_grid(node.position, 15.0);
+                // Simplistic baseline: plants emit O2, animals consume it.
+                let net_o2 = if meta.is_plant { 1.5 } else { -1.0 };
+                gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
+                    grid_pos: [gx, gy],
+                    value: net_o2 * meta.mass,
+                    grid_radius: gr,
+                });
+            }
+            let o2_count = gpu_emitters.len() as u32 - o2_offset;
+
+            // Layer 3: CO2
+            let co2_offset = gpu_emitters.len() as u32;
+            for (node, _chem, meta) in query_chem.iter(&self.world.ecs) {
+                let (gx, gy, gr) = to_grid(node.position, 15.0);
+                // Simplistic baseline: plants consume CO2, animals emit it.
+                let net_co2 = if meta.is_plant { -1.5 } else { 1.0 };
+                gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
+                    grid_pos: [gx, gy],
+                    value: net_co2 * meta.mass,
+                    grid_radius: gr,
+                });
+            }
+            // Corpses emit CO2
+            let mut query_dead = self.world.ecs.query_filtered::<(&physics::ParticleNode, &metabolism::Metabolism), bevy_ecs::query::With<metabolism::Dead>>();
+            for (node, meta) in query_dead.iter(&self.world.ecs) {
+                let (gx, gy, gr) = to_grid(node.position, 20.0);
+                gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
+                    grid_pos: [gx, gy],
+                    value: 2.0 * meta.mass, // Corpses release a lot of CO2 as they decay
+                    grid_radius: gr,
+                });
+            }
+            let co2_count = gpu_emitters.len() as u32 - co2_offset;
+
+            let layer_configs = [
+                gpu::diffusion_pipeline::LayerConfig {
+                    diffusion_rate: diff_rate,
+                    decay_rate: dec_rate,
+                    emitter_count: pheromones_count,
+                    emitter_offset: pheromones_offset,
+                },
+                gpu::diffusion_pipeline::LayerConfig {
+                    diffusion_rate: 0.05,
+                    decay_rate: dec_rate * 0.5,
+                    emitter_count: energy_count,
+                    emitter_offset: energy_offset,
+                },
+                gpu::diffusion_pipeline::LayerConfig {
+                    diffusion_rate: 0.8,
+                    decay_rate: 0.005,
+                    emitter_count: o2_count,
+                    emitter_offset: o2_offset,
+                },
+                gpu::diffusion_pipeline::LayerConfig {
+                    diffusion_rate: 0.8,
+                    decay_rate: 0.005,
+                    emitter_count: co2_count,
+                    emitter_offset: co2_offset,
+                },
+            ];
 
             let diffusion_start = std::time::Instant::now();
             diffusion_compute.step(
                 &gpu.device,
                 &gpu.queue,
                 gpu::diffusion_pipeline::DiffusionUniforms {
-                    diffusion_rate: diff_rate,
-                    decay_rate: dec_rate,
-                    dt: DT, // fixed timestep
-                    emitter_count: gpu_emitters.len() as u32,
+                    dt: DT,
+                    _pad1: 0,
+                    _pad2: 0,
+                    _pad3: 0,
+                    layers: layer_configs,
                 },
                 &gpu_emitters,
                 gpu.query_set.as_ref(),

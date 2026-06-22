@@ -57,6 +57,7 @@ pub fn spawn_organism(
         metabolism::Metabolism {
             mass: 10.0,
             base_rate: 0.005,
+            is_plant: diet == ecology::Diet::Producer,
         },
         Generation(generation),
         SpawnTick(spawn_tick),
@@ -289,6 +290,7 @@ pub fn spawn_proto_fish(
         metabolism::Metabolism {
             mass: 15.0, // approx mass of 5 spine + 2 fin nodes
             base_rate: 0.05,
+            is_plant: diet == ecology::Diet::Producer,
         },
         Generation(generation),
         SpawnTick(spawn_tick),

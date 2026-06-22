@@ -72,6 +72,7 @@ pub fn sensing_system(
         Option<&ecology::Diet>,
     )>,
     node_query: bevy_ecs::prelude::Query<&physics::ParticleNode>,
+    diet_query: bevy_ecs::prelude::Query<(&physics::ParticleNode, &ecology::Diet)>,
     food_query: bevy_ecs::prelude::Query<&ecology::FoodPellet>,
     mineral_query: bevy_ecs::prelude::Query<&ecology::MineralPellet>,
     corpse_query: bevy_ecs::prelude::Query<&ecology::Corpse>,
@@ -80,6 +81,11 @@ pub fn sensing_system(
     cpu_hazard_field: Option<bevy_ecs::prelude::Res<diffusion::CpuHazardFieldState>>,
     mut local_tick: bevy_ecs::prelude::Local<u64>,
 ) {
+    let mut diet_map = std::collections::HashMap::new();
+    for (node, diet) in diet_query.iter() {
+        diet_map.insert(node.organism_id, diet.clone());
+    }
+
     for (mut state, node, mut vision_opt, energy_opt, age_opt, diet_opt) in query.iter_mut() {
         if state.inputs.is_empty() {
             continue;
@@ -90,7 +96,7 @@ pub fn sensing_system(
         // 1. Chemical sensor (Olfaction) - reads diffusion field
         if let Some(field) = &cpu_field {
             // Very basic: read the exact cell concentration
-            let val = field.sample(node.position);
+            let val = field.sample(node.position, 0);
             if idx < state.inputs.len() {
                 state.inputs[idx] = val;
                 idx += 1;
@@ -141,11 +147,15 @@ pub fn sensing_system(
             }
             let forward = vision.last_forward;
 
-            let mut left_val = 0.0f32;
-            let mut center_val = 0.0f32;
-            let mut right_val = 0.0f32;
+            let mut food_left = 0.0f32;
+            let mut food_center = 0.0f32;
+            let mut food_right = 0.0f32;
 
-            let mut process_vision_target = |target_pos: common::Vec2| {
+            let mut obs_left = 0.0f32;
+            let mut obs_center = 0.0f32;
+            let mut obs_right = 0.0f32;
+
+            let mut process_vision_target = |target_pos: common::Vec2, is_food: bool| {
                 let diff = target_pos - node.position;
                 let dist = diff.length();
 
@@ -165,19 +175,44 @@ pub fn sensing_system(
                     let strength = 1.0 - (dist / vision.range);
 
                     let third_fov = half_fov / 1.5; // Divide FOV into 3 bins
-                    if angle < -third_fov {
-                        left_val = left_val.max(strength);
-                    } else if angle > third_fov {
-                        right_val = right_val.max(strength);
+                    if is_food {
+                        if angle < -third_fov {
+                            food_left = food_left.max(strength);
+                        } else if angle > third_fov {
+                            food_right = food_right.max(strength);
+                        } else {
+                            food_center = food_center.max(strength);
+                        }
                     } else {
-                        center_val = center_val.max(strength);
+                        if angle < -third_fov {
+                            obs_left = obs_left.max(strength);
+                        } else if angle > third_fov {
+                            obs_right = obs_right.max(strength);
+                        } else {
+                            obs_center = obs_center.max(strength);
+                        }
                     }
                 }
             };
 
             // 1. See other organisms (mating, collision avoidance, predation)
             for other_node in node_query.iter() {
-                process_vision_target(other_node.position);
+                let mut is_food = false;
+                if let (Some(my_diet), Some(other_diet)) =
+                    (diet_opt, diet_map.get(&other_node.organism_id))
+                {
+                    is_food = matches!(
+                        (my_diet, other_diet),
+                        (
+                            ecology::Diet::Carnivore,
+                            ecology::Diet::Herbivore | ecology::Diet::Omnivore
+                        ) | (
+                            ecology::Diet::Herbivore | ecology::Diet::Omnivore,
+                            ecology::Diet::Producer
+                        )
+                    );
+                }
+                process_vision_target(other_node.position, is_food);
             }
 
             // 2. Diet-specific target vision
@@ -185,17 +220,17 @@ pub fn sensing_system(
                 match diet {
                     ecology::Diet::Producer => {
                         for mineral in mineral_query.iter() {
-                            process_vision_target(mineral.position);
+                            process_vision_target(mineral.position, true);
                         }
                     }
                     ecology::Diet::Herbivore | ecology::Diet::Omnivore => {
                         for food in food_query.iter() {
-                            process_vision_target(food.position);
+                            process_vision_target(food.position, true);
                         }
                     }
                     ecology::Diet::Decomposer => {
                         for corpse in corpse_query.iter() {
-                            process_vision_target(corpse.position);
+                            process_vision_target(corpse.position, true);
                         }
                     }
                     ecology::Diet::Carnivore => {
@@ -205,15 +240,15 @@ pub fn sensing_system(
             }
 
             if idx < state.inputs.len() {
-                state.inputs[idx] = left_val;
+                state.inputs[idx] = food_left - obs_left;
                 idx += 1;
             }
             if idx < state.inputs.len() {
-                state.inputs[idx] = center_val;
+                state.inputs[idx] = food_center - obs_center;
                 idx += 1;
             }
             if idx < state.inputs.len() {
-                state.inputs[idx] = right_val;
+                state.inputs[idx] = food_right - obs_right;
                 idx += 1;
             }
 

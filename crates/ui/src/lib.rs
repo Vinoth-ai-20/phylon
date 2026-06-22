@@ -12,7 +12,10 @@
 
 /// UI state types and enums.
 pub mod types;
-pub use types::{AppState, BottomTab, CanvasInteraction, MenuAction, SidebarTab, UiError};
+pub use types::{
+    ActiveHeatmap, AppState, BottomTab, CanvasInteraction, HeatmapState, MenuAction, SidebarTab,
+    UiError,
+};
 
 /// UI helper utilities.
 pub mod utils;

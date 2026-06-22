@@ -41,7 +41,7 @@ pub use debug::{DebugInstance, DebugRenderer};
 
 /// Field overlay rendering module.
 pub mod field;
-pub use field::FieldRenderer;
+pub use field::{FieldConfig, FieldRenderer, GpuSplat, SplatComputePipeline, SplatConfig};
 
 /// SDF skin rendering module (capsule-SDF organic skin).
 pub mod sdf_skin;

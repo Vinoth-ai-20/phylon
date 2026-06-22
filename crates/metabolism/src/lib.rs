@@ -70,6 +70,8 @@ pub struct Metabolism {
     pub mass: f32,
     /// The base cost multiplier per tick.
     pub base_rate: f32,
+    /// Indicates if the organism is a Producer (autotroph).
+    pub is_plant: bool,
 }
 
 /// System that deducts energy per tick based on mass and handles aging.
@@ -83,28 +85,41 @@ pub struct Metabolism {
 /// and we can publish the event by storing an `EventBus` resource.
 pub fn metabolism_system(
     mut commands: Commands,
-    mut atmosphere: ResMut<GlobalAtmosphere>,
-    mut query: Query<(Entity, &mut ChemicalEconomy, &mut Age, &Metabolism)>,
+    atmosphere: Res<GlobalAtmosphere>,
+    cpu_field: Option<Res<diffusion::CpuFieldState>>,
+    mut query: Query<(
+        Entity,
+        &physics::ParticleNode,
+        &mut ChemicalEconomy,
+        &mut Age,
+        &Metabolism,
+    )>,
 ) {
-    for (entity, mut chem, mut age, metabolism) in query.iter_mut() {
+    for (entity, node, mut chem, mut age, metabolism) in query.iter_mut() {
         // Increment age
         age.ticks += 1;
 
         // 1. Gas Exchange (Organism <-> Atmosphere)
+        // Instead of GlobalAtmosphere, we sample the local spatial grid.
+        let local_o2 = if let Some(field) = &cpu_field {
+            field.sample(node.position, 2)
+        } else {
+            1000.0 // fallback
+        };
+        let local_co2 = if let Some(field) = &cpu_field {
+            field.sample(node.position, 3)
+        } else {
+            0.0 // fallback
+        };
+
         // Organisms want to keep their O2 full and CO2 empty.
         let o2_needed = (chem.max_o2 - chem.o2).min(metabolism.mass * 2.0); // Max inhalation rate
-        if atmosphere.o2 >= o2_needed {
-            atmosphere.o2 -= o2_needed;
-            chem.o2 += o2_needed;
-        } else {
-            chem.o2 += atmosphere.o2;
-            atmosphere.o2 = 0.0;
-        }
+        let o2_absorbed = o2_needed.min(local_o2);
+        chem.o2 += o2_absorbed;
 
-        // Exhale CO2
+        // Exhale CO2 (we just dump it from internal stores; actual grid addition happens in simulation.rs)
         let co2_exhale = chem.co2.min(metabolism.mass * 2.0);
         chem.co2 -= co2_exhale;
-        atmosphere.co2 += co2_exhale;
 
         // 2. Cellular Respiration (Glucose + O2 -> ATP + CO2)
         // How much ATP they want to generate to fill their tank
@@ -126,17 +141,33 @@ pub fn metabolism_system(
 
         // 3. Basal Metabolic Cost
         // Deduct ATP: superlinear scaling mass^1.2
-        let cost = metabolism.base_rate * metabolism.mass.powf(1.2);
+        let mut active_base_rate = metabolism.base_rate;
+
+        // Phase 2: Metabolic Dormancy (Night/Scarcity Mode)
+        if metabolism.is_plant && (atmosphere.sunlight < 0.2 || local_co2 < 10.0) {
+            // Sleep through the night or CO2 droughts without burning entire Glucose supply.
+            active_base_rate *= 0.2;
+        }
+
+        let cost = active_base_rate * metabolism.mass.powf(1.2);
         chem.atp -= cost;
 
         // Check starvation / suffocation (ATP hit 0)
         if chem.atp <= 0.0 {
+            println!(
+                "Producer died of ATP Loss! ATP: {}, Glucose: {}, CO2: {}",
+                chem.atp, chem.glucose, chem.co2
+            );
             commands.entity(entity).insert(Dead);
             continue;
         }
 
         // Check old age
         if age.ticks >= age.max_lifespan {
+            println!(
+                "Producer died of SOMETHING ELSE! ATP: {}, Age: {}",
+                chem.atp, age.ticks
+            );
             commands.entity(entity).insert(Dead);
             continue;
         }

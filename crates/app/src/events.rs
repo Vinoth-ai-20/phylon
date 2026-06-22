@@ -231,7 +231,7 @@ impl PhylonApp {
                 ui::MenuAction::StepForward => {
                     self.accumulated_time += 1.0;
                 }
-                ui::MenuAction::Reset | ui::MenuAction::ReseedEcosystem => {
+                ui::MenuAction::ReseedEcosystem => {
                     // Despawn all entities
                     let entities: Vec<_> = self.world.ecs.iter_entities().map(|e| e.id()).collect();
                     for entity in entities {

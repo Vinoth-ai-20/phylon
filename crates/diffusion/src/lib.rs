@@ -52,8 +52,9 @@ impl Default for CpuFieldState {
 }
 
 impl CpuFieldState {
-    /// Samples the field at a given world position.
-    pub fn sample(&self, pos: Vec2) -> f32 {
+    /// Samples the field at a given world position for a specific layer.
+    /// Layer 0: Pheromones, 1: Energy, 2: O2, 3: CO2.
+    pub fn sample(&self, pos: Vec2, layer: u32) -> f32 {
         let gx = (pos.x / 10.0) + (self.width as f32 / 2.0);
         let gy = (pos.y / 10.0) + (self.height as f32 / 2.0);
 
@@ -61,7 +62,8 @@ impl CpuFieldState {
         let iy = gy.floor() as i32;
 
         if ix >= 0 && ix < self.width as i32 && iy >= 0 && iy < self.height as i32 {
-            let idx = (iy * self.width as i32 + ix) as usize;
+            let layer_offset = (layer * self.width * self.height) as usize;
+            let idx = layer_offset + (iy * self.width as i32 + ix) as usize;
             if idx < self.data.len() {
                 return self.data[idx];
             }
@@ -73,12 +75,27 @@ impl CpuFieldState {
 /// A spatial emitter that adds a quantity to the field per tick.
 #[derive(Component, Clone, Debug)]
 pub struct Emitter {
-    /// World position of the emitter
+    /// World position
     pub position: Vec2,
-    /// The value to add per tick
+    /// Value emitted per tick (can be negative for absorption)
     pub value: f32,
-    /// The radius of emission (world space)
+    /// Radius of the emission
     pub radius: f32,
+    /// Which field layer this emitter affects
+    pub layer: FieldLayer,
+}
+
+/// Represents the type of layer an emitter affects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldLayer {
+    /// Pheromones layer for ant-like communication.
+    Pheromones = 0,
+    /// Spatial energy layer for localized resources.
+    Energy = 1,
+    /// Spatial oxygen layer.
+    O2 = 2,
+    /// Spatial carbon dioxide layer.
+    CO2 = 3,
 }
 
 /// The latest state of the signal diffusion field read back from the GPU.
