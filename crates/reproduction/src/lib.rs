@@ -17,7 +17,21 @@ pub enum ReproductionMode {
     Sexual,
 }
 
-/// Component defining an organism's reproduction logic.
+/// # Ecological Reproduction Strategy
+///
+/// ## 1. What Happens
+/// The `ReproductionStrategy` component manages the biological cost, threshold, and mode
+/// (Asexual vs Sexual) of creating offspring. It stores the parent's `Genome` which will
+/// be passed down or crossed over.
+///
+/// ## 2. Why It Happens
+/// In ALife, infinite free reproduction causes exponential explosions that crash the engine.
+/// Tying reproduction directly to the `ChemicalEconomy` ensures that populations are strictly
+/// bottlenecked by the availability of environmental energy (Glucose/ATP).
+///
+/// ## 3. How It Happens
+/// If $Glucose \ge \text{energy\_threshold}$ and $ATP \ge \text{energy\_threshold}$ and the
+/// `current_cooldown` is $0$, the system deducts `energy_cost` and emits a `BirthRequest`.
 #[derive(Component, Debug, Clone)]
 pub struct ReproductionStrategy {
     /// Energy required to trigger reproduction.
@@ -34,7 +48,19 @@ pub struct ReproductionStrategy {
     pub genome: Genome,
 }
 
-/// Event triggered when an organism successfully reproduces.
+/// # Offspring Spawning Event
+///
+/// ## 1. What Happens
+/// `BirthRequest` is an asynchronous event requesting the engine to spawn a new organism.
+///
+/// ## 2. Why It Happens
+/// Spawning a complex physics body with $N$ nodes and $M$ springs requires mutable access to
+/// `Commands` and various structural components. Processing reproduction in the ECS update phase
+/// but deferring the actual spawning to an Event Reader phase prevents system borrow conflicts.
+///
+/// ## 3. How It Happens
+/// The `reproduction_system` writes the event. The `app` crate reads the event, increments the
+/// `Generation` counter, and calls `spawn_organism` from the `organisms` crate.
 #[derive(Event, Debug, Clone)]
 pub struct BirthRequest {
     /// The parent entity, if any.
@@ -49,7 +75,26 @@ pub struct BirthRequest {
     pub category: ecology::EcologicalCategory,
 }
 
-/// System that handles reproduction (Asexual cloning and Sexual mating).
+/// # Population Replication System
+///
+/// ## 1. What Happens
+/// The `reproduction_system` scans all organisms. If they meet their metabolic and cooldown
+/// thresholds, it attempts to reproduce them. It supports both Asexual (clonal budding) and
+/// Sexual (proximity-based crossover) mating.
+///
+/// ## 2. Why It Happens
+/// This system drives the evolutionary loop. By enforcing proximity for Sexual mating, we
+/// create spatial selection pressures (organisms must be good at finding mates). By tracking
+/// global population caps, we prevent OOM crashes during periods of extreme resource abundance.
+///
+/// ## 3. How It Happens
+/// The system runs in two passes:
+/// 1. **Asexual Pass**: Checks thresholds. If Asexual, mutates the `Genome` structurally and
+///    sends a `BirthRequest`. If Sexual, adds the organism to a `ready_sexuals` vector.
+/// 2. **Sexual Pass**: Iterates over `ready_sexuals` looking for pairs where:
+///    $$ \text{Distance}(A, B) < 50.0 $$
+///    $$ A.BrainTopology \equiv B.BrainTopology $$
+///    If matched, it performs NEAT crossover, mutates, and deducts the energy cost.
 pub fn reproduction_system(
     mut query: Query<(
         Entity,

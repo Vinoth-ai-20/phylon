@@ -20,9 +20,11 @@ struct FieldConfig {
     max_val: f32,
     camera_pos: vec2<f32>,
     camera_zoom: f32,
+    _pad0: u32,
     screen_size: vec2<f32>,
     colormap: u32,
-    _pad: u32,
+    _pad1: u32,
+    world_bounds: vec2<f32>,
 }
 
 @group(0) @binding(0) var t_field: texture_2d<f32>;
@@ -108,16 +110,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let world_y = clip_y * (config.screen_size.y * 0.5) / config.camera_zoom + config.camera_pos.y;
 
     // 3. Map world space back to the simulation grid space [0..1]
-    let GRID_EXTENTS: f32 = 1500.0;
-    let grid_u = (world_x / GRID_EXTENTS) * 0.5 + 0.5;
-    let grid_v = (-world_y / GRID_EXTENTS) * 0.5 + 0.5;
+    let grid_u = (world_x / config.world_bounds.x) * 0.5 + 0.5;
+    let grid_v = (-world_y / config.world_bounds.y) * 0.5 + 0.5;
     
     let sample_uv = vec2<f32>(grid_u, grid_v);
-
-    // Fade out if outside simulation boundaries
-    if (sample_uv.x < 0.0 || sample_uv.x > 1.0 || sample_uv.y < 0.0 || sample_uv.y > 1.0) {
-        return vec4<f32>(0.0);
-    }
 
     let val = textureSample(t_field, s_field, sample_uv).r;
     

@@ -44,15 +44,21 @@ use events::EventBus;
 // SystemOrder
 // ────────────────────────────────────────────────────────────────────────────
 
-/// The canonical execution order of all simulation subsystems within one tick.
+/// # Deterministic System Execution Order
 ///
-/// This enum defines the **only** permitted ordering for system execution.
-/// Any deviation requires an architecture decision and a corresponding update
-/// to `docs/04_simulation_model.md`.
+/// ## 1. What Happens
+/// `SystemOrder` defines the strict, canonical enumeration of the phases in a single
+/// simulation tick.
 ///
-/// Systems registered with a later variant run after all systems with an
-/// earlier variant. Systems registered with the same variant may run in any
-/// relative order (rayon parallel) — they must not depend on each other.
+/// ## 2. Why It Happens
+/// In complex ECS-driven ALife engines, execution order bugs ("System A reads X before
+/// System B writes it") are the leading cause of non-determinism. By forcing all systems
+/// into a rigid pipeline, a simulation run with RNG seed 42 will always produce the exact
+/// same ecology 1,000,000 ticks later across different machines.
+///
+/// ## 3. How It Happens
+/// Systems registered to the `SimulationScheduler` are sorted by this enum. During `run_tick`,
+/// the scheduler loops over the sorted vector and invokes the boxed closures sequentially.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SystemOrder {
     /// Spatial index updates, broad-phase collision preparation.
@@ -172,11 +178,23 @@ pub struct TickStats {
 /// This API will be replaced by `bevy_ecs` system scheduling in Phase 1.
 pub type SystemFn = Box<dyn FnMut(Tick, &EventBus) -> Result<(), String> + Send>;
 
-/// The fixed-tick deterministic scheduler.
+/// # Deterministic Tick Scheduler
 ///
-/// Owns the canonical [`Tick`] counter, the [`EventBus`], and the list of
-/// registered system callbacks. Drives the simulation forward by advancing the
-/// tick counter and invoking all registered systems in [`SystemOrder`].
+/// ## 1. What Happens
+/// The `SimulationScheduler` is the beating heart of the Phylon engine. It manages the `Tick`
+/// counter, accumulates wall-clock time, and dispatches systems in canonical order.
+///
+/// ## 2. Why It Happens
+/// Real-time rendering framerates fluctuate (e.g., $144Hz$ vs $60Hz$). If physics or metabolism
+/// were tied to the frame delta, the simulation would become non-deterministic. A fixed timestep
+/// accumulator decouples simulation updates from rendering.
+///
+/// ## 3. How It Happens
+/// The `app` event loop calls `advance(max_ticks_per_frame)` passing the elapsed frame time.
+/// 1. The time is added to `accumulator`.
+/// 2. While `accumulator >= tick_duration`, it calls `run_tick()` and subtracts `tick_duration`.
+/// 3. `run_tick()` iterates through `SystemOrder`, executing all registered closures, then
+///    increments `current_tick`.
 pub struct SimulationScheduler {
     /// The current tick (starts at zero, incremented by [`SimulationScheduler::advance`]).
     current_tick: Tick,

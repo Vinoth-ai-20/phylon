@@ -31,7 +31,22 @@ use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message;
 
-/// Commands received from RL agents.
+/// # Multi-Agent Reinforcement Learning Command
+///
+/// ## 1. What Happens
+/// The `MarlCommand` enum defines the typed RPC payload sent from an external Machine Learning
+/// trainer (like a Python PPO script) over the WebSocket to the Phylon engine.
+///
+/// ## 2. Why It Happens
+/// In headless ML training, the engine acts as an OpenAI Gym Environment. It cannot run continuously;
+/// it must wait for the Python script to run its backward pass, update gradients, and compute the
+/// next deterministic action vector before advancing physics. This enum forces synchronous lock-stepping.
+///
+/// ## 3. How It Happens
+/// The payload is serialized as JSON string frames over TCP:
+/// 1. `Step { ticks }` unpauses the engine loop for $N$ iterations.
+/// 2. `SetActions` injects the network output tensor $A_t$ into the organisms.
+/// 3. `GetState` requests the latest $O_t$ observation tensor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MarlCommand {
     /// Advance the simulation by a fixed number of ticks.
@@ -50,7 +65,20 @@ pub enum MarlCommand {
     Reset,
 }
 
-/// Responses sent to RL agents.
+/// # Multi-Agent Reinforcement Learning Response
+///
+/// ## 1. What Happens
+/// The `MarlResponse` enum defines the typed RPC payload sent from the Phylon engine back to
+/// the external Machine Learning trainer in response to a `MarlCommand`.
+///
+/// ## 2. Why It Happens
+/// When the trainer requests `GetState` after executing a `Step`, it expects the simulation to
+/// have resolved physics, evaluated collisions, and computed the new sensor values. This response
+/// delivers that data.
+///
+/// ## 3. How It Happens
+/// The `State` variant serializes the continuous $\mathbb{R}^N$ `ObservationVector` from the
+/// `learning` crate back into JSON format and pushes it down the WebSocket stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MarlResponse {
     /// The current state of the environment.
@@ -75,7 +103,22 @@ pub struct MarlRequest {
     pub reply: tokio::sync::oneshot::Sender<MarlResponse>,
 }
 
-/// WebSocket network server for MARL headless control.
+/// # Async WebSocket Network Server
+///
+/// ## 1. What Happens
+/// The `NetworkServer` manages a headless TCP WebSocket listener using `tokio` and `tungstenite`.
+/// It acts as the networking bridge between the asynchronous IO runtime and the synchronous Bevy ECS.
+///
+/// ## 2. Why It Happens
+/// Phylon's core simulation (`crates/app`) is a blocking `winit` event loop or a tight `while` loop
+/// (headless). Networking must not block the physics integration. Therefore, we spawn a separate
+/// `tokio` runtime that handles TCP handshakes and JSON parsing, passing strongly-typed
+/// `MarlRequest` structs to the ECS via a lock-free MPSC channel.
+///
+/// ## 3. How It Happens
+/// The server listens on `addr`. When a connection is accepted, a green thread (`tokio::spawn`)
+/// parses incoming `Message::Text` frames into `MarlCommand`s, constructs a one-shot reply channel,
+/// and sends the job to `cmd_tx`. The ECS dequeues the job during its pre-tick phase.
 pub struct NetworkServer {
     addr: String,
     cmd_tx: tokio::sync::mpsc::Sender<MarlRequest>,

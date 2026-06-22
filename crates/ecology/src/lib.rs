@@ -124,7 +124,30 @@ pub fn food_spawner_system(
     }
 }
 
-/// System that handles collision eating based on ecological roles.
+/// # Predation and Biomass Transfer System
+///
+/// ## 1. What Happens
+/// The `foraging_system` handles all collision-based consumption in the ecosystem. It evaluates
+/// interactions between organisms based on their `Diet` components (Carnivore, Herbivore, Decomposer)
+/// and transfers `Glucose` from the prey (or food pellet/corpse) to the predator upon spatial overlap.
+///
+/// ## 2. Why It Happens
+/// An ecosystem requires a flow of energy. Without predation, primary producers (plants) would simply
+/// replicate until the `max_organisms` limit was reached, creating a static, dead simulation.
+/// Predation introduces Lotka-Volterra population dynamics and creates evolutionary selection pressures
+/// for speed, armor, and vision.
+///
+/// ## 3. How It Happens
+/// The system uses an $O(N^2)$ distance check (optimized by chunking in Phase 4) to find collisions
+/// between entities. When the distance between a predator node $P_1$ and prey node $P_2$ is less than
+/// the threshold $R$:
+///
+/// $$ | \vec{P_1} - \vec{P_2} | \le R $$
+///
+/// The prey is marked `Eaten` and its total caloric value is added to the predator's glucose pool,
+/// clamped to the predator's maximum stomach capacity:
+///
+/// $$ G_{predator} = \min(G_{predator} + G_{prey} + ATP_{prey}, G_{max}) $$
 pub fn foraging_system(
     mut commands: Commands,
     mut organism_query: Query<(
@@ -259,7 +282,31 @@ pub fn foraging_system(
     }
 }
 
-/// System that handles photosynthesis for Producers.
+/// # Autotrophic Energy Generation System
+///
+/// ## 1. What Happens
+/// The `photosynthesis_system` allows organisms with the `Diet::Producer` trait to passively
+/// convert ambient `GlobalAtmosphere.sunlight` and `GlobalAtmosphere.co2` directly into
+/// structural `Glucose` and respired $O_2$.
+///
+/// ## 2. Why It Happens
+/// The food web must have a foundational energy source. In Earth's biosphere, this is solar
+/// irradiance. This system injects new biomass into the economy. However, to prevent runaway
+/// infinite growth, the conversion is strictly bottlenecked by the availability of atmospheric $CO_2$.
+///
+/// ## 3. How It Happens
+/// Every tick, a Producer requests a carbon volume proportional to its mass ($M$) and the
+/// available sunlight ($S$):
+///
+/// $$ CO_{2_{req}} = 4.0 \times M \times S $$
+///
+/// To prevent a "Carbon Leak" where plants delete carbon by over-eating when full, the requested
+/// $CO_2$ is clamped to the available space in the organism's glucose tank:
+///
+/// $$ \Delta CO_2 = \min(CO_{2_{req}}, G_{max} - G_{current}, CO_{2_{atmosphere}}) $$
+///
+/// The $\Delta CO_2$ is subtracted from the atmosphere, and the organism's glucose and $O_2$
+/// are incremented by the same amount (a 1:1 simplified stoichiometric ratio).
 pub fn photosynthesis_system(
     mut atmosphere: ResMut<metabolism::GlobalAtmosphere>,
     mut query: Query<(
@@ -290,7 +337,28 @@ pub fn photosynthesis_system(
     }
 }
 
-/// System that decays Corpses into MineralPellets over time.
+/// # Corpse Decomposition & Outgassing System
+///
+/// ## 1. What Happens
+/// The `corpse_decay_system` manages the biological decay of organisms that have died. When a
+/// `Corpse` decays, it steadily outgasses $CO_2$ back into the `GlobalAtmosphere` over a set
+/// duration. Once fully decayed, it despawns and leaves behind a `MineralPellet`.
+///
+/// ## 2. Why It Happens
+/// This resolves the "Carbon Leak" tragedy-of-the-commons crisis. If organisms consume $CO_2$
+/// to grow but delete that mass from the simulation upon death, the atmosphere would eventually
+/// run out of carbon, halting all photosynthetic life. The outgassing models the gradual
+/// respiration of invisible decomposer microbes breaking down structural carbon.
+///
+/// ## 3. How It Happens
+/// Each tick, the system iterates over all entities with a `Corpse` component. The decay timer
+/// is decremented, and the atmospheric outgassing accumulation is calculated per tick as:
+///
+/// $$ \Delta CO_{2} = \text{corpse.energy\_value} \times 0.0001 $$
+///
+/// Upon timer exhaustion ($t = 0$), the corpse undergoes complete mineralization. 50% of
+/// the remaining energy is spawned as a `MineralPellet`, a 10% $\Delta CO_2$ burst is released,
+/// and the `Corpse` entity is safely despawned.
 pub fn corpse_decay_system(
     mut commands: Commands,
     mut atmosphere: ResMut<metabolism::GlobalAtmosphere>,

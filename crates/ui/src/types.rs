@@ -43,8 +43,20 @@ pub enum BottomTab {
     EventLog,
 }
 
-/// Contains the screen-space rect of the transparent canvas area and the
-/// unified touch/mouse/trackpad gesture interactions performed on it.
+/// # Unified Viewport Interaction
+///
+/// ## 1. What Happens
+/// `CanvasInteraction` captures all user input that occurred specifically within the
+/// 3D/2D simulation view, avoiding UI panels.
+///
+/// ## 2. Why It Happens
+/// If a user drags a slider in the inspector, they are clicking the mouse, but we don't
+/// want the camera to pan. We must isolate input events that pass *through* the UI to
+/// the underlying canvas.
+///
+/// ## 3. How It Happens
+/// In `render_ui`, we allocate an `egui::CentralPanel`. We check `response.drag_delta()`
+/// and `ui.input(|i| i.zoom_delta())` while ensuring the pointer is hovering the canvas rect.
 #[derive(Debug, Clone, Copy)]
 pub struct CanvasInteraction {
     /// The screen-space bounding rect of the central canvas panel.
@@ -84,7 +96,20 @@ pub enum AppState {
     Simulation,
 }
 
-/// Menu actions returned by the UI layer to the main app loop.
+/// # UI Command Dispatch
+///
+/// ## 1. What Happens
+/// `MenuAction` is an enum of discrete commands (e.g., Save, Load, Spawn) returned by the UI.
+///
+/// ## 2. Why It Happens
+/// `egui` requires mutable borrows to draw data, but executing a complex command (like
+/// Reseeding the Ecosystem) requires a mutable borrow of the *entire* ECS World, which is
+/// currently borrowed by the UI! `MenuAction` acts as a message queue to execute commands
+/// *after* the UI finishes rendering.
+///
+/// ## 3. How It Happens
+/// UI buttons push variants to a `Vec<MenuAction>`. The main loop receives this vector and
+/// pattern-matches each action, safely applying structural changes to the ECS.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MenuAction {
     /// Save the simulation state to disk.

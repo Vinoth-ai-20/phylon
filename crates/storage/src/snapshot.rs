@@ -75,6 +75,23 @@ pub struct SnapshotCorpse {
     pub max_decay: u32,
 }
 
+/// # Deterministic State Snapshot
+///
+/// ## 1. What Happens
+/// `SimulationSnapshot` is a serializable representation of the entire ECS world state
+/// at a specific tick.
+///
+/// ## 2. Why It Happens
+/// Bevy's ECS does not natively support perfect serialization out of the box, especially
+/// with pointers, Entity IDs, and GPU buffers. To guarantee deterministic restore, we must
+/// extract the exact float positions, neural weights, and genomes, and map local Entity IDs
+/// to a stable 64-bit format.
+///
+/// ## 3. How It Happens
+/// `from_world` executes bulk queries over the ECS, packing `ParticleNode`, `Spring`, and
+/// `FoodPellet` data into flat `Vec`s. `restore_world` clears the ECS completely and respawns
+/// every entity, carefully rewriting `node_a` and `node_b` entity references in the `Spring`s
+/// to match the new Bevy Entity IDs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationSnapshot {
     pub schema_version: u32,

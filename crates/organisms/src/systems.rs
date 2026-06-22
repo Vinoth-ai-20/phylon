@@ -2,13 +2,26 @@ use crate::components::{GrowthState, OrganismColor};
 use bevy_ecs::prelude::{Commands, Entity, Query};
 use common::Vec2;
 
-/// System that builds out the organism's body sequentially, one Hox gene per tick.
+/// # Embryonic Growth & Morphogenesis System
 ///
-/// Topology produced:
-/// - **Spine**: single node per axial segment, connected end-to-end by `Rigid` bones.
-///   No two-node-per-segment pairs, no cross springs, no closed rectangular loops.
-/// - **Fins**: when a gene's `branching_signal > 0.0`, two fin nodes are sprouted
-///   laterally from the spine node and attached via `Rotational` hinges.
+/// ## 1. What Happens
+/// The `growth_system` executes the procedural embryogenesis of an organism. Over multiple ticks,
+/// it reads the `HoxSequence` (or generates one dynamically via the Morph CPPN) and iteratively
+/// spawns the `ParticleNode`s and `Spring` constraints that make up the organism's physical body.
+///
+/// ## 2. Why It Happens
+/// Spawning an entire complex multi-body organism in a single tick with perfect physics stability
+/// is mathematically impossible due to spring rest-length violations. By growing the organism
+/// one segment at a time (like a biological bud), the PBD physics solver has time to gently
+/// relax the tension, preventing numeric explosions ("fly-off").
+///
+/// ## 3. How It Happens
+/// The system acts as a state machine tracked by `GrowthState`:
+/// 1. Every $N$ ticks, it reads the next `HoxGene`.
+/// 2. It spawns a new node at exactly $RestLength$ away from the `parent_spine_node`.
+/// 3. It attaches a `Rigid` or `Passive` spring to the parent.
+/// 4. If $BranchingSignal > 0$, it sprouts orthogonal fin nodes and connects them with `Elastic` muscles.
+/// 5. Once the Hox sequence is exhausted, it wires the `Brain` CTRNN topology.
 pub fn growth_system(
     mut commands: Commands,
     mut query: Query<(Entity, &mut GrowthState)>,
@@ -375,7 +388,25 @@ pub fn growth_system(
     }
 }
 
-/// System that handles physical growth/branching for Producers.
+/// # Unbounded Plant Growth System
+///
+/// ## 1. What Happens
+/// The `producer_growth_system` handles the continuous, post-embryonic structural expansion
+/// of `Producer` organisms (plants/autotrophs) as long as they have surplus resources.
+///
+/// ## 2. Why It Happens
+/// Unlike animals (which have a fixed Hox body plan to ensure locomotion symmetry), plants
+/// grow fractally based on resource availability. This creates physical obstruction and
+/// biomass aggregation in the ecosystem, providing dynamic maze-like structures for herbivores.
+///
+/// ## 3. How It Happens
+/// If a Producer's $Glucose$ and $ATP$ exceed the `growth_cost` threshold, it pays the metabolic tax:
+///
+/// $$ Glucose_{new} = Glucose - 5000.0 $$
+/// $$ ATP_{new} = ATP - 2000.0 $$
+///
+/// The system traverses the existing plant graph (BFS) and randomly attaches a new leaf node
+/// via an `Elastic` spring, inherently biasing growth upwards against gravity.
 pub fn producer_growth_system(
     mut commands: Commands,
     atmosphere: bevy_ecs::prelude::Res<metabolism::GlobalAtmosphere>,

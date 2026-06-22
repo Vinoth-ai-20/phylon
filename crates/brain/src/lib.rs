@@ -47,7 +47,22 @@ pub enum ActivationFn {
     Step,
 }
 
-/// A single node in the CTRNN, designed for GPU/Pod compatibility.
+/// # Continuous-Time Recurrent Neural Node
+///
+/// ## 1. What Happens
+/// The `CtrnnNode` represents a single artificial neuron with an internal state potential,
+/// a time constant ($\tau$), an activation function, and indices tracking incoming synapses.
+///
+/// ## 2. Why It Happens
+/// Unlike standard feed-forward networks, biological brains operate continuously in time.
+/// CTRNNs emulate this by treating nodes as leaky integrators (differential equations) rather
+/// than discrete step-functions. This naturally supports rhythmic pattern generation
+/// (like walking gaits) and short-term memory.
+///
+/// ## 3. How It Happens
+/// Nodes are strictly `#[repr(C)]` PODs (Plain Old Data) allowing direct upload to WGPU
+/// buffers. The `first_synapse` and `synapse_count` fields allow a GPU shader to iterate
+/// only over the incoming connections without pointer traversal.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Serialize, Deserialize)]
 pub struct CtrnnNode {
@@ -65,7 +80,20 @@ pub struct CtrnnNode {
     pub synapse_count: u32,
 }
 
-/// A synapse connecting two nodes in the CTRNN, designed for GPU/Pod compatibility.
+/// # Neural Synapse
+///
+/// ## 1. What Happens
+/// The `CtrnnSynapse` represents a directed, weighted connection between two `CtrnnNode`s.
+///
+/// ## 2. Why It Happens
+/// Synapses define the topology and strength of information flow in the brain. Over
+/// generations, evolution (NEAT) modifies these weights, adds new synapses, or splices
+/// new nodes into existing synapses to grow complex cognitive architectures.
+///
+/// ## 3. How It Happens
+/// Stored as a flat `Vec<CtrnnSynapse>` in the `Brain`, sorted by `target` index. The GPU
+/// uses the target's `first_synapse` offset to quickly aggregate incoming signals:
+/// $I_j = \sum (w_{ij} \cdot \sigma(state_i))$.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Serialize, Deserialize)]
 pub struct CtrnnSynapse {
@@ -79,7 +107,21 @@ pub struct CtrnnSynapse {
     pub _padding: u32,
 }
 
-/// A Continuous-Time Recurrent Neural Network (CTRNN).
+/// # Organism Brain Substrate
+///
+/// ## 1. What Happens
+/// The `Brain` component encapsulates the complete neural network (nodes and synapses)
+/// driving an organism's behavior.
+///
+/// ## 2. Why It Happens
+/// To achieve agency, the organism needs a control mechanism mapping sensory inputs
+/// to muscular actuation. The `Brain` acts as the mapping layer. We encapsulate it into
+/// flat arrays so it can be cloned cheaply during reproduction or sent to the GPU.
+///
+/// ## 3. How It Happens
+/// The brain reads sensory data via `set_inputs`. During the `BrainEvaluation` pipeline,
+/// the integration equations are evaluated (either on CPU or GPU). Afterwards, `get_outputs`
+/// extracts the post-activation values to drive the organism's physics springs (muscles).
 #[derive(bevy_ecs::prelude::Component, Debug, Clone, Serialize, Deserialize)]
 pub struct Brain {
     /// Unique identifier for this brain.

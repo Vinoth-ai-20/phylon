@@ -28,6 +28,21 @@ use winit::window::Window;
 use config::PhylonConfig;
 use scheduler::SimulationScheduler;
 
+/// # Hardware Graphics Context
+///
+/// ## 1. What Happens
+/// The `GpuContext` holds the underlying device handles (`wgpu::Device`, `wgpu::Queue`)
+/// and the swapchain (`wgpu::Surface`) required to interface with the physical GPU.
+///
+/// ## 2. Why It Happens
+/// We cannot rely on a pure CPU simulation if we want to scale to 10,000 organisms.
+/// We need low-level access to the GPU to dispatch massive parallel compute shaders
+/// (for Physics and Diffusion) and to render the SDF organism skin.
+///
+/// ## 3. How It Happens
+/// Initialized once during `PhylonApp` startup via `wgpu::Instance`. It is kept alive
+/// for the duration of the application and passed by reference to the pipeline renderers
+/// each frame.
 pub struct GpuContext {
     pub(crate) surface: Option<wgpu::Surface<'static>>,
     pub(crate) device: wgpu::Device,
@@ -99,6 +114,24 @@ impl Default for PhylonUIState {
     }
 }
 
+/// # Phylon Application Orchestrator
+///
+/// ## 1. What Happens
+/// The `PhylonApp` struct is the Composition Root of the entire engine. It holds the
+/// Bevy ECS `World`, the WGPU graphics context, the immediate-mode EGUI state, and the
+/// bindings to the custom GPU Compute pipelines (Physics, Diffusion, and Neural Networks).
+///
+/// ## 2. Why It Happens
+/// Architecturally, ALife engines require a strict boundary between discrete logic (biology,
+/// genetics, metabolism) and continuous presentation (rendering, input). The `PhylonApp`
+/// exists to safely bridge these domains without violating Rust's borrowing rules, managing
+/// the lifetime of the GPU buffers alongside the ECS world data.
+///
+/// ## 3. How It Happens
+/// During initialization, `PhylonApp` consumes the `PhylonConfig` to bootstrap the GPU device.
+/// On every OS event loop iteration, it delegates control flow to either the UI renderer
+/// or the `SimulationScheduler`. Memory is passed over the PCIe bus to the GPU compute shaders
+/// strictly through the `Option<GpuContext>` and mapped uniform buffers.
 pub(crate) struct PhylonApp {
     /// Deserialised application/simulation config
     pub(crate) sim_config: PhylonConfig,

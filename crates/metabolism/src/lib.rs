@@ -5,7 +5,21 @@
 
 use bevy_ecs::prelude::*;
 
-/// Tracks the chemical economy of an organism.
+/// # Cellular Chemical Economy
+///
+/// ## 1. What Happens
+/// The `ChemicalEconomy` component acts as the biological ledger for an organism, tracking the
+/// internal storage of four primary resources: Glucose, Oxygen, Carbon Dioxide, and ATP.
+///
+/// ## 2. Why It Happens
+/// Simple ALife simulations just use a single "Energy" scalar. Real biology uses a multi-step
+/// conversion process. By splitting energy into stored mass (Glucose), volatile fuel (ATP), and
+/// gas dependencies ($O_2$/$CO_2$), the engine naturally emerges distinct ecological niches:
+/// anaerobic vs aerobic organisms, suffocation from algal blooms, and starvation.
+///
+/// ## 3. How It Happens
+/// Every tick, the `metabolism_system` attempts to perform cellular respiration, converting
+/// Glucose and Oxygen into ATP and Carbon Dioxide. If ATP drops to $0.0$, the organism dies.
 #[derive(Component, Debug, Clone)]
 pub struct ChemicalEconomy {
     /// Glucose: Raw fuel acquired by eating or photosynthesis.
@@ -74,15 +88,27 @@ pub struct Metabolism {
     pub is_plant: bool,
 }
 
-/// System that deducts energy per tick based on mass and handles aging.
+/// # Cellular Respiration and Aging System
 ///
-/// Note: Starvation and old age deaths emit a `DeathEvent` (handled in `app`).
-/// For simplicity in this phase, we just flag them by despawning or marking them dead
-/// directly via commands if we don't have access to the EventBus here.
-/// Actually, to use `EventBus`, we would need it as a Resource. Since `events::EventBus`
-/// isn't a Bevy Resource yet, we can either insert it as a Resource or just despawn
-/// directly here. For Phylon architecture, let's use `commands.entity(entity).despawn_recursive()`
-/// and we can publish the event by storing an `EventBus` resource.
+/// ## 1. What Happens
+/// The `metabolism_system` ticks the biological clock for all organisms. It handles gas exchange
+/// with the local spatial PDE grid, converts Glucose to ATP via respiration, and deducts the basal
+/// metabolic cost required to stay alive.
+///
+/// ## 2. Why It Happens
+/// Thermodynamics dictates that organization requires energy. Without a continuous basal cost,
+/// organisms could sit perfectly still forever. The super-linear scaling of mass to cost prevents
+/// the evolution of infinitely large organisms, enforcing physical tradeoffs.
+///
+/// ## 3. How It Happens
+/// The system executes 3 phases per organism:
+/// 1. **Gas Exchange**: Samples $O_2$ from `CpuFieldState` and fills internal lungs.
+/// 2. **Respiration**: Converts $1G + 2O_2 \to 5ATP + 2CO_2$, limited by mass-based reaction rates.
+/// 3. **Basal Cost**: Deducts ATP using Kleiber's Law (super-linear metabolic scaling):
+///
+/// $$ ATP_{cost} = \text{base\_rate} \times M^{1.2} $$
+///
+/// If $ATP \le 0.0$ or $Age \ge \text{max\_lifespan}$, the entity is marked `Dead`.
 pub fn metabolism_system(
     mut commands: Commands,
     atmosphere: Res<GlobalAtmosphere>,
@@ -154,20 +180,12 @@ pub fn metabolism_system(
 
         // Check starvation / suffocation (ATP hit 0)
         if chem.atp <= 0.0 {
-            println!(
-                "Producer died of ATP Loss! ATP: {}, Glucose: {}, CO2: {}",
-                chem.atp, chem.glucose, chem.co2
-            );
             commands.entity(entity).insert(Dead);
             continue;
         }
 
         // Check old age
         if age.ticks >= age.max_lifespan {
-            println!(
-                "Producer died of SOMETHING ELSE! ATP: {}, Age: {}",
-                chem.atp, age.ticks
-            );
             commands.entity(entity).insert(Dead);
             continue;
         }

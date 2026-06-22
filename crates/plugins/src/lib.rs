@@ -23,10 +23,20 @@ pub enum PluginError {
 
 impl common::PhylonError for PluginError {}
 
-/// Placeholder for the plugin engine.
+/// # Embedded Scripting Engine
 ///
-/// TODO(phase-12): Implement rhai engine initialisation, script loading,
-/// and simulation API exposure.
+/// ## 1. What Happens
+/// The `PluginEngine` is a placeholder for the `rhai` embedded scripting context.
+///
+/// ## 2. Why It Happens
+/// Researchers often need to inject custom scenarios, trigger ecological disasters, or
+/// modify genome populations on the fly without recompiling the Rust engine. An embedded
+/// scripting engine provides a sandboxed "God Mode" API.
+///
+/// ## 3. How It Happens
+/// In Phase 12, this struct will wrap a `rhai::Engine`, exposing tightly controlled
+/// bindings to the Bevy ECS `Commands` queue and `EventBus` so scripts can spawn entities
+/// or alter weather systems.
 pub struct PluginEngine;
 
 impl PluginEngine {

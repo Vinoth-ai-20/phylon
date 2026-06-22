@@ -1,9 +1,20 @@
 use wgpu::util::DeviceExt;
 
-/// A single bone for SDF skin rendering.
+/// # Signed Distance Field Bone Data
 ///
-/// Each bone corresponds to a `Rigid` spring between two `ParticleNode`s.
-/// Its world-space endpoints and radius are used to compute the capsule SDF.
+/// ## 1. What Happens
+/// `SdfBoneInstance` holds the GPU-side vertex payload for a single capsule in the
+/// 2D soft-body skin renderer.
+///
+/// ## 2. Why It Happens
+/// Traditional 2D sprites look rigid, and generating a dynamic 2D mesh contour for every organism
+/// every frame on the CPU is incredibly slow. By rendering the physics springs as mathematical
+/// distance fields directly on the GPU, we get perfectly smooth, seamless, "metaball"-like
+/// tissue blending for free.
+///
+/// ## 3. How It Happens
+/// The physics `ParticleNode` positions are uploaded as endpoints (`pos_a`, `pos_b`).
+/// In the Vertex Shader, a screen-space Quad is expanded around this bounding box.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SdfBoneInstance {
@@ -31,21 +42,29 @@ impl SdfBoneInstance {
     }
 }
 
-/// Renders the organic SDF skin for all bones using a two-pass
-/// accumulate-then-threshold technique.
+/// # Metaball SDF Skin Renderer
 ///
-/// ## Pass 1 — Accumulation
-/// Each bone is rendered as a world-space AABB quad into a single-channel
-/// `Rgba16Float` intermediate texture using **additive blending**.  The
-/// fragment shader computes the capsule SDF and writes a density contribution
-/// that is ≤ 0 outside the capsule and smoothly positive inside it.
+/// ## 1. What Happens
+/// `SdfSkinRenderer` manages the two-pass WebGPU rendering pipeline that turns discrete physics
+/// springs into contiguous, organic, squishy cell-membranes.
 ///
-/// ## Pass 2 — Composite
-/// A single full-screen triangle samples the accumulated density texture.
-/// Pixels where `density ≥ 1.0` are considered "inside" the organism skin.
-/// `smoothstep(0.7, 1.0, density)` produces the final alpha value, yielding
-/// an anti-aliased edge without visible seams at bone joints (where two bone
-/// quads overlap, density simply sums to > 1, remaining fully opaque).
+/// ## 2. Why It Happens
+/// When an organism stretches a muscle, we want the "flesh" between the nodes to stretch and thin
+/// out naturally. Metaballs achieve this via density accumulation. Since we use capsules instead of
+/// points, the "bones" maintain their structural width while smoothly merging with adjacent segments.
+///
+/// ## 3. How It Happens
+/// The pipeline executes a classic Thresholded Signed Distance Field technique:
+///
+/// **Pass 1 — Accumulation (Additive Blend):**
+/// Draws a bounding quad for each `SdfBoneInstance`. The fragment shader calculates the exact
+/// distance $D$ to the line segment. Density is accumulated into an offscreen `Rgba16Float` texture:
+///
+/// $$ Density = \max\left(0.0, 1.0 - \frac{D}{Radius}\right) $$
+///
+/// **Pass 2 — Composite (Thresholding):**
+/// A full-screen triangle reads the accumulation texture. If the summed density $\ge 1.0$, the
+/// pixel is inside the body. A `smoothstep` provides a perfectly anti-aliased organic edge.
 pub struct SdfSkinRenderer {
     // ── Accumulation pipeline ──────────────────────────────────────────────
     accum_pipeline: wgpu::RenderPipeline,

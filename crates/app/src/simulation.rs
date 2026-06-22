@@ -5,7 +5,27 @@ use bevy_ecs::system::RunSystemOnce;
 const DT: f32 = 0.016; // Fixed 60 Hz timestep
 
 impl PhylonApp {
-    /// Advances the simulation by exactly one tick (DT).
+    /// # Discrete Biological Update Loop
+    ///
+    /// ## 1. What Happens
+    /// The `update_simulation` method advances the entire biological, ecological, and physical
+    /// state of the world by exactly one discrete timestep ($DT = 0.016$ seconds). It orchestrates
+    /// the strict ordering of sensing, brain evaluation, behavior, physics integration, and spatial
+    /// diffusion.
+    ///
+    /// ## 2. Why It Happens
+    /// Strict deterministic execution ordering is ecologically critical. If physics ran before
+    /// sensing, an organism's brain would evaluate stale spatial data. Furthermore, performance
+    /// dictates that heavy tensor operations (like CTRNN brain evaluation) must be batched and
+    /// uploaded to the GPU compute shaders rather than evaluated linearly on the CPU.
+    ///
+    /// ## 3. How It Happens
+    /// The ECS `World` executes systems sequentially:
+    /// 1. **Biology**: Organism growth and sensory data gathering.
+    /// 2. **Neural Compute**: Batched ECS `Brain` data is mapped to `GpuCtrnnNode` buffers and dispatched to the GPU for numerical integration via Euler's method:
+    ///    $$ y_{i}(t + DT) = y_{i}(t) + \frac{DT}{\tau_i} \left( -y_i + \sum_{j} w_{ji} \sigma(y_j + \theta_j) + I_i \right) $$
+    /// 3. **Behavior & Physics**: Node forces are accumulated and integrated into velocity/position vectors.
+    /// 4. **Spatial Dynamics**: Pheromones and gases diffuse across the `texture_2d_array`.
     pub(crate) fn update_simulation(&mut self) -> (f64, f64) {
         let mut physics_duration_ms = 0.0;
         let mut diffusion_duration_ms = 0.0;

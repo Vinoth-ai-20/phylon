@@ -70,11 +70,26 @@ impl HoxGene {
     }
 }
 
-/// The complete axial Hox sequence for an organism's body plan.
+/// # Hox Gene Axial Sequence
 ///
-/// Growth walks this list front-to-back: index 0 is the anteriormost segment
-/// (Head), the last index is the posteriormost (Tail).  Each intermediate
-/// segment is a Torso, Muscle, or Fin gene.
+/// ## 1. What Happens
+/// The `HoxSequence` defines the macroscopic, segmented 1D body plan of a Phylon organism.
+/// It acts as the "spine" blueprint, dictating the order of Head, Torso, Muscle, and Tail segments.
+///
+/// ## 2. Why It Happens
+/// In real evolutionary biology, Hox genes control the head-to-tail axis of embryos, acting as
+/// master switches for appendage placement. Phylon relies on this modular morphology so the engine
+/// can procedurally assemble rigid bodies, joints, and springs without requiring a manual 3D mesh
+/// for every new species.
+///
+/// ## 3. How It Happens
+/// During embryogenesis (Phase 5), the engine walks the `genes` vector from index $0 \to N-1$.
+/// For a given gene $G_i$, the physics system spawns a node at distance $D$ from the previous node:
+///
+/// $$ \vec{Pos_i} = \vec{Pos_{i-1}} + \langle D, 0 \rangle $$
+///
+/// If $G_i.branching\_signal > 0.0$ and $G_i$ is a `Torso`, a bilateral pair of fin/limb nodes
+/// are sprouted orthogonally to the axial axis.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HoxSequence {
     /// The ordered list of segment genes (Head → ... → Tail).

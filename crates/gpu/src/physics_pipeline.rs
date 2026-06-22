@@ -54,7 +54,26 @@ struct PhysicsConfigUniform {
     _padding: [u32; 2],
 }
 
-/// Wrapper around the physics WGSL compute pipelines.
+/// # GPU Physics Compute Pipeline
+///
+/// ## 1. What Happens
+/// The `PhysicsComputePipeline` wraps the WebGPU WGSL shaders responsible for resolving
+/// the soft-body spring physics equations for all organisms simultaneously.
+///
+/// ## 2. Why It Happens
+/// A simulation with 500 organisms, each having 10 nodes and 25 springs, requires
+/// ~12,500 spring evaluations per tick. CPU-based physics engines (like Rapier) struggle
+/// with thousands of soft-body constraints. Moving the $O(N)$ math to a GPU Compute
+/// Shader allows the engine to run the Symplectic Euler and Position-Based Dynamics (PBD)
+/// at 60 FPS without blocking the CPU.
+///
+/// ## 3. How It Happens
+/// The pipeline manages 5 distinct compute passes:
+/// 1. `MuscleActuation`: Modifies rest lengths based on Sine oscillators.
+/// 2. `ComputeForces`: Calculates Hooke's Law for elastic springs.
+/// 3. `Integrate`: Applies $F=MA$ and updates velocities (Symplectic Euler).
+/// 4. `PbdProjection`: Solves distance constraints for rigid segments.
+/// 5. `ApplyPbd`: Updates final positions.
 pub struct PhysicsComputePipeline {
     muscle_actuation_pipeline: wgpu::ComputePipeline,
     compute_forces_pipeline: wgpu::ComputePipeline,
@@ -202,12 +221,27 @@ impl PhysicsComputePipeline {
         }
     }
 
-    /// Dispatches the physics compute shaders and returns the updated nodes.
+    /// # Physics Step Dispatch & Integration
     ///
-    /// This performs:
-    /// 1. Force computation (Elastic + Passive springs)
-    /// 2. Velocity / Position integration
-    /// 3. Position-Based Dynamics projection for Rigid springs (3 iterations)
+    /// ## 1. What Happens
+    /// `compute_step` marshals the CPU-side `GpuParticleNode` and `GpuPhysicsSpring` arrays
+    /// into GPU Storage Buffers, dispatches the compute workloads, and performs an asynchronous
+    /// readback to the CPU.
+    ///
+    /// ## 2. Why It Happens
+    /// The ECS needs the updated physics positions to render the organisms and calculate
+    /// collision/foraging distance checks. While the GPU is incredibly fast at math, transferring
+    /// data across the PCIe bus is slow. We pack all nodes into a flat $1D$ array to minimize
+    /// buffer mapping overhead.
+    ///
+    /// ## 3. How It Happens
+    /// To resolve rigid structural constraints without exploding the simulation, we use
+    /// a Position-Based Dynamics (PBD) approach. The standard Hooke's Law integration runs first,
+    /// followed by a 3-iteration Gauss-Seidel style projection loop:
+    ///
+    /// $$ \Delta \vec{p}_1 = \frac{w_1}{w_1 + w_2} (|\vec{p}_1 - \vec{p}_2| - d) \frac{\vec{p}_1 - \vec{p}_2}{|\vec{p}_1 - \vec{p}_2|} $$
+    ///
+    /// The final mapped buffer is cast back to a `Vec<GpuParticleNode>` using `bytemuck` and returned.
     #[allow(clippy::too_many_arguments)]
     pub fn compute_step(
         &self,

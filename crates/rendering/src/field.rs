@@ -44,8 +44,26 @@ pub struct FieldConfig {
     pub colormap: u32,
     /// Padding.
     pub _pad: u32,
+    /// Simulation World Bounds (width, height)
+    pub world_bounds: [f32; 2],
 }
-/// Renders the scalar diffusion field as a background overlay.
+/// # Diffusion Field Renderer
+///
+/// ## 1. What Happens
+/// The `FieldRenderer` executes the WebGPU pipeline responsible for drawing the PDE grid
+/// (e.g., Temperature, Biomass, Pheromones) onto the screen as a visual heatmap backdrop.
+///
+/// ## 2. Why It Happens
+/// A core part of Phylon is the continuous environment interacting with discrete agents.
+/// Rendering a $1000 \times 1000$ diffusion grid on the CPU via iterating pixels is
+/// impossibly slow. WebGPU binds the grid's backing data as a texture and samples it
+/// instantly on the fragment shader.
+///
+/// ## 3. How It Happens
+/// The `field_overlay.wgsl` shader receives the camera position, zoom, and screen bounds
+/// via `FieldConfig`. It maps each screen pixel into grid-space UV coordinates, samples
+/// the texture using hardware linear interpolation, and translates the scalar value into
+/// an RGB color using Viridis/Magma/Inferno colormaps.
 pub struct FieldRenderer {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,

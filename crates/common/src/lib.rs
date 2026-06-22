@@ -32,12 +32,21 @@ pub use glam::IVec2;
 // Entity identity
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Globally unique entity identifier.
+/// # Phylon Global Entity Identifier
 ///
-/// The 64-bit space is wide enough to accommodate distributed simulation
-/// scenarios where multiple processes mint IDs independently (Phase 12).
-/// IDs are minted by a monotonic atomic counter seeded from the experiment
-/// manifest so they are unique and reproducible per-experiment.
+/// ## 1. What Happens
+/// `EntityId` is a 64-bit unsigned integer acting as the canonical unique identifier
+/// for any discrete object in the simulation.
+///
+/// ## 2. Why It Happens
+/// We cannot rely solely on Bevy's internal 32-bit/generation Entity IDs because those
+/// are local to the current runtime process and are re-used when entities are despawned.
+/// A global `EntityId` ensures that an organism's lineage record remains stable across
+/// snapshot save/loads and future distributed network topologies.
+///
+/// ## 3. How It Happens
+/// The `World` crate tracks a monotonic `u64` counter. Every time a new entity is spawned,
+/// the counter increments and assigns the new `EntityId`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EntityId(pub u64);
 
@@ -58,14 +67,19 @@ impl std::fmt::Display for EntityId {
     }
 }
 
-/// Identifies a spatial chunk in the world grid.
+/// # World Partition Chunk
 ///
-/// The world is divided into fixed-size chunks addressed by a signed integer
-/// pair. The origin chunk `(0, 0)` is the spawn-zone for the default scenario.
-/// Negative coordinates extend in the West / South directions.
+/// ## 1. What Happens
+/// `ChunkId` represents a discrete 2D spatial partition of the infinite continuous world.
 ///
-/// Chunk IDs are designed for future distributed ownership: a separate process
-/// can be assigned a contiguous rectangle of chunk IDs.
+/// ## 2. Why It Happens
+/// An infinite world cannot be loaded into memory all at once. By partitioning space into
+/// chunks, the engine can dynamically load, unload, and serialize regions of space
+/// based on the camera's location and the density of organisms.
+///
+/// ## 3. How It Happens
+/// Calculated by taking continuous world coordinates $(X, Y)$ and dividing by the configured
+/// chunk size, then flooring the result to `i32`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ChunkId(pub i32, pub i32);
 
@@ -89,14 +103,21 @@ impl std::fmt::Display for ChunkId {
     }
 }
 
-/// The canonical, monotonically increasing simulation time counter.
+/// # Deterministic Simulation Tick
 ///
-/// One [`Tick`] corresponds to one fixed-timestep simulation update. Rendering
-/// may interpolate *between* ticks using a fractional [`SimTime`] value, but
-/// all simulation state transitions happen on tick boundaries.
+/// ## 1. What Happens
+/// `Tick` is a strictly monotonic counter representing the current discrete step of the
+/// physics and biological simulation.
 ///
-/// Ticks are ordered and comparable so they can be used as event timestamps,
-/// snapshot labels, and replay indices.
+/// ## 2. Why It Happens
+/// Artificial life experiments require perfect determinism. Relying on floating-point
+/// delta-time (`dt`) accumulation leads to subtle floating-point drift across different
+/// CPU architectures. A discrete integer tick guarantees that the simulation state at
+/// `Tick(10_000)` is identical no matter the hardware.
+///
+/// ## 3. How It Happens
+/// The `SimulationScheduler` executes the entire suite of engine systems. Once all systems
+/// complete their passes for the current state, the global `Tick` is incremented by 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Tick(pub u64);
 

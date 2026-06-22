@@ -16,11 +16,21 @@
 
 use common::Tick;
 
-/// The manifest for a single experiment run.
+/// # Scientific Experiment Manifest
 ///
-/// Recorded at experiment start and stored alongside every snapshot and
-/// dataset export so results are always traceable back to their origin
-/// conditions.
+/// ## 1. What Happens
+/// The `ExperimentManifest` is a data record defining the parameters, deterministic seeds,
+/// and metadata for a specific headless simulation run.
+///
+/// ## 2. Why It Happens
+/// Academic ALife research requires reproducibility. If a user observes a fascinating
+/// speciation event at tick $1,000,000$, they need to be able to re-run the exact simulation
+/// with the exact same RNG seed to study it. The manifest ensures all exported SQLite databases
+/// are strictly tied to their initial conditions.
+///
+/// ## 3. How It Happens
+/// In Phase 9, this struct is instantiated at the start of a headless batch run, serialized
+/// into the `analytics` output folder, and embedded into the `storage` SQLite headers.
 #[derive(Debug, Clone)]
 pub struct ExperimentManifest {
     /// A unique identifier for this experiment (usually a UUID or timestamp).

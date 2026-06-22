@@ -38,7 +38,22 @@ pub enum WorldError {
 
 impl common::PhylonError for WorldError {}
 
-/// The core ECS-backed world state.
+/// # Phylon Root ECS Wrapper
+///
+/// ## 1. What Happens
+/// The `World` struct wraps the raw `bevy_ecs::world::World`, providing a single
+/// entry point for spawning and despawning entities while tracking global ID counters.
+///
+/// ## 2. Why It Happens
+/// We chose `bevy_ecs` over a custom entity manager for its extremely fast sparse-set
+/// archetype iteration, which is required for systems like `metabolism` iterating over
+/// 10,000 entities per tick. However, we need a wrapper layer to handle logic that
+/// spans across components (like tracking global IDs for deterministic snapshots).
+///
+/// ## 3. How It Happens
+/// In Phase 0, it holds the raw `ecs` World. The `app` crate instantiates this and
+/// passes mutable references down to the `SimulationScheduler`, which executes systems
+/// via `bevy_ecs::world::World::query`.
 pub struct World {
     /// The underlying bevy_ecs world.
     pub ecs: bevy_ecs::world::World,

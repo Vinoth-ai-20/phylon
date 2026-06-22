@@ -39,7 +39,23 @@ pub enum PhysicsError {
 
 impl common::PhylonError for PhysicsError {}
 
-/// A single point mass in the particle-spring network.
+/// # Soft-Body Particle Node
+///
+/// ## 1. What Happens
+/// `ParticleNode` represents a discrete unit of physical mass in the environment. Organisms
+/// are constructed entirely from networks of these nodes.
+///
+/// ## 2. Why It Happens
+/// Real animals are soft, squishy, and deformable. Using rigid-body box colliders (like a typical
+/// game engine) prevents natural gaits and limits morphological diversity. A particle-spring
+/// system allows for complex locomotion, fluid drag, and structural failure (e.g., amputation).
+///
+/// ## 3. How It Happens
+/// During integration, the sum of all forces (spring tension, fluid drag, collisions) is applied
+/// to the node via Symplectic Euler:
+///
+/// $$ V_{t+1} = V_t + \frac{F}{M} dt $$
+/// $$ P_{t+1} = P_t + V_{t+1} dt $$
 #[derive(Component, Debug, Clone, Default)]
 pub struct ParticleNode {
     /// Current position in simulation space.
@@ -86,7 +102,25 @@ pub enum ConstraintType {
     Rotational,
 }
 
-/// A spring connecting two nodes.
+/// # Soft-Body Spring Constraint
+///
+/// ## 1. What Happens
+/// The `Spring` component binds two `ParticleNode`s together. It dictates the structural integrity
+/// and muscular actuation of the organism.
+///
+/// ## 2. Why It Happens
+/// A bag of unconstrained particles is just a fluid. By connecting them with springs of varying
+/// stiffness ($k$), we create tissues. `Rigid` springs act as bones, `Passive` springs act as fat,
+/// and `Elastic` springs act as muscles that contract and expand to generate locomotion.
+///
+/// ## 3. How It Happens
+/// The physics solver applies Hooke's Law with damping to both nodes:
+///
+/// $$ F = -k(|x| - d) \frac{x}{|x|} - c \cdot v_{rel} $$
+///
+/// If `constraint_type` is `Elastic`, the $d$ (`rest_length`) is dynamically modified by the
+/// organism's neural network to contract the muscle. If strain exceeds `breaking_strain`, the
+/// component is despawned, amputating the tissue.
 #[derive(Component, Debug, Clone)]
 pub struct Spring {
     /// The first node entity.
@@ -209,7 +243,20 @@ pub fn spring_force_system(
     }
 }
 
-/// Integrates positions and velocities using Symplectic Euler.
+/// # CPU Physics Integrator (Fallback)
+///
+/// ## 1. What Happens
+/// The `physics_integration_system` applies accumulated forces to velocities and updates positions
+/// for all `ParticleNode`s.
+///
+/// ## 2. Why It Happens
+/// While Phylon primarily uses WebGPU Compute Shaders for $O(N^2)$ collision and PBD constraint
+/// solving, the CPU fallback is maintained for unit tests, headless CI, and deterministic validation.
+///
+/// ## 3. How It Happens
+/// The system uses Symplectic (Semi-Implicit) Euler. Unlike Explicit Euler (which adds energy
+/// and explodes spring systems), Symplectic Euler updates velocity *before* position, perfectly
+/// conserving the Hamiltonian of a harmonic oscillator over time.
 pub fn physics_integration_system(config: Res<PhysicsConfig>, mut query: Query<&mut ParticleNode>) {
     let dt = config.dt;
     for mut node in query.iter_mut() {

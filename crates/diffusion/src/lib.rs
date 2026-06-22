@@ -6,7 +6,26 @@
 use bevy_ecs::prelude::*;
 use common::Vec2;
 
-/// Configuration for the global diffusion field.
+/// # Global Diffusion Configuration
+///
+/// ## 1. What Happens
+/// The `DiffusionConfig` holds the global thermodynamic constants governing the Partial Differential
+/// Equations (PDEs) solved by the GPU. It defines the base diffusion rate ($D$) and the evaporation/decay
+/// rate ($\lambda$).
+///
+/// ## 2. Why It Happens
+/// In real environments, chemical signals and gases do not persist forever. They diffuse across
+/// a gradient and chemically break down over time. Without a decay rate ($\lambda$), any emitted
+/// pheromone would accumulate infinitely until the entire map saturated to maximum capacity, rendering
+/// spatial navigation impossible.
+///
+/// ## 3. How It Happens
+/// The GPU compute shader solves a variation of the Reaction-Diffusion equation. For a chemical
+/// concentration $C$:
+///
+/// $$ \frac{\partial C}{\partial t} = D \nabla^2 C - \lambda C + E $$
+///
+/// Where $D$ is `diffusion_rate`, $\lambda$ is `decay_rate`, and $E$ is the external emission source.
 #[derive(Resource, Clone, Debug)]
 pub struct DiffusionConfig {
     /// Diffusion rate (D in the PDE)
@@ -30,7 +49,29 @@ impl Default for DiffusionConfig {
     }
 }
 
-/// The latest state of the diffusion field read back from the GPU.
+/// # CPU Field Readback Buffer
+///
+/// ## 1. What Happens
+/// `CpuFieldState` maintains a linear `Vec<f32>` representation of the continuous 2D spatial grid.
+/// It provides methods to map continuous physical coordinates to discrete array indices to sample
+/// environmental concentrations (O2, Pheromones).
+///
+/// ## 2. Why It Happens
+/// The diffusion PDEs are computed entirely on the GPU for performance. However, biological
+/// organisms running in the CPU ECS (like olfactory sensors or photosynthetic leaves) need to
+/// sample their local environment to make decisions. The GPU buffer must be asynchronously copied
+/// back to main system memory each tick to provide this spatial data to the CPU.
+///
+/// ## 3. How It Happens
+/// The `sample` method maps a continuous world vector $\vec{P} = \langle x, y \rangle$ to a
+/// discrete 1D array index $i$ on a grid of width $W$ and height $H$, with a cell resolution $R$:
+///
+/// $$ G_x = \lfloor \frac{P_x}{R} + \frac{W}{2} \rfloor $$
+/// $$ G_y = \lfloor \frac{P_y}{R} + \frac{H}{2} \rfloor $$
+///
+/// Indexing into the multi-layered 1D array for a specific $Layer$:
+///
+/// $$ i = (Layer \times W \times H) + (G_y \times W + G_x) $$
 #[derive(Resource, Clone, Debug)]
 pub struct CpuFieldState {
     /// The 2D grid data (e.g., 256x256)
@@ -138,7 +179,24 @@ impl CpuSignalFieldState {
     }
 }
 
-/// A biological signal emitter that adds a quantity to the signal field per tick.
+/// # Biological Signal Emitter
+///
+/// ## 1. What Happens
+/// The `SignalEmitter` component allows an organism to inject mass or concentration values
+/// into the spatial diffusion fields.
+///
+/// ## 2. Why It Happens
+/// Communication in primitive ALife (like ants) is often stigmergic—organisms modify their
+/// spatial environment to leave persistent signals rather than communicating directly via sound
+/// or sight. The emitter acts as the biological gland injecting the chemical.
+///
+/// ## 3. How It Happens
+/// Each simulation tick, the `behavior_system` extracts an output scalar from the CTRNN
+/// neural network. This scalar $[0, 1]$ sets the `value` field. During the GPU dispatch, all
+/// active emitters are packed into a `GpuEmitter` uniform array. The shader then integrates
+/// this mass into the local discrete cell $C$:
+///
+/// $$ C_{t+1} = C_{t} + (\text{value} \times DT) $$
 #[derive(Component, Clone, Debug)]
 pub struct SignalEmitter {
     /// The value to add per tick. Typically driven by a brain output node.

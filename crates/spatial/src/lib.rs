@@ -49,11 +49,23 @@ pub enum SpatialError {
 
 impl common::PhylonError for SpatialError {}
 
-/// A uniform-grid spatial index.
+/// # Broad-Phase Uniform Grid Index
 ///
-/// Divides the 2D plane into fixed-size cells. Each entity maps to exactly
-/// one cell. Neighbourhood queries examine a fixed number of cells, giving
-/// O(k) query time where k is the number of cells in the query radius.
+/// ## 1. What Happens
+/// The `UniformGrid` divides the continuous 2D space into discrete grid cells.
+/// Entities update their cell buckets as they move, allowing O(1) broad-phase radius queries.
+///
+/// ## 2. Why It Happens
+/// In an engine with 10,000 interacting agents, checking collisions and sensory proximity
+/// for every pair requires $O(N^2)$ checks (100,000,000 distance calculations per tick).
+/// By bucketing entities into cells roughly the size of their maximum interaction radius,
+/// we reduce this to $O(N \cdot k)$ where $k$ is the number of entities in adjacent cells.
+///
+/// ## 3. How It Happens
+/// The spatial space is mapped via modulo arithmetic:
+/// $$ Cell_{X, Y} = \left( \lfloor \frac{Pos_x}{Size} \rfloor, \lfloor \frac{Pos_y}{Size} \rfloor \right) $$
+/// Queries calculate the bounding box of the query radius, convert to cell coordinates,
+/// and iterate only through the entities in that subset of buckets.
 ///
 /// ## Phase 0 status
 ///

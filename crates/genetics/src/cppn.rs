@@ -26,7 +26,28 @@ pub struct CppnConnection {
     pub innovation: usize,
 }
 
-/// A complete Compositional Pattern Producing Network (CPPN).
+/// # Compositional Pattern Producing Network (NEAT Topology)
+///
+/// ## 1. What Happens
+/// The `Cppn` is a specialized Artificial Neural Network architecture used to generate spatial
+/// patterns and morphological traits (like brain weights or skin color) as a function of
+/// geometry $(X, Y, \dots)$ rather than temporal inputs.
+///
+/// ## 2. Why It Happens
+/// In natural biology, DNA doesn't store a 1:1 blueprint of the brain. It stores a "recipe"
+/// that unfolds over space and time. A CPPN mathematically mimics this by taking spatial coordinates
+/// and outputting traits, creating smooth gradients, symmetries, and repeating motifs—crucial
+/// for generating complex, scalable biological structures with minimal genetic bytes.
+///
+/// ## 3. How It Happens
+/// The network is a Directed Acyclic Graph (DAG) evaluated via topological feedforward.
+/// For a node $N_i$ with activation function $f$, bias $b_i$, and incoming synapses $W_{j \to i}$:
+///
+/// $$ Output_i = f\left( b_i + \sum_{j} (Output_j \times W_{j \to i}) \right) $$
+///
+/// The structure evolves using NEAT (NeuroEvolution of Augmenting Topologies). Mutations
+/// (`mutate_add_node`, `mutate_add_connection`) split edges and insert complexity over generations,
+/// tracked via global `innovation` numbers for historical crossover.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Cppn {
     /// The nodes in the CPPN.

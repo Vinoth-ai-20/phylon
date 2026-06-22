@@ -24,7 +24,28 @@ use anyhow::Result;
 use crate::app::PhylonApp;
 
 impl PhylonApp {
-    /// Advances the simulation and renders one frame.
+    /// # Main Frame Renderer and Time Integrator
+    ///
+    /// ## 1. What Happens
+    /// The `render` method is called every time the OS requests a frame redraw. It handles camera
+    /// tracking, accumulates delta time, triggers biological simulation ticks to catch up to real-time,
+    /// and dispatches the final WGPU render passes (Splatting, Heatmaps, UI).
+    ///
+    /// ## 2. Why It Happens
+    /// Simulation physics must run at a fixed, deterministic timestep (`DT`) to ensure biological
+    /// processes (like energy decay or neuron membrane potentials) do not destabilize. However,
+    /// monitor refresh rates fluctuate. This method decouples the render framerate from the biological
+    /// tick rate using a fixed-timestep accumulator algorithm.
+    ///
+    /// ## 3. How It Happens
+    /// The method utilizes an accumulator model:
+    ///
+    /// $$ t_{accum} = t_{accum} + (speed \times \Delta t_{frame}) $$
+    ///
+    /// While $t_{accum} \ge 1.0$, the engine calls `update_simulation()` to step the ECS forward by
+    /// the fixed $DT = 0.016$ seconds, decrementing $t_{accum}$. Once caught up, it builds the WGPU
+    /// `CommandEncoder`, executes the Gaussian Splat and Heatmap render passes, and renders the `egui`
+    /// contexts.
     pub(crate) fn render(&mut self) -> Result<()> {
         if self.gpu.is_none() || self.physics_compute.is_none() {
             return Ok(());
@@ -860,6 +881,7 @@ impl PhylonApp {
                     screen_size: [screen_w, screen_h],
                     colormap: heatmap_state.colormap,
                     _pad: 0,
+                    world_bounds: [1500.0, 1500.0],
                 },
             );
 
@@ -884,6 +906,7 @@ impl PhylonApp {
                     screen_size: [screen_w, screen_h],
                     colormap: heatmap_state.colormap,
                     _pad: 0,
+                    world_bounds: [1500.0, 1500.0],
                 },
             );
             if let Some(diffusion) = self.diffusion_compute.as_ref() {

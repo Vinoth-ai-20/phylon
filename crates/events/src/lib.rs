@@ -91,15 +91,23 @@ pub enum FieldType {
 // PhylonEvent enum
 // ────────────────────────────────────────────────────────────────────────────
 
-/// All observable events that can occur during a simulation tick.
+/// # Phylon Global Observable Events
 ///
-/// Events are immutable value types dispatched through [`EventBus`]. Handlers
-/// receive a snapshot of the event state at the moment it was published;
-/// later mutations to simulation entities do not retroactively change events.
+/// ## 1. What Happens
+/// `PhylonEvent` is an immutable, cloneable value type representing a state change or milestone
+/// that has definitively occurred in the simulation (e.g., Birth, Death, Spikes).
 ///
-/// New variants should be added here as later phases introduce new subsystems.
-/// Every variant must include a `tick` field so events can be ordered and
-/// replayed.
+/// ## 2. Why It Happens
+/// For post-simulation analytics and machine-learning fitness evaluations, the engine needs an
+/// audit trail of what happened, not just the final state. Since ECS data is mutated in-place
+/// (and dead organisms are despawned and lost), events serve as the historical ledger.
+///
+/// ## 3. How It Happens
+/// When a state-mutating system finishes its logic, it constructs a variant of this enum,
+/// attaching the exact temporal frame (Tick $t$). Handlers reading this enum are guaranteed
+/// to see the causal timeline:
+///
+/// $$ T_{birth} \le t \le T_{death} $$
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PhylonEvent {
     /// A new organism has been born (either initial spawn or reproduction).
@@ -194,17 +202,23 @@ impl common::PhylonError for EventBusError {}
 // EventBus
 // ────────────────────────────────────────────────────────────────────────────
 
-/// The central typed event bus.
+/// # The Central Typed Event Bus
 ///
-/// Internally backed by a bounded [`crossbeam::channel`] MPMC queue.
-/// Multiple producers (simulation threads) can safely call [`EventBus::publish`]
-/// concurrently. A single consumer (the scheduler's `PostTick` phase) calls
-/// [`EventBus::drain`] to collect all pending events.
+/// ## 1. What Happens
+/// The `EventBus` is an MPMC (Multi-Producer, Multi-Consumer) channel wrapper using `crossbeam::channel`.
+/// It acts as the backbone for cross-subsystem communication without requiring hard dependencies.
 ///
-/// The bus is intentionally kept as a single channel for all event types to
-/// preserve inter-event ordering within a tick. If per-type filtering becomes
-/// a bottleneck in later phases, the implementation can be upgraded to a
-/// per-type channel map without changing the public API.
+/// ## 2. Why It Happens
+/// In complex simulations (especially ones spanning CPU ECS and GPU pipelines), tight coupling
+/// between systems causes deadlocks and borrow-checker conflicts. By using a deferred event bus,
+/// an organism can "die" in the physics step, and the analytics/UI system can process that death
+/// at the end of the tick, perfectly preserving temporal order $O(N)$ without locking ECS resources.
+///
+/// ## 3. How It Happens
+/// A bounded channel of size `C` is created. Producers push $E$ events into the channel lock-free.
+/// If $E > C$, the bus drops the event to prevent out-of-memory cascading failures:
+///
+/// $$ \text{Result} = \begin{cases} \text{Ok}(), & \text{if } |Q| < C \\ \text{Err}(\text{ChannelFull}), & \text{if } |Q| \ge C \end{cases} $$
 #[derive(Debug, Clone)]
 pub struct EventBus {
     sender: Sender<PhylonEvent>,

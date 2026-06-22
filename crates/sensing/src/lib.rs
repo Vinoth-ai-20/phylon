@@ -30,7 +30,21 @@ pub enum SensorModality {
     Hazard,
 }
 
-/// A component holding the current sensory inputs for an organism.
+/// # Ecological Sensory State
+///
+/// ## 1. What Happens
+/// The `SensoryState` component stores the flattened float vector ($\mathbb{R}^N$) representing
+/// the organism's current environmental perception.
+///
+/// ## 2. Why It Happens
+/// Neural networks (like CTRNNs or neat-based brains) require normalized numeric arrays as
+/// input. We decouple the biological sensors (eyes, noses) from the neural network topology.
+/// The biology writes to this array, and the brain reads from it.
+///
+/// ## 3. How It Happens
+/// During the `Sensing` phase, `sensing_system` iterates over active sensor modalities, computes
+/// their values (e.g., sampling diffusion fields or raycasting for vision), and overwrites the
+/// indices in `inputs`.
 #[derive(bevy_ecs::prelude::Component, Debug, Clone)]
 pub struct SensoryState {
     /// Array of float inputs corresponding to the active sensor modalities.
@@ -46,7 +60,20 @@ impl SensoryState {
     }
 }
 
-/// A component attached to the Head node of an organism, defining its vision capabilities.
+/// # Organism Visual Cortex
+///
+/// ## 1. What Happens
+/// The `HeadVision` component defines the geometric capabilities of an organism's eyes.
+///
+/// ## 2. Why It Happens
+/// Blind organisms stumble aimlessly. Vision allows targeted predation, foraging, and mating.
+/// However, true raycasting is too expensive for thousands of agents. We use a lightweight
+/// binned-cone heuristic instead.
+///
+/// ## 3. How It Happens
+/// The system checks the angle to nearby entities. If the entity falls within the `fov` cone,
+/// its inverse-distance is accumulated into three bins (Left, Center, Right). This gives the
+/// neural network enough gradient information to turn toward or away from a target.
 #[derive(bevy_ecs::prelude::Component, Debug, Clone)]
 pub struct HeadVision {
     /// Maximum distance the organism can see.
@@ -59,7 +86,23 @@ pub struct HeadVision {
     pub self_occlusion_radius: f32,
 }
 
-/// System that gathers sensory data from the environment and biology.
+/// # Sensory Acquisition System
+///
+/// ## 1. What Happens
+/// The `sensing_system` collects environmental data (Chemical fields, visual targets) and
+/// internal data (ATP, Age) and populates the `SensoryState` array for every organism.
+///
+/// ## 2. Why It Happens
+/// The brain needs a snapshot of the world to make decisions. By combining field sampling
+/// (for gradients/pheromones), distance-based vision (for hunting/fleeing), and an internal
+/// Pacemaker (for gait generation), we provide the necessary basis for complex behavior.
+///
+/// ## 3. How It Happens
+/// For every organism with a `SensoryState`:
+/// 1. Sample CPU diffusion fields (Olfaction, Signals, Hazards) at the node's position.
+/// 2. Read internal components (`ChemicalEconomy::atp`, `Age::ticks`) for proprioception.
+/// 3. Iterate over the spatial index (or all nodes/food/corpses) and bin them into the `HeadVision` FOV.
+/// 4. Generate a sine wave `Pacemaker` signal ($\approx 2Hz$) to drive rhythmic locomotion.
 #[allow(clippy::type_complexity)]
 #[allow(clippy::too_many_arguments)]
 pub fn sensing_system(

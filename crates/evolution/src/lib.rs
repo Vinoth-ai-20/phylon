@@ -25,7 +25,24 @@ pub struct LineageId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SpeciesId(pub u64);
 
-/// Tracks the lifecycle of a single lineage instance.
+/// # Lineage Trajectory Record
+///
+/// ## 1. What Happens
+/// The `LineageRecord` structurally tracks the demographic lifecycle of a single specific organism,
+/// linking it to its ancestral topology (parent), demographic cluster (lineage/species), and temporal bounds (birth/death).
+///
+/// ## 2. Why It Happens
+/// Evolution is emergent, meaning fitness is entirely implicit—organisms survive because they didn't die.
+/// To study how genetic configurations correlate with survival, researchers must reconstruct the phylogenetic
+/// tree post-simulation. This record is the irreducible quantum of that tree.
+///
+/// ## 3. How It Happens
+/// When an organism is spawned via reproduction, $Entity_{child}$ is linked to $Entity_{parent}$.
+/// The fitness metric (Lifespan $L$) can be defined mathematically upon death:
+///
+/// $$ L = T_{death} - T_{birth} $$
+///
+/// The collection of all records forms a Directed Acyclic Graph (DAG) representing the evolutionary tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LineageRecord {
     /// The entity this record belongs to.
@@ -46,7 +63,21 @@ pub struct LineageRecord {
     pub cause_of_death: Option<String>,
 }
 
-/// A centralized resource tracking active lineage histories in-memory.
+/// # In-Memory Phylogeny Tracker
+///
+/// ## 1. What Happens
+/// `LineageTracker` is a central ECS resource that acts as an ephemeral holding buffer for the
+/// evolutionary Directed Acyclic Graph (DAG) of the current active population.
+///
+/// ## 2. Why It Happens
+/// Logging every birth and death directly to an SQLite disk database causes extreme I/O bottlenecking
+/// during periods of high population turnover (e.g., mass extinction events or invasive species blooms).
+/// Maintaining an in-memory hash map allows $O(1)$ updates without blocking the simulation thread.
+///
+/// ## 3. How It Happens
+/// The tracker maintains an active set $A$. When an organism is born, it is inserted into $A$.
+/// When it dies, its record in $A$ is mutated to include $T_{death}$. The set $A$ is then partitioned
+/// during the `extract_completed_records` phase to flush completed lineages to cold storage.
 #[derive(bevy_ecs::system::Resource)]
 pub struct LineageTracker {
     next_lineage_id: u64,
@@ -107,8 +138,25 @@ impl LineageTracker {
         self.records.get(&entity)
     }
 
-    /// Extracts all completed records and removes them from active tracking,
-    /// suitable for background flushing to SQLite.
+    /// # Ephemeral DAG Cold-Storage Extraction
+    ///
+    /// ## 1. What Happens
+    /// The `extract_completed_records` method filters the in-memory active set $A$ for all records
+    /// where `death_tick` is populated, removes them from the tracker, and returns them as a batch.
+    ///
+    /// ## 2. Why It Happens
+    /// Memory cannot grow infinitely. To prevent Out-Of-Memory (OOM) panics over a multi-day simulation
+    /// run with millions of generations, completed dead lineages must be evicted from the active map
+    /// and passed to the asynchronous `storage` crate for permanent SQLite persistence.
+    ///
+    /// ## 3. How It Happens
+    /// The filter operation runs over the active set $A$:
+    ///
+    /// $$ D = \{ r \in A \mid r.death\_tick \ne \emptyset \} $$
+    /// $$ A' = A \setminus D $$
+    ///
+    /// The extracted set $D$ is returned as an owned `Vec` to be handed over to a background rayon
+    /// thread, preventing garbage collection stuttering.
     pub fn extract_completed_records(&mut self) -> Vec<LineageRecord> {
         let completed: Vec<EntityId> = self
             .records

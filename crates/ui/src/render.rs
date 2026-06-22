@@ -1,15 +1,22 @@
 use crate::types::*;
 use crate::utils::*;
 
-/// Renders the main immediate-mode user interface.
+/// # Phylon Research Interface
 ///
-/// Returns a `CanvasInteraction` containing the screen-space `Rect` of the
-/// transparent `CentralPanel` (for viewport sizing) and the unified
-/// touch/mouse interactions (clicks, drags, zooms) generated on it.
+/// ## 1. What Happens
+/// The `render_ui` function executes the immediate-mode `egui` layer over the simulation canvas,
+/// dispatching commands via `MenuAction` and parsing user gestures into `CanvasInteraction`.
 ///
-/// `debug_structural` is mutated by a checkbox in the Inspector sidebar.
-/// When `true`, the caller should render raw physics quads instead of the SDF
-/// organic skin.
+/// ## 2. Why It Happens
+/// We need to separate the visual control panels (Tuning, Genetics, Environment) from the core
+/// ECS so the simulation can be run in headless batch mode. Immediate-mode GUIs allow us to
+/// easily draw dynamic data (like neural network graphs) without maintaining a complex DOM.
+///
+/// ## 3. How It Happens
+/// Every frame, the app calls `render_ui`, passing in mutable references to shared state.
+/// It constructs panels (Top, Bottom, Sidebar). Any empty space left over becomes the
+/// `CentralPanel`, over which we calculate `CanvasInteraction` (clicks, drags, scroll zooms)
+/// for the `wgpu` camera to consume.
 #[allow(clippy::too_many_arguments)]
 pub fn render_ui(
     ctx: &egui::Context,

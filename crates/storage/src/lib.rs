@@ -68,7 +68,21 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 
-/// Manages serialization of simulation state and run tracking.
+/// # Simulation Storage Manager
+///
+/// ## 1. What Happens
+/// The `StorageManager` handles disk I/O, writing binary state snapshots, and logging
+/// genealogical and event data to a persistent SQLite database.
+///
+/// ## 2. Why It Happens
+/// A simulation with 10,000 organisms running for days will generate enormous amounts of
+/// data. We split this into two formats: fast binary snapshots (for pausing/resuming the
+/// app) and relational SQL data (for offline analytics, lineage tracking, and graphing).
+///
+/// ## 3. How It Happens
+/// It maintains a long-lived connection to `data/runs.db`. When `flush_lineages` is called,
+/// it batches `LineageRecord` inserts. When `save_simulation_state` is called, it serializes
+/// the ECS world using `bincode` into a `.phylon` snapshot file.
 pub struct StorageManager {
     run_db: Option<rusqlite::Connection>,
 }

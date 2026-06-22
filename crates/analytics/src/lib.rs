@@ -85,10 +85,20 @@ pub struct PopulationCounts {
     pub corpses: usize,
 }
 
-/// Live simulation metrics resource, held in the ECS world and updated each frame.
+/// # Live Simulation Metrics State
 ///
-/// Data is stored as `[sim_time, value]` pairs suitable for direct use with
-/// `egui_plot::PlotPoints`.
+/// ## 1. What Happens
+/// `MetricsState` stores time-series ring buffers of ecological populations, performance metrics
+/// (FPS/TPS), and environmental variables (Sunlight, O2, CO2, Temp) for use by the GUI plotters.
+///
+/// ## 2. Why It Happens
+/// A core part of artificial life research is observing macro-level emergent trends (e.g.,
+/// predator-prey Lotka-Volterra cycles). The UI needs a sliding window of historical data to
+/// render live graphs without causing memory bloat.
+///
+/// ## 3. How It Happens
+/// The `Analytics` system (running at the end of `SystemOrder`) aggregates counts by querying
+/// the ECS and pushes `[sim_time_s, value]` pairs onto `VecDeque`s capped at `METRICS_RING_CAPACITY`.
 #[derive(bevy_ecs::prelude::Resource, Debug, Clone)]
 pub struct MetricsState {
     /// Ring buffer of `[sim_time_s, value]` points for Producers.
@@ -235,7 +245,21 @@ pub struct NarrativeEvent {
     pub description: String,
 }
 
-/// Ring buffer resource tracking recent narrative events.
+/// # Narrative Event Logger
+///
+/// ## 1. What Happens
+/// `NarrationLog` is a ring buffer that records distinct, human-readable milestones that
+/// occur during the simulation (e.g., "Species Extinction", "Mutation Discovered").
+///
+/// ## 2. Why It Happens
+/// Raw numbers in a graph are useful, but contextualizing *why* a population graph suddenly
+/// dropped is harder. The Event Log acts as a "dungeon master", giving the user a readable
+/// chronological history of major ecological events.
+///
+/// ## 3. How It Happens
+/// Various systems (like `reproduction` or `ecology`) detect edge-case conditions and call
+/// `push_event`. The UI renders this queue in the bottom panel. Oldest events are evicted
+/// once `max_events` is reached to cap memory usage.
 #[derive(bevy_ecs::prelude::Resource, Debug, Clone)]
 pub struct NarrationLog {
     /// Buffer of recent events.

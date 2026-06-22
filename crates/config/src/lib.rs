@@ -96,11 +96,20 @@ pub enum PhysicsIntegrator {
 // SimulationConfig
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Core simulation parameters that govern the deterministic tick engine.
+/// # Core Simulation Configuration
 ///
-/// All tuneable simulation constants live here. **No magic numbers** should
-/// exist in the simulation crates — they must reference fields from this struct
-/// passed through the scheduler.
+/// ## 1. What Happens
+/// `SimulationConfig` stores parameters that dictate the deterministic tick rate,
+/// spatial topologies, and numerical bounds of the physics and diffusion systems.
+///
+/// ## 2. Why It Happens
+/// Hardcoded "magic numbers" in engine code are brittle and prevent batch testing.
+/// Extracting these to a loaded config allows researchers to run scripts that sweep
+/// `tick_rate` or `world_chunk_size` without recompiling the Rust binary.
+///
+/// ## 3. How It Happens
+/// Parsed from a `.ron` file and validated during startup. It is passed as a shared
+/// reference to the ECS `World` or `SimulationScheduler`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationConfig {
     /// Target simulation ticks per second. Default: `60`.
@@ -202,7 +211,20 @@ impl SimulationConfig {
 // RenderConfig
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Parameters controlling the rendering and windowing subsystem.
+/// # Renderer Configuration
+///
+/// ## 1. What Happens
+/// `RenderConfig` dictates the physical window dimensions, frame synchronisation,
+/// and visual overlay settings for the wgpu presentation layer.
+///
+/// ## 2. Why It Happens
+/// Allows end-users to customize their viewing experience (e.g., turning off vsync
+/// to unlock frame rates, or adjusting UI opacities for better visibility of
+/// underlying structures).
+///
+/// ## 3. How It Happens
+/// This config configures the winit `WindowBuilder` before the graphics context
+/// is instantiated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenderConfig {
     /// Initial window width in physical pixels. Default: `1280`.
@@ -237,7 +259,21 @@ impl Default for RenderConfig {
 // ResearchConfig
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Parameters controlling the research and data-collection subsystem.
+/// # Research & Automation Configuration
+///
+/// ## 1. What Happens
+/// `ResearchConfig` controls headless operation, autosave intervals, experiment
+/// metadata, and optional network connections for MARL.
+///
+/// ## 2. Why It Happens
+/// A typical desktop game expects a human sitting at a screen. Phylon is an Alife
+/// research tool—sometimes it needs to run on a Linux cluster for 48 hours with
+/// no GPU, spitting out data to SQLite. This config enables those environments.
+///
+/// ## 3. How It Happens
+/// The `app` crate checks `headless`. If true, it skips initializing `winit` and
+/// `wgpu`, locking into a fast-forward tight loop that only sleeps if `realtime_lock`
+/// is enabled.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResearchConfig {
     /// Human-readable experiment identifier. Recorded in the manifest.
@@ -280,12 +316,19 @@ impl Default for ResearchConfig {
 // PhylonConfig (root)
 // ────────────────────────────────────────────────────────────────────────────
 
-/// The root configuration struct for the Phylon runtime.
+/// # Root Runtime Configuration
 ///
-/// Loaded once at startup via [`PhylonConfig::load`] and distributed as a
-/// shared, immutable reference throughout the application. Mutating config at
-/// runtime is intentionally not supported — runtime overrides go through the
-/// [`research`](../research/index.html) crate's experiment API.
+/// ## 1. What Happens
+/// `PhylonConfig` is the root container struct parsing the RON file and storing
+/// the parsed nested config modules (Simulation, Render, Research).
+///
+/// ## 2. Why It Happens
+/// Centralizing all configuration into a single struct guarantees that any subsystem
+/// has an unambiguous source of truth for its parameters.
+///
+/// ## 3. How It Happens
+/// The `load()` method deserializes a text string into this struct using `ron`.
+/// It then calls validation routines to ensure constraints (e.g., tick_rate > 0).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PhylonConfig {
     /// Core simulation parameters (tick rate, RNG seed, world topology).

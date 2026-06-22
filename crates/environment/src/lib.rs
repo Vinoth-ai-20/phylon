@@ -66,7 +66,29 @@ impl EnvironmentManager {
         self.height
     }
 
-    /// Evaluates a 2D tileable/continuous noise function using 4D mapping if toroidal.
+    /// # Toroidal Noise Evaluation
+    ///
+    /// ## 1. What Happens
+    /// The `eval_noise` function samples an `OpenSimplex` noise generator. If the environment is
+    /// configured to be `toroidal` (wrapping boundaries), it projects the 2D Cartesian coordinates
+    /// into a 4D hyperspace to ensure the noise field loops seamlessly without artifacts.
+    ///
+    /// ## 2. Why It Happens
+    /// In ALife simulations, boundary conditions strongly affect population dynamics. Hard borders
+    /// cause organisms to pile up in corners. A Torus (Pac-Man map) solves this, but standard 2D
+    /// Perlin/Simplex noise does not tile seamlessly. To create continuous tiling, we must wrap both
+    /// the $X$ and $Y$ dimensions into circles, which mathematically requires 4 dimensions.
+    ///
+    /// ## 3. How It Happens
+    /// The 2D coordinates $(X, Y)$ on a grid of size $(W, H)$ are mapped to two independent angles
+    /// $\theta_x, \theta_y$ in $[0, 2\pi]$. The evaluation is then sampled from a 4D noise space
+    /// $N(x_1, y_1, x_2, y_2)$:
+    ///
+    /// $$ \theta_x = \frac{X}{W} 2\pi $$
+    /// $$ \theta_y = \frac{Y}{H} 2\pi $$
+    /// $$ R_x = \frac{W}{Scale \times 2\pi}, \quad R_y = \frac{H}{Scale \times 2\pi} $$
+    ///
+    /// $$ N_{val} = Noise_{4D}(R_x \cos\theta_x, R_x \sin\theta_x, R_y \cos\theta_y, R_y \sin\theta_y) $$
     fn eval_noise(&self, noise: &OpenSimplex, x: f32, y: f32, scale: f32) -> f64 {
         if self.toroidal {
             // Map [0, width] -> angle in [0, 2pi]
@@ -92,7 +114,24 @@ impl EnvironmentManager {
         }
     }
 
-    /// Returns the temperature in Celsius at the given coordinates.
+    /// # Environmental Domain Mapping (Temperature)
+    ///
+    /// ## 1. What Happens
+    /// The `get_temperature_at` method samples the continuous noise field and maps it to a
+    /// biologically relevant temperature scale (Celsius).
+    ///
+    /// ## 2. Why It Happens
+    /// Simplex noise naturally outputs values in the domain $[-1.0, 1.0]$. For biological constraints
+    /// (like thermodynamic efficiency in the `behavior` crate), we need a realistic temperature gradient
+    /// ranging from freezing (Tundra) to extremely hot (Desert).
+    ///
+    /// ## 3. How It Happens
+    /// The standard $[-1, 1]$ output is linearly mapped to $[-20^\circ C, +45^\circ C]$.
+    /// Given a desired target range $[T_{min}, T_{max}]$, the transformation is:
+    ///
+    /// $$ Amplitude = \frac{T_{max} - T_{min}}{2.0} $$
+    /// $$ Offset = T_{min} + Amplitude $$
+    /// $$ T_{final} = Offset + (Noise_{val} \times Amplitude) $$
     pub fn get_temperature_at(&self, x: f32, y: f32) -> f32 {
         // Evaluate noise in [-1, 1], scale to [-20.0, 45.0] C
         let noise_val = self.eval_noise(&self.noise_temp, x, y, 400.0) as f32;
@@ -106,7 +145,22 @@ impl EnvironmentManager {
         (noise_val * 0.5) + 0.5
     }
 
-    /// Resolves the Biome at a specific coordinate based on temperature and humidity.
+    /// # Whittaker Biome Resolution
+    ///
+    /// ## 1. What Happens
+    /// The `get_biome_at` function resolves a specific `Biome` enum variant based on the local
+    /// temperature and humidity coordinates.
+    ///
+    /// ## 2. Why It Happens
+    /// While temperature and humidity are continuous fields, ecological niches and fertility levels
+    /// are often discrete states. To spawn appropriate food distributions (`EcologyConfig`) or
+    /// apply localized evolutionary pressures, the engine must classify the continuum into known
+    /// macroscopic biome types.
+    ///
+    /// ## 3. How It Happens
+    /// The logic implements a simplified Robert Whittaker biome classification diagram. It evaluates
+    /// a 2D piece-wise conditional tree mapping the coordinate $(T_{Celsius}, H_{Relative})$ to a
+    /// discrete state space (e.g., $T > 15 \cap H > 0.7 \Rightarrow \text{TropicalRainforest}$).
     pub fn get_biome_at(&self, x: f32, y: f32) -> Biome {
         let temp = self.get_temperature_at(x, y);
         let hum = self.get_humidity_at(x, y);
