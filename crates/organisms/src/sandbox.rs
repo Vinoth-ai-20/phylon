@@ -146,6 +146,7 @@ pub fn generate_hex_mesh(
     use physics::{ConstraintType, ParticleNode, Spring};
 
     let mut nodes = Vec::new();
+    let mesh_id = world.spawn_empty().id();
 
     // Spawn nodes
     for row in 0..rows {
@@ -165,7 +166,7 @@ pub fn generate_hex_mesh(
 
             let entity = world
                 .spawn((
-                    ParticleNode::new(pos, 5.0, 1),
+                    ParticleNode::new(pos, 5.0, 1, mesh_id.index()),
                     crate::OrganismColor(color),
                     SandboxTraits {
                         mesh: true,

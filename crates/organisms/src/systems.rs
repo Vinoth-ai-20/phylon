@@ -215,7 +215,7 @@ pub fn growth_system(
 
         let spine_node = commands
             .spawn((
-                ParticleNode::new(spawn_pos, 1.0, seg_u32),
+                ParticleNode::new(spawn_pos, 1.0, seg_u32, entity.index()),
                 OrganismColor(state.color),
             ))
             .id();
@@ -275,13 +275,13 @@ pub fn growth_system(
 
             let f_up = commands
                 .spawn((
-                    ParticleNode::new(f_up_pos, 0.5, 4),
+                    ParticleNode::new(f_up_pos, 0.5, 4, entity.index()),
                     OrganismColor(state.color),
                 ))
                 .id();
             let f_dn = commands
                 .spawn((
-                    ParticleNode::new(f_dn_pos, 0.5, 4),
+                    ParticleNode::new(f_dn_pos, 0.5, 4, entity.index()),
                     OrganismColor(state.color),
                 ))
                 .id();
@@ -438,7 +438,12 @@ pub fn producer_growth_system(
 
             let new_node_id = commands
                 .spawn((
-                    physics::ParticleNode::new(head_node.position + offset, 1.0, 1),
+                    physics::ParticleNode::new(
+                        head_node.position + offset,
+                        1.0,
+                        1,
+                        head_entity.index(),
+                    ),
                     crate::components::OrganismColor([0.2, 0.9, 0.2]), // Bright green new leaf
                 ))
                 .id();

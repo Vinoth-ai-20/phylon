@@ -12,8 +12,8 @@ pub struct GpuParticleNode {
     pub force: [f32; 2],
     /// Mass of the node.
     pub mass: f32,
-    /// Padding for alignment.
-    pub _padding: u32,
+    /// ID of the organism this node belongs to.
+    pub organism_id: u32,
 }
 
 /// A GPU-friendly representation of a Spring constraint.

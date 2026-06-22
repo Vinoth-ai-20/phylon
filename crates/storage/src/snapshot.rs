@@ -28,6 +28,7 @@ pub struct SnapshotNode {
     pub mass: f32,
     pub segment_type: u32,
     pub is_fixed: bool,
+    pub organism_id: u32,
 
     // Optional attributes per node
     pub color: Option<[f32; 3]>,
@@ -123,6 +124,7 @@ impl SimulationSnapshot {
                 mass: node.mass,
                 segment_type: node.segment_type,
                 is_fixed: node.is_fixed,
+                organism_id: node.organism_id,
                 color: color.map(|c| c.0),
                 diet: diet.cloned(),
                 category: category.cloned(),
@@ -207,6 +209,7 @@ impl SimulationSnapshot {
                 mass: node.mass,
                 segment_type: node.segment_type,
                 is_fixed: node.is_fixed,
+                organism_id: node.organism_id,
             });
 
             if let Some(color) = node.color {

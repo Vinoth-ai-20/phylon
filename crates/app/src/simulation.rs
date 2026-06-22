@@ -94,7 +94,7 @@ impl PhylonApp {
                 velocity: [node.velocity.x, node.velocity.y],
                 force: [node.force.x, node.force.y],
                 mass: node.mass,
-                _padding: 0,
+                organism_id: node.organism_id,
             });
             node_entities.push(entity);
         }

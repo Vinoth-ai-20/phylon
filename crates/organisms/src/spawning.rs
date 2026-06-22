@@ -32,12 +32,11 @@ pub fn spawn_organism(
     };
 
     // Spawn the head node at start_pos (gene index 0).
-    let head_node = world
-        .spawn((
-            ParticleNode::new(start_pos, 1.0, head_seg_u32),
-            OrganismColor(color),
-        ))
-        .id();
+    let head_node = world.spawn_empty().id();
+    world.entity_mut(head_node).insert((
+        ParticleNode::new(start_pos, 1.0, head_seg_u32, head_node.index()),
+        OrganismColor(color),
+    ));
 
     // Attach biology to the head node.
     world.entity_mut(head_node).insert((
@@ -141,17 +140,21 @@ pub fn spawn_proto_fish(
     let spine_types: [u32; 5] = [0, 1, 1, 1, 3];
     let proto_color = [0.15, 0.72, 0.45]; // The original green used for debug proto-fish
 
+    let mut head_node_id = 0;
     let spine_nodes: Vec<bevy_ecs::entity::Entity> = spine_types
         .iter()
         .enumerate()
         .map(|(i, &seg_type)| {
             let p = pos + dir * (-(i as f32) * segment_len);
-            world
-                .spawn((
-                    ParticleNode::new(p, 1.0, seg_type),
-                    OrganismColor(proto_color),
-                ))
-                .id()
+            let ent = world.spawn_empty().id();
+            if i == 0 {
+                head_node_id = ent.index();
+            }
+            world.entity_mut(ent).insert((
+                ParticleNode::new(p, 1.0, seg_type, head_node_id),
+                OrganismColor(proto_color),
+            ));
+            ent
         })
         .collect();
 
@@ -185,13 +188,13 @@ pub fn spawn_proto_fish(
 
     let f_up = world
         .spawn((
-            ParticleNode::new(f_up_pos, 0.5, 4),
+            ParticleNode::new(f_up_pos, 0.5, 4, head_node_id),
             OrganismColor(proto_color),
         ))
         .id();
     let f_dn = world
         .spawn((
-            ParticleNode::new(f_dn_pos, 0.5, 4),
+            ParticleNode::new(f_dn_pos, 0.5, 4, head_node_id),
             OrganismColor(proto_color),
         ))
         .id();

@@ -54,11 +54,13 @@ pub struct ParticleNode {
     pub segment_type: u32,
     /// Whether the node is fixed in place.
     pub is_fixed: bool,
+    /// ID of the organism this node belongs to.
+    pub organism_id: u32,
 }
 
 impl ParticleNode {
     /// Creates a new node at the given position.
-    pub fn new(position: Vec2, mass: f32, segment_type: u32) -> Self {
+    pub fn new(position: Vec2, mass: f32, segment_type: u32, organism_id: u32) -> Self {
         Self {
             position,
             velocity: Vec2::ZERO,
@@ -66,6 +68,7 @@ impl ParticleNode {
             mass,
             segment_type,
             is_fixed: false,
+            organism_id,
         }
     }
 }
@@ -231,7 +234,7 @@ mod tests {
 
     #[test]
     fn particle_node_initial_state() {
-        let node = ParticleNode::new(Vec2::new(1.0, 2.0), 3.0, 1);
+        let node = ParticleNode::new(Vec2::new(1.0, 2.0), 3.0, 1, 42);
         assert_eq!(node.position, Vec2::new(1.0, 2.0));
         assert_eq!(node.velocity, Vec2::ZERO);
         assert_eq!(node.force, Vec2::ZERO);

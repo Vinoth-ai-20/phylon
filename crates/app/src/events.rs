@@ -133,17 +133,19 @@ impl PhylonApp {
                                 [0.7, 0.7, 0.7]
                             };
 
-                            let mut node = physics::ParticleNode::new(spawn_pos, 5.0, seg_type);
+                            let entity = self.world.ecs.spawn_empty().id();
+                            let mut node = physics::ParticleNode::new(
+                                spawn_pos,
+                                5.0,
+                                seg_type,
+                                entity.index(),
+                            );
                             node.is_fixed = preset.traits.fixable;
-                            let entity = self
-                                .world
-                                .ecs
-                                .spawn((
-                                    node,
-                                    organisms::OrganismColor(color),
-                                    preset.traits, // Attach SandboxTraits
-                                ))
-                                .id();
+                            self.world.ecs.entity_mut(entity).insert((
+                                node,
+                                organisms::OrganismColor(color),
+                                preset.traits, // Attach SandboxTraits
+                            ));
 
                             // Attach biological components so Inspector can view it
                             self.world.ecs.entity_mut(entity).insert((

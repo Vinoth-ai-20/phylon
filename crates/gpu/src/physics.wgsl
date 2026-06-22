@@ -3,6 +3,7 @@ struct ParticleNode {
     velocity: vec2<f32>,
     force: vec2<f32>,
     mass: f32,
+    organism_id: u32,
 }
 
 struct Spring {
@@ -101,9 +102,29 @@ fn integrate(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     var node = nodes[index];
     
+    // --- STERIC HINDRANCE (Node Repulsion) ---
+    // Only repel nodes of the SAME organism to give it volume
+    let R = 15.0; // Rest distance threshold
+    let k_repel = 2000.0; // Repulsion strength. High enough to counter springs.
+    var repel_force = vec2<f32>(0.0, 0.0);
+    
+    let num_nodes = arrayLength(&nodes);
+    for (var i = 0u; i < num_nodes; i = i + 1u) {
+        if (i == index) { continue; }
+        let other = nodes[i];
+        if (other.organism_id == node.organism_id) {
+            let delta = node.position - other.position;
+            let d = length(delta);
+            if (d > 0.0001 && d < R) {
+                let dir = delta / d;
+                repel_force = repel_force + dir * (k_repel * (R - d));
+            }
+        }
+    }
+    
     let fx = f32(atomicLoad(&atomic_forces_x[index])) / FORCE_SCALE;
     let fy = f32(atomicLoad(&atomic_forces_y[index])) / FORCE_SCALE;
-    let total_force = node.force + vec2<f32>(fx, fy);
+    let total_force = node.force + vec2<f32>(fx, fy) + repel_force;
     
     // Symplectic Euler
     let acceleration = total_force / node.mass;
