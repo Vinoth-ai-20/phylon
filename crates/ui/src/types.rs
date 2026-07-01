@@ -143,8 +143,8 @@ pub enum MenuAction {
         /// Are the nodes anchored
         is_fixed: bool,
     },
-    /// Spawn a new proto-fish under the camera.
-    SpawnProtoFish,
+    /// Spawn a new Carnivore under the camera.
+    SpawnCarnivore,
     /// Show the Phylon documentation.
     ShowDocumentation,
     /// Show the About Phylon dialog.

@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use common::{Tick, Vec2};
 
 /// Event triggered when a hazard is spawned.
-#[derive(Event, Debug, Clone)]
+#[derive(Message, Debug, Clone)]
 pub struct HazardSpawned(pub Vec2);
 
 /// Configuration for random hazards.

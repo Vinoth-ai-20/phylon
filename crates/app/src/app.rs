@@ -238,9 +238,9 @@ impl PhylonApp {
             .insert_resource(ecology::catastrophe::CatastropheManager::default());
         world
             .ecs
-            .insert_resource(bevy_ecs::event::Events::<reproduction::BirthRequest>::default());
+            .insert_resource(bevy_ecs::message::Events::<reproduction::BirthRequest>::default());
         world.ecs.insert_resource(
-            bevy_ecs::event::Events::<ecology::catastrophe::HazardSpawned>::default(),
+            bevy_ecs::message::Events::<ecology::catastrophe::HazardSpawned>::default(),
         );
         world.ecs.insert_resource(analytics::MetricsState::new());
         world.ecs.insert_resource(analytics::NarrationLog::new(100));

@@ -9,3 +9,4 @@ common    = { workspace = true }
 wgpu      = { workspace = true }
 thiserror = { workspace = true }
 bytemuck  = { workspace = true }
+crossbeam-channel = "0.5.15"

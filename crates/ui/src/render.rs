@@ -77,7 +77,7 @@ pub fn render_ui(
         actions.push(MenuAction::Deselect);
     }
     if ctx.input_mut(|i| i.consume_shortcut(&shortcut_spawn)) {
-        actions.push(MenuAction::SpawnProtoFish);
+        actions.push(MenuAction::SpawnCarnivore);
     }
 
     if *app_state == AppState::MainMenu {
@@ -336,12 +336,12 @@ pub fn render_ui(
                 ui.menu_button("Tools", |ui| {
                     if ui
                         .add(
-                            egui::Button::new("Spawn Proto-Fish")
+                            egui::Button::new("Spawn Carnivore")
                                 .shortcut_text(ctx.format_shortcut(&shortcut_spawn)),
                         )
                         .clicked()
                     {
-                        actions.push(MenuAction::SpawnProtoFish);
+                        actions.push(MenuAction::SpawnCarnivore);
                     }
                 });
                 ui.menu_button("Help", |ui| {
@@ -420,7 +420,8 @@ pub fn render_ui(
             });
 
             // Right Aligned Camera Controls
-            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(bar_rect), |ui| {
+            // Downgraded to egui 0.28 equivalent API
+            ui.allocate_ui_at_rect(bar_rect, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("+").on_hover_text("Zoom In (+/=)").clicked() {
                         actions.push(MenuAction::CameraZoomIn);
@@ -910,7 +911,7 @@ pub fn render_ui(
                                         ui.color_edit_button_rgb(&mut color);
                                     });
                                     egui::ScrollArea::vertical()
-                                        .id_salt("hox_scroll")
+                                        .id_source("hox_scroll")
                                         .max_height(250.0)
                                         .show(ui, |ui| {
                                             egui::Grid::new("hox_grid")
@@ -1778,7 +1779,7 @@ pub fn render_ui(
     if *spectator_mode {
         let current_time = ctx.input(|i| i.time);
 
-        let is_tracked_dead = tracked_entity.is_none_or(|e| world.ecs.get_entity(e).is_none());
+        let is_tracked_dead = tracked_entity.is_none_or(|e| world.ecs.get_entity(e).is_err());
 
         if is_tracked_dead || current_time - *last_spectator_switch_time > 15.0 {
             // Find most "interesting" organism (e.g. oldest alive or highest generation)

@@ -229,7 +229,7 @@ pub fn spring_force_system(
     }
 
     for entity in springs_to_break {
-        if let Some(mut e) = commands.get_entity(entity) {
+        if let Ok(mut e) = commands.get_entity(entity) {
             e.despawn();
         }
     }

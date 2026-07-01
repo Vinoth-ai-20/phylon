@@ -61,7 +61,7 @@ pub struct ReproductionStrategy {
 /// ## 3. How It Happens
 /// The `reproduction_system` writes the event. The `app` crate reads the event, increments the
 /// `Generation` counter, and calls `spawn_organism` from the `organisms` crate.
-#[derive(Event, Debug, Clone)]
+#[derive(Message, Debug, Clone)]
 pub struct BirthRequest {
     /// The parent entity, if any.
     pub parent_id: Option<bevy_ecs::entity::Entity>,
@@ -107,7 +107,7 @@ pub fn reproduction_system(
     config: Res<ecology::EcologyConfig>,
     mut tracker: ResMut<genetics::GlobalInnovationTracker>,
     all_organisms: Query<(), With<ReproductionStrategy>>,
-    mut birth_events: EventWriter<BirthRequest>,
+    mut birth_events: MessageWriter<BirthRequest>,
 ) {
     let current_population = all_organisms.iter().count();
     let mut pending_births = 0;
@@ -153,7 +153,7 @@ pub fn reproduction_system(
                     (fastrand::f32() - 0.5) * 50.0,
                 );
 
-                birth_events.send(BirthRequest {
+                birth_events.write(BirthRequest {
                     parent_id: Some(entity),
                     genome: child_genome,
                     position: node.position + offset,
@@ -210,7 +210,7 @@ pub fn reproduction_system(
                     offset_pos.x += (rng.gen::<f32>() - 0.5) * 50.0;
                     offset_pos.y += (rng.gen::<f32>() - 0.5) * 50.0;
 
-                    birth_events.send(BirthRequest {
+                    birth_events.write(BirthRequest {
                         parent_id: Some(*e1),
                         genome: child_genome,
                         position: offset_pos,

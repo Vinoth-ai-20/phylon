@@ -5,13 +5,14 @@ struct CtrnnNode {
     activation: u32,
     first_synapse: u32,
     synapse_count: u32,
+    neuromodulator: f32,
 }
 
 struct CtrnnSynapse {
     source: u32,
     tgt_node: u32,
     weight: f32,
-    _padding: u32,
+    plasticity_rate: f32,
 }
 
 struct BrainConfig {
@@ -22,7 +23,7 @@ struct BrainConfig {
 }
 
 @group(0) @binding(0) var<storage, read_write> nodes: array<CtrnnNode>;
-@group(0) @binding(1) var<storage, read> synapses: array<CtrnnSynapse>;
+@group(0) @binding(1) var<storage, read_write> synapses: array<CtrnnSynapse>;
 @group(0) @binding(2) var<uniform> config: BrainConfig;
 
 fn apply_activation(x: f32, act_id: u32) -> f32 {
@@ -63,8 +64,19 @@ fn integrate_nodes(@builtin(global_invocation_id) global_id: vec3<u32>) {
     for (var i = 0u; i < node.synapse_count; i++) {
         let syn = synapses[node.first_synapse + i];
         let src_node = nodes[syn.source];
-        let act = apply_activation(src_node.state + src_node.bias, src_node.activation);
-        sum += act * syn.weight;
+        let src_act = apply_activation(src_node.state + src_node.bias, src_node.activation);
+        sum += src_act * syn.weight;
+        
+        // Hebbian Plasticity Update: ΔW = η * O_src * O_tgt * M
+        if syn.plasticity_rate > 0.0 {
+            let tgt_act = apply_activation(node.state + node.bias, node.activation);
+            // We use the post-activation states and the neuromodulator concentration
+            let delta_w = syn.plasticity_rate * src_act * tgt_act * node.neuromodulator;
+            
+            // In-place weight update (clamped to prevent explosion)
+            let new_weight = clamp(syn.weight + delta_w * config.dt, -10.0, 10.0);
+            synapses[node.first_synapse + i].weight = new_weight;
+        }
     }
     
     // Euler step

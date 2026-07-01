@@ -122,6 +122,8 @@ pub fn sensing_system(
     cpu_field: Option<bevy_ecs::prelude::Res<diffusion::CpuFieldState>>,
     cpu_signal_field: Option<bevy_ecs::prelude::Res<diffusion::CpuSignalFieldState>>,
     cpu_hazard_field: Option<bevy_ecs::prelude::Res<diffusion::CpuHazardFieldState>>,
+    atmosphere: Option<bevy_ecs::prelude::Res<metabolism::GlobalAtmosphere>>,
+    env: Option<bevy_ecs::prelude::Res<environment::EnvironmentManager>>,
     mut local_tick: bevy_ecs::prelude::Local<u64>,
 ) {
     let mut diet_map = std::collections::HashMap::new();
@@ -130,135 +132,124 @@ pub fn sensing_system(
     }
 
     for (mut state, node, mut vision_opt, energy_opt, age_opt, diet_opt) in query.iter_mut() {
-        if state.inputs.is_empty() {
-            continue;
+        if state.inputs.len() < 15 {
+            continue; // Safety fallback
         }
 
-        let mut idx = 0;
+        for i in 0..state.inputs.len() {
+            state.inputs[i] = -1.0; // Default to -1.0 (empty)
+        }
 
-        // 1. Chemical sensor (Olfaction) - reads diffusion field
+        // --- INTERNAL STATE ---
+        // [0] ATP
+        if let Some(chem) = energy_opt {
+            let normalized_atp = (chem.atp / chem.max_atp.max(1.0)).clamp(0.0, 1.0);
+            state.inputs[0] = normalized_atp * 2.0 - 1.0;
+        }
+        // [1] Age
+        if let Some(age) = age_opt {
+            let normalized_age =
+                (age.ticks as f32 / age.max_lifespan.max(1) as f32).clamp(0.0, 1.0);
+            state.inputs[1] = normalized_age * 2.0 - 1.0;
+        }
+        // [2] Internal Pacemaker (~2Hz sine wave)
+        state.inputs[2] = (*local_tick as f32 * 0.2).sin();
+
+        // --- CHEMICAL SENSING ---
+        // [3] O2 Gradient
         if let Some(field) = &cpu_field {
-            // Very basic: read the exact cell concentration
-            let val = field.sample(node.position, 0);
-            if idx < state.inputs.len() {
-                state.inputs[idx] = val;
-                idx += 1;
-            }
+            let val = field.sample(node.position, 2); // channel 2 = O2
+            state.inputs[3] = (val / 5000.0).clamp(0.0, 1.0) * 2.0 - 1.0;
         }
-
-        // 1.5. Signal sensor - reads emergent signal field
+        // [4] CO2 Gradient
+        if let Some(field) = &cpu_field {
+            let val = field.sample(node.position, 3); // channel 3 = CO2
+            state.inputs[4] = (val / 1000.0).clamp(0.0, 1.0) * 2.0 - 1.0;
+        }
+        // [5] Pheromones
         if let Some(field) = &cpu_signal_field {
             let val = field.sample(node.position);
-            if idx < state.inputs.len() {
-                state.inputs[idx] = val;
-                idx += 1;
-            }
+            state.inputs[5] = val.clamp(0.0, 1.0) * 2.0 - 1.0;
         }
 
-        // 1.6. Hazard sensor - reads "impending doom" field
+        // --- ENVIRONMENT ---
+        // [6] Sunlight
+        if let Some(atm) = &atmosphere {
+            state.inputs[6] = atm.sunlight.clamp(0.0, 1.0) * 2.0 - 1.0;
+        }
+        // [7] Hazards
         if let Some(field) = &cpu_hazard_field {
             let val = field.sample(node.position);
-            if idx < state.inputs.len() {
-                state.inputs[idx] = val;
-                idx += 1;
-            }
+            state.inputs[7] = val.clamp(0.0, 1.0) * 2.0 - 1.0;
+        }
+        // [8] World Boundary
+        if let Some(e) = &env {
+            let hw = e.width() / 2.0;
+            let hh = e.height() / 2.0;
+            let dist_x = hw - node.position.x.abs();
+            let dist_y = hh - node.position.y.abs();
+            let dist = dist_x.min(dist_y);
+            let norm_dist = (dist / 150.0).clamp(0.0, 1.0);
+            state.inputs[8] = norm_dist * 2.0 - 1.0;
         }
 
-        // 2. Proprioception (ATP level)
-        if let Some(chem) = energy_opt {
-            if idx < state.inputs.len() {
-                state.inputs[idx] = chem.atp / chem.max_atp.max(1.0);
-                idx += 1;
-            }
-        }
-
-        // 3. Proprioception (Age)
-        if let Some(age) = age_opt {
-            if idx < state.inputs.len() {
-                state.inputs[idx] = age.ticks as f32 / age.max_lifespan.max(1) as f32;
-                idx += 1;
-            }
-        }
-
-        // 4, 5, 6. Vision (Left, Center, Right bins)
+        // --- VISION ---
         if let Some(vision) = &mut vision_opt {
-            // Update forward direction based on velocity
             if node.velocity.length_squared() > 0.01 {
                 vision.last_forward = node.velocity.normalize();
             } else if vision.last_forward.length_squared() < 0.01 {
-                vision.last_forward = common::Vec2::X; // Fallback
+                vision.last_forward = common::Vec2::X;
             }
             let forward = vision.last_forward;
 
-            let mut food_left = 0.0f32;
-            let mut food_center = 0.0f32;
-            let mut food_right = 0.0f32;
+            let mut org_left = 0.0f32;
+            let mut org_center = 0.0f32;
+            let mut org_right = 0.0f32;
 
-            let mut obs_left = 0.0f32;
-            let mut obs_center = 0.0f32;
-            let mut obs_right = 0.0f32;
+            let mut res_left = 0.0f32;
+            let mut res_center = 0.0f32;
+            let mut res_right = 0.0f32;
 
-            let mut process_vision_target = |target_pos: common::Vec2, is_food: bool| {
+            let mut process_vision_target = |target_pos: common::Vec2, is_resource: bool| {
                 let diff = target_pos - node.position;
                 let dist = diff.length();
-
-                // Ignore self (heuristic), very close nodes, or nodes beyond range
                 if dist < vision.self_occlusion_radius || dist > vision.range {
                     return;
                 }
-
                 let dir = diff / dist;
-                // Angle between forward and dir
                 let angle = forward.angle_to(dir);
-
-                // If within FOV
                 let half_fov = vision.fov / 2.0;
-                if angle >= -half_fov && angle <= half_fov {
-                    // Vision strength is inverse to distance
-                    let strength = 1.0 - (dist / vision.range);
 
-                    let third_fov = half_fov / 1.5; // Divide FOV into 3 bins
-                    if is_food {
+                if angle >= -half_fov && angle <= half_fov {
+                    let strength = 1.0 - (dist / vision.range);
+                    let third_fov = half_fov / 1.5;
+
+                    if is_resource {
                         if angle < -third_fov {
-                            food_left = food_left.max(strength);
+                            res_left = res_left.max(strength);
                         } else if angle > third_fov {
-                            food_right = food_right.max(strength);
+                            res_right = res_right.max(strength);
                         } else {
-                            food_center = food_center.max(strength);
+                            res_center = res_center.max(strength);
                         }
                     } else {
                         if angle < -third_fov {
-                            obs_left = obs_left.max(strength);
+                            org_left = org_left.max(strength);
                         } else if angle > third_fov {
-                            obs_right = obs_right.max(strength);
+                            org_right = org_right.max(strength);
                         } else {
-                            obs_center = obs_center.max(strength);
+                            org_center = org_center.max(strength);
                         }
                     }
                 }
             };
 
-            // 1. See other organisms (mating, collision avoidance, predation)
             for other_node in node_query.iter() {
-                let mut is_food = false;
-                if let (Some(my_diet), Some(other_diet)) =
-                    (diet_opt, diet_map.get(&other_node.organism_id))
-                {
-                    is_food = matches!(
-                        (my_diet, other_diet),
-                        (
-                            ecology::Diet::Carnivore,
-                            ecology::Diet::Herbivore | ecology::Diet::Omnivore
-                        ) | (
-                            ecology::Diet::Herbivore | ecology::Diet::Omnivore,
-                            ecology::Diet::Producer
-                        )
-                    );
+                if other_node.organism_id != node.organism_id {
+                    process_vision_target(other_node.position, false);
                 }
-                process_vision_target(other_node.position, is_food);
             }
 
-            // 2. Diet-specific target vision
             if let Some(diet) = diet_opt {
                 match diet {
                     ecology::Diet::Producer => {
@@ -276,36 +267,20 @@ pub fn sensing_system(
                             process_vision_target(corpse.position, true);
                         }
                     }
-                    ecology::Diet::Carnivore => {
-                        // Carnivores look at other organisms which is already done above.
-                    }
+                    ecology::Diet::Carnivore => {}
                 }
             }
 
-            if idx < state.inputs.len() {
-                state.inputs[idx] = food_left - obs_left;
-                idx += 1;
-            }
-            if idx < state.inputs.len() {
-                state.inputs[idx] = food_center - obs_center;
-                idx += 1;
-            }
-            if idx < state.inputs.len() {
-                state.inputs[idx] = food_right - obs_right;
-                idx += 1;
-            }
+            state.inputs[9] = org_left * 2.0 - 1.0;
+            state.inputs[10] = org_center * 2.0 - 1.0;
+            state.inputs[11] = org_right * 2.0 - 1.0;
 
-            // 7. Internal Pacemaker (CPG)
-            if idx < state.inputs.len() {
-                // Since this runs once per tick, local_tick corresponds to elapsed ticks.
-                // At 60 ticks/sec, * 0.2 gives ~2 Hz frequency.
-                let pacemaker_signal = (*local_tick as f32 * 0.2).sin();
-                state.inputs[idx] = pacemaker_signal;
-            }
+            state.inputs[12] = res_left * 2.0 - 1.0;
+            state.inputs[13] = res_center * 2.0 - 1.0;
+            state.inputs[14] = res_right * 2.0 - 1.0;
         }
     }
 
-    // Advance the pacemaker tick globally once per frame
     *local_tick += 1;
 }
 

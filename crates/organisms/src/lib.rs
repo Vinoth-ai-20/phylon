@@ -29,4 +29,4 @@ pub use systems::growth_system;
 
 /// Organism spawning logic.
 pub mod spawning;
-pub use spawning::{spawn_organism, spawn_proto_fish};
+pub use spawning::spawn_organism;

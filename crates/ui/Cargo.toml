@@ -8,6 +8,7 @@ description = "egui-based research interface: inspector panels, analytics, contr
 common     = { workspace = true }
 events     = { workspace = true }
 thiserror  = { workspace = true }
+bevy       = { workspace = true }
 bevy_ecs   = { workspace = true }
 genetics   = { workspace = true }
 physics    = { workspace = true }
@@ -17,11 +18,7 @@ metabolism = { workspace = true }
 reproduction = { workspace = true }
 analytics  = { workspace = true }
 world      = { workspace = true }
-egui       = { workspace = true }
-egui_plot  = { workspace = true }
-egui_dock  = { workspace = true }
 sensing    = { workspace = true }
 ecology = { version = "0.1.0", path = "../ecology" }
 evolution = { version = "0.1.0", path = "../evolution" }
 sysinfo = "0.39.3"
-egui-remixicon = "0.29.1"

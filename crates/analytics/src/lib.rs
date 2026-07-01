@@ -62,7 +62,52 @@ impl Default for AnalyticsAccumulator {
 }
 
 /// Maximum number of time-series samples to keep in the ring buffers.
-const METRICS_RING_CAPACITY: usize = 512;
+pub const METRICS_RING_CAPACITY: usize = 512;
+
+/// A generic history buffer for time-series data.
+#[derive(Debug, Clone)]
+pub struct HistoryBuffer<T> {
+    samples: std::collections::VecDeque<[f64; 2]>,
+    capacity: usize,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T: Into<f64> + Copy> HistoryBuffer<T> {
+    /// Create a new history buffer with the given capacity.
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            samples: std::collections::VecDeque::with_capacity(capacity),
+            capacity,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Push a new value at the given time.
+    pub fn push(&mut self, time: f64, value: T) {
+        if self.samples.len() >= self.capacity {
+            self.samples.pop_front();
+        }
+        self.samples.push_back([time, value.into()]);
+    }
+
+    /// Get a reference to the internal samples for rendering.
+    pub fn samples(&self) -> &std::collections::VecDeque<[f64; 2]> {
+        &self.samples
+    }
+
+    /// Get the latest sample value.
+    pub fn latest(&self) -> Option<f64> {
+        self.samples.back().map(|&[_, v]| v)
+    }
+}
+
+impl<T> std::ops::Deref for HistoryBuffer<T> {
+    type Target = std::collections::VecDeque<[f64; 2]>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.samples
+    }
+}
 
 /// Current population counts for various entity types.
 #[derive(Debug, Clone, Default)]
@@ -101,36 +146,36 @@ pub struct PopulationCounts {
 /// the ECS and pushes `[sim_time_s, value]` pairs onto `VecDeque`s capped at `METRICS_RING_CAPACITY`.
 #[derive(bevy_ecs::prelude::Resource, Debug, Clone)]
 pub struct MetricsState {
-    /// Ring buffer of `[sim_time_s, value]` points for Producers.
-    pub producers_history: std::collections::VecDeque<[f64; 2]>,
+    /// Ring buffer for Producers.
+    pub producers_history: HistoryBuffer<f32>,
     /// Ring buffer for Herbivores.
-    pub herbivores_history: std::collections::VecDeque<[f64; 2]>,
+    pub herbivores_history: HistoryBuffer<f32>,
     /// Ring buffer for Carnivores.
-    pub carnivores_history: std::collections::VecDeque<[f64; 2]>,
+    pub carnivores_history: HistoryBuffer<f32>,
     /// Ring buffer for Omnivores.
-    pub omnivores_history: std::collections::VecDeque<[f64; 2]>,
+    pub omnivores_history: HistoryBuffer<f32>,
     /// Ring buffer for Decomposers.
-    pub decomposers_history: std::collections::VecDeque<[f64; 2]>,
+    pub decomposers_history: HistoryBuffer<f32>,
     /// Ring buffer for FoodPellets.
-    pub food_history: std::collections::VecDeque<[f64; 2]>,
+    pub food_history: HistoryBuffer<f32>,
     /// Ring buffer for Minerals.
-    pub minerals_history: std::collections::VecDeque<[f64; 2]>,
+    pub minerals_history: HistoryBuffer<f32>,
     /// Ring buffer for Corpses.
-    pub corpses_history: std::collections::VecDeque<[f64; 2]>,
-    /// Ring buffer of `[sim_time_s, fps]` points for the FPS plot.
-    pub fps_history: std::collections::VecDeque<[f64; 2]>,
+    pub corpses_history: HistoryBuffer<f32>,
+    /// Ring buffer for the FPS plot.
+    pub fps_history: HistoryBuffer<f32>,
     /// Ring buffer for TPS (Ticks Per Second).
-    pub tps_history: std::collections::VecDeque<[f64; 2]>,
+    pub tps_history: HistoryBuffer<f32>,
     /// Ring buffer for Memory usage (MB).
-    pub memory_history: std::collections::VecDeque<[f64; 2]>,
+    pub memory_history: HistoryBuffer<f32>,
     /// Ring buffer for Sunlight.
-    pub sunlight_history: std::collections::VecDeque<[f64; 2]>,
+    pub sunlight_history: HistoryBuffer<f32>,
     /// Ring buffer for O2.
-    pub o2_history: std::collections::VecDeque<[f64; 2]>,
+    pub o2_history: HistoryBuffer<f32>,
     /// Ring buffer for CO2.
-    pub co2_history: std::collections::VecDeque<[f64; 2]>,
+    pub co2_history: HistoryBuffer<f32>,
     /// Ring buffer for Temperature.
-    pub temp_history: std::collections::VecDeque<[f64; 2]>,
+    pub temp_history: HistoryBuffer<f32>,
     /// Accumulated simulation time in seconds.
     pub sim_time: f64,
     /// Smoothed FPS estimate (exponential moving average).
@@ -145,21 +190,21 @@ impl MetricsState {
     /// Creates a new, empty `MetricsState`.
     pub fn new() -> Self {
         Self {
-            producers_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
-            herbivores_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
-            carnivores_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
-            omnivores_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
-            decomposers_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
-            food_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
-            minerals_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
-            corpses_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
-            fps_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
-            tps_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
-            memory_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
-            sunlight_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
-            o2_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
-            co2_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
-            temp_history: std::collections::VecDeque::with_capacity(METRICS_RING_CAPACITY),
+            producers_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
+            herbivores_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
+            carnivores_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
+            omnivores_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
+            decomposers_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
+            food_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
+            minerals_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
+            corpses_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
+            fps_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
+            tps_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
+            memory_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
+            sunlight_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
+            o2_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
+            co2_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
+            temp_history: HistoryBuffer::new(METRICS_RING_CAPACITY),
             sim_time: 0.0,
             smoothed_fps: 60.0,
             smoothed_tps: 60.0,
@@ -177,27 +222,25 @@ impl MetricsState {
         let raw_fps = if real_dt > 0.0 { 1.0 / real_dt } else { 60.0 };
         self.smoothed_fps = self.smoothed_fps * 0.95 + raw_fps * 0.05;
 
-        let push_metric = |history: &mut std::collections::VecDeque<[f64; 2]>, value: usize| {
-            if history.len() >= METRICS_RING_CAPACITY {
-                history.pop_front();
-            }
-            history.push_back([self.sim_time, value as f64]);
-        };
+        self.producers_history
+            .push(self.sim_time, counts.producers as f32);
+        self.herbivores_history
+            .push(self.sim_time, counts.herbivores as f32);
+        self.carnivores_history
+            .push(self.sim_time, counts.carnivores as f32);
+        self.omnivores_history
+            .push(self.sim_time, counts.omnivores as f32);
+        self.decomposers_history
+            .push(self.sim_time, counts.decomposers as f32);
+        self.food_history
+            .push(self.sim_time, counts.food_pellets as f32);
+        self.minerals_history
+            .push(self.sim_time, counts.minerals as f32);
+        self.corpses_history
+            .push(self.sim_time, counts.corpses as f32);
 
-        push_metric(&mut self.producers_history, counts.producers);
-        push_metric(&mut self.herbivores_history, counts.herbivores);
-        push_metric(&mut self.carnivores_history, counts.carnivores);
-        push_metric(&mut self.omnivores_history, counts.omnivores);
-        push_metric(&mut self.decomposers_history, counts.decomposers);
-        push_metric(&mut self.food_history, counts.food_pellets);
-        push_metric(&mut self.minerals_history, counts.minerals);
-        push_metric(&mut self.corpses_history, counts.corpses);
-
-        if self.fps_history.len() >= METRICS_RING_CAPACITY {
-            self.fps_history.pop_front();
-        }
         self.fps_history
-            .push_back([self.sim_time, self.smoothed_fps]);
+            .push(self.sim_time, self.smoothed_fps as f32);
     }
 
     /// Records additional environment and performance metrics.
@@ -212,19 +255,13 @@ impl MetricsState {
     ) {
         self.smoothed_tps = self.smoothed_tps * 0.95 + tps * 0.05;
 
-        let push_metric = |history: &mut std::collections::VecDeque<[f64; 2]>, value: f64| {
-            if history.len() >= METRICS_RING_CAPACITY {
-                history.pop_front();
-            }
-            history.push_back([self.sim_time, value]);
-        };
-
-        push_metric(&mut self.tps_history, self.smoothed_tps);
-        push_metric(&mut self.memory_history, memory_mb);
-        push_metric(&mut self.sunlight_history, sunlight);
-        push_metric(&mut self.o2_history, o2);
-        push_metric(&mut self.co2_history, co2);
-        push_metric(&mut self.temp_history, temp);
+        self.tps_history
+            .push(self.sim_time, self.smoothed_tps as f32);
+        self.memory_history.push(self.sim_time, memory_mb as f32);
+        self.sunlight_history.push(self.sim_time, sunlight as f32);
+        self.o2_history.push(self.sim_time, o2 as f32);
+        self.co2_history.push(self.sim_time, co2 as f32);
+        self.temp_history.push(self.sim_time, temp as f32);
     }
 }
 
@@ -318,7 +355,7 @@ mod tests {
         for _ in 0..(METRICS_RING_CAPACITY + 10) {
             m.record_frame(PopulationCounts::default(), 0.016, 0.016);
         }
-        assert_eq!(m.producers_history.len(), METRICS_RING_CAPACITY);
-        assert_eq!(m.fps_history.len(), METRICS_RING_CAPACITY);
+        assert_eq!(m.producers_history.samples().len(), METRICS_RING_CAPACITY);
+        assert_eq!(m.fps_history.samples().len(), METRICS_RING_CAPACITY);
     }
 }

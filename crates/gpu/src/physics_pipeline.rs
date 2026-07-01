@@ -153,9 +153,9 @@ impl PhysicsComputePipeline {
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            immediate_size: 0,
             label: Some("PhysicsComputePipelineLayout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
         });
 
         let compute_forces_pipeline =
@@ -163,7 +163,7 @@ impl PhysicsComputePipeline {
                 label: Some("ComputeForcesPipeline"),
                 layout: Some(&pipeline_layout),
                 module: &shader,
-                entry_point: "compute_forces",
+                entry_point: Some("compute_forces"),
                 compilation_options: Default::default(),
                 cache: None,
             });
@@ -178,7 +178,7 @@ impl PhysicsComputePipeline {
                 label: Some("MuscleActuationPipeline"),
                 layout: Some(&pipeline_layout),
                 module: &muscle_shader,
-                entry_point: "main",
+                entry_point: Some("main"),
                 compilation_options: Default::default(),
                 cache: None,
             });
@@ -187,7 +187,7 @@ impl PhysicsComputePipeline {
             label: Some("IntegratePipeline"),
             layout: Some(&pipeline_layout),
             module: &shader,
-            entry_point: "integrate",
+            entry_point: Some("integrate"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -197,7 +197,7 @@ impl PhysicsComputePipeline {
                 label: Some("PbdProjectionPipeline"),
                 layout: Some(&pipeline_layout),
                 module: &shader,
-                entry_point: "pbd_projection",
+                entry_point: Some("pbd_projection"),
                 compilation_options: Default::default(),
                 cache: None,
             });
@@ -206,7 +206,7 @@ impl PhysicsComputePipeline {
             label: Some("ApplyPbdPipeline"),
             layout: Some(&pipeline_layout),
             module: &shader,
-            entry_point: "apply_pbd",
+            entry_point: Some("apply_pbd"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -425,7 +425,10 @@ impl PhysicsComputePipeline {
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-        device.poll(wgpu::Maintain::Wait);
+        let _ = device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
 
         if receiver.recv().unwrap().is_ok() {
             let data = buffer_slice.get_mapped_range();

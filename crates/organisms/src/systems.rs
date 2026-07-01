@@ -48,16 +48,19 @@ pub fn growth_system(
                     };
                     let inputs = [i as f32 / max_segments as f32, parent_type];
                     let outputs = state.genome.morph_cppn.evaluate(&inputs);
-                    if outputs.len() >= 3 {
+                    if outputs.len() >= 4 {
                         let type_val = outputs[0];
                         let branching = outputs[1];
                         let phase = outputs[2] * std::f32::consts::PI;
+                        // Map tanh output [-1, 1] to a reasonable amplitude magnitude, e.g. [0, 5]
+                        let amplitude = outputs[3].abs() * 5.0;
 
                         if type_val < -0.2 {
-                            generated.push(genetics::HoxGene::muscle(1.2, phase));
+                            generated.push(genetics::HoxGene::muscle(amplitude, phase));
                         } else if type_val > 0.2 {
                             if branching > 0.0 {
-                                generated.push(genetics::HoxGene::branching_torso(2.5, phase));
+                                generated
+                                    .push(genetics::HoxGene::branching_torso(amplitude, phase));
                             } else {
                                 generated.push(genetics::HoxGene::torso());
                             }
@@ -84,8 +87,9 @@ pub fn growth_system(
 
         if is_finished {
             // ── Wire the brain once the body is fully grown ──────────────────
-            // 6 standard inputs + 1 Signal input + 1 Hazard input + 1 Pacemaker
-            let input_count = 9;
+            // 15 biological inputs:
+            // 3 Internal, 3 Chemical, 3 Environment, 3 Vision (Orgs), 3 Vision (Resources)
+            let input_count = 15;
             // effectors + 1 SignalEmitter output
             let output_count = state.effectors.len() + 1;
 
@@ -121,11 +125,12 @@ pub fn growth_system(
 
                 nodes.push(brain::CtrnnNode {
                     state: 0.0,
-                    time_constant,
                     bias,
+                    time_constant,
                     activation,
                     first_synapse: 0,
                     synapse_count: 0,
+                    neuromodulator: 0.0,
                 });
             }
 
@@ -157,7 +162,7 @@ pub fn growth_system(
                         ];
                         let w_outputs = state.genome.brain_cppn.evaluate(&w_inputs);
                         if !w_outputs.is_empty() {
-                            weight += w_outputs[0] * 1.5;
+                            weight += w_outputs[0] * 0.5;
                         }
                     }
 
@@ -166,7 +171,7 @@ pub fn growth_system(
                             source: i as u32,
                             target: j as u32,
                             weight,
-                            _padding: 0,
+                            plasticity_rate: 0.1, // Default plasticity rate
                         });
                     }
                 }
@@ -228,7 +233,7 @@ pub fn growth_system(
 
         let spine_node = commands
             .spawn((
-                ParticleNode::new(spawn_pos, 1.0, seg_u32, entity.index()),
+                ParticleNode::new(spawn_pos, 1.0, seg_u32, entity.index_u32()),
                 OrganismColor(state.color),
             ))
             .id();
@@ -288,13 +293,13 @@ pub fn growth_system(
 
             let f_up = commands
                 .spawn((
-                    ParticleNode::new(f_up_pos, 0.5, 4, entity.index()),
+                    ParticleNode::new(f_up_pos, 0.5, 4, entity.index_u32()),
                     OrganismColor(state.color),
                 ))
                 .id();
             let f_dn = commands
                 .spawn((
-                    ParticleNode::new(f_dn_pos, 0.5, 4, entity.index()),
+                    ParticleNode::new(f_dn_pos, 0.5, 4, entity.index_u32()),
                     OrganismColor(state.color),
                 ))
                 .id();
@@ -478,7 +483,7 @@ pub fn producer_growth_system(
                         head_node.position + offset,
                         1.0,
                         1,
-                        head_entity.index(),
+                        head_entity.index_u32(),
                     ),
                     crate::components::OrganismColor([0.2, 0.9, 0.2]), // Bright green new leaf
                 ))

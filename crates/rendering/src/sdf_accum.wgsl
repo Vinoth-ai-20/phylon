@@ -66,7 +66,11 @@ fn vs_accum(
 fn capsule_sdf(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, r: f32) -> f32 {
     let pa = p - a;
     let ba = b - a;
-    let h  = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    let dot_ba = dot(ba, ba);
+    var h = 0.0;
+    if dot_ba > 1e-6 {
+        h = clamp(dot(pa, ba) / dot_ba, 0.0, 1.0);
+    }
     return length(pa - ba * h) - r;
 }
 

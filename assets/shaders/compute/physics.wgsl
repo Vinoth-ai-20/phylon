@@ -1,0 +1,255 @@
+struct ParticleNode {
+    position: vec2<f32>,
+    velocity: vec2<f32>,
+    force: vec2<f32>,
+    mass: f32,
+    organism_id: u32,
+}
+
+struct Spring {
+    node_a: u32,
+    node_b: u32,
+    constraint_type: u32, // 0 = Elastic, 1 = Rigid, 2 = Passive, 3 = Rotational
+    rest_length: f32,
+    base_length: f32,
+    stiffness: f32,
+    damping: f32,
+    actuation_amplitude: f32,
+    actuation_phase: f32,
+    breaking_strain: f32,
+    is_fin: u32,
+    padding_2: u32,
+}
+
+struct PhysicsConfig {
+    dt: f32,
+    time: f32,
+    _padding: vec2<f32>,
+}
+
+@group(0) @binding(0) var<storage, read_write> nodes: array<ParticleNode>;
+@group(0) @binding(1) var<storage, read_write> springs: array<Spring>;
+@group(0) @binding(2) var<uniform> config: PhysicsConfig;
+@group(0) @binding(3) var<storage, read_write> atomic_forces_x: array<atomic<i32>>;
+@group(0) @binding(4) var<storage, read_write> atomic_forces_y: array<atomic<i32>>;
+
+const FORCE_SCALE: f32 = 10000.0;
+
+// Pass 1: Compute Forces
+@compute @workgroup_size(64)
+fn compute_forces(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let index = global_id.x;
+    if (index >= arrayLength(&springs)) { return; }
+
+    let spring = springs[index];
+    let a_idx = spring.node_a;
+    let b_idx = spring.node_b;
+    
+    let pos_a = nodes[a_idx].position;
+    let pos_b = nodes[b_idx].position;
+    
+    let delta = pos_b - pos_a;
+    let dist = max(length(delta), 0.0001); // Prevent div-by-zero
+
+    let dir = delta / dist;
+    // Only apply standard forces for Elastic, Passive, and Rotational. Rigid is handled in PBD.
+    if (spring.constraint_type != 1u) {
+            let displacement = dist - spring.rest_length;
+            let spring_force = dir * (displacement * spring.stiffness);
+            
+            let vel_a = nodes[a_idx].velocity;
+            let vel_b = nodes[b_idx].velocity;
+            let rel_vel = vel_b - vel_a;
+            let damp_force = dir * (dot(rel_vel, dir) * spring.damping);
+            
+            var total_force = spring_force + damp_force;
+            
+            // Apply anisotropic drag if it's a Fin
+            if (spring.is_fin == 1u) {
+                let mid_vel = (vel_a + vel_b) * 0.5; // Velocity relative to fluid
+                let normal = vec2<f32>(-dir.y, dir.x);
+                let v_norm = dot(mid_vel, normal);
+                
+                // High drag perpendicular to fin, low drag parallel
+                let drag_force = -normal * (v_norm * abs(v_norm) * 50.0); // Quadratic drag
+                
+                // Add drag force to the nodes (divided equally)
+                let half_drag = drag_force * 0.5;
+                
+                let dfx = i32(half_drag.x * FORCE_SCALE);
+                let dfy = i32(half_drag.y * FORCE_SCALE);
+                atomicAdd(&atomic_forces_x[a_idx], dfx);
+                atomicAdd(&atomic_forces_y[a_idx], dfy);
+                atomicAdd(&atomic_forces_x[b_idx], dfx);
+                atomicAdd(&atomic_forces_y[b_idx], dfy);
+            }
+            
+            let fx = i32(total_force.x * FORCE_SCALE);
+            let fy = i32(total_force.y * FORCE_SCALE);
+            
+            atomicAdd(&atomic_forces_x[a_idx], fx);
+            atomicAdd(&atomic_forces_y[a_idx], fy);
+            atomicAdd(&atomic_forces_x[b_idx], -fx);
+            atomicAdd(&atomic_forces_y[b_idx], -fy);
+    }
+}
+
+// Pass 2: Integrate
+@compute @workgroup_size(64)
+fn integrate(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let index = global_id.x;
+    if (index >= arrayLength(&nodes)) { return; }
+
+    var node = nodes[index];
+    
+    // --- STERIC HINDRANCE (Node Repulsion) ---
+    // Only repel nodes of the SAME organism to give it volume
+    let R = 15.0; // Rest distance threshold
+    let k_repel = 2000.0; // Repulsion strength. High enough to counter springs.
+    var repel_force = vec2<f32>(0.0, 0.0);
+    
+    let num_nodes = arrayLength(&nodes);
+    for (var i = 0u; i < num_nodes; i = i + 1u) {
+        if (i == index) { continue; }
+        let other = nodes[i];
+        if (other.organism_id == node.organism_id) {
+            let delta = node.position - other.position;
+            let d = length(delta);
+            if (d > 0.0001 && d < R) {
+                let dir = delta / d;
+                repel_force = repel_force + dir * (k_repel * (R - d));
+            }
+        }
+    }
+    
+    let fx = f32(atomicLoad(&atomic_forces_x[index])) / FORCE_SCALE;
+    let fy = f32(atomicLoad(&atomic_forces_y[index])) / FORCE_SCALE;
+    let total_force = node.force + vec2<f32>(fx, fy) + repel_force;
+    
+    // Symplectic Euler
+    let acceleration = total_force / node.mass;
+    node.velocity = node.velocity + acceleration * config.dt;
+    
+    // Global damping
+    node.velocity = node.velocity * 0.99;
+
+    // ── Hard velocity cap (BEFORE position update) ──────────────────────────
+    // This must be here — not just in apply_pbd — because position is updated
+    // below. apply_pbd runs after position update so it cannot prevent the
+    // displacement from an uncapped velocity.
+    let max_speed = 200.0; // world-units / s; typical locomotion is < 20
+    let speed = length(node.velocity);
+    if (speed > max_speed) {
+        node.velocity = node.velocity * (max_speed / speed);
+    }
+
+    // ── Soft world-bounds reflection (BEFORE position update) ───────────────
+    // Reflect nodes that are already out-of-bounds so they migrate back.
+    // This runs before the position update so the reflected velocity produces
+    // inward displacement this same tick.
+    let bounds = 1500.0;
+    if (abs(node.position.x) > bounds) {
+        node.position.x = clamp(node.position.x, -bounds, bounds);
+        node.velocity.x = -node.velocity.x * 0.5; // lose half energy on bounce
+    }
+    if (abs(node.position.y) > bounds) {
+        node.position.y = clamp(node.position.y, -bounds, bounds);
+        node.velocity.y = -node.velocity.y * 0.5;
+    }
+
+    node.position = node.position + node.velocity * config.dt;
+    
+    // Reset forces
+    node.force = vec2<f32>(0.0, 0.0);
+    atomicStore(&atomic_forces_x[index], 0);
+    atomicStore(&atomic_forces_y[index], 0);
+    
+    nodes[index] = node;
+}
+
+
+// Pass 3: PBD Projection
+@compute @workgroup_size(64)
+fn pbd_projection(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let index = global_id.x;
+    if (index >= arrayLength(&springs)) { return; }
+
+    let spring = springs[index];
+    
+    // Only process Rigid constraints
+    if (spring.constraint_type == 1u) {
+        let a_idx = spring.node_a;
+        let b_idx = spring.node_b;
+        
+        let pos_a = nodes[a_idx].position;
+        let pos_b = nodes[b_idx].position;
+        
+        let delta = pos_b - pos_a;
+        let dist = max(length(delta), 0.0001); // Prevent div-by-zero
+        
+        // Dampen correction by 0.25 (relaxation factor) to prevent multi-spring atomicAdd explosions
+        let correction_mag = (dist - spring.rest_length) * 0.5 * 0.25;
+        let dir = delta / dist;
+        let correction = dir * correction_mag;
+            
+            // To be thread-safe without atomic floats, PBD on GPU typically uses Graph Coloring or Jacobi methods.
+            // For a simple implementation, we just atomic add the positional correction and divide later, 
+            // or we accept slight tearing. Here we use atomicAdd on fixed-point positions.
+            
+            let cx = i32(correction.x * FORCE_SCALE);
+            let cy = i32(correction.y * FORCE_SCALE);
+            
+            atomicAdd(&atomic_forces_x[a_idx], cx);
+            atomicAdd(&atomic_forces_y[a_idx], cy);
+            atomicAdd(&atomic_forces_x[b_idx], -cx);
+            atomicAdd(&atomic_forces_y[b_idx], -cy);
+    }
+}
+
+// Pass 4: Apply PBD Corrections
+@compute @workgroup_size(64)
+fn apply_pbd(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let index = global_id.x;
+    if (index >= arrayLength(&nodes)) { return; }
+
+    var node = nodes[index];
+
+    let cx = f32(atomicLoad(&atomic_forces_x[index])) / FORCE_SCALE;
+    let cy = f32(atomicLoad(&atomic_forces_y[index])) / FORCE_SCALE;
+    let correction = vec2<f32>(cx, cy);
+
+    node.position = node.position + correction;
+
+    // Inject velocity from PBD correction — clamp to prevent explosion.
+    // Without clamping, large corrections (from nodes far apart) inject
+    // huge velocities that accumulate across ticks and cause fly-off.
+    let raw_vel_correction = correction / config.dt;
+    let max_pbd_vel = 150.0; // world-units/s cap on PBD velocity injection
+    let pbd_vel = clamp(raw_vel_correction, vec2<f32>(-max_pbd_vel, -max_pbd_vel), vec2<f32>(max_pbd_vel, max_pbd_vel));
+    node.velocity = node.velocity + pbd_vel;
+
+    // Hard velocity cap — prevents runaway accumulation regardless of cause.
+    let max_speed = 300.0;
+    let speed = length(node.velocity);
+    if (speed > max_speed) {
+        node.velocity = node.velocity * (max_speed / speed);
+    }
+
+    // Soft world-bounds: reflect nodes that drift too far so they stay
+    // within a reasonable simulation area (±2000 world units).
+    let bounds = 2000.0;
+    if (abs(node.position.x) > bounds) {
+        node.position.x = clamp(node.position.x, -bounds, bounds);
+        node.velocity.x = node.velocity.x * -0.5;
+    }
+    if (abs(node.position.y) > bounds) {
+        node.position.y = clamp(node.position.y, -bounds, bounds);
+        node.velocity.y = node.velocity.y * -0.5;
+    }
+
+    atomicStore(&atomic_forces_x[index], 0);
+    atomicStore(&atomic_forces_y[index], 0);
+
+    nodes[index] = node;
+}
+

@@ -28,32 +28,29 @@ diffusion = { workspace = true }
 metabolism = { workspace = true }
 ecology    = { workspace = true }
 reproduction = { workspace = true }
+workbench  = { workspace = true }
 ui         = { workspace = true }
 storage    = { path = "../storage" }
 analytics  = { workspace = true }
 
 # GUI
-egui       = { workspace = true }
-egui-wgpu  = { workspace = true }
-egui-winit = { workspace = true }
 
 # ECS
-bevy_ecs  = { workspace = true }
+bevy  = { workspace = true }
+bevy_ecs = { workspace = true }
 
-# Windowing & GPU
-winit = { workspace = true }
+# GPU
 wgpu  = { workspace = true }
 
 # Logging
 tracing             = { workspace = true }
-tracing-subscriber  = { workspace = true }
+tracing-subscriber  = { workspace = true, features = ["json"] }
 
 # Error handling (app layer uses anyhow)
 anyhow = { workspace = true }
 
 # Async block-on helper for wgpu initialization
 pollster = "0.3"
-egui-remixicon = "0.29.1"
 environment = { version = "0.1.0", path = "../environment" }
 network = { path = "../network" }
 
@@ -61,3 +58,7 @@ network = { path = "../network" }
 tokio = { workspace = true }
 rand = { workspace = true }
 sysinfo = "0.39.3"
+crossbeam-channel = "0.5.15"
+bytemuck = { workspace = true }
+tracing-appender = "0.2.5"
+bevy_vector_shapes = "0.13.0"

@@ -1,11 +1,12 @@
 use crate::cppn::{Cppn, CppnConnection, CppnNode, GlobalInnovationTracker};
 use crate::hox::HoxSequence;
 use crate::types::{GenomeId, Ploidy};
+use bevy_ecs::prelude::Component;
 use common::EntityId;
 use serde::{Deserialize, Serialize};
 
 /// The genome of an organism, containing independent CPPNs for body morphology and neural wiring.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Component, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Genome {
     /// Schema version for serialization compatibility (currently 2).
     pub schema_version: u32,
@@ -30,7 +31,7 @@ impl Genome {
     /// Creates a minimal genome.
     pub fn new_minimal(id: GenomeId, origin: EntityId) -> Self {
         Self {
-            schema_version: 2,
+            schema_version: 3,
             id,
             origin,
             ploidy: Ploidy::Haploid,
@@ -43,7 +44,7 @@ impl Genome {
     /// Creates a deterministic genome with a pre-defined Hox sequence.
     pub fn new_hox_driven(id: GenomeId, origin: EntityId, hox: HoxSequence) -> Self {
         Self {
-            schema_version: 2,
+            schema_version: 3,
             id,
             origin,
             ploidy: Ploidy::Haploid,
@@ -79,28 +80,28 @@ impl Genome {
                     CppnConnection {
                         source: 0,
                         target: 2,
-                        weight: 2.0,
+                        weight: 0.5,
                         enabled: true,
                         innovation: 1,
                     },
                     CppnConnection {
                         source: 1,
                         target: 2,
-                        weight: -1.0,
+                        weight: -0.25,
                         enabled: true,
                         innovation: 2,
                     },
                     CppnConnection {
                         source: 1,
                         target: 3,
-                        weight: 1.0,
+                        weight: 0.25,
                         enabled: true,
                         innovation: 3,
                     },
                     CppnConnection {
                         source: 1,
                         target: 4,
-                        weight: 0.5,
+                        weight: 0.1,
                         enabled: true,
                         innovation: 4,
                     },
@@ -133,6 +134,11 @@ impl Genome {
                         bias: 0.0,
                         layer: 1,
                     }, // Output 2: phase
+                    CppnNode {
+                        activation: brain::ActivationFn::Tanh,
+                        bias: 0.0,
+                        layer: 1,
+                    }, // Output 3: amplitude
                 ],
                 connections: vec![
                     CppnConnection {
@@ -155,6 +161,13 @@ impl Genome {
                         weight: 1.0,
                         enabled: true,
                         innovation: 7,
+                    },
+                    CppnConnection {
+                        source: 0,
+                        target: 5,
+                        weight: 1.0,
+                        enabled: true,
+                        innovation: 8,
                     },
                 ],
             },

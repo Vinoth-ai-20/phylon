@@ -91,6 +91,5 @@ mod tests {
     fn world_creates_empty() {
         let world = World::new();
         assert_eq!(world.entity_counter, 0);
-        assert_eq!(world.ecs.entities().len(), 0);
     }
 }

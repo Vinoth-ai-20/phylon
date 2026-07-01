@@ -166,7 +166,7 @@ pub fn generate_hex_mesh(
 
             let entity = world
                 .spawn((
-                    ParticleNode::new(pos, 5.0, 1, mesh_id.index()),
+                    ParticleNode::new(pos, 5.0, 1, mesh_id.index_u32()),
                     crate::OrganismColor(color),
                     SandboxTraits {
                         mesh: true,

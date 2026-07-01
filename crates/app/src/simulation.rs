@@ -214,14 +214,14 @@ impl PhylonApp {
         if let Some(mut events) = self
             .world
             .ecs
-            .get_resource_mut::<bevy_ecs::event::Events<reproduction::BirthRequest>>()
+            .get_resource_mut::<bevy_ecs::message::Events<reproduction::BirthRequest>>()
         {
             events.update();
         }
         if let Some(mut hazard_events) = self
             .world
             .ecs
-            .get_resource_mut::<bevy_ecs::event::Events<ecology::catastrophe::HazardSpawned>>()
+            .get_resource_mut::<bevy_ecs::message::Events<ecology::catastrophe::HazardSpawned>>()
         {
             hazard_events.update();
         }

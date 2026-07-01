@@ -3,6 +3,7 @@
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 
+use bevy_ecs::message::MessageWriter;
 use bevy_ecs::prelude::*;
 use common::Vec2;
 
@@ -147,7 +148,7 @@ pub fn food_spawner_system(
 /// The prey is marked `Eaten` and its total caloric value is added to the predator's glucose pool,
 /// clamped to the predator's maximum stomach capacity:
 ///
-/// $$ G_{predator} = \min(G_{predator} + G_{prey} + ATP_{prey}, G_{max}) $$
+/// $$ G_{predator} = \min(G_{predator} + E_{extracted}, G_{max}) $$
 pub fn foraging_system(
     mut commands: Commands,
     mut organism_query: Query<(
@@ -174,7 +175,7 @@ pub fn foraging_system(
     // Phase 1: Organism vs Organism predation
     let organism_eat_radius = 40.0;
     let mut combos = organism_query.iter_combinations_mut();
-    while let Some([(e1, mut chem1, diet1, node1), (e2, mut chem2, diet2, node2)]) =
+    while let Some([(_e1, mut chem1, diet1, node1), (_e2, mut chem2, diet2, node2)]) =
         combos.fetch_next()
     {
         if chem1.atp <= 0.0 || chem2.atp <= 0.0 {
@@ -183,12 +184,12 @@ pub fn foraging_system(
 
         let mut dist = node1.position.distance(node2.position);
 
-        if let Some(nodes2) = organism_nodes.get(&e2.index()) {
+        if let Some(nodes2) = organism_nodes.get(&node2.organism_id) {
             for pos in nodes2 {
                 dist = dist.min(node1.position.distance(*pos));
             }
         }
-        if let Some(nodes1) = organism_nodes.get(&e1.index()) {
+        if let Some(nodes1) = organism_nodes.get(&node1.organism_id) {
             for pos in nodes1 {
                 dist = dist.min(node2.position.distance(*pos));
             }
@@ -207,21 +208,25 @@ pub fn foraging_system(
             );
 
             if one_eats_two {
-                chem1.glucose =
-                    (chem1.glucose + chem2.max_glucose + chem2.max_atp).min(chem1.max_glucose);
-                chem2.glucose = 0.0;
-                chem2.atp = 0.0;
-                if let Some(mut entity_cmds) = commands.get_entity(e2) {
-                    entity_cmds.insert(Eaten);
-                }
+                let bite_size = 500.0_f32;
+                let glucose_drain = chem2.glucose.min(bite_size);
+                chem2.glucose -= glucose_drain;
+
+                let atp_drain = chem2.atp.min(bite_size - glucose_drain);
+                chem2.atp -= atp_drain;
+
+                let total_drained = glucose_drain + atp_drain;
+                chem1.glucose = (chem1.glucose + total_drained).min(chem1.max_glucose);
             } else if two_eats_one {
-                chem2.glucose =
-                    (chem2.glucose + chem1.max_glucose + chem1.max_atp).min(chem2.max_glucose);
-                chem1.glucose = 0.0;
-                chem1.atp = 0.0;
-                if let Some(mut entity_cmds) = commands.get_entity(e1) {
-                    entity_cmds.insert(Eaten);
-                }
+                let bite_size = 500.0_f32;
+                let glucose_drain = chem1.glucose.min(bite_size);
+                chem1.glucose -= glucose_drain;
+
+                let atp_drain = chem1.atp.min(bite_size - glucose_drain);
+                chem1.atp -= atp_drain;
+
+                let total_drained = glucose_drain + atp_drain;
+                chem2.glucose = (chem2.glucose + total_drained).min(chem2.max_glucose);
             }
         }
     }
@@ -240,7 +245,7 @@ pub fn foraging_system(
                 for (mineral_entity, mineral) in mineral_query.iter() {
                     if node.position.distance(mineral.position) <= eat_radius {
                         chem.glucose = (chem.glucose + mineral.energy_value).min(chem.max_glucose);
-                        if let Some(mut e) = commands.get_entity(mineral_entity) {
+                        if let Ok(mut e) = commands.get_entity(mineral_entity) {
                             e.despawn();
                         }
                         break;
@@ -252,7 +257,7 @@ pub fn foraging_system(
                 for (food_entity, food) in food_query.iter() {
                     if node.position.distance(food.position) <= eat_radius {
                         chem.glucose = (chem.glucose + food.energy_value).min(chem.max_glucose);
-                        if let Some(mut e) = commands.get_entity(food_entity) {
+                        if let Ok(mut e) = commands.get_entity(food_entity) {
                             e.despawn();
                         }
                         break;
@@ -264,7 +269,7 @@ pub fn foraging_system(
                 for (corpse_entity, corpse) in corpse_query.iter() {
                     if node.position.distance(corpse.position) <= eat_radius {
                         chem.glucose = (chem.glucose + corpse.energy_value).min(chem.max_glucose);
-                        if let Some(mut e) = commands.get_entity(corpse_entity) {
+                        if let Ok(mut e) = commands.get_entity(corpse_entity) {
                             e.despawn();
                         }
 
@@ -379,7 +384,7 @@ pub fn corpse_decay_system(
             // Final burst of CO2 upon complete decay
             atmosphere.co2 += corpse.energy_value * 0.1;
 
-            if let Some(mut e) = commands.get_entity(entity) {
+            if let Ok(mut e) = commands.get_entity(entity) {
                 e.despawn();
             }
         }
@@ -393,7 +398,7 @@ pub fn catastrophe_system(
     config: Res<catastrophe::CatastropheConfig>,
     mut hazard_field: ResMut<diffusion::CpuHazardFieldState>,
     env: Res<environment::EnvironmentManager>,
-    mut hazard_events: EventWriter<catastrophe::HazardSpawned>,
+    mut hazard_events: MessageWriter<catastrophe::HazardSpawned>,
     mut organisms: Query<(
         &mut metabolism::ChemicalEconomy,
         &physics::ParticleNode,
@@ -408,7 +413,7 @@ pub fn catastrophe_system(
         let x = (fastrand::f32() - 0.5) * env.width();
         let y = (fastrand::f32() - 0.5) * env.height();
         manager.spawn_hazard(tick, Vec2::new(x, y));
-        hazard_events.send(catastrophe::HazardSpawned(Vec2::new(x, y)));
+        hazard_events.write(catastrophe::HazardSpawned(Vec2::new(x, y)));
     }
 
     hazard_field.clear();

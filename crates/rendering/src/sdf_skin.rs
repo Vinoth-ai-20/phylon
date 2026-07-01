@@ -86,6 +86,7 @@ pub struct SdfSkinRenderer {
     highlight_composite_pipeline: wgpu::RenderPipeline,
     highlight_color_buffer: wgpu::Buffer,
     highlight_color_bind_group: wgpu::BindGroup,
+    msaa_samples: u32,
 }
 
 /// The texture format used for the intermediate density accumulation target.
@@ -101,6 +102,7 @@ impl SdfSkinRenderer {
         surface_format: wgpu::TextureFormat,
         width: u32,
         height: u32,
+        msaa_samples: u32,
     ) -> Self {
         // ── Camera uniform ─────────────────────────────────────────────────
         let camera_matrix: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
@@ -141,23 +143,24 @@ impl SdfSkinRenderer {
 
         let accum_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                immediate_size: 0,
                 label: Some("SdfAccumPipelineLayout"),
-                bind_group_layouts: &[&camera_bgl],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&camera_bgl)],
             });
 
         let accum_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            multiview_mask: None,
             label: Some("SdfAccumPipeline"),
             layout: Some(&accum_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &accum_shader,
-                entry_point: "vs_accum",
+                entry_point: Some("vs_accum"),
                 buffers: &[SdfBoneInstance::desc()],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &accum_shader,
-                entry_point: "fs_accum",
+                entry_point: Some("fs_accum"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: ACCUM_FORMAT,
                     // Additive blending: accumulated density = sum of all bone contributions
@@ -183,7 +186,7 @@ impl SdfSkinRenderer {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+
             cache: None,
         });
 
@@ -217,23 +220,24 @@ impl SdfSkinRenderer {
 
         let composite_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                immediate_size: 0,
                 label: Some("SdfCompositePipelineLayout"),
-                bind_group_layouts: &[&composite_bgl],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&composite_bgl)],
             });
 
         let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            multiview_mask: None,
             label: Some("SdfCompositePipeline"),
             layout: Some(&composite_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &composite_shader,
-                entry_point: "vs_composite",
+                entry_point: Some("vs_composite"),
                 buffers: &[],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &composite_shader,
-                entry_point: "fs_composite",
+                entry_point: Some("fs_composite"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -246,8 +250,11 @@ impl SdfSkinRenderer {
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multisample: wgpu::MultisampleState {
+                count: msaa_samples,
+                ..Default::default()
+            },
+
             cache: None,
         });
 
@@ -289,24 +296,25 @@ impl SdfSkinRenderer {
 
         let highlight_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                immediate_size: 0,
                 label: Some("SdfHighlightPipelineLayout"),
-                bind_group_layouts: &[&composite_bgl, &highlight_color_bgl],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&composite_bgl), Some(&highlight_color_bgl)],
             });
 
         let highlight_composite_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                multiview_mask: None,
                 label: Some("SdfHighlightPipeline"),
                 layout: Some(&highlight_pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &highlight_shader,
-                    entry_point: "vs_highlight",
+                    entry_point: Some("vs_highlight"),
                     buffers: &[],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &highlight_shader,
-                    entry_point: "fs_highlight",
+                    entry_point: Some("fs_highlight"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: surface_format,
                         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -320,7 +328,7 @@ impl SdfSkinRenderer {
                 },
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
-                multiview: None,
+
                 cache: None,
             });
 
@@ -349,8 +357,14 @@ impl SdfSkinRenderer {
             highlight_composite_pipeline,
             highlight_color_buffer,
             highlight_color_bind_group,
+            msaa_samples,
             current_height: height,
         }
+    }
+
+    /// Returns the number of MSAA samples this renderer was configured with.
+    pub fn msaa_samples(&self) -> u32 {
+        self.msaa_samples
     }
 
     fn create_accum_texture(
@@ -426,7 +440,8 @@ impl SdfSkinRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        target_view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+        color_attachment: wgpu::RenderPassColorAttachment<'_>,
         bones: &[SdfBoneInstance],
         screen_size: [f32; 2],
         camera_pos: common::Vec2,
@@ -457,15 +472,13 @@ impl SdfSkinRenderer {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("SdfEncoder"),
-        });
-
         // ── Pass 1: accumulate density into offscreen texture ──────────────
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                multiview_mask: None,
                 label: Some("SdfAccumPass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    depth_slice: None,
                     view: &self.accum_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -487,15 +500,9 @@ impl SdfSkinRenderer {
         // ── Pass 2: composite onto swapchain ──────────────────────────────
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("SdfCompositePass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load, // Composite onto existing frame
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
+                multiview_mask: None,
+                label: Some("SdfCompositeRenderPass"),
+                color_attachments: &[Some(color_attachment)],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -512,8 +519,6 @@ impl SdfSkinRenderer {
             rpass.set_bind_group(0, &self.composite_bind_group, &[]);
             rpass.draw(0..3, 0..1); // Full-screen triangle
         }
-
-        queue.submit(Some(encoder.finish()));
     }
 
     /// Renders a highlight outline for the provided bones.
@@ -522,6 +527,7 @@ impl SdfSkinRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
         target_view: &wgpu::TextureView,
         bones: &[SdfBoneInstance],
         color: [f32; 4],
@@ -560,15 +566,13 @@ impl SdfSkinRenderer {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("SdfHighlightEncoder"),
-        });
-
         // ── Pass 1: accumulate density into offscreen texture ──────────────
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                multiview_mask: None,
                 label: Some("SdfHighlightAccumPass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    depth_slice: None,
                     view: &self.accum_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -590,8 +594,10 @@ impl SdfSkinRenderer {
         // ── Pass 2: composite highlight onto swapchain ──────────────────────
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                multiview_mask: None,
                 label: Some("SdfHighlightCompositePass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    depth_slice: None,
                     view: target_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -616,7 +622,5 @@ impl SdfSkinRenderer {
             rpass.set_bind_group(1, &self.highlight_color_bind_group, &[]);
             rpass.draw(0..3, 0..1); // Full-screen triangle
         }
-
-        queue.submit(Some(encoder.finish()));
     }
 }

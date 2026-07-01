@@ -1,67 +1,72 @@
 //! # Phylon Application
 //!
 //! The main binary entry point for the Phylon simulation.
-//!
-//! ## Responsibilities
-//!
-//! 1. Parse CLI arguments and locate the config file.
-//! 2. Initialise structured logging via `tracing_subscriber`.
-//! 3. Load `PhylonConfig` from `data/default.ron` (falls back to defaults).
-//! 4. Create a `winit` `EventLoop` and application window.
-//! 5. Initialise a `wgpu` surface on the window.
-//! 6. Create a `SimulationScheduler`.
-//! 7. Run the event loop — advancing the scheduler on each `AboutToWait` and
-//!    presenting a cleared frame on each `RedrawRequested`.
-//!
-//! ## Architecture note
-//!
-//! The `app` crate is the **composition root** — the only crate permitted to
-//! depend on everything. All other crates are decoupled from each other via
-//! the dependency rules in `docs/02_crate_dependency_graph.md`.
 
-pub mod app;
-pub mod events;
+pub mod camera;
+pub mod metrics_plot;
+pub mod plugins;
 pub mod render;
-pub mod simulation;
+pub mod selection;
 pub mod systems;
+pub mod ui;
 
 use anyhow::{Context, Result};
-use app::PhylonApp;
 use config::PhylonConfig;
 use std::path::Path;
 use tracing::info;
-use winit::event_loop::{ControlFlow, EventLoop};
+use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::prelude::*;
+
+use bevy::prelude::*;
+use bevy::window::{PresentMode, WindowResolution};
+
+use plugins::{AppState, PhylonPlugins};
+
+#[derive(Resource)]
+pub struct PositionReceiver(pub crossbeam_channel::Receiver<Vec<u8>>);
+
+#[derive(Resource)]
+pub struct NodeEntitiesReceiver(pub crossbeam_channel::Receiver<Vec<Entity>>);
+
+#[derive(Resource)]
+pub struct BrainDataReceiver(pub crossbeam_channel::Receiver<Vec<u8>>);
+
+#[derive(Resource)]
+pub struct DiffusionDataReceiver(pub crossbeam_channel::Receiver<Vec<f32>>);
+
+#[derive(Resource, Default)]
+pub struct ActiveOverlay(pub Option<diffusion::FieldLayer>);
 
 fn main() -> Result<()> {
-    // Initialise structured logging.
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                tracing_subscriber::EnvFilter::new(
-                    "info,wgpu_core=warn,wgpu_hal=warn,egui_wgpu=error",
-                )
-            }),
+    // Initialise structured logging to stdout and behavior.jsonl
+    let file_appender = tracing_appender::rolling::never("logs", "behavior.jsonl");
+    let (non_blocking, _guard_tracing) = tracing_appender::non_blocking(file_appender);
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive(tracing::Level::INFO.into()),
         )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(non_blocking)
+                .with_target(true)
+                .with_span_events(FmtSpan::NONE),
+        )
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stdout))
         .init();
 
     info!("Phylon v{} starting", env!("CARGO_PKG_VERSION"));
 
     // Load configuration.
     let config_path = Path::new("data/default.ron");
-    let sim_config =
-        PhylonConfig::load(Some(config_path)).context("failed to load configuration")?;
-    info!(
-        tick_rate = sim_config.simulation.tick_rate,
-        rng_seed = sim_config.simulation.rng_seed,
-        "Configuration loaded"
+    let sim_config = PhylonConfig::load(Some(config_path)).unwrap_or_default();
+
+    println!(
+        "Configuration loaded: tick_rate={}, rng_seed={}",
+        sim_config.simulation.tick_rate, sim_config.simulation.rng_seed
     );
-
-    let is_headless = sim_config.research.headless;
-    let realtime_lock = sim_config.research.realtime_lock;
-    let max_ticks = sim_config.research.max_ticks;
-    let tick_rate = sim_config.simulation.tick_rate;
-
-    let mut app = PhylonApp::new(sim_config.clone());
 
     // Initialize tokio runtime for background tasks and networking
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -69,10 +74,13 @@ fn main() -> Result<()> {
         .build()
         .context("failed to create tokio runtime")?;
 
-    // Enter the tokio runtime context so we can spawn tasks or run servers
     let _guard = rt.enter();
 
-    let (marl_tx, mut marl_rx) = tokio::sync::mpsc::channel(10);
+    let (marl_tx, _marl_rx) = tokio::sync::mpsc::channel(10);
+    let (gpu_pos_tx, gpu_pos_rx) = crossbeam_channel::unbounded();
+    let (gpu_node_entities_tx, gpu_node_entities_rx) = crossbeam_channel::unbounded();
+    let (brain_data_tx, brain_data_rx) = crossbeam_channel::unbounded();
+    let (diffusion_data_tx, diffusion_data_rx) = crossbeam_channel::unbounded();
 
     // Start Network server
     if let Some(port) = sim_config.research.network_port {
@@ -84,82 +92,50 @@ fn main() -> Result<()> {
         });
     }
 
-    if is_headless {
-        info!("Running in headless mode");
-        app.init_gpu_headless()
-            .context("failed to initialize headless GPU context")?;
+    // --- BEVY BOOTSTRAPPING ---
 
-        let tick_duration = std::time::Duration::from_secs_f64(1.0 / tick_rate as f64);
-        let mut tick_count = 0;
-
-        if sim_config.research.network_port.is_some() {
-            info!("Running in RL environment mode");
-            let mut steps_remaining = 0;
-
-            loop {
-                if steps_remaining == 0 {
-                    match rt.block_on(marl_rx.recv()) {
-                        Some(req) => {
-                            match req.command {
-                                network::MarlCommand::Step { ticks } => {
-                                    steps_remaining = ticks;
-                                    let _ = req.reply.send(network::MarlResponse::Ok);
-                                }
-                                network::MarlCommand::GetState => {
-                                    let observables = vec![]; // Placeholder
-                                    let _ = req
-                                        .reply
-                                        .send(network::MarlResponse::State { observables });
-                                }
-                                network::MarlCommand::SetActions { actions: _ } => {
-                                    let _ = req.reply.send(network::MarlResponse::Ok);
-                                }
-                                network::MarlCommand::Reset => {
-                                    let _ = req.reply.send(network::MarlResponse::Ok);
-                                }
-                            }
-                        }
-                        None => break,
-                    }
-                }
-
-                if steps_remaining > 0 {
-                    app.update_simulation();
-                    steps_remaining -= 1;
-                    tick_count += 1;
-
-                    if max_ticks > 0 && tick_count >= max_ticks {
-                        break;
-                    }
-                }
-            }
-        } else {
-            while max_ticks == 0 || tick_count < max_ticks {
-                let start = std::time::Instant::now();
-
-                app.update_simulation();
-                tick_count += 1;
-
-                if realtime_lock {
-                    let elapsed = start.elapsed();
-                    if elapsed < tick_duration {
-                        std::thread::sleep(tick_duration - elapsed);
-                    }
-                }
-            }
+    let asset_path = if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let mut path = std::path::PathBuf::from(manifest_dir);
+        while !path.join("Cargo.lock").exists() && path.parent().is_some() {
+            path = path.parent().unwrap().to_path_buf();
         }
-
-        info!(
-            "Headless run completed (reached max_ticks = {})",
-            tick_count
-        );
+        path.join("assets").to_string_lossy().into_owned()
     } else {
-        // Build and run the winit event loop.
-        let event_loop = EventLoop::new().context("failed to create event loop")?;
-        event_loop.set_control_flow(ControlFlow::Poll);
+        "assets".to_string()
+    };
 
-        event_loop.run_app(&mut app).context("event loop error")?;
-    }
+    App::new()
+        .add_plugins(
+            DefaultPlugins
+                .build()
+                .disable::<bevy::log::LogPlugin>()
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Phylon".into(),
+                        resolution: WindowResolution::new(1280, 720),
+                        present_mode: PresentMode::AutoVsync,
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .set(AssetPlugin {
+                    file_path: asset_path,
+                    ..default()
+                }),
+        )
+        .init_state::<AppState>()
+        .insert_resource(PositionReceiver(gpu_pos_rx))
+        .insert_resource(NodeEntitiesReceiver(gpu_node_entities_rx))
+        .insert_resource(BrainDataReceiver(brain_data_rx))
+        .insert_resource(DiffusionDataReceiver(diffusion_data_rx))
+        .insert_resource(ActiveOverlay(Some(diffusion::FieldLayer::Energy)))
+        .add_plugins(PhylonPlugins {
+            gpu_pos_tx,
+            gpu_node_entities_tx,
+            brain_data_tx,
+            diffusion_data_tx,
+        })
+        .run();
 
     info!("Phylon shutdown complete");
     Ok(())

@@ -122,7 +122,7 @@ pub fn behavior_system(
     for (
         _entity,
         node,
-        _sensory,
+        sensory,
         mut brain_opt,
         motor_opt,
         mut emitter_opt,
@@ -131,7 +131,13 @@ pub fn behavior_system(
     ) in query.iter_mut()
     {
         if let Some(brain) = brain_opt.as_mut() {
-            // 1. Extract outputs (the integration happened globally on GPU)
+            // -1. Set inputs from sensory state
+            brain.set_inputs(&sensory.inputs);
+
+            // 0. Perform CPU integration step to allow CTRNNs to oscillate
+            brain.step_cpu(0.016);
+
+            // 1. Extract outputs
             let outputs = brain.get_outputs();
 
             // Calculate environmental efficiency based on local temperature
@@ -204,6 +210,56 @@ pub fn behavior_system(
                     }
                 }
             }
+        }
+    }
+}
+
+/// # Behavior Tracing System
+///
+/// Reads the neural outputs of each organism's brain and logs significant actions
+/// (e.g. high actuation or strong signal emission) to the structured tracing output.
+pub fn behavior_logging_system(
+    query: bevy_ecs::prelude::Query<(
+        bevy_ecs::entity::Entity,
+        &brain::Brain,
+        Option<&physics::ParticleNode>,
+        Option<&diffusion::SignalEmitter>,
+    )>,
+) {
+    for (entity, brain, node_opt, emitter_opt) in query.iter() {
+        let outputs = brain.get_outputs();
+        if outputs.is_empty() {
+            continue;
+        }
+
+        // Check for strong physical actuation
+        let mut max_actuation = 0.0_f32;
+        for &out in &outputs {
+            if out.abs() > max_actuation {
+                max_actuation = out.abs();
+            }
+        }
+
+        let emission = if let Some(emitter) = emitter_opt {
+            emitter.value
+        } else {
+            0.0
+        };
+
+        // Only log if something interesting is happening
+        if max_actuation > 0.8 || emission > 0.5 {
+            let pos_x = node_opt.map_or(0.0, |n| n.position.x);
+            let pos_y = node_opt.map_or(0.0, |n| n.position.y);
+
+            tracing::info!(
+                target: "behavior",
+                entity_id = entity.to_bits(),
+                max_actuation = max_actuation,
+                emission = emission,
+                pos_x = pos_x,
+                pos_y = pos_y,
+                "Significant behavioral action recorded"
+            );
         }
     }
 }

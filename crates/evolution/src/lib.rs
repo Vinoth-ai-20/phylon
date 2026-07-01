@@ -78,7 +78,7 @@ pub struct LineageRecord {
 /// The tracker maintains an active set $A$. When an organism is born, it is inserted into $A$.
 /// When it dies, its record in $A$ is mutated to include $T_{death}$. The set $A$ is then partitioned
 /// during the `extract_completed_records` phase to flush completed lineages to cold storage.
-#[derive(bevy_ecs::system::Resource)]
+#[derive(bevy_ecs::prelude::Resource)]
 pub struct LineageTracker {
     next_lineage_id: u64,
     records: std::collections::HashMap<EntityId, LineageRecord>,

@@ -11,6 +11,4 @@ world     = { workspace = true }
 serde     = { workspace = true }
 thiserror = { workspace = true }
 wgpu      = { workspace = true }
-egui      = { workspace = true }
-egui_plot = { workspace = true }
 bevy_ecs  = { workspace = true }

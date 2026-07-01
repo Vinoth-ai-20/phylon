@@ -78,6 +78,8 @@ pub struct CtrnnNode {
     pub first_synapse: u32,
     /// Number of synapses targeting this node.
     pub synapse_count: u32,
+    /// Local concentration of a neuromodulator (e.g. dopamine), enabling/scaling plasticity.
+    pub neuromodulator: f32,
 }
 
 /// # Neural Synapse
@@ -103,8 +105,8 @@ pub struct CtrnnSynapse {
     pub target: u32,
     /// Connection weight.
     pub weight: f32,
-    /// Padding for 16-byte alignment.
-    pub _padding: u32,
+    /// Plasticity rate (Hebbian learning rate). If 0, the synapse is fixed.
+    pub plasticity_rate: f32,
 }
 
 /// # Organism Brain Substrate
@@ -238,12 +240,52 @@ impl Brain {
             }
         }
 
+        // Initialize neuromodulator to 0
+        for node in &mut nodes {
+            node.neuromodulator = 0.0;
+        }
+
         Self {
             id,
             nodes,
             synapses,
             input_count,
             output_count,
+        }
+    }
+
+    /// Performs a single integration step on the CPU.
+    /// This allows the CTRNN to oscillate and function without GPU compute.
+    pub fn step_cpu(&mut self, dt: f32) {
+        if self.nodes.is_empty() {
+            return;
+        }
+
+        let mut new_states = vec![0.0; self.nodes.len()];
+
+        for (i, node) in self.nodes.iter().enumerate() {
+            let mut input_sum = 0.0;
+            let start = node.first_synapse as usize;
+            let count = node.synapse_count as usize;
+
+            for j in 0..count {
+                if let Some(syn) = self.synapses.get(start + j) {
+                    let source_node = &self.nodes[syn.source as usize];
+                    let source_output = Self::apply_activation(
+                        source_node.state + source_node.bias,
+                        source_node.activation,
+                    );
+                    input_sum += syn.weight * source_output;
+                }
+            }
+
+            let tau = node.time_constant.max(0.001);
+            let dy = (-node.state + input_sum) / tau;
+            new_states[i] = node.state + dy * dt;
+        }
+
+        for (i, state) in new_states.iter().enumerate() {
+            self.nodes[i].state = *state;
         }
     }
 }

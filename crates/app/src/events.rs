@@ -281,7 +281,7 @@ impl PhylonApp {
                     self.ui.selected_entity = None;
                     self.ui.tracked_entity = None;
                 }
-                ui::MenuAction::SpawnProtoFish => {
+                ui::MenuAction::SpawnCarnivore => {
                     let fish_hox = genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]);
                     let fish_genome = genetics::Genome::new_hox_driven(
                         genetics::GenomeId(100),

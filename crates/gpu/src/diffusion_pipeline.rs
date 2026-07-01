@@ -4,7 +4,7 @@ use wgpu::util::DeviceExt;
 
 /// Configuration for a single diffusion layer (e.g. Pheromones, Energy, O2, CO2).
 #[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable, Default)]
 pub struct LayerConfig {
     /// Diffusion rate (D)
     pub diffusion_rate: f32,
@@ -18,7 +18,7 @@ pub struct LayerConfig {
 
 /// Uniforms for the diffusion compute shader.
 #[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable, Default)]
 pub struct DiffusionUniforms {
     /// Timestep
     pub dt: f32,
@@ -34,7 +34,7 @@ pub struct DiffusionUniforms {
 
 /// GPU representation of a spatial emitter.
 #[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable, Default)]
 pub struct GpuEmitter {
     /// Position in grid coordinates
     pub grid_pos: [f32; 2],
@@ -71,8 +71,8 @@ pub struct DiffusionComputePipeline {
     staging_buffers: [wgpu::Buffer; 2],
     has_been_mapped: [bool; 2],
     frame_index: usize,
-    ready_tx: std::sync::mpsc::Sender<usize>,
-    ready_rx: std::sync::mpsc::Receiver<usize>,
+    ready_tx: crossbeam_channel::Sender<usize>,
+    ready_rx: crossbeam_channel::Receiver<usize>,
 }
 
 impl DiffusionComputePipeline {
@@ -134,16 +134,16 @@ impl DiffusionComputePipeline {
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            immediate_size: 0,
             label: Some("DiffusionComputePipelineLayout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
         });
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("DiffusionComputePipeline"),
             layout: Some(&pipeline_layout),
             module: &shader,
-            entry_point: "main",
+            entry_point: Some("main"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -274,7 +274,7 @@ impl DiffusionComputePipeline {
             }),
         ];
 
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (ready_tx, ready_rx) = crossbeam_channel::unbounded();
 
         Self {
             pipeline,
@@ -314,6 +314,7 @@ impl DiffusionComputePipeline {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
         uniforms: DiffusionUniforms,
         emitters: &[GpuEmitter],
         query_set: Option<&wgpu::QuerySet>,
@@ -389,10 +390,6 @@ impl DiffusionComputePipeline {
             })
         };
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("DiffusionComputeEncoder"),
-        });
-
         if let Some(qs) = query_set {
             encoder.write_timestamp(qs, 2);
         }
@@ -423,18 +420,19 @@ impl DiffusionComputePipeline {
         let buf_idx = self.frame_index % 2;
         if self.has_been_mapped[buf_idx] {
             self.staging_buffers[buf_idx].unmap();
+            self.has_been_mapped[buf_idx] = false;
         }
 
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: output_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &self.staging_buffers[buf_idx],
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(self.width * 4),
                     rows_per_image: Some(self.height),
@@ -446,18 +444,20 @@ impl DiffusionComputePipeline {
                 depth_or_array_layers: 4,
             },
         );
-
-        queue.submit(Some(encoder.finish()));
-
-        // Start mapping the buffer we just copied into
-        self.has_been_mapped[buf_idx] = true;
-        let tx = self.ready_tx.clone();
-        let slice = self.staging_buffers[buf_idx].slice(..);
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            if result.is_ok() {
-                let _ = tx.send(buf_idx);
+        // Instead of map_async on buf_idx, map the previous buffer
+        if self.frame_index > 0 {
+            let prev_idx = (self.frame_index - 1) % 2;
+            if !self.has_been_mapped[prev_idx] {
+                self.has_been_mapped[prev_idx] = true;
+                let tx = self.ready_tx.clone();
+                let slice = self.staging_buffers[prev_idx].slice(..);
+                slice.map_async(wgpu::MapMode::Read, move |result| {
+                    if result.is_ok() {
+                        let _ = tx.send(prev_idx);
+                    }
+                });
             }
-        });
+        }
 
         // Swap ping-pong direction
         self.read_a = !self.read_a;
@@ -475,7 +475,10 @@ impl DiffusionComputePipeline {
         if let Some(idx) = latest_idx {
             // Wgpu requires the main thread to poll before the buffer state officially updates to Mapped,
             // even if the map_async callback already fired on a background thread.
-            device.poll(wgpu::Maintain::Wait);
+            let _ = device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            });
 
             let slice = self.staging_buffers[idx].slice(..);
             let data = slice.get_mapped_range();

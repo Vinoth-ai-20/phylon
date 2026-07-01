@@ -70,11 +70,16 @@ pub struct FieldRenderer {
     sampler: wgpu::Sampler,
     /// The buffer storing the field configuration.
     pub config_buffer: wgpu::Buffer,
+    msaa_samples: u32,
 }
 
 impl FieldRenderer {
     /// Creates a new FieldRenderer.
-    pub fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        msaa_samples: u32,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("FieldOverlayShader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("field_overlay.wgsl").into()),
@@ -113,23 +118,24 @@ impl FieldRenderer {
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            immediate_size: 0,
             label: Some("FieldPipelineLayout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            multiview_mask: None,
             label: Some("FieldPipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 buffers: &[],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -147,8 +153,11 @@ impl FieldRenderer {
                 conservative: false,
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multisample: wgpu::MultisampleState {
+                count: msaa_samples,
+                ..Default::default()
+            },
+
             cache: None,
         });
 
@@ -160,7 +169,7 @@ impl FieldRenderer {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
 
@@ -176,18 +185,23 @@ impl FieldRenderer {
             bind_group_layout,
             sampler,
             config_buffer,
+            msaa_samples,
         }
     }
 
+    /// Returns the number of MSAA samples this renderer was configured with.
+    pub fn msaa_samples(&self) -> u32 {
+        self.msaa_samples
+    }
+
     /// Renders the field into the specified render pass.
-    pub fn render(
-        &self,
+    pub fn render<'a>(
+        &'a self,
         device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
+        encoder: &'a mut wgpu::CommandEncoder,
+        color_attachment: wgpu::RenderPassColorAttachment<'a>,
         field_texture_view: &wgpu::TextureView,
         viewport: Option<[u32; 4]>,
-        clear_color: wgpu::Color,
     ) {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("FieldBindGroup"),
@@ -209,15 +223,9 @@ impl FieldRenderer {
         });
 
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
             label: Some("FieldRenderPass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear_color),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
+            color_attachments: &[Some(color_attachment)],
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
@@ -312,16 +320,16 @@ impl SplatComputePipeline {
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            immediate_size: 0,
             label: Some("SplatPipelineLayout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
         });
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("SplatComputePipeline"),
             layout: Some(&pipeline_layout),
             module: &shader,
-            entry_point: "main",
+            entry_point: Some("main"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -397,16 +405,22 @@ impl SplatComputePipeline {
     }
 
     /// Executes the compute pass to splat data onto the texture.
-    pub fn step(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, splats: &[GpuSplat]) {
+    pub fn step(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        splats: &[GpuSplat],
+    ) {
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &self.texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             &self.empty_data,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(self.width * 4),
                 rows_per_image: Some(self.height),
@@ -418,12 +432,7 @@ impl SplatComputePipeline {
             },
         );
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("SplatComputeEncoder"),
-        });
-
         if splats.is_empty() {
-            queue.submit(Some(encoder.finish()));
             return;
         }
 
@@ -478,7 +487,5 @@ impl SplatComputePipeline {
             let workgroup_count_y = (self.height as f32 / 16.0).ceil() as u32;
             cpass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
         }
-
-        queue.submit(Some(encoder.finish()));
     }
 }

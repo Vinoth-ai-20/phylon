@@ -1,4 +1,4 @@
-use bevy_ecs::system::Resource;
+use bevy_ecs::prelude::Resource;
 use noise::{NoiseFn, OpenSimplex};
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +41,12 @@ pub struct EnvironmentManager {
     height: f32,
     noise_temp: OpenSimplex,
     noise_humid: OpenSimplex,
+}
+
+impl Default for EnvironmentManager {
+    fn default() -> Self {
+        Self::new(42, true, 4000.0, 4000.0)
+    }
 }
 
 impl EnvironmentManager {
