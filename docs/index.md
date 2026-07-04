@@ -2,7 +2,7 @@
 
 Welcome to the official documentation for **Phylon**, a research-grade, high-performance artificial life laboratory built in Rust.
 
-This documentation is organized following the [Diátaxis framework](https://diataxis.fr/), which divides content into four distinct quadrants based on user needs:
+This documentation is organized following the [Diï¿½taxis framework](https://diataxis.fr/), which divides content into four distinct quadrants based on user needs:
 
 ## 1. Tutorials (Learning-Oriented)
 *Start here if you are new to Phylon.*
@@ -26,6 +26,17 @@ This documentation is organized following the [Diátaxis framework](https://diata
 - [Component Overview](reference/components.md) - High-level map of the Entity-Component-System logic.
 - [Crate Dependency Graph](reference/crate_graph.md) - Workspace architecture and boundaries.
 - **Rust API Docs:** For exhaustive method signatures, structs, and enumerations, run cargo doc --open in the root workspace.
+
+## 5. Design System (Information-Oriented)
+*The permanent source of truth for the workbench UI's visual and interaction design â€” implemented in `crates/ui/src/theme.rs`.*
+- [Design System Overview](design/design_system.md) - Principles and how the other design docs relate.
+- [Typography](design/typography.md) - Type scale, numerals, capitalization.
+- [Colors](design/colors.md) - Every color token and its meaning.
+- [Spacing](design/spacing.md) - The 4/8/12/16/24/32/48 scale.
+- [Layout &amp; Docking](design/layout.md) - Panel ratios, docking model, window management.
+- [Component Catalog](design/components.md) - Every reusable widget, fully specified.
+- [Iconography](design/iconography.md) - Icon sizes and semantic meaning.
+- [Accessibility](design/accessibility.md) - Colorblind safety, focus, keyboard navigation.
 
 ---
 

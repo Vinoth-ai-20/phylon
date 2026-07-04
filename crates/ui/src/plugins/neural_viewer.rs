@@ -22,7 +22,7 @@ pub fn neural_viewer_ui(
         ui.centered_and_justified(|ui| {
             ui.label(
                 egui::RichText::new("Select an organism to view its brain")
-                    .color(egui::Color32::GRAY)
+                    .color(crate::theme::DISABLED_FG)
                     .italics(),
             );
         });
@@ -57,7 +57,7 @@ pub fn neural_viewer_ui(
         ui.centered_and_justified(|ui| {
             ui.label(
                 egui::RichText::new("Selected organism has no Brain component")
-                    .color(egui::Color32::GRAY)
+                    .color(crate::theme::DISABLED_FG)
                     .italics(),
             );
         });
@@ -75,7 +75,7 @@ pub fn neural_viewer_ui(
         ui.centered_and_justified(|ui| {
             ui.label(
                 egui::RichText::new("Selected organism has no Brain component")
-                    .color(egui::Color32::GRAY)
+                    .color(crate::theme::DISABLED_FG)
                     .italics(),
             );
         });
@@ -96,16 +96,20 @@ pub fn neural_viewer_ui(
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.label(egui::RichText::new("Phenotype — CTRNN Runtime Network").strong());
-            draw_brain_graph(ui, b);
+            graph_header(
+                ui,
+                "Phenotype — CTRNN Runtime Network",
+                &mut state.neural_ctrnn_view,
+            );
+            draw_brain_graph(ui, b, &mut state.neural_ctrnn_view);
 
             ui.add_space(crate::theme::SPACE_MD);
 
             if let Some(genome) = genome {
                 ui.separator();
                 ui.add_space(crate::theme::SPACE_MD);
-                ui.label(egui::RichText::new("Genotype — Brain CPPN").strong());
-                draw_cppn_graph(ui, &genome.brain_cppn);
+                graph_header(ui, "Genotype — Brain CPPN", &mut state.neural_cppn_view);
+                draw_cppn_graph(ui, &genome.brain_cppn, &mut state.neural_cppn_view);
             }
         });
 }
@@ -206,6 +210,62 @@ fn activation_name(act_id: u32) -> &'static str {
     }
 }
 
+/// Title row for a graph canvas: the section heading, a live zoom readout,
+/// and a "Reset View" button (only shown once the view has actually moved
+/// away from the default) so a user who's zoomed/panned into a large genome
+/// always has a one-click way back.
+fn graph_header(ui: &mut egui::Ui, title: &str, view: &mut crate::state::GraphViewState) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(title).strong());
+        ui.label(
+            egui::RichText::new(format!("{:.0}%", view.zoom * 100.0))
+                .small()
+                .color(crate::theme::DISABLED_FG),
+        );
+        if ((view.zoom - 1.0).abs() > 0.01 || view.pan != egui::Vec2::ZERO)
+            && ui.small_button("Reset View").clicked()
+        {
+            *view = crate::state::GraphViewState::default();
+        }
+    });
+    ui.label(
+        egui::RichText::new("Scroll to zoom · drag to pan")
+            .small()
+            .color(crate::theme::DISABLED_FG),
+    );
+}
+
+/// Applies a graph's pan/zoom transform to one base (untransformed) node
+/// position, scaling around the canvas rect's center so zooming feels
+/// anchored to the middle of the graph rather than its top-left corner.
+fn apply_view(
+    pos: egui::Pos2,
+    rect: egui::Rect,
+    view: &crate::state::GraphViewState,
+) -> egui::Pos2 {
+    rect.center() + (pos - rect.center()) * view.zoom + view.pan
+}
+
+/// Reads scroll (zoom, only while hovering the canvas) and drag (pan) input
+/// from a graph canvas's response into its `GraphViewState`. Shared by both
+/// `draw_brain_graph` and `draw_cppn_graph` so a 40-hidden-node genome is as
+/// navigable as a 4-hidden-node one in either view.
+fn handle_pan_zoom(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    view: &mut crate::state::GraphViewState,
+) {
+    if response.dragged() {
+        view.pan += response.drag_delta();
+    }
+    if response.hovered() {
+        let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
+        if scroll_y != 0.0 {
+            view.zoom = (view.zoom * (1.0 + scroll_y * 0.001)).clamp(0.2, 4.0);
+        }
+    }
+}
+
 /// Draws a small filled circle "swatch" followed by a label — used for
 /// legends instead of a Unicode "●" glyph, which silently falls back to a
 /// tofu/box glyph in fonts that don't carry that codepoint (as IBM Plex Sans
@@ -269,12 +329,12 @@ fn hit_test_edge(
 /// hidden / output) and index-within-column, synapses as lines colored by
 /// weight sign and shaded by magnitude. Hovering a node or synapse shows its
 /// details in a tooltip.
-fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain) {
+fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain, view: &mut crate::state::GraphViewState) {
     if b.nodes.is_empty() {
         ui.label(
             egui::RichText::new("Empty network.")
                 .italics()
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::DISABLED_FG),
         );
         return;
     }
@@ -282,8 +342,9 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain) {
     let height = 240.0_f32.max(b.nodes.len() as f32 * 4.0).min(480.0);
     let (response, painter) = ui.allocate_painter(
         egui::vec2(ui.available_width(), height),
-        egui::Sense::hover(),
+        egui::Sense::click_and_drag(),
     );
+    handle_pan_zoom(ui, &response, view);
     let rect = response.rect;
     painter.rect_filled(
         rect,
@@ -346,6 +407,10 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain) {
             positions[node_idx] = egui::pos2(x, y);
         }
     }
+    for pos in &mut positions {
+        *pos = apply_view(*pos, rect, view);
+    }
+    let node_radius_scaled = 6.0 * view.zoom;
 
     // Synapses first, so nodes render on top.
     let edges: Vec<(usize, usize)> = b
@@ -371,7 +436,7 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain) {
     }
 
     // Nodes.
-    let node_radius = 6.0;
+    let node_radius = node_radius_scaled;
     for (idx, node) in b.nodes.iter().enumerate() {
         let color = match column_of(idx) {
             0 => egui::Color32::from_rgb(120, 220, 120), // input
@@ -465,7 +530,7 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain) {
         ui.label(
             egui::RichText::new("— blue = excitatory, red = inhibitory")
                 .small()
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::DISABLED_FG),
         );
     });
 }
@@ -474,12 +539,16 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain) {
 /// (left → right) and index-within-layer (top → bottom), connections as
 /// lines colored by weight sign and shaded by magnitude. Hovering a node or
 /// connection shows its details in a tooltip.
-fn draw_cppn_graph(ui: &mut egui::Ui, cppn: &genetics::cppn::Cppn) {
+fn draw_cppn_graph(
+    ui: &mut egui::Ui,
+    cppn: &genetics::cppn::Cppn,
+    view: &mut crate::state::GraphViewState,
+) {
     if cppn.nodes.is_empty() {
         ui.label(
             egui::RichText::new("Empty network.")
                 .italics()
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::DISABLED_FG),
         );
         return;
     }
@@ -487,13 +556,18 @@ fn draw_cppn_graph(ui: &mut egui::Ui, cppn: &genetics::cppn::Cppn) {
     let height = 200.0_f32.max(cppn.nodes.len() as f32 * 4.0).min(360.0);
     let (response, painter) = ui.allocate_painter(
         egui::vec2(ui.available_width(), height),
-        egui::Sense::hover(),
+        egui::Sense::click_and_drag(),
     );
+    handle_pan_zoom(ui, &response, view);
     let rect = response.rect;
+    // A distinct blue-tinted background (vs. the CTRNN graph's neutral
+    // near-black) plus square nodes below is the CTRNN/CPPN visual
+    // differentiation this milestone adds beyond the plain text header —
+    // this is the *genotype* (evolved blueprint), not the running network.
     painter.rect_filled(
         rect,
         egui::Rounding::same(4.0),
-        egui::Color32::from_rgb(16, 16, 20),
+        egui::Color32::from_rgb(14, 18, 26),
     );
 
     // Group node indices by layer, preserving genome order within a layer.
@@ -543,6 +617,10 @@ fn draw_cppn_graph(ui: &mut egui::Ui, cppn: &genetics::cppn::Cppn) {
             positions[node_idx] = egui::pos2(x, y);
         }
     }
+    for pos in &mut positions {
+        *pos = apply_view(*pos, rect, view);
+    }
+    let node_radius_scaled = 5.0 * view.zoom;
 
     // Edges first, so nodes render on top.
     let edges: Vec<(usize, usize)> = cppn
@@ -567,18 +645,24 @@ fn draw_cppn_graph(ui: &mut egui::Ui, cppn: &genetics::cppn::Cppn) {
         );
     }
 
-    // Nodes.
-    let node_radius = 5.0;
+    // Nodes — drawn as squares (vs. the CTRNN graph's circles) so the two
+    // graphs are visually distinguishable even zoomed out or screenshotted
+    // without their headers.
+    let node_radius = node_radius_scaled;
     for (idx, node) in cppn.nodes.iter().enumerate() {
         let color = match node.layer {
             0 => egui::Color32::from_rgb(120, 220, 120), // input
             l if l == max_layer => egui::Color32::from_rgb(255, 180, 90), // output
             _ => egui::Color32::from_rgb(150, 170, 255), // hidden
         };
-        painter.circle_filled(positions[idx], node_radius, color);
-        painter.circle_stroke(
+        let square = egui::Rect::from_center_size(
             positions[idx],
-            node_radius,
+            egui::vec2(node_radius * 2.0, node_radius * 2.0),
+        );
+        painter.rect_filled(square, egui::Rounding::same(1.0), color);
+        painter.rect_stroke(
+            square,
+            egui::Rounding::same(1.0),
             egui::Stroke::new(1.0, egui::Color32::from_gray(20)),
         );
     }

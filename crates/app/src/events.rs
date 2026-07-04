@@ -554,6 +554,7 @@ impl PhylonApp {
                     ui::layout::rebuild_tree_from_modes(
                         &mut self.ui.dock_tree,
                         &self.ui.panel_modes,
+                        &self.ui.layout_shares,
                     );
                     info!("Docked panel: {}", name);
                 }

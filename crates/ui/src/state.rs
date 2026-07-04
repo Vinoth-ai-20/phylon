@@ -159,6 +159,11 @@ pub struct WorkbenchState {
     /// Wall-clock time (`WorkbenchState::time`) the current recording
     /// started, for the toolbar's elapsed-time readout.
     pub recording_started_at: Option<f64>,
+    /// Whether the left activity bar shows icon+label (discoverable, wider)
+    /// or icon-only (compact, narrow — the previous permanent behavior).
+    /// Defaults to expanded: an icon-only rail with only a hover tooltip was
+    /// the audit's top discoverability finding for first-time users.
+    pub activity_bar_expanded: bool,
     /// The active tab in the primary sidebar.
     pub active_tab: crate::SidebarTab,
     /// The active tab in the bottom panel.
@@ -186,6 +191,43 @@ pub struct WorkbenchState {
     /// A one-shot corrected position to apply to a floating panel next frame
     /// after it snapped to a screen edge/corner on drag release.
     pub floating_snap_pos: std::collections::HashMap<String, egui::Pos2>,
+
+    /// Neural Viewer's CTRNN (phenotype) graph pan/zoom — persisted across
+    /// frames since the immediate-mode graph is otherwise stateless. A
+    /// 40-hidden-node genome is unreadable at a fixed 1:1 scale; this is the
+    /// Milestone 8 fix.
+    pub neural_ctrnn_view: GraphViewState,
+    /// Neural Viewer's CPPN (genotype) graph pan/zoom — separate from
+    /// `neural_ctrnn_view` since the two graphs are independently sized and
+    /// scrolled.
+    pub neural_cppn_view: GraphViewState,
+
+    /// Last-known split ratio for each named docking split, keyed by the
+    /// child tile's label (`"Sidebar"`, `"MainColumn"`, `"Neural Viewer"`,
+    /// `"Viewport"`, `"BottomTabs"` — see `layout::extract_shares`).
+    /// Captured from the live tree every frame and fed back into
+    /// `layout::rebuild_tree_from_modes` so a user's dragged split survives
+    /// a dock/undock/reset-triggered rebuild instead of snapping back to the
+    /// hardcoded default ratio every time.
+    pub layout_shares: std::collections::HashMap<String, f32>,
+}
+
+/// Pan/zoom transform for one Neural Viewer graph canvas.
+#[derive(Debug, Clone, Copy)]
+pub struct GraphViewState {
+    /// Scale factor applied to node positions/radii, anchored at `pan`.
+    pub zoom: f32,
+    /// Canvas-space offset added to every node position after scaling.
+    pub pan: egui::Vec2,
+}
+
+impl Default for GraphViewState {
+    fn default() -> Self {
+        Self {
+            zoom: 1.0,
+            pan: egui::Vec2::ZERO,
+        }
+    }
 }
 
 /// Filter level for the event log panel.
@@ -223,7 +265,7 @@ pub enum PanelMode {
 pub fn default_panel_modes() -> std::collections::HashMap<String, PanelMode> {
     let mut m = std::collections::HashMap::new();
     for &name in crate::layout::ALL_PANEL_NAMES {
-        let mode = if name == "Neural Viewer" {
+        let mode = if name == "Neural Viewer" || name == "Placeholder Panel" {
             PanelMode::Closed
         } else {
             PanelMode::Docked
@@ -238,7 +280,11 @@ impl Default for WorkbenchState {
         let panel_modes = default_panel_modes();
         let dock_tree = {
             let mut tree = Tree::empty("workbench_tree");
-            crate::layout::rebuild_tree_from_modes(&mut tree, &panel_modes);
+            crate::layout::rebuild_tree_from_modes(
+                &mut tree,
+                &panel_modes,
+                &std::collections::HashMap::new(),
+            );
             tree
         };
 
@@ -289,6 +335,10 @@ impl Default for WorkbenchState {
             show_world_boundary: false,
             recording_active: false,
             recording_started_at: None,
+            activity_bar_expanded: true,
+            neural_ctrnn_view: GraphViewState::default(),
+            neural_cppn_view: GraphViewState::default(),
+            layout_shares: std::collections::HashMap::new(),
             active_tab: crate::SidebarTab::Inspector,
             active_bottom_tab: crate::BottomTab::Metrics,
             quit_confirm_time: None,

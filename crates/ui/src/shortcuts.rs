@@ -23,6 +23,11 @@ pub struct ShortcutManager {
     /// Start/stop recording an animated GIF of the viewport.
     pub toggle_recording: KeyboardShortcut,
 
+    /// Undo the last action.
+    pub undo: KeyboardShortcut,
+    /// Redo the last undone action.
+    pub redo: KeyboardShortcut,
+
     /// Toggle between play and pause.
     pub play_pause: KeyboardShortcut,
     /// Advance the simulation by a single tick.
@@ -39,7 +44,8 @@ pub struct ShortcutManager {
     /// Toggle the Sidebar panel visibility.
     pub toggle_sidebar: KeyboardShortcut,
 
-    /// Reset the viewport camera to the home position.
+    /// Reset the viewport camera to the home position (Home/Num0 also do
+    /// this — see `consume_all` — this is the Ctrl-modified alternative).
     pub reset_camera: KeyboardShortcut,
     /// Select all entities.
     pub select_all: KeyboardShortcut,
@@ -58,6 +64,9 @@ impl Default for ShortcutManager {
             export_genome: KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::E),
             take_screenshot: KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::S),
             toggle_recording: KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::R),
+
+            undo: KeyboardShortcut::new(Modifiers::CTRL, Key::Z),
+            redo: KeyboardShortcut::new(Modifiers::CTRL, Key::Y),
 
             play_pause: KeyboardShortcut::new(Modifiers::NONE, Key::Space),
             step_forward: KeyboardShortcut::new(Modifiers::NONE, Key::ArrowRight),
@@ -141,6 +150,50 @@ impl ShortcutManager {
         }
         if ctx.input_mut(|i| i.consume_shortcut(&self.spawn)) {
             actions.push(MenuAction::SpawnProtoFish);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&self.undo)) {
+            actions.push(MenuAction::Undo);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&self.redo)) {
+            actions.push(MenuAction::Redo);
+        }
+
+        // Raw, unmodified single-key shortcuts (only when egui doesn't want
+        // keyboard input elsewhere, e.g. not while typing in a text field) —
+        // a Blender-style scene-manipulation scheme, unadvertised in any
+        // menu today, preserved as-is from the previous `render.rs`
+        // implementation this method replaces.
+        if !ctx.wants_keyboard_input() {
+            if ctx.input(|i| i.key_pressed(Key::G)) {
+                actions.push(MenuAction::GrabSelection);
+            }
+            if ctx.input(|i| i.key_pressed(Key::X)) {
+                actions.push(MenuAction::DeleteSelection);
+            }
+            if ctx.input(|i| i.key_pressed(Key::C)) {
+                actions.push(MenuAction::DuplicateSelection);
+            }
+            if ctx.input(|i| i.key_pressed(Key::V)) {
+                actions.push(MenuAction::SpawnPaste);
+            }
+            if ctx.input(|i| i.key_pressed(Key::F)) {
+                actions.push(MenuAction::ToggleStationary);
+            }
+            if ctx.input(|i| i.key_pressed(Key::J)) {
+                actions.push(MenuAction::JoinSelection);
+            }
+        }
+
+        // Camera zoom — always active, no modifier, not gated by
+        // `wants_keyboard_input` (matches the previous implementation).
+        if ctx.input(|i| i.key_pressed(Key::Plus) || i.key_pressed(Key::Equals)) {
+            actions.push(MenuAction::CameraZoomIn);
+        }
+        if ctx.input(|i| i.key_pressed(Key::Minus)) {
+            actions.push(MenuAction::CameraZoomOut);
+        }
+        if ctx.input(|i| i.key_pressed(Key::Home) || i.key_pressed(Key::Num0)) {
+            actions.push(MenuAction::CameraHome);
         }
     }
 }

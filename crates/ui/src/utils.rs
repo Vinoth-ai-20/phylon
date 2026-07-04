@@ -66,7 +66,7 @@ pub(crate) fn draw_segment_tree(
                             constraint_name
                         ))
                         .small()
-                        .color(egui::Color32::GRAY),
+                        .color(crate::theme::DISABLED_FG),
                     );
                     if spring.actuation_amplitude > 0.0 {
                         ui.label(

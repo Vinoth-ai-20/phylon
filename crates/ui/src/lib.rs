@@ -35,6 +35,10 @@ pub mod theme;
 /// UI helper utilities.
 pub mod utils;
 
+/// Shared, reusable UI primitives (kv_row, chart_legend_dot, empty/error
+/// states) — see `docs/design/components.md` for the full catalog.
+pub mod widgets;
+
 /// Immediate-mode rendering logic.
 pub mod render;
 pub use render::render_ui;

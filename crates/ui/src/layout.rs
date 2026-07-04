@@ -29,12 +29,20 @@ use egui_tiles::{Behavior, TileId, UiResponse};
 use world::World;
 
 /// Every named panel that can be docked, floated, or closed.
+///
+/// "Placeholder Panel" carries no real content — it exists solely to prove
+/// the forward-compatibility claim in `docs/design/layout.md`: a future
+/// module (Experiment Manager, Replay Timeline, Genome Editor, ...) needs
+/// only a name here and one dispatch arm in `WorkbenchBehavior::pane_ui` /
+/// `render_floating_panels` to be fully dockable/floatable/closable, exactly
+/// like every panel above it.
 pub const ALL_PANEL_NAMES: &[&str] = &[
     "Sidebar",
     "Viewport",
     "Metrics",
     "Event Log",
     "Neural Viewer",
+    "Placeholder Panel",
 ];
 
 /// Standard opaque panel background colour, used for every non-Viewport pane
@@ -147,6 +155,14 @@ impl<'a> Behavior<String> for WorkbenchBehavior<'a> {
                                 self.commands,
                             );
                         }
+                        "Placeholder Panel" => {
+                            crate::widgets::empty_state(
+                                ui,
+                                "Forward-compatibility placeholder — proves a new panel type can \
+                                 dock, float, and close like any other without redesign. \
+                                 See docs/design/layout.md.",
+                            );
+                        }
                         _ => {
                             ui.label(format!("Unknown pane: {}", name));
                         }
@@ -181,34 +197,19 @@ impl<'a> Behavior<String> for WorkbenchBehavior<'a> {
         };
         let name = name.clone();
 
-        // Close button
-        if ui
-            .small_button(
-                egui::RichText::new(egui_remixicon::icons::CLOSE_LINE)
-                    .color(egui::Color32::from_rgb(180, 80, 80))
-                    .size(12.0),
-            )
-            .on_hover_text(format!("Close {} (reopen via Windows menu)", name))
-            .clicked()
-        {
-            self.commands.push(MenuAction::ClosePanel(name.clone()));
-        }
-
-        // Detach button
-        if ui
-            .small_button(
-                egui::RichText::new(egui_remixicon::icons::EXTERNAL_LINK_LINE)
-                    .color(egui::Color32::from_rgb(150, 150, 220))
-                    .size(12.0),
-            )
-            .on_hover_text(format!("Detach {} into a floating window", name))
-            .clicked()
-        {
-            self.commands.push(MenuAction::DetachPanel(name));
-        }
+        chrome_bar(ui, &name, None, None, self.commands, false, None);
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    /// No child panel should shrink below this width/height when a split is
+    /// dragged. `egui_tiles` only supports one global floor (not a distinct
+    /// minimum per panel), so this is the smallest value that still keeps
+    /// every panel's content usable — see the per-panel *target* minimums
+    /// documented in `docs/design/layout.md`, which this single floor backs.
+    fn min_size(&self) -> f32 {
+        160.0
+    }
 
     /// Remove panes from the tree if they are Floating or Closed.
     /// egui_tiles will then simplify empty containers automatically.
@@ -247,47 +248,119 @@ fn panel_chrome(ui: &mut egui::Ui, name: &str, title: &str, commands: &mut Vec<M
     ui.allocate_ui_with_layout(
         egui::vec2(ui.available_width(), crate::theme::CHROME_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.add_space(crate::theme::SPACE_XS);
+        |ui| chrome_bar(ui, name, Some(title), None, commands, false, None),
+    );
+
+    ui.separator();
+}
+
+/// Draws one Close/Detach/Dock/Minimize icon button with the shared chrome
+/// styling — single source for the button size/color every chrome variant
+/// below uses, so `CLOSE_RED`/`DETACH_BLUE` can never drift out of sync
+/// between the docked, tabbed, and floating chrome bars again.
+fn chrome_button(
+    ui: &mut egui::Ui,
+    icon: &str,
+    color: egui::Color32,
+    tooltip: &str,
+) -> egui::Response {
+    ui.add(
+        egui::Button::new(egui::RichText::new(icon).color(color).size(13.0))
+            .min_size(egui::vec2(20.0, 20.0)),
+    )
+    .on_hover_text(tooltip)
+}
+
+/// Single chrome-bar renderer, consolidating what were three independent
+/// implementations (`panel_chrome` for docked/untabbed panes,
+/// `WorkbenchBehavior::top_bar_right_ui` for tabbed panes, and
+/// `floating_chrome` for floating windows) that had drifted to mismatched
+/// close-button reds (`rgb(180,80,80)` vs `rgb(220,80,80)`).
+///
+/// `title`/`leading_icon` are `None` for the tabbed variant, since
+/// egui_tiles' own tab strip already draws the title there. `minimized` is
+/// `Some` only for floating windows, which get a third Minimize/Restore
+/// button; `dock_instead_of_detach` swaps the second button from "Detach"
+/// (docked/tabbed → floating) to "Dock" (floating → docked).
+fn chrome_bar(
+    ui: &mut egui::Ui,
+    name: &str,
+    title: Option<&str>,
+    leading_icon: Option<&str>,
+    commands: &mut Vec<MenuAction>,
+    dock_instead_of_detach: bool,
+    minimized: Option<&mut bool>,
+) {
+    ui.horizontal(|ui| {
+        ui.add_space(crate::theme::SPACE_XS);
+        if let Some(icon) = leading_icon {
+            ui.label(
+                egui::RichText::new(icon)
+                    .color(egui::Color32::from_gray(120))
+                    .size(14.0),
+            );
+        }
+        if let Some(title) = title {
             ui.label(
                 egui::RichText::new(title)
                     .strong()
                     .size(crate::theme::SIZE_SUBHEADING),
             );
+        }
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(crate::theme::SPACE_XS);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(crate::theme::SPACE_XS);
 
-                // Close button
-                if ui
-                    .small_button(
-                        egui::RichText::new(egui_remixicon::icons::CLOSE_LINE)
-                            .color(egui::Color32::from_rgb(180, 80, 80))
-                            .size(12.0),
+            if chrome_button(
+                ui,
+                egui_remixicon::icons::CLOSE_LINE,
+                crate::theme::CLOSE_RED,
+                &format!("Close {} (reopen via Windows menu)", name),
+            )
+            .clicked()
+            {
+                commands.push(MenuAction::ClosePanel(name.to_string()));
+            }
+
+            if dock_instead_of_detach {
+                if chrome_button(
+                    ui,
+                    egui_remixicon::icons::PICTURE_IN_PICTURE_EXIT_LINE,
+                    crate::theme::DETACH_BLUE,
+                    "Dock — attach back to the main layout",
+                )
+                .clicked()
+                {
+                    commands.push(MenuAction::DockPanel(name.to_string()));
+                }
+            } else if chrome_button(
+                ui,
+                egui_remixicon::icons::EXTERNAL_LINK_LINE,
+                crate::theme::DETACH_BLUE,
+                &format!("Detach {} into a floating window", name),
+            )
+            .clicked()
+            {
+                commands.push(MenuAction::DetachPanel(name.to_string()));
+            }
+
+            if let Some(minimized) = minimized {
+                let (min_icon, min_tip) = if *minimized {
+                    (egui_remixicon::icons::ARROW_UP_S_LINE, "Restore window")
+                } else {
+                    (
+                        egui_remixicon::icons::SUBTRACT_LINE,
+                        "Minimize to title bar",
                     )
-                    .on_hover_text(format!("Close {} (reopen via Windows menu)", name))
+                };
+                if chrome_button(ui, min_icon, egui::Color32::from_rgb(180, 180, 60), min_tip)
                     .clicked()
                 {
-                    commands.push(MenuAction::ClosePanel(name.to_string()));
+                    *minimized = !*minimized;
                 }
-
-                // Detach button
-                if ui
-                    .small_button(
-                        egui::RichText::new(egui_remixicon::icons::EXTERNAL_LINK_LINE)
-                            .color(egui::Color32::from_rgb(150, 150, 220))
-                            .size(12.0),
-                    )
-                    .on_hover_text(format!("Detach {} into a floating window", name))
-                    .clicked()
-                {
-                    commands.push(MenuAction::DetachPanel(name.to_string()));
-                }
-            });
-        },
-    );
-
-    ui.separator();
+            }
+        });
+    });
 }
 
 // ─── Floating window rendering ────────────────────────────────────────────────
@@ -390,6 +463,12 @@ pub fn render_floating_panels(
                             commands,
                         );
                     }
+                    "Placeholder Panel" => {
+                        crate::widgets::empty_state(
+                            ui,
+                            "Forward-compatibility placeholder — see docs/design/layout.md.",
+                        );
+                    }
                     _ => {
                         ui.label(format!("Unknown panel: {}", name));
                     }
@@ -460,82 +539,16 @@ fn floating_chrome(
     minimized: &mut bool,
     commands: &mut Vec<MenuAction>,
 ) {
-    ui.horizontal(|ui| {
-        // Drag handle icon
-        ui.label(
-            egui::RichText::new(egui_remixicon::icons::DRAG_MOVE_2_LINE)
-                .color(egui::Color32::from_gray(120))
-                .size(14.0),
-        );
-
-        // Panel title
-        ui.label(
-            egui::RichText::new(format!(
-                "{} {}",
-                egui_remixicon::icons::WINDOW_2_LINE,
-                title
-            ))
-            .strong()
-            .size(crate::theme::SIZE_SUBHEADING),
-        );
-
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // ── Close button ──
-            if ui
-                .add(
-                    egui::Button::new(
-                        egui::RichText::new(egui_remixicon::icons::CLOSE_LINE)
-                            .color(egui::Color32::from_rgb(220, 80, 80))
-                            .size(13.0),
-                    )
-                    .min_size(egui::vec2(20.0, 20.0)),
-                )
-                .on_hover_text("Close (reopen via Windows › menu)")
-                .clicked()
-            {
-                commands.push(MenuAction::ClosePanel(name.to_string()));
-            }
-
-            // ── Dock button ──
-            if ui
-                .add(
-                    egui::Button::new(
-                        egui::RichText::new(egui_remixicon::icons::PICTURE_IN_PICTURE_EXIT_LINE)
-                            .size(13.0),
-                    )
-                    .min_size(egui::vec2(20.0, 20.0)),
-                )
-                .on_hover_text("Dock — attach back to the main layout")
-                .clicked()
-            {
-                commands.push(MenuAction::DockPanel(name.to_string()));
-            }
-
-            // ── Minimize / Restore button ──
-            let (min_icon, min_tip) = if *minimized {
-                (egui_remixicon::icons::ARROW_UP_S_LINE, "Restore window")
-            } else {
-                (
-                    egui_remixicon::icons::SUBTRACT_LINE,
-                    "Minimize to title bar",
-                )
-            };
-            if ui
-                .add(
-                    egui::Button::new(
-                        egui::RichText::new(min_icon)
-                            .color(egui::Color32::from_rgb(180, 180, 60))
-                            .size(13.0),
-                    )
-                    .min_size(egui::vec2(20.0, 20.0)),
-                )
-                .on_hover_text(min_tip)
-                .clicked()
-            {
-                *minimized = !*minimized;
-            }
-        });
-    });
+    let full_title = format!("{} {}", egui_remixicon::icons::WINDOW_2_LINE, title);
+    chrome_bar(
+        ui,
+        name,
+        Some(&full_title),
+        Some(egui_remixicon::icons::DRAG_MOVE_2_LINE),
+        commands,
+        true,
+        Some(minimized),
+    );
 }
 
 // ─── Layout initialisation ────────────────────────────────────────────────────
@@ -553,7 +566,10 @@ fn floating_chrome(
 pub fn rebuild_tree_from_modes(
     tree: &mut egui_tiles::Tree<String>,
     panel_modes: &std::collections::HashMap<String, PanelMode>,
+    shares: &std::collections::HashMap<String, f32>,
 ) {
+    let share_of = |key: &str, default: f32| shares.get(key).copied().unwrap_or(default);
+
     let mut tiles = egui_tiles::Tiles::default();
     let is_docked = |name: &str| {
         panel_modes.get(name).copied().unwrap_or(PanelMode::Docked) == PanelMode::Docked
@@ -572,6 +588,11 @@ pub fn rebuild_tree_from_modes(
     // silently never appeared).
     let neural_viewer =
         is_docked("Neural Viewer").then(|| tiles.insert_pane("Neural Viewer".to_string()));
+    // Placeholder Panel — see `ALL_PANEL_NAMES` doc comment; shares the root
+    // row with Sidebar/Neural Viewer, defaulting to Closed so it never takes
+    // space unless explicitly docked.
+    let placeholder =
+        is_docked("Placeholder Panel").then(|| tiles.insert_pane("Placeholder Panel".to_string()));
 
     // Bottom tab strip: Metrics | Event Log (whichever are docked).
     let bottom_panes: Vec<egui_tiles::TileId> =
@@ -582,34 +603,43 @@ pub fn rebuild_tree_from_modes(
         bottom_panes.first().copied()
     };
 
-    // Right column: Viewport (3/4) + bottom_tabs (1/4), or just Viewport.
+    // Right column: Viewport (3/4) + bottom_tabs (1/4), or just Viewport —
+    // ratio persisted from the last frame's live tree (see
+    // `extract_shares`), falling back to the 3:1 default the first time.
     let right_col = match bottom_tabs {
         Some(bottom_tabs) => {
             let right_col = tiles.insert_vertical_tile(vec![viewport, bottom_tabs]);
             if let egui_tiles::Tile::Container(egui_tiles::Container::Linear(linear)) =
                 tiles.get_mut(right_col).unwrap()
             {
-                linear.shares.set_share(viewport, 3.0);
-                linear.shares.set_share(bottom_tabs, 1.0);
+                linear.shares.set_share(viewport, share_of("Viewport", 3.0));
+                linear
+                    .shares
+                    .set_share(bottom_tabs, share_of("BottomTabs", 1.0));
             }
             right_col
         }
         None => viewport,
     };
 
-    // Root row: Sidebar (1) | right_col (3) | Neural Viewer (1), omitting
-    // whichever of Sidebar/Neural Viewer aren't currently docked.
+    // Root row: Sidebar | right_col | Neural Viewer | Placeholder Panel,
+    // omitting whichever aren't currently docked, ratios persisted the same
+    // way as the nested split above.
     let mut root_children = Vec::new();
     let mut root_shares = Vec::new();
     if let Some(sidebar) = sidebar {
         root_children.push(sidebar);
-        root_shares.push(1.0);
+        root_shares.push(share_of("Sidebar", 1.0));
     }
     root_children.push(right_col);
-    root_shares.push(3.0);
+    root_shares.push(share_of("MainColumn", 3.0));
     if let Some(neural_viewer) = neural_viewer {
         root_children.push(neural_viewer);
-        root_shares.push(1.0);
+        root_shares.push(share_of("Neural Viewer", 1.0));
+    }
+    if let Some(placeholder) = placeholder {
+        root_children.push(placeholder);
+        root_shares.push(share_of("Placeholder Panel", 1.0));
     }
 
     let root = if root_children.len() > 1 {
@@ -629,12 +659,109 @@ pub fn rebuild_tree_from_modes(
     *tree = egui_tiles::Tree::new("workbench_tree", root, tiles);
 }
 
-/// Reset the entire workspace to its default layout: every panel except
-/// "Neural Viewer" docked in its canonical home slot. Used by both "Reset
-/// Layout" menu entries so they can't drift out of sync with each other.
+/// Reads the current split ratio for every named docking split out of the
+/// live tree, keyed by each child's label (`tile_label`) — the vertical
+/// Viewport/bottom-tabs split is labeled by its two children's own names
+/// (`"Viewport"`/`"BottomTabs"`); the root row's non-leaf child (whichever
+/// of Viewport-alone or the vertical split occupies that slot) is labeled
+/// `"MainColumn"` so the root row always has a stable key for it regardless
+/// of whether Metrics/Event Log are currently docked. Called once per frame
+/// (see `render.rs`) right after the tree renders, so a user's drag this
+/// frame is captured before the next rebuild (dock/undock/reset) would
+/// otherwise discard it.
+pub fn extract_shares(tree: &egui_tiles::Tree<String>) -> std::collections::HashMap<String, f32> {
+    let mut out = std::collections::HashMap::new();
+    if let Some(root) = tree.root {
+        collect_shares(&tree.tiles, root, &mut out);
+    }
+    out
+}
+
+fn tile_label(tiles: &egui_tiles::Tiles<String>, id: egui_tiles::TileId) -> Option<String> {
+    match tiles.get(id) {
+        Some(egui_tiles::Tile::Pane(name)) => Some(name.clone()),
+        Some(egui_tiles::Tile::Container(egui_tiles::Container::Tabs(_))) => {
+            Some("BottomTabs".to_string())
+        }
+        Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(_))) => {
+            Some("MainColumn".to_string())
+        }
+        _ => None,
+    }
+}
+
+fn collect_shares(
+    tiles: &egui_tiles::Tiles<String>,
+    id: egui_tiles::TileId,
+    out: &mut std::collections::HashMap<String, f32>,
+) {
+    if let Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(linear))) = tiles.get(id)
+    {
+        for &child in &linear.children {
+            if let Some(label) = tile_label(tiles, child) {
+                out.insert(label, linear.shares[child]);
+            }
+            collect_shares(tiles, child, out);
+        }
+    }
+}
+
+/// A named, fixed `PanelMode` configuration selectable from the Windows menu
+/// — see `docs/design/layout.md`'s Layout Presets section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutPreset {
+    /// Sidebar + Viewport + Neural Viewer docked, Metrics/Event Log tabbed
+    /// at the bottom. The default layout.
+    Research,
+    /// Sidebar and Neural Viewer closed, Viewport maximized, Metrics
+    /// floating — for screen-sharing a clean simulation view.
+    Presentation,
+    /// Everything docked and visible, including panels a researcher might
+    /// normally leave closed.
+    Debug,
+}
+
+/// Apply a named layout preset: set every panel's `PanelMode`, clear any
+/// stale persisted split ratios (a preset is a deliberate reset, not a drag),
+/// and rebuild the tree.
+pub fn apply_layout_preset(state: &mut WorkbenchState, preset: LayoutPreset) {
+    let mut modes = std::collections::HashMap::new();
+    for &name in ALL_PANEL_NAMES {
+        modes.insert(name.to_string(), PanelMode::Docked);
+    }
+    match preset {
+        LayoutPreset::Research => {
+            modes.insert("Neural Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Placeholder Panel".to_string(), PanelMode::Closed);
+        }
+        LayoutPreset::Presentation => {
+            modes.insert("Sidebar".to_string(), PanelMode::Closed);
+            modes.insert("Neural Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Placeholder Panel".to_string(), PanelMode::Closed);
+            modes.insert("Metrics".to_string(), PanelMode::Floating);
+        }
+        LayoutPreset::Debug => {
+            // Everything docked, including Neural Viewer — Placeholder
+            // Panel stays closed even here since it carries no real content
+            // a researcher would want visible by default.
+            modes.insert("Placeholder Panel".to_string(), PanelMode::Closed);
+        }
+    }
+
+    state.panel_modes = modes;
+    state.layout_shares.clear();
+    rebuild_tree_from_modes(
+        &mut state.dock_tree,
+        &state.panel_modes,
+        &state.layout_shares,
+    );
+}
+
+/// Reset the entire workspace to its default (Research) layout. Used by both
+/// "Reset Layout" menu entries so they can't drift out of sync with each
+/// other.
 pub fn apply_default_layout(state: &mut WorkbenchState) {
-    state.panel_modes = crate::state::default_panel_modes();
-    rebuild_tree_from_modes(&mut state.dock_tree, &state.panel_modes);
+    apply_layout_preset(state, LayoutPreset::Research);
 }
 
 /// Immediately remove a named panel's tile from the tree, if present.

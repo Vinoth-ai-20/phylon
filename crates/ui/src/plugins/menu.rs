@@ -9,7 +9,7 @@ pub fn menu_ui(
     _ctx: &egui::Context,
     ui: &mut egui::Ui,
     state: &mut crate::WorkbenchState,
-    _world: &mut world::World,
+    world: &mut world::World,
     actions: &mut Vec<MenuAction>,
 ) {
     let shortcuts = state.shortcuts.clone();
@@ -170,8 +170,42 @@ pub fn menu_ui(
 
         // ── VIEW ──────────────────────────────────────────────────────────
         ui.menu_button("View", |ui| {
-            ui.checkbox(&mut state.debug_structural, "Debug Structural View");
+            ui.checkbox(&mut state.debug_structural, "Wireframe View");
             ui.checkbox(&mut state.show_vision_cones, "Show Vision Cones");
+            ui.checkbox(
+                &mut state.show_world_boundary,
+                format!(
+                    "{} Show World Boundary",
+                    egui_remixicon::icons::RECTANGLE_LINE
+                ),
+            );
+            ui.separator();
+
+            // Colormap selector — moved out of the always-visible toolbar
+            // (Milestone 13): it's a configuration choice, not a per-frame
+            // control, so it doesn't need constant screen real estate.
+            let current_colormap = world
+                .ecs
+                .get_resource::<HeatmapState>()
+                .map(|h| h.colormap)
+                .unwrap_or(0);
+            ui.menu_button(
+                format!(
+                    "Colormap: {}",
+                    crate::plugins::toolbar::colormap_label(current_colormap)
+                ),
+                |ui| {
+                    for (index, label) in crate::plugins::toolbar::COLORMAP_VARIANTS {
+                        if ui
+                            .selectable_label(current_colormap == index, label)
+                            .clicked()
+                        {
+                            actions.push(MenuAction::SetColormap(index));
+                            ui.close_menu();
+                        }
+                    }
+                },
+            );
             ui.separator();
             if ui
                 .add(
@@ -242,7 +276,27 @@ pub fn menu_ui(
                 ui.close_menu();
             }
             ui.separator();
-            if ui.button("Reset Layout").clicked() {
+            ui.menu_button("Layout Presets", |ui| {
+                if ui.button("Research (default)").clicked() {
+                    crate::layout::apply_layout_preset(
+                        state,
+                        crate::layout::LayoutPreset::Research,
+                    );
+                    ui.close_menu();
+                }
+                if ui.button("Presentation").clicked() {
+                    crate::layout::apply_layout_preset(
+                        state,
+                        crate::layout::LayoutPreset::Presentation,
+                    );
+                    ui.close_menu();
+                }
+                if ui.button("Debug").clicked() {
+                    crate::layout::apply_layout_preset(state, crate::layout::LayoutPreset::Debug);
+                    ui.close_menu();
+                }
+            });
+            if ui.button("Restore Defaults").clicked() {
                 crate::layout::apply_default_layout(state);
                 ui.close_menu();
             }
@@ -398,7 +452,7 @@ pub fn menu_ui(
             ui.label(
                 egui::RichText::new("Panels")
                     .small()
-                    .color(egui::Color32::GRAY),
+                    .color(crate::theme::DISABLED_FG),
             );
             ui.separator();
 
@@ -443,7 +497,27 @@ pub fn menu_ui(
             }
 
             ui.separator();
-            if ui.button("Reset Layout").clicked() {
+            ui.menu_button("Layout Presets", |ui| {
+                if ui.button("Research (default)").clicked() {
+                    crate::layout::apply_layout_preset(
+                        state,
+                        crate::layout::LayoutPreset::Research,
+                    );
+                    ui.close_menu();
+                }
+                if ui.button("Presentation").clicked() {
+                    crate::layout::apply_layout_preset(
+                        state,
+                        crate::layout::LayoutPreset::Presentation,
+                    );
+                    ui.close_menu();
+                }
+                if ui.button("Debug").clicked() {
+                    crate::layout::apply_layout_preset(state, crate::layout::LayoutPreset::Debug);
+                    ui.close_menu();
+                }
+            });
+            if ui.button("Restore Defaults").clicked() {
                 crate::layout::apply_default_layout(state);
                 ui.close_menu();
             }

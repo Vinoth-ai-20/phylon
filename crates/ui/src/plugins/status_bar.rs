@@ -1,6 +1,39 @@
 //! Status bar plugin — live simulation metrics strip at the bottom of the window.
+//!
+//! Organized into three zones per `docs/design/layout.md`: **Simulation**
+//! (tick/fps/tps/playback/overlay/selection — what's happening right now),
+//! **Population** (entity/diet/resource counts — what exists right now),
+//! and **System** (engine/memory/render-mode/camera — operational detail
+//! that matters less continuously, so it hides behind a hover tooltip
+//! instead of taking up permanent strip width).
 
 use crate::types::*;
+
+/// Renders `text` as a tight-spaced (zero item-spacing) horizontal run of
+/// labels, so a "prefix: number suffix" reads as one continuous label
+/// instead of separate widgets with a full item-spacing gap between them.
+/// Used to give every live-updating number tabular (`.monospace()`) digits
+/// — see `docs/design/typography.md` — without also forcing the icon glyph
+/// that usually precedes it into the Monospace font family, which doesn't
+/// carry the Remix Icon glyphs and would render a tofu box instead.
+fn tight_row(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    let saved = ui.spacing().item_spacing.x;
+    ui.spacing_mut().item_spacing.x = 0.0;
+    ui.horizontal(add_contents);
+    ui.spacing_mut().item_spacing.x = saved;
+}
+
+fn mono(ui: &mut egui::Ui, text: impl Into<String>) {
+    ui.label(egui::RichText::new(text.into()).monospace());
+}
+
+/// A vertical rule between status-bar zones, more prominent than the
+/// item-level `ui.separator()` used between fields inside a zone.
+fn zone_separator(ui: &mut egui::Ui) {
+    ui.add_space(crate::theme::SPACE_SM);
+    ui.separator();
+    ui.add_space(crate::theme::SPACE_SM);
+}
 
 /// Render the status bar strip.
 #[allow(clippy::too_many_arguments)]
@@ -12,35 +45,67 @@ pub fn status_bar_ui(
     _actions: &mut Vec<MenuAction>,
 ) {
     ui.horizontal(|ui| {
-        // ── Simulation timing ─────────────────────────────────────────────
+        // ── Zone 1: Simulation ──────────────────────────────────────────────
         let (fps, tps, sim_time) = world
             .ecs
             .get_resource::<analytics::MetricsState>()
             .map(|m| (m.smoothed_fps, m.smoothed_tps, m.sim_time))
             .unwrap_or((0.0, 0.0, 0.0));
-
         let tick_count = (sim_time / 0.016).round() as u64;
-        ui.label(format!("{} Tick: {}", egui_remixicon::icons::TIMER_LINE, tick_count));
+
+        crate::widgets::status_chip(ui, egui_remixicon::icons::TIMER_LINE, tick_count.to_string(), None);
         ui.separator();
-        ui.label(format!("{} FPS: {:.0}", egui_remixicon::icons::SPEED_LINE, fps));
+        crate::widgets::status_chip(ui, egui_remixicon::icons::SPEED_LINE, format!("{:.0}", fps), None);
         ui.separator();
-        ui.label(format!("TPS: {:.0}", tps));
+        crate::widgets::status_chip(ui, "TPS", format!("{:.0}", tps), None);
         ui.separator();
 
-        // ── Entity counts ─────────────────────────────────────────────────
-        let entity_count = world.ecs.entities().len();
-        ui.label(format!("{} Entities: {}", egui_remixicon::icons::BUG_LINE, entity_count));
-        ui.separator();
-
-        // ── Render mode ───────────────────────────────────────────────────
-        ui.label(if state.debug_structural {
-            format!("{} Structural", egui_remixicon::icons::EYE_LINE)
+        let (pb_icon, pb_color) = if state.is_paused {
+            (egui_remixicon::icons::PAUSE_CIRCLE_LINE, egui::Color32::from_rgb(255, 150, 50))
         } else {
-            format!("{} SDF Skin", egui_remixicon::icons::EYE_LINE)
-        });
+            (egui_remixicon::icons::PLAY_CIRCLE_LINE, egui::Color32::LIGHT_GREEN)
+        };
+        crate::widgets::status_chip(
+            ui,
+            pb_icon,
+            format!("{:.1}×", state.simulation_speed),
+            Some(pb_color),
+        );
+
+        // Active overlay — only takes strip space when one is active.
+        let overlay_name = world
+            .ecs
+            .get_resource::<HeatmapState>()
+            .map(|h| crate::plugins::toolbar::heatmap_label(h.active))
+            .unwrap_or("None");
+        if overlay_name != "None" {
+            ui.separator();
+            crate::widgets::status_chip(
+                ui,
+                egui_remixicon::icons::MAP_LINE,
+                overlay_name,
+                Some(egui::Color32::LIGHT_BLUE),
+            );
+        }
+
+        // Selected entity — only takes strip space when something is selected.
+        if let Some(entity) = state.selected_entity {
+            ui.separator();
+            crate::widgets::status_chip(
+                ui,
+                egui_remixicon::icons::CURSOR_LINE,
+                format!("{:?}", entity),
+                Some(egui::Color32::LIGHT_GREEN),
+            );
+        }
+
+        zone_separator(ui);
+
+        // ── Zone 2: Population ───────────────────────────────────────────────
+        let entity_count = world.ecs.entities().len();
+        crate::widgets::status_chip(ui, egui_remixicon::icons::BUG_LINE, entity_count.to_string(), None);
         ui.separator();
 
-        // ── Organism diet counts ──────────────────────────────────────────
         let food_count = world.ecs.query::<&ecology::FoodPellet>().iter(&world.ecs).count();
         let mineral_count = world.ecs.query::<&ecology::MineralPellet>().iter(&world.ecs).count();
         let corpse_count = world.ecs.query::<&ecology::Corpse>().iter(&world.ecs).count();
@@ -60,21 +125,30 @@ pub fn status_bar_ui(
             }
         }
 
-        ui.label(format!("{} P:{} H:{} C:{} O:{} D:{}", egui_remixicon::icons::TEAM_LINE, prod_count, herb_count, carn_count, omni_count, deco_count));
+        tight_row(ui, |ui| {
+            ui.label(format!("{} P:", egui_remixicon::icons::TEAM_LINE));
+            mono(ui, prod_count.to_string());
+            ui.label(" H:");
+            mono(ui, herb_count.to_string());
+            ui.label(" C:");
+            mono(ui, carn_count.to_string());
+            ui.label(" O:");
+            mono(ui, omni_count.to_string());
+            ui.label(" D:");
+            mono(ui, deco_count.to_string());
+        });
         ui.separator();
-        ui.label(format!(
-            "{} Food: {}  {} Minerals: {}  {} Corpses: {}",
-            egui_remixicon::icons::RESTAURANT_LINE,
-            food_count,
-            egui_remixicon::icons::COPPER_DIAMOND_LINE,
-            mineral_count,
-            egui_remixicon::icons::SKULL_LINE,
-            corpse_count
-        ));
+        tight_row(ui, |ui| {
+            ui.label(format!("{} Food: ", egui_remixicon::icons::RESTAURANT_LINE));
+            mono(ui, food_count.to_string());
+            ui.label(format!("  {} Minerals: ", egui_remixicon::icons::COPPER_DIAMOND_LINE));
+            mono(ui, mineral_count.to_string());
+            ui.label(format!("  {} Corpses: ", egui_remixicon::icons::SKULL_LINE));
+            mono(ui, corpse_count.to_string());
+        });
 
-        // ── Right side ────────────────────────────────────────────────────
+        // ── Zone 3: System (hover-reveal) ────────────────────────────────────
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // Memory
             thread_local! {
                 static SYS: std::cell::RefCell<sysinfo::System> = std::cell::RefCell::new(sysinfo::System::new());
             }
@@ -88,61 +162,23 @@ pub fn status_bar_ui(
                 }
                 0
             });
-            ui.label(format!("Mem: {}MB", mem_mb));
-            ui.separator();
 
-            // Engine status
-            ui.label(
-                egui::RichText::new(format!("{} Engine Online", egui_remixicon::icons::SERVER_LINE))
-                    .color(egui::Color32::GREEN),
+            // A single compact "System" chip stands in for engine/memory/
+            // render-mode/camera detail — full values reveal on hover
+            // rather than occupying permanent strip width, per the
+            // Interaction Design Standards (hover-reveal for low-priority
+            // continuous detail).
+            let render_mode = if state.debug_structural { "Wireframe" } else { "SDF Skin" };
+            let hover_text = format!(
+                "Engine Online\nMemory: {mem_mb} MB\nRender Mode: {render_mode}\nCamera: ({:.0}, {:.0}) × {:.1}",
+                state.camera_pos.x, state.camera_pos.y, state.camera_zoom
             );
-            ui.separator();
-
-            // Active overlay
-            let overlay_name = world
-                .ecs
-                .get_resource::<HeatmapState>()
-                .map(|h| crate::plugins::toolbar::heatmap_label(h.active))
-                .unwrap_or("None");
-            if overlay_name != "None" {
-                ui.label(
-                    egui::RichText::new(format!("{} {}", egui_remixicon::icons::MAP_LINE, overlay_name))
-                        .color(egui::Color32::LIGHT_BLUE),
-                );
-                ui.separator();
-            }
-
-            // Playback state
-            let (pb_icon, pb_color) = if state.is_paused {
-                (egui_remixicon::icons::PAUSE_CIRCLE_LINE, egui::Color32::from_rgb(255, 150, 50))
-            } else {
-                (egui_remixicon::icons::PLAY_CIRCLE_LINE, egui::Color32::LIGHT_GREEN)
-            };
             ui.label(
-                egui::RichText::new(format!("{} {:.1}×", pb_icon, state.simulation_speed))
-                    .color(pb_color),
-            );
-            ui.separator();
-
-            // Selected entity
-            if let Some(entity) = state.selected_entity {
-                ui.label(
-                    egui::RichText::new(format!("{} {:?}", egui_remixicon::icons::CURSOR_LINE, entity))
-                        .color(egui::Color32::LIGHT_GREEN)
-                        .size(crate::theme::SIZE_SMALL),
-                );
-                ui.separator();
-            }
-
-            // Camera
-            ui.label(
-                egui::RichText::new(format!(
-                    "Cam ({:.0}, {:.0}) ×{:.1}",
-                    state.camera_pos.x, state.camera_pos.y, state.camera_zoom
-                ))
-                .color(egui::Color32::GRAY)
-                .size(crate::theme::SIZE_SMALL),
-            );
+                egui::RichText::new(format!("{} System", egui_remixicon::icons::SERVER_LINE))
+                    .color(egui::Color32::GREEN)
+                    .size(crate::theme::SIZE_SMALL),
+            )
+            .on_hover_text(hover_text);
         });
     });
 }

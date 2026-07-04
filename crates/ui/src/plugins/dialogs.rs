@@ -26,37 +26,25 @@ fn about_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) {
             ui.vertical_centered(|ui| {
                 ui.heading(
                     egui::RichText::new("PHYLON")
-                        .size(36.0)
+                        .size(crate::theme::SIZE_DISPLAY * 1.6)
                         .strong()
-                        .color(egui::Color32::from_rgb(100, 200, 255)),
+                        .color(crate::theme::ACCENT),
                 );
                 ui.label(
                     egui::RichText::new("Artificial Life Simulation Engine")
                         .italics()
-                        .color(egui::Color32::GRAY),
+                        .color(crate::theme::DISABLED_FG),
                 );
-                ui.add_space(12.0);
+                ui.add_space(crate::theme::SPACE_MD);
                 ui.separator();
-                ui.add_space(8.0);
-                egui::Grid::new("about_grid").show(ui, |ui| {
-                    ui.label("Version");
-                    ui.label(egui::RichText::new("0.1.0").strong());
-                    ui.end_row();
-                    ui.label("Architecture");
-                    ui.label("ECS + GPU Compute");
-                    ui.end_row();
-                    ui.label("Physics");
-                    ui.label("Verlet Particle Nodes");
-                    ui.end_row();
-                    ui.label("Genetics");
-                    ui.label("CPPN + Hox Sequences");
-                    ui.end_row();
-                    ui.label("Neural");
-                    ui.label("CTRNN (Continuous-Time RNN)");
-                    ui.end_row();
-                    ui.label("Renderer");
-                    ui.label("wgpu (WebGPU / Vulkan / DX12)");
-                    ui.end_row();
+                ui.add_space(crate::theme::SPACE_SM);
+                egui::Grid::new("about_grid").striped(true).show(ui, |ui| {
+                    crate::widgets::kv_row(ui, "Version", "0.1.0");
+                    crate::widgets::kv_row(ui, "Architecture", "ECS + GPU Compute");
+                    crate::widgets::kv_row(ui, "Physics", "Verlet Particle Nodes");
+                    crate::widgets::kv_row(ui, "Genetics", "CPPN + Hox Sequences");
+                    crate::widgets::kv_row(ui, "Neural", "CTRNN (Continuous-Time RNN)");
+                    crate::widgets::kv_row(ui, "Renderer", "wgpu (WebGPU / Vulkan / DX12)");
                 });
             });
         });
@@ -77,7 +65,7 @@ fn documentation_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) 
                     encodes both their morphology (via a CPPN developmental \
                     program) and their neural controller (CTRNN).",
                 );
-                ui.add_space(8.0);
+                ui.add_space(crate::theme::SPACE_SM);
 
                 ui.collapsing("Physics Engine", |ui| {
                     ui.label("• Verlet particle nodes connected by spring constraints");
@@ -133,7 +121,7 @@ fn keybinds_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) {
                     &[
                         ("Space", "Play / Pause"),
                         ("→", "Step Forward (one tick)"),
-                        ("Ctrl+R", "Reset / Reseed Simulation"),
+                        ("↑ / ↓", "Speed Up / Slow Down"),
                     ],
                 );
                 keybind_section(
@@ -142,6 +130,10 @@ fn keybinds_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) {
                     &[
                         ("Ctrl+S", "Save State"),
                         ("Ctrl+O", "Load State"),
+                        ("Ctrl+Shift+I", "Import Genome"),
+                        ("Ctrl+Shift+E", "Export Genome"),
+                        ("Ctrl+Shift+S", "Take Screenshot"),
+                        ("Ctrl+Shift+R", "Start / Stop Recording"),
                         ("Ctrl+P", "Spawn Proto-Fish"),
                     ],
                 );
@@ -161,7 +153,7 @@ fn keybinds_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) {
                     &[
                         ("+ / =", "Zoom In"),
                         ("−", "Zoom Out"),
-                        ("Home / 0", "Reset Camera"),
+                        ("Home / 0 / Ctrl+R", "Reset Camera"),
                         ("W A S D / Arrow Keys", "Pan Camera"),
                     ],
                 );
@@ -178,8 +170,9 @@ fn keybinds_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) {
                     ui,
                     "Editing",
                     &[
-                        ("Z", "Undo"),
-                        ("Y", "Redo"),
+                        ("Ctrl+Z", "Undo"),
+                        ("Ctrl+Y", "Redo"),
+                        ("G", "Grab Selection"),
                         ("V", "Paste / Spawn from Clipboard"),
                         ("F", "Toggle Stationary"),
                         ("J", "Join Selection"),
@@ -199,7 +192,7 @@ fn keybind_section(ui: &mut egui::Ui, title: &str, binds: &[(&str, &str)]) {
                     ui.label(
                         egui::RichText::new(*key)
                             .monospace()
-                            .color(egui::Color32::from_rgb(200, 200, 100)),
+                            .color(crate::theme::ACCENT),
                     );
                     ui.label(*action);
                     ui.end_row();

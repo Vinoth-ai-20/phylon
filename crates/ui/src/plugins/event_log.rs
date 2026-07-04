@@ -47,7 +47,7 @@ pub fn event_log_ui(
                     .color(egui::Color32::LIGHT_GREEN)
             } else {
                 egui::RichText::new(egui_remixicon::icons::ARROW_DOWN_LINE)
-                    .color(egui::Color32::GRAY)
+                    .color(crate::theme::DISABLED_FG)
             };
             if ui
                 .small_button(auto_label)
@@ -98,7 +98,7 @@ pub fn event_log_ui(
         ui.label(
             egui::RichText::new("Event system not yet initialised.")
                 .italics()
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::DISABLED_FG),
         );
         return;
     };
@@ -151,7 +151,7 @@ pub fn event_log_ui(
                 ui.label(
                     egui::RichText::new("No matching events.")
                         .italics()
-                        .color(egui::Color32::GRAY),
+                        .color(crate::theme::DISABLED_FG),
                 );
             }
             for ev in &filtered {
@@ -181,7 +181,7 @@ pub fn event_log_ui(
     ui.separator();
     ui.label(
         egui::RichText::new(format!("{} events", event_count))
-            .color(egui::Color32::GRAY)
+            .color(crate::theme::DISABLED_FG)
             .size(crate::theme::SIZE_SMALL),
     );
 }
@@ -200,6 +200,6 @@ fn severity_color_for_type(event_type: &str) -> egui::Color32 {
     } else if et.contains("user") || et.contains("manual") {
         egui::Color32::from_rgb(100, 180, 255)
     } else {
-        egui::Color32::GRAY
+        crate::theme::DISABLED_FG
     }
 }

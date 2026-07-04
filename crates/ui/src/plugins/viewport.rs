@@ -61,7 +61,7 @@ pub fn viewport_ui(
                     ui.label(
                         egui::RichText::new(format!("Entity {:?}", entity))
                             .small()
-                            .color(egui::Color32::GRAY),
+                            .color(crate::theme::DISABLED_FG),
                     );
                     ui.separator();
 

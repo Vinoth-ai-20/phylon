@@ -6,7 +6,12 @@
 
 use crate::types::*;
 
-/// Narrow activity bar (icon strip, far left column).
+/// Activity bar (navigation rail, far left column) — the `labeled_icon_tab`
+/// component from `docs/design/components.md`. Shows icon+label when
+/// `state.activity_bar_expanded` (the default, fixing the audit's top
+/// discoverability finding: an icon-only rail with only a hover tooltip),
+/// or icon-only (the previous permanent behavior) when collapsed via the
+/// pin toggle at the bottom of the rail.
 #[allow(clippy::too_many_arguments)]
 pub fn activity_bar_ui(
     _ctx: &egui::Context,
@@ -15,17 +20,32 @@ pub fn activity_bar_ui(
     _world: &mut world::World,
     actions: &mut Vec<MenuAction>,
 ) {
-    ui.add_space(8.0);
-    ui.vertical_centered(|ui| {
+    let expanded = state.activity_bar_expanded;
+
+    ui.add_space(crate::theme::SPACE_SM);
+    ui.vertical(|ui| {
         for (icon, tab, tooltip) in NAV_TABS {
-            if ui
-                .selectable_label(
+            // Tooltip is always present even when labeled — redundant
+            // labeling costs nothing and helps anyone skimming quickly (see
+            // docs/design/components.md's `labeled_icon_tab`).
+            let response = if expanded {
+                ui.add(egui::SelectableLabel::new(
                     state.active_tab == tab,
-                    egui::RichText::new(icon).size(18.0),
-                )
+                    egui::RichText::new(format!("{icon}  {tooltip}")).size(crate::theme::ICON_MD),
+                ))
                 .on_hover_text(tooltip)
-                .clicked()
-            {
+            } else {
+                ui.vertical_centered(|ui| {
+                    ui.selectable_label(
+                        state.active_tab == tab,
+                        egui::RichText::new(icon).size(crate::theme::ICON_LG),
+                    )
+                })
+                .inner
+                .on_hover_text(tooltip)
+            };
+
+            if response.clicked() {
                 let mode = state
                     .panel_modes
                     .get("Sidebar")
@@ -47,7 +67,36 @@ pub fn activity_bar_ui(
                     }
                 }
             }
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
+        }
+
+        // Pin/collapse toggle — always icon-only regardless of `expanded`,
+        // pinned to the bottom of the rail.
+        ui.add_space(crate::theme::SPACE_MD);
+        ui.separator();
+        let (pin_icon, pin_tip) = if expanded {
+            (
+                egui_remixicon::icons::SIDEBAR_FOLD_LINE,
+                "Collapse to icons only",
+            )
+        } else {
+            (
+                egui_remixicon::icons::SIDEBAR_UNFOLD_LINE,
+                "Expand to icon + label",
+            )
+        };
+        if ui
+            .vertical_centered(|ui| {
+                ui.selectable_label(
+                    false,
+                    egui::RichText::new(pin_icon).size(crate::theme::ICON_LG),
+                )
+            })
+            .inner
+            .on_hover_text(pin_tip)
+            .clicked()
+        {
+            state.activity_bar_expanded = !expanded;
         }
     });
 }
@@ -76,7 +125,7 @@ const NAV_TABS: [(&str, crate::SidebarTab, &str); 8] = [
     (
         egui_remixicon::icons::LINE_CHART_LINE,
         crate::SidebarTab::Analytics,
-        "Analytics",
+        "Snapshot",
     ),
     (
         egui_remixicon::icons::TOOLS_LINE,
@@ -86,7 +135,7 @@ const NAV_TABS: [(&str, crate::SidebarTab, &str); 8] = [
     (
         egui_remixicon::icons::EQUALIZER_LINE,
         crate::SidebarTab::Tuning,
-        "Tuning",
+        "Simulation Parameters",
     ),
     (
         egui_remixicon::icons::SETTINGS_LINE,
@@ -137,7 +186,7 @@ fn genetics_panel(
             ui.label(
                 egui::RichText::new("No organism selected.")
                     .italics()
-                    .color(egui::Color32::GRAY),
+                    .color(crate::theme::DISABLED_FG),
             );
             return;
         }
@@ -146,33 +195,33 @@ fn genetics_panel(
     let mut genome_q = world.ecs.query::<&genetics::Genome>();
     if let Ok(genome) = genome_q.get(&world.ecs, entity) {
         egui::Grid::new("gen_panel").striped(true).show(ui, |ui| {
-            grid_row(ui, "Genome ID", &genome.id.0.to_string());
-            grid_row(ui, "Schema", &format!("v{}", genome.schema_version));
-            grid_row(ui, "Ploidy", &format!("{:?}", genome.ploidy));
-            grid_row(
+            crate::widgets::kv_row(ui, "Genome ID", &genome.id.0.to_string());
+            crate::widgets::kv_row(ui, "Schema", &format!("v{}", genome.schema_version));
+            crate::widgets::kv_row(ui, "Ploidy", &format!("{:?}", genome.ploidy));
+            crate::widgets::kv_row(
                 ui,
                 "Brain nodes",
                 &genome.brain_cppn.nodes.len().to_string(),
             );
-            grid_row(
+            crate::widgets::kv_row(
                 ui,
                 "Brain edges",
                 &genome.brain_cppn.connections.len().to_string(),
             );
-            grid_row(
+            crate::widgets::kv_row(
                 ui,
                 "Morph nodes",
                 &genome.morph_cppn.nodes.len().to_string(),
             );
-            grid_row(
+            crate::widgets::kv_row(
                 ui,
                 "Morph edges",
                 &genome.morph_cppn.connections.len().to_string(),
             );
             if let Some(hox) = &genome.hox {
-                grid_row(ui, "Hox genes", &hox.genes.len().to_string());
+                crate::widgets::kv_row(ui, "Hox genes", &hox.genes.len().to_string());
             } else {
-                grid_row(ui, "Hox genes", "None (CPPN-driven)");
+                crate::widgets::kv_row(ui, "Hox genes", "None (CPPN-driven)");
             }
         });
         ui.add_space(8.0);
@@ -181,7 +230,7 @@ fn genetics_panel(
                 "{} Brain Network graph moved to the Neural Viewer panel",
                 egui_remixicon::icons::BRAIN_LINE
             ))
-            .color(egui::Color32::GRAY)
+            .color(crate::theme::DISABLED_FG)
             .italics(),
         );
 
@@ -192,7 +241,7 @@ fn genetics_panel(
     } else {
         ui.label(
             egui::RichText::new("Genome not on this node. Select the head node.")
-                .color(egui::Color32::GRAY)
+                .color(crate::theme::DISABLED_FG)
                 .italics(),
         );
     }
@@ -238,37 +287,37 @@ fn ecology_panel(ui: &mut egui::Ui, world: &mut world::World) {
         .default_open(true)
         .show(ui, |ui| {
             egui::Grid::new("eco_pop").striped(true).show(ui, |ui| {
-                grid_row_colored(
+                crate::widgets::kv_row_colored(
                     ui,
                     "Producers",
                     &prod.to_string(),
-                    egui::Color32::from_rgb(100, 220, 100),
+                    crate::theme::chart_color(&ecology::Diet::Producer),
                 );
-                grid_row_colored(
+                crate::widgets::kv_row_colored(
                     ui,
                     "Herbivores",
                     &herb.to_string(),
-                    egui::Color32::from_rgb(180, 255, 150),
+                    crate::theme::chart_color(&ecology::Diet::Herbivore),
                 );
-                grid_row_colored(
+                crate::widgets::kv_row_colored(
                     ui,
                     "Carnivores",
                     &carn.to_string(),
-                    egui::Color32::from_rgb(255, 100, 100),
+                    crate::theme::chart_color(&ecology::Diet::Carnivore),
                 );
-                grid_row_colored(
+                crate::widgets::kv_row_colored(
                     ui,
                     "Omnivores",
                     &omni.to_string(),
-                    egui::Color32::from_rgb(255, 200, 100),
+                    crate::theme::chart_color(&ecology::Diet::Omnivore),
                 );
-                grid_row_colored(
+                crate::widgets::kv_row_colored(
                     ui,
                     "Decomposers",
                     &deco.to_string(),
-                    egui::Color32::from_rgb(180, 140, 200),
+                    crate::theme::chart_color(&ecology::Diet::Decomposer),
                 );
-                grid_row(ui, "TOTAL", &total_organisms.to_string());
+                crate::widgets::kv_row_mono(ui, "TOTAL", &total_organisms.to_string());
             });
         });
 
@@ -276,9 +325,9 @@ fn ecology_panel(ui: &mut egui::Ui, world: &mut world::World) {
         .default_open(true)
         .show(ui, |ui| {
             egui::Grid::new("eco_res").striped(true).show(ui, |ui| {
-                grid_row(ui, "Food Pellets", &food.to_string());
-                grid_row(ui, "Minerals", &minerals.to_string());
-                grid_row(ui, "Corpses", &corpses.to_string());
+                crate::widgets::kv_row_mono(ui, "Food Pellets", &food.to_string());
+                crate::widgets::kv_row_mono(ui, "Minerals", &minerals.to_string());
+                crate::widgets::kv_row_mono(ui, "Corpses", &corpses.to_string());
             });
         });
 
@@ -303,17 +352,21 @@ fn environment_panel(ui: &mut egui::Ui, world: &mut world::World) {
             .default_open(true)
             .show(ui, |ui| {
                 egui::Grid::new("env_atmo").striped(true).show(ui, |ui| {
-                    grid_row(ui, "Sunlight", &format!("{:.1}%", atmo.sunlight * 100.0));
-                    grid_row(ui, "O₂", &format!("{:.3}", atmo.o2));
-                    grid_row(ui, "CO₂", &format!("{:.3}", atmo.co2));
-                    grid_row(ui, "Temperature", &format!("{:.1}°C", atmo.temp));
-                    grid_row(ui, "Day/Night Tick", &atmo.ticks.to_string());
+                    crate::widgets::kv_row_mono(
+                        ui,
+                        "Sunlight",
+                        &format!("{:.1}%", atmo.sunlight * 100.0),
+                    );
+                    crate::widgets::kv_row_mono(ui, "O₂", &format!("{:.3}", atmo.o2));
+                    crate::widgets::kv_row_mono(ui, "CO₂", &format!("{:.3}", atmo.co2));
+                    crate::widgets::kv_row_mono(ui, "Temperature", &format!("{:.1}°C", atmo.temp));
+                    crate::widgets::kv_row_mono(ui, "Day/Night Tick", &atmo.ticks.to_string());
                 });
             });
     } else {
         ui.label(
             egui::RichText::new("GlobalAtmosphere resource not available.")
-                .color(egui::Color32::GRAY)
+                .color(crate::theme::DISABLED_FG)
                 .italics(),
         );
     }
@@ -326,39 +379,43 @@ fn environment_panel(ui: &mut egui::Ui, world: &mut world::World) {
 fn analytics_panel(ui: &mut egui::Ui, world: &mut world::World) {
     if let Some(metrics) = world.ecs.get_resource::<analytics::MetricsState>() {
         egui::Grid::new("ana_grid").striped(true).show(ui, |ui| {
-            grid_row(ui, "Sim Time", &format!("{:.1}s", metrics.sim_time));
-            grid_row(ui, "FPS", &format!("{:.0}", metrics.smoothed_fps));
-            grid_row(ui, "TPS", &format!("{:.0}", metrics.smoothed_tps));
+            crate::widgets::kv_row_mono(ui, "Sim Time", &format!("{:.1}s", metrics.sim_time));
+            crate::widgets::kv_row_mono(ui, "FPS", &format!("{:.0}", metrics.smoothed_fps));
+            crate::widgets::kv_row_mono(ui, "TPS", &format!("{:.0}", metrics.smoothed_tps));
 
             // Latest population counts from history
             let latest = |hist: &std::collections::VecDeque<[f64; 2]>| {
                 hist.back().map(|p| p[1] as usize).unwrap_or(0)
             };
-            grid_row(
+            crate::widgets::kv_row_colored(
                 ui,
                 "Producers",
                 &latest(&metrics.producers_history).to_string(),
+                crate::theme::chart_color(&ecology::Diet::Producer),
             );
-            grid_row(
+            crate::widgets::kv_row_colored(
                 ui,
                 "Herbivores",
                 &latest(&metrics.herbivores_history).to_string(),
+                crate::theme::chart_color(&ecology::Diet::Herbivore),
             );
-            grid_row(
+            crate::widgets::kv_row_colored(
                 ui,
                 "Carnivores",
                 &latest(&metrics.carnivores_history).to_string(),
+                crate::theme::chart_color(&ecology::Diet::Carnivore),
             );
-            grid_row(
+            crate::widgets::kv_row_colored(
                 ui,
                 "Omnivores",
                 &latest(&metrics.omnivores_history).to_string(),
+                crate::theme::chart_color(&ecology::Diet::Omnivore),
             );
         });
     } else {
         ui.label(
             egui::RichText::new("MetricsState not available.")
-                .color(egui::Color32::GRAY)
+                .color(crate::theme::DISABLED_FG)
                 .italics(),
         );
     }
@@ -371,7 +428,7 @@ fn sandbox_panel(
     state: &mut crate::WorkbenchState,
     actions: &mut Vec<MenuAction>,
 ) {
-    ui.label(egui::RichText::new("Spawn at camera position:").color(egui::Color32::GRAY));
+    ui.label(egui::RichText::new("Spawn at camera position:").color(crate::theme::DISABLED_FG));
     ui.add_space(4.0);
 
     for preset in organisms::sandbox::PresetDefinition::standard_presets() {
@@ -417,7 +474,7 @@ fn tuning_panel(ui: &mut egui::Ui, state: &mut crate::WorkbenchState, world: &mu
     egui::CollapsingHeader::new(format!("{} Rendering", egui_remixicon::icons::EYE_LINE))
         .default_open(true)
         .show(ui, |ui| {
-            ui.checkbox(&mut state.debug_structural, "Debug Structural View");
+            ui.checkbox(&mut state.debug_structural, "Wireframe View");
             ui.checkbox(&mut state.show_vision_cones, "Show Vision Cones");
             ui.add_space(4.0);
             ui.add(
@@ -515,38 +572,9 @@ pub fn tab_label(tab: crate::SidebarTab) -> &'static str {
         crate::SidebarTab::Genetics => "Genetics",
         crate::SidebarTab::Ecology => "Ecology",
         crate::SidebarTab::Environment => "Environment",
-        crate::SidebarTab::Analytics => "Analytics",
+        crate::SidebarTab::Analytics => "Snapshot",
         crate::SidebarTab::Sandbox => "Sandbox",
-        crate::SidebarTab::Tuning => "Tuning",
+        crate::SidebarTab::Tuning => "Simulation Parameters",
         crate::SidebarTab::Settings => "Settings",
     }
-}
-
-fn grid_row(ui: &mut egui::Ui, key: &str, val: &str) {
-    ui.label(
-        egui::RichText::new(key)
-            .color(egui::Color32::GRAY)
-            .size(crate::theme::SIZE_BODY),
-    );
-    ui.label(
-        egui::RichText::new(val)
-            .strong()
-            .size(crate::theme::SIZE_BODY),
-    );
-    ui.end_row();
-}
-
-fn grid_row_colored(ui: &mut egui::Ui, key: &str, val: &str, color: egui::Color32) {
-    ui.label(
-        egui::RichText::new(key)
-            .color(color)
-            .size(crate::theme::SIZE_BODY),
-    );
-    ui.label(
-        egui::RichText::new(val)
-            .color(color)
-            .strong()
-            .size(crate::theme::SIZE_BODY),
-    );
-    ui.end_row();
 }

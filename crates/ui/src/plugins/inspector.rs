@@ -12,11 +12,7 @@ pub fn inspector_ui(
     let entity = match state.selected_entity.or(state.tracked_entity) {
         Some(e) => e,
         None => {
-            ui.label(
-                egui::RichText::new("No organism selected.")
-                    .italics()
-                    .color(egui::Color32::GRAY),
-            );
+            crate::widgets::empty_state(ui, "Select an organism to view its details");
             return;
         }
     };
@@ -113,7 +109,7 @@ pub fn inspector_ui(
         }
     }
 
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_SM);
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -125,42 +121,58 @@ pub fn inspector_ui(
             ))
             .default_open(true)
             .show(ui, |ui| {
-                ui.label("SpeciesId: Not Available");
-                ui.label("GenomeId: Not Available");
-                ui.label("EntityName: Not Available");
+                egui::Grid::new("insp_identity")
+                    .striped(true)
+                    .show(ui, |ui| {
+                        crate::widgets::kv_row(ui, "SpeciesId", "Not Available");
+                        crate::widgets::kv_row(ui, "GenomeId", "Not Available");
+                        crate::widgets::kv_row(ui, "EntityName", "Not Available");
 
-                let mut gen_q = world.ecs.query::<&organisms::Generation>();
-                if let Ok(gen) = gen_q.get(&world.ecs, entity) {
-                    ui.label(format!("Generation: {}", gen.0));
-                } else {
-                    ui.label("Generation: Not Available");
-                }
+                        let mut gen_q = world.ecs.query::<&organisms::Generation>();
+                        if let Ok(gen) = gen_q.get(&world.ecs, entity) {
+                            crate::widgets::kv_row_mono(ui, "Generation", &gen.0.to_string());
+                        } else {
+                            crate::widgets::kv_row(ui, "Generation", "Not Available");
+                        }
 
-                let mut age_q = world.ecs.query::<&metabolism::Age>();
-                if let Ok(age) = age_q.get(&world.ecs, entity) {
-                    ui.label(format!("Age: {} / {} ticks", age.ticks, age.max_lifespan));
-                } else {
-                    let mut bio_q = world.ecs.query::<&organisms::BiologicalComponents>();
-                    if let Ok(bio) = bio_q.get(&world.ecs, entity) {
-                        ui.label(format!("Age: {} ticks", bio.age_ticks));
-                    } else {
-                        ui.label("Age: Not Available");
-                    }
-                }
+                        let mut age_q = world.ecs.query::<&metabolism::Age>();
+                        if let Ok(age) = age_q.get(&world.ecs, entity) {
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "Age",
+                                &format!("{} / {} ticks", age.ticks, age.max_lifespan),
+                            );
+                        } else {
+                            let mut bio_q = world.ecs.query::<&organisms::BiologicalComponents>();
+                            if let Ok(bio) = bio_q.get(&world.ecs, entity) {
+                                crate::widgets::kv_row_mono(
+                                    ui,
+                                    "Age",
+                                    &format!("{} ticks", bio.age_ticks),
+                                );
+                            } else {
+                                crate::widgets::kv_row(ui, "Age", "Not Available");
+                            }
+                        }
 
-                let mut spawn_q = world.ecs.query::<&organisms::SpawnTick>();
-                if let Ok(spawn) = spawn_q.get(&world.ecs, entity) {
-                    ui.label(format!("BirthTick: {}", spawn.0));
-                } else {
-                    ui.label("BirthTick: Not Available");
-                }
+                        let mut spawn_q = world.ecs.query::<&organisms::SpawnTick>();
+                        if let Ok(spawn) = spawn_q.get(&world.ecs, entity) {
+                            crate::widgets::kv_row_mono(ui, "BirthTick", &spawn.0.to_string());
+                        } else {
+                            crate::widgets::kv_row(ui, "BirthTick", "Not Available");
+                        }
 
-                let mut bio_q = world.ecs.query::<&organisms::BiologicalComponents>();
-                if let Ok(bio) = bio_q.get(&world.ecs, entity) {
-                    ui.label(format!("ParentEntity: {:?}", bio.parent));
-                } else {
-                    ui.label("ParentEntity: Not Available");
-                }
+                        let mut bio_q = world.ecs.query::<&organisms::BiologicalComponents>();
+                        if let Ok(bio) = bio_q.get(&world.ecs, entity) {
+                            crate::widgets::kv_row(
+                                ui,
+                                "ParentEntity",
+                                &format!("{:?}", bio.parent),
+                            );
+                        } else {
+                            crate::widgets::kv_row(ui, "ParentEntity", "Not Available");
+                        }
+                    });
             });
 
             // --- PHYSIOLOGY ---
@@ -170,59 +182,85 @@ pub fn inspector_ui(
             ))
             .default_open(true)
             .show(ui, |ui| {
-                let mut bio_q = world.ecs.query::<&organisms::BiologicalComponents>();
-                if let Ok(bio) = bio_q.get(&world.ecs, entity) {
-                    ui.label(format!("Energy: {:?}", bio.energy));
-                } else {
-                    ui.label("Energy: Not Available");
-                }
+                egui::Grid::new("insp_physiology")
+                    .striped(true)
+                    .show(ui, |ui| {
+                        let mut bio_q = world.ecs.query::<&organisms::BiologicalComponents>();
+                        if let Ok(bio) = bio_q.get(&world.ecs, entity) {
+                            crate::widgets::kv_row_mono(ui, "Energy", &format!("{:?}", bio.energy));
+                        } else {
+                            crate::widgets::kv_row(ui, "Energy", "Not Available");
+                        }
 
-                let mut chem_q = world.ecs.query::<&metabolism::ChemicalEconomy>();
-                if let Ok(chem) = chem_q.get(&world.ecs, entity) {
-                    ui.label(format!("ATP: {:.1} / {:.1}", chem.atp, chem.max_atp));
-                    ui.label(format!(
-                        "Glucose: {:.1} / {:.1}",
-                        chem.glucose, chem.max_glucose
-                    ));
-                    ui.label(format!("Oxygen: {:.1} / {:.1}", chem.o2, chem.max_o2));
-                    ui.label(format!(
-                        "CarbonDioxide: {:.1} / {:.1}",
-                        chem.co2, chem.max_co2
-                    ));
-                } else {
-                    ui.label("ATP: Not Available");
-                    ui.label("Glucose: Not Available");
-                    ui.label("Oxygen: Not Available");
-                    ui.label("CarbonDioxide: Not Available");
-                }
+                        let mut chem_q = world.ecs.query::<&metabolism::ChemicalEconomy>();
+                        if let Ok(chem) = chem_q.get(&world.ecs, entity) {
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "ATP",
+                                &format!("{:.1} / {:.1}", chem.atp, chem.max_atp),
+                            );
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "Glucose",
+                                &format!("{:.1} / {:.1}", chem.glucose, chem.max_glucose),
+                            );
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "Oxygen",
+                                &format!("{:.1} / {:.1}", chem.o2, chem.max_o2),
+                            );
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "CarbonDioxide",
+                                &format!("{:.1} / {:.1}", chem.co2, chem.max_co2),
+                            );
+                        } else {
+                            crate::widgets::kv_row(ui, "ATP", "Not Available");
+                            crate::widgets::kv_row(ui, "Glucose", "Not Available");
+                            crate::widgets::kv_row(ui, "Oxygen", "Not Available");
+                            crate::widgets::kv_row(ui, "CarbonDioxide", "Not Available");
+                        }
 
-                let mut health_q = world.ecs.query::<&metabolism::Health>();
-                if let Ok(health) = health_q.get(&world.ecs, entity) {
-                    ui.label(format!("Health: {:.1} / {:.1}", health.current, health.max));
-                } else {
-                    ui.label("Health: Not Available");
-                }
+                        let mut health_q = world.ecs.query::<&metabolism::Health>();
+                        if let Ok(health) = health_q.get(&world.ecs, entity) {
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "Health",
+                                &format!("{:.1} / {:.1}", health.current, health.max),
+                            );
+                        } else {
+                            crate::widgets::kv_row(ui, "Health", "Not Available");
+                        }
 
-                let mut hydro_q = world.ecs.query::<&metabolism::Hydration>();
-                if let Ok(hydro) = hydro_q.get(&world.ecs, entity) {
-                    ui.label(format!("Hydration: {:.1}%", hydro.level * 100.0));
-                } else {
-                    ui.label("Hydration: Not Available");
-                }
+                        let mut hydro_q = world.ecs.query::<&metabolism::Hydration>();
+                        if let Ok(hydro) = hydro_q.get(&world.ecs, entity) {
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "Hydration",
+                                &format!("{:.1}%", hydro.level * 100.0),
+                            );
+                        } else {
+                            crate::widgets::kv_row(ui, "Hydration", "Not Available");
+                        }
 
-                let mut temp_q = world.ecs.query::<&metabolism::BodyTemperature>();
-                if let Ok(temp) = temp_q.get(&world.ecs, entity) {
-                    ui.label(format!("BodyTemperature: {:.1}°C", temp.current));
-                } else {
-                    ui.label("BodyTemperature: Not Available");
-                }
+                        let mut temp_q = world.ecs.query::<&metabolism::BodyTemperature>();
+                        if let Ok(temp) = temp_q.get(&world.ecs, entity) {
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "BodyTemperature",
+                                &format!("{:.1}°C", temp.current),
+                            );
+                        } else {
+                            crate::widgets::kv_row(ui, "BodyTemperature", "Not Available");
+                        }
 
-                let mut meta_q = world.ecs.query::<&metabolism::Metabolism>();
-                if let Ok(meta) = meta_q.get(&world.ecs, entity) {
-                    ui.label(format!("Mass: {:.2}", meta.mass));
-                } else {
-                    ui.label("Mass: Not Available");
-                }
+                        let mut meta_q = world.ecs.query::<&metabolism::Metabolism>();
+                        if let Ok(meta) = meta_q.get(&world.ecs, entity) {
+                            crate::widgets::kv_row_mono(ui, "Mass", &format!("{:.2}", meta.mass));
+                        } else {
+                            crate::widgets::kv_row(ui, "Mass", "Not Available");
+                        }
+                    });
             });
 
             // --- GENETICS ---
@@ -234,30 +272,53 @@ pub fn inspector_ui(
             .show(ui, |ui| {
                 let mut genome_q = world.ecs.query::<&genetics::Genome>();
                 if let Ok(genome) = genome_q.get(&world.ecs, entity) {
-                    ui.label(format!("GenomeId: {}", genome.id.0));
-                    ui.label(format!("Schema: v{}", genome.schema_version));
-                    ui.label(format!("Ploidy: {:?}", genome.ploidy));
-                    ui.label(format!(
-                        "Brain CPPN: {} nodes, {} connections",
-                        genome.brain_cppn.nodes.len(),
-                        genome.brain_cppn.connections.len()
-                    ));
-                    ui.label(format!(
-                        "Morph CPPN: {} nodes, {} connections",
-                        genome.morph_cppn.nodes.len(),
-                        genome.morph_cppn.connections.len()
-                    ));
-                    ui.label(format!(
-                        "HoxSequence: {}",
-                        if genome.hox.is_some() {
-                            "Present"
-                        } else {
-                            "None (CPPN-driven)"
-                        }
-                    ));
-                    if let Some(hox) = &genome.hox {
-                        ui.label(format!("  Hox Genes: {}", hox.genes.len()));
-                    }
+                    egui::Grid::new("insp_genetics")
+                        .striped(true)
+                        .show(ui, |ui| {
+                            crate::widgets::kv_row(ui, "GenomeId", &genome.id.0.to_string());
+                            crate::widgets::kv_row(
+                                ui,
+                                "Schema",
+                                &format!("v{}", genome.schema_version),
+                            );
+                            crate::widgets::kv_row(ui, "Ploidy", &format!("{:?}", genome.ploidy));
+                            crate::widgets::kv_row(
+                                ui,
+                                "Brain CPPN",
+                                &format!(
+                                    "{} nodes, {} connections",
+                                    genome.brain_cppn.nodes.len(),
+                                    genome.brain_cppn.connections.len()
+                                ),
+                            );
+                            crate::widgets::kv_row(
+                                ui,
+                                "Morph CPPN",
+                                &format!(
+                                    "{} nodes, {} connections",
+                                    genome.morph_cppn.nodes.len(),
+                                    genome.morph_cppn.connections.len()
+                                ),
+                            );
+                            crate::widgets::kv_row(
+                                ui,
+                                "HoxSequence",
+                                if genome.hox.is_some() {
+                                    "Present"
+                                } else {
+                                    "None (CPPN-driven)"
+                                },
+                            );
+                            if let Some(hox) = &genome.hox {
+                                crate::widgets::kv_row(
+                                    ui,
+                                    "Hox Genes",
+                                    &hox.genes.len().to_string(),
+                                );
+                            }
+                            crate::widgets::kv_row(ui, "MutationHistory", "Not Available");
+                            crate::widgets::kv_row(ui, "MutationCount", "Not Available");
+                        });
                     if ui.button("Export Genome…").clicked() {
                         actions.push(MenuAction::ExportGenome);
                     }
@@ -265,36 +326,49 @@ pub fn inspector_ui(
                     // Fallback: check if still growing
                     let mut growth_q = world.ecs.query::<&organisms::GrowthState>();
                     if let Ok(_growth) = growth_q.get(&world.ecs, entity) {
-                        ui.label("Genome: Active (Growing – head node not selected)");
+                        crate::widgets::empty_state(
+                            ui,
+                            "Genome: Active (Growing – head node not selected)",
+                        );
                     } else {
-                        ui.label("Genome: Not Available (Select the head node)");
+                        crate::widgets::empty_state(
+                            ui,
+                            "Genome: Not Available (Select the head node)",
+                        );
                     }
                 }
-
-                ui.label("MutationHistory: Not Available");
-                ui.label("MutationCount: Not Available");
             });
 
             // --- NEURAL ---
             egui::CollapsingHeader::new(format!("{} Neural", egui_remixicon::icons::BRAIN_LINE))
                 .default_open(true)
                 .show(ui, |ui| {
-                    let mut brain_q = world.ecs.query::<&brain::Brain>();
-                    if let Ok(brain) = brain_q.get(&world.ecs, entity) {
-                        ui.label(format!(
-                            "Brain: {} nodes, {} synapses",
-                            brain.nodes.len(),
-                            brain.synapses.len()
-                        ));
-                    } else {
-                        ui.label("Brain: Not Available");
-                    }
+                    egui::Grid::new("insp_neural").striped(true).show(ui, |ui| {
+                        let mut brain_q = world.ecs.query::<&brain::Brain>();
+                        if let Ok(brain) = brain_q.get(&world.ecs, entity) {
+                            crate::widgets::kv_row(
+                                ui,
+                                "Brain",
+                                &format!(
+                                    "{} nodes, {} synapses",
+                                    brain.nodes.len(),
+                                    brain.synapses.len()
+                                ),
+                            );
+                        } else {
+                            crate::widgets::kv_row(ui, "Brain", "Not Available");
+                        }
 
-                    ui.label("CTRNNState: Not Available (In-place mutated)");
-                    ui.label("NeuronActivity: Not Available");
-                    ui.label("SynapseActivity: Not Available");
-                    ui.label("BrainInputs: Not Available");
-                    ui.label("BrainOutputs: Not Available");
+                        crate::widgets::kv_row(
+                            ui,
+                            "CTRNNState",
+                            "Not Available (In-place mutated)",
+                        );
+                        crate::widgets::kv_row(ui, "NeuronActivity", "Not Available");
+                        crate::widgets::kv_row(ui, "SynapseActivity", "Not Available");
+                        crate::widgets::kv_row(ui, "BrainInputs", "Not Available");
+                        crate::widgets::kv_row(ui, "BrainOutputs", "Not Available");
+                    });
                 });
 
             // --- MORPHOLOGY ---
@@ -304,96 +378,135 @@ pub fn inspector_ui(
             ))
             .default_open(true)
             .show(ui, |ui| {
-                let mut spatial_q = world.ecs.query::<&organisms::SpatialComponents>();
-                if let Ok(spatial) = spatial_q.get(&world.ecs, entity) {
-                    ui.label(format!(
-                        "Transform: ({:.1}, {:.1})",
-                        spatial.position.x, spatial.position.y
-                    ));
-                    ui.label(format!(
-                        "Velocity: ({:.2}, {:.2})",
-                        spatial.velocity.x, spatial.velocity.y
-                    ));
-                } else {
-                    let mut node_q = world.ecs.query::<&physics::ParticleNode>();
-                    if let Ok(node) = node_q.get(&world.ecs, entity) {
-                        ui.label(format!(
-                            "Transform: ({:.1}, {:.1})",
-                            node.position.x, node.position.y
-                        ));
-                        ui.label(format!(
-                            "Velocity: ({:.2}, {:.2})",
-                            node.velocity.x, node.velocity.y
-                        ));
-                    } else {
-                        ui.label("Transform: Not Available");
-                        ui.label("Velocity: Not Available");
-                    }
-                }
+                egui::Grid::new("insp_morphology")
+                    .striped(true)
+                    .show(ui, |ui| {
+                        let mut spatial_q = world.ecs.query::<&organisms::SpatialComponents>();
+                        if let Ok(spatial) = spatial_q.get(&world.ecs, entity) {
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "Transform",
+                                &format!("({:.1}, {:.1})", spatial.position.x, spatial.position.y),
+                            );
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "Velocity",
+                                &format!("({:.2}, {:.2})", spatial.velocity.x, spatial.velocity.y),
+                            );
+                        } else {
+                            let mut node_q = world.ecs.query::<&physics::ParticleNode>();
+                            if let Ok(node) = node_q.get(&world.ecs, entity) {
+                                crate::widgets::kv_row_mono(
+                                    ui,
+                                    "Transform",
+                                    &format!("({:.1}, {:.1})", node.position.x, node.position.y),
+                                );
+                                crate::widgets::kv_row_mono(
+                                    ui,
+                                    "Velocity",
+                                    &format!("({:.2}, {:.2})", node.velocity.x, node.velocity.y),
+                                );
+                            } else {
+                                crate::widgets::kv_row(ui, "Transform", "Not Available");
+                                crate::widgets::kv_row(ui, "Velocity", "Not Available");
+                            }
+                        }
 
-                ui.label("BodyPlan: Not Available");
-                ui.label("SegmentTree: Not Available");
-                ui.label("SensorArray: Not Available");
-                ui.label("MuscleSystem: Not Available");
+                        crate::widgets::kv_row(ui, "BodyPlan", "Not Available");
+                        crate::widgets::kv_row(ui, "SegmentTree", "Not Available");
+                        crate::widgets::kv_row(ui, "SensorArray", "Not Available");
+                        crate::widgets::kv_row(ui, "MuscleSystem", "Not Available");
+                    });
             });
 
             // --- BEHAVIOR ---
             egui::CollapsingHeader::new(format!("{} Behavior", egui_remixicon::icons::RUN_LINE))
                 .default_open(true)
                 .show(ui, |ui| {
-                    let mut state_q = world.ecs.query::<&behavior::BehaviorState>();
-                    if let Ok(bstate) = state_q.get(&world.ecs, entity) {
-                        ui.label(format!("BehaviorState: {:?}", bstate));
-                    } else {
-                        ui.label("BehaviorState: Not Available");
-                    }
+                    egui::Grid::new("insp_behavior")
+                        .striped(true)
+                        .show(ui, |ui| {
+                            let mut state_q = world.ecs.query::<&behavior::BehaviorState>();
+                            if let Ok(bstate) = state_q.get(&world.ecs, entity) {
+                                crate::widgets::kv_row(
+                                    ui,
+                                    "BehaviorState",
+                                    &format!("{:?}", bstate),
+                                );
+                            } else {
+                                crate::widgets::kv_row(ui, "BehaviorState", "Not Available");
+                            }
 
-                    let mut goal_q = world.ecs.query::<&behavior::CurrentGoal>();
-                    if let Ok(goal) = goal_q.get(&world.ecs, entity) {
-                        ui.label(format!("CurrentGoal: {}", goal.description));
-                        if let Some(target) = goal.target_entity {
-                            ui.label(format!("CurrentTarget: {:?}", target));
-                        } else {
-                            ui.label("CurrentTarget: None");
-                        }
-                    } else {
-                        ui.label("CurrentGoal: Not Available");
-                        ui.label("CurrentTarget: Not Available");
-                    }
+                            let mut goal_q = world.ecs.query::<&behavior::CurrentGoal>();
+                            if let Ok(goal) = goal_q.get(&world.ecs, entity) {
+                                crate::widgets::kv_row(ui, "CurrentGoal", &goal.description);
+                                if let Some(target) = goal.target_entity {
+                                    crate::widgets::kv_row(
+                                        ui,
+                                        "CurrentTarget",
+                                        &format!("{:?}", target),
+                                    );
+                                } else {
+                                    crate::widgets::kv_row(ui, "CurrentTarget", "None");
+                                }
+                            } else {
+                                crate::widgets::kv_row(ui, "CurrentGoal", "Not Available");
+                                crate::widgets::kv_row(ui, "CurrentTarget", "Not Available");
+                            }
 
-                    ui.label("ActionState: Not Available");
-                    ui.label("MemoryState: Not Available");
+                            crate::widgets::kv_row(ui, "ActionState", "Not Available");
+                            crate::widgets::kv_row(ui, "MemoryState", "Not Available");
+                        });
                 });
 
             // --- ECOLOGY ---
             egui::CollapsingHeader::new(format!("{} Ecology", egui_remixicon::icons::EARTH_LINE))
                 .default_open(true)
                 .show(ui, |ui| {
-                    let mut diet_q = world.ecs.query::<&ecology::Diet>();
-                    if let Ok(diet) = diet_q.get(&world.ecs, entity) {
-                        ui.label(format!("DietType: {:?}", diet));
-                    } else {
-                        let mut bio_q = world.ecs.query::<&organisms::BiologicalComponents>();
-                        if let Ok(bio) = bio_q.get(&world.ecs, entity) {
-                            ui.label(format!("DietType: {:?}", bio.diet));
-                        } else {
-                            ui.label("DietType: Not Available");
-                        }
-                    }
+                    egui::Grid::new("insp_ecology")
+                        .striped(true)
+                        .show(ui, |ui| {
+                            let mut diet_q = world.ecs.query::<&ecology::Diet>();
+                            if let Ok(diet) = diet_q.get(&world.ecs, entity) {
+                                crate::widgets::kv_row_colored(
+                                    ui,
+                                    "DietType",
+                                    &format!("{:?}", diet),
+                                    crate::theme::chart_color(diet),
+                                );
+                            } else {
+                                let mut bio_q =
+                                    world.ecs.query::<&organisms::BiologicalComponents>();
+                                if let Ok(bio) = bio_q.get(&world.ecs, entity) {
+                                    crate::widgets::kv_row(
+                                        ui,
+                                        "DietType",
+                                        &format!("{:?}", bio.diet),
+                                    );
+                                } else {
+                                    crate::widgets::kv_row(ui, "DietType", "Not Available");
+                                }
+                            }
 
-                    let mut cat_q = world.ecs.query::<&ecology::EcologicalCategory>();
-                    if let Ok(cat) = cat_q.get(&world.ecs, entity) {
-                        ui.label(format!("TrophicLevel: {:?}", cat));
-                    } else {
-                        let mut bio_q = world.ecs.query::<&organisms::BiologicalComponents>();
-                        if let Ok(bio) = bio_q.get(&world.ecs, entity) {
-                            ui.label(format!("TrophicLevel: {:?}", bio.category));
-                        } else {
-                            ui.label("TrophicLevel: Not Available");
-                        }
-                    }
+                            let mut cat_q = world.ecs.query::<&ecology::EcologicalCategory>();
+                            if let Ok(cat) = cat_q.get(&world.ecs, entity) {
+                                crate::widgets::kv_row(ui, "TrophicLevel", &format!("{:?}", cat));
+                            } else {
+                                let mut bio_q =
+                                    world.ecs.query::<&organisms::BiologicalComponents>();
+                                if let Ok(bio) = bio_q.get(&world.ecs, entity) {
+                                    crate::widgets::kv_row(
+                                        ui,
+                                        "TrophicLevel",
+                                        &format!("{:?}", bio.category),
+                                    );
+                                } else {
+                                    crate::widgets::kv_row(ui, "TrophicLevel", "Not Available");
+                                }
+                            }
 
-                    ui.label("SpeciesMembership: Not Available");
+                            crate::widgets::kv_row(ui, "SpeciesMembership", "Not Available");
+                        });
                 });
         });
 }
@@ -432,10 +545,16 @@ fn render_pellet_summary(
         }
     });
 
-    ui.add_space(8.0);
-    ui.label(format!("Position: ({:.1}, {:.1})", position.x, position.y));
-    ui.label(format!("EnergyValue: {:.1}", energy_value));
-    if let Some((timer, max)) = decay {
-        ui.label(format!("DecayTimer: {} / {} ticks", timer, max));
-    }
+    ui.add_space(crate::theme::SPACE_SM);
+    egui::Grid::new("insp_pellet").striped(true).show(ui, |ui| {
+        crate::widgets::kv_row_mono(
+            ui,
+            "Position",
+            &format!("({:.1}, {:.1})", position.x, position.y),
+        );
+        crate::widgets::kv_row_mono(ui, "EnergyValue", &format!("{:.1}", energy_value));
+        if let Some((timer, max)) = decay {
+            crate::widgets::kv_row_mono(ui, "DecayTimer", &format!("{} / {} ticks", timer, max));
+        }
+    });
 }

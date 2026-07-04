@@ -115,41 +115,10 @@ pub fn toolbar_ui(
                 }
             });
 
-        // ── Colormap Selector ──────────────────────────────────────────────
-        // Always visible (not gated on an overlay being active) so the user
-        // can pick a colormap ahead of choosing a field to display.
-        let current_colormap = world
-            .ecs
-            .get_resource::<HeatmapState>()
-            .map(|h| h.colormap)
-            .unwrap_or(0);
-
-        egui::ComboBox::from_id_salt("colormap_selector")
-            .selected_text(colormap_label(current_colormap))
-            .show_ui(ui, |ui| {
-                for (index, label) in COLORMAP_VARIANTS {
-                    if ui
-                        .selectable_label(current_colormap == index, label)
-                        .clicked()
-                    {
-                        actions.push(MenuAction::SetColormap(index));
-                    }
-                }
-            });
-
-        ui.separator();
-
-        // ── World Boundary Toggle ──────────────────────────────────────────
-        if ui
-            .selectable_label(
-                state.show_world_boundary,
-                egui::RichText::new(egui_remixicon::icons::CROP_LINE).size(14.0),
-            )
-            .on_hover_text("Show world boundary")
-            .clicked()
-        {
-            state.show_world_boundary = !state.show_world_boundary;
-        }
+        // Colormap selector and World Boundary toggle moved to the View menu
+        // (Milestone 13) — they're configuration, not per-frame controls,
+        // and the audit flagged the toolbar as overcrowded with always-on
+        // controls that don't need constant visibility.
 
         ui.separator();
 
@@ -170,7 +139,7 @@ pub fn toolbar_ui(
         } else {
             (
                 egui_remixicon::icons::RECORD_CIRCLE_LINE,
-                egui::Color32::GRAY,
+                crate::theme::DISABLED_FG,
             )
         };
         let rec_label =
@@ -220,7 +189,7 @@ pub fn toolbar_ui(
                     .color(egui::Color32::LIGHT_GREEN)
             } else {
                 egui::RichText::new(format!("{} Spectator", egui_remixicon::icons::FILM_LINE))
-                    .color(egui::Color32::GRAY)
+                    .color(crate::theme::DISABLED_FG)
             };
             if ui
                 .selectable_label(state.spectator_mode, spec_text)
@@ -258,7 +227,7 @@ pub fn toolbar_ui(
                     "Cam ({:.0}, {:.0}){}",
                     state.camera_pos.x, state.camera_pos.y, track_str
                 ))
-                .color(egui::Color32::GRAY)
+                .color(crate::theme::DISABLED_FG)
                 .size(11.0),
             );
 
@@ -312,7 +281,7 @@ pub fn colormap_label(index: u32) -> &'static str {
 }
 
 /// All selectable colormap variants with their display labels.
-const COLORMAP_VARIANTS: [(u32, &str); 5] = [
+pub const COLORMAP_VARIANTS: [(u32, &str); 5] = [
     (0, "Viridis"),
     (1, "Magma"),
     (2, "Plasma"),

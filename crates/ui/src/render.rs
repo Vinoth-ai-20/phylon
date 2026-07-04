@@ -35,7 +35,13 @@ pub fn render_ui(
     state.cleanup_toasts();
 
     // ── Global keyboard shortcuts ────────────────────────────────────────────
-    process_shortcuts(ctx, &mut actions);
+    // `ShortcutManager::consume_all` (crate::shortcuts) is the single active
+    // shortcut system — it used to be shadowed by a separate, hardcoded
+    // `process_shortcuts` here that silently made several menu-advertised
+    // shortcuts (Ctrl+M/L/B, speed up/down, Ctrl+Z/Y) dead, since egui's
+    // `ShortcutManager` instance was only ever read for menu hint text, never
+    // executed.
+    state.shortcuts.consume_all(ctx, &mut actions);
 
     // ── Main Menu screen ─────────────────────────────────────────────────────
     if *app_state == AppState::MainMenu {
@@ -74,11 +80,20 @@ pub fn render_ui(
             });
     }
 
-    // ── Left: Activity Bar (narrow icon strip) ──────────────────────────────
+    // ── Left: Activity Bar (icon+label rail, collapsible to icon-only) ──────
     // The activity bar switches the active_tab; the Inspector tile inside the
-    // egui_tiles tree reads state.active_tab and renders the appropriate content.
+    // egui_tiles tree reads state.active_tab and renders the appropriate
+    // content. Width depends on `activity_bar_expanded` — expanded (labeled)
+    // is the default per the audit's discoverability finding; collapsed
+    // (40px, icon-only) is the previous permanent behavior, still available
+    // via the pin toggle at the bottom of the rail.
+    let activity_bar_width = if state.activity_bar_expanded {
+        140.0
+    } else {
+        40.0
+    };
     egui::SidePanel::left("activity_bar")
-        .exact_width(40.0)
+        .exact_width(activity_bar_width)
         .resizable(false)
         .show(ctx, |ui| {
             crate::plugins::sidebar::activity_bar_ui(ctx, ui, state, world, &mut actions);
@@ -100,6 +115,12 @@ pub fn render_ui(
             tree.ui(&mut behavior, ui);
             let canvas_interaction = behavior.canvas_interaction;
             // behavior ends here naturally; no explicit drop needed
+
+            // Capture this frame's live split ratios (a user may have just
+            // dragged a divider) so the next dock/undock/reset-triggered
+            // rebuild reproduces them instead of snapping back to the
+            // hardcoded default — see `layout::extract_shares`.
+            state.layout_shares = crate::layout::extract_shares(&tree);
             state.dock_tree = tree;
 
             canvas_interaction.unwrap_or_else(|| {
@@ -127,6 +148,15 @@ pub fn render_ui(
         render_vision_cones(ctx, state, world, interact_response.rect);
     }
 
+    // ── World-space scale grid (always on) ──────────────────────────────────
+    // Low-opacity, so it reads as a subtle scale reference rather than
+    // competing with the simulation — the audit's "no viewport scale
+    // reference" finding. Unlike the boundary/vision-cone overlays, this one
+    // is never gated behind a toggle: it's cheap (line count is bounded by
+    // the visible world extent divided by the grid step, not by zoom level)
+    // and useful at every zoom.
+    render_scale_grid(ctx, state, interact_response.rect);
+
     // ── World boundary overlay ──────────────────────────────────────────────
     if state.show_world_boundary {
         render_world_boundary(ctx, state, interact_response.rect);
@@ -139,101 +169,6 @@ pub fn render_ui(
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-
-fn process_shortcuts(ctx: &egui::Context, actions: &mut Vec<MenuAction>) {
-    let shortcut_save = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::S);
-    let shortcut_load = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::O);
-    let shortcut_play_pause = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Space);
-    let shortcut_step = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::ArrowRight);
-    let shortcut_reset = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::R);
-    let shortcut_select_all = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::A);
-    let shortcut_deselect = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Escape);
-    let shortcut_spawn = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::P);
-    let shortcut_screenshot =
-        egui::KeyboardShortcut::new(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::S);
-    let shortcut_recording =
-        egui::KeyboardShortcut::new(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::R);
-
-    // `consume_shortcut` matches modifiers *logically* — extra Shift/Alt are
-    // ignored — so Ctrl+Shift+S also satisfies plain Ctrl+S, and Ctrl+Shift+R
-    // also satisfies plain Ctrl+R. The more specific Shift-combos MUST be
-    // checked (and consume the key event) first, or Ctrl+Shift+S/R would
-    // fire Save/Reset instead of Screenshot/Recording — which is exactly the
-    // clash this was reported as.
-    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_screenshot)) {
-        actions.push(MenuAction::TakeScreenshot);
-    }
-    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_recording)) {
-        actions.push(MenuAction::ToggleRecording);
-    }
-
-    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_save)) {
-        actions.push(MenuAction::SaveState);
-    }
-    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_load)) {
-        actions.push(MenuAction::LoadState);
-    }
-    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_play_pause)) {
-        // Don't flip `is_paused` here too — MenuAction::TogglePlayPause's
-        // handler already does it, and doing both cancels out (this is
-        // exactly why Space appeared to do nothing).
-        actions.push(MenuAction::TogglePlayPause);
-    }
-    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_step)) {
-        actions.push(MenuAction::StepForward);
-    }
-    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_reset)) {
-        actions.push(MenuAction::ReseedEcosystem);
-    }
-    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_select_all)) {
-        actions.push(MenuAction::SelectAll);
-    }
-    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_deselect)) {
-        actions.push(MenuAction::Deselect);
-    }
-    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_spawn)) {
-        actions.push(MenuAction::SpawnProtoFish);
-    }
-
-    // Raw key shortcuts (only when egui doesn't need keyboard)
-    if !ctx.wants_keyboard_input() {
-        if ctx.input(|i| i.key_pressed(egui::Key::Z)) {
-            actions.push(MenuAction::Undo);
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::Y)) {
-            actions.push(MenuAction::Redo);
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::G)) {
-            actions.push(MenuAction::GrabSelection);
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::X)) {
-            actions.push(MenuAction::DeleteSelection);
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::C)) {
-            actions.push(MenuAction::DuplicateSelection);
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::V)) {
-            actions.push(MenuAction::SpawnPaste);
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::F)) {
-            actions.push(MenuAction::ToggleStationary);
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::J)) {
-            actions.push(MenuAction::JoinSelection);
-        }
-    }
-
-    // Camera zoom shortcuts (always active)
-    if ctx.input(|i| i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals)) {
-        actions.push(MenuAction::CameraZoomIn);
-    }
-    if ctx.input(|i| i.key_pressed(egui::Key::Minus)) {
-        actions.push(MenuAction::CameraZoomOut);
-    }
-    if ctx.input(|i| i.key_pressed(egui::Key::Home) || i.key_pressed(egui::Key::Num0)) {
-        actions.push(MenuAction::CameraHome);
-    }
-}
 
 fn render_main_menu(
     ctx: &egui::Context,
@@ -252,7 +187,7 @@ fn render_main_menu(
             ui.label(
                 egui::RichText::new("Artificial Life Simulation Engine")
                     .italics()
-                    .color(egui::Color32::GRAY),
+                    .color(crate::theme::DISABLED_FG),
             );
             ui.add_space(40.0);
 
@@ -340,16 +275,19 @@ fn render_toasts(ctx: &egui::Context, state: &crate::WorkbenchState) {
                 egui::Frame::none()
                     .fill(bg_color)
                     .stroke(egui::Stroke::new(1.5, border_color))
-                    .rounding(egui::Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(10.0, 8.0)),
+                    .rounding(egui::Rounding::same(crate::theme::RADIUS_STD))
+                    .inner_margin(egui::Margin::symmetric(
+                        crate::theme::SPACE_SM,
+                        crate::theme::SPACE_XS,
+                    )),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(toast_icon(toast.severity));
+                    ui.label(egui::RichText::new(toast_icon(toast.severity)).color(border_color));
                     ui.label(
                         egui::RichText::new(&toast.message)
                             .color(egui::Color32::WHITE)
-                            .size(13.0),
+                            .size(crate::theme::SIZE_BODY),
                     );
                 });
             });
@@ -358,25 +296,19 @@ fn render_toasts(ctx: &egui::Context, state: &crate::WorkbenchState) {
     }
 }
 
+/// (background, border) colors for a toast — routed through `theme::`'s
+/// semantic `GOOD`/`WARN`/`BAD` tokens (and their `_SOFT` background tints)
+/// instead of four independent hand-picked color pairs, so a toast and any
+/// other semantically-colored surface (a validation error, a confirmation)
+/// can never drift apart.
 fn toast_colors(severity: crate::ToastSeverity) -> (egui::Color32, egui::Color32) {
     use crate::ToastSeverity::*;
+    let opaque = |c: egui::Color32| egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 220);
     match severity {
-        Info => (
-            egui::Color32::from_rgba_premultiplied(30, 50, 80, 220),
-            egui::Color32::from_rgb(80, 140, 220),
-        ),
-        Success => (
-            egui::Color32::from_rgba_premultiplied(20, 60, 30, 220),
-            egui::Color32::from_rgb(60, 180, 80),
-        ),
-        Warning => (
-            egui::Color32::from_rgba_premultiplied(70, 55, 20, 220),
-            egui::Color32::from_rgb(220, 160, 40),
-        ),
-        Error => (
-            egui::Color32::from_rgba_premultiplied(80, 20, 20, 220),
-            egui::Color32::from_rgb(220, 60, 60),
-        ),
+        Info => (opaque(crate::theme::ACCENT_SOFT), crate::theme::ACCENT),
+        Success => (opaque(crate::theme::GOOD_SOFT), crate::theme::GOOD),
+        Warning => (opaque(crate::theme::WARN_SOFT), crate::theme::WARN),
+        Error => (opaque(crate::theme::BAD_SOFT), crate::theme::BAD),
     }
 }
 
@@ -535,6 +467,79 @@ fn render_vision_cones(
 /// diffusion/render bounds (`physics.wgsl`, `simulation.rs`, `render.rs`),
 /// which are all ±1500.
 const WORLD_HALF_EXTENT: f32 = 1500.0;
+
+/// World-space spacing between scale-grid lines, in simulation units.
+const SCALE_GRID_STEP: f32 = 100.0;
+
+/// Draws a faint world-space grid across the visible viewport, plus a small
+/// "N units" label in the corner, so a user always has a scale reference
+/// under panning/zooming without needing to toggle anything on. Uses the
+/// same world→screen transform as `render_world_boundary`/
+/// `render_vision_cones`, but computes only the grid lines that intersect
+/// the currently visible world extent (derived from `camera_pos`/
+/// `camera_zoom`/`viewport_rect`) rather than a fixed line count, so cost
+/// stays flat whether zoomed far in or far out.
+fn render_scale_grid(
+    ctx: &egui::Context,
+    state: &crate::WorkbenchState,
+    viewport_rect: egui::Rect,
+) {
+    if !viewport_rect.is_positive() {
+        return;
+    }
+    let screen_center = viewport_rect.center();
+    let ppp = ctx.pixels_per_point();
+    let scale = state.camera_zoom / ppp;
+    if scale <= 0.0 {
+        return;
+    }
+
+    let to_screen = |x: f32, y: f32| {
+        egui::pos2(
+            screen_center.x + (x - state.camera_pos.x) * scale,
+            screen_center.y - (y - state.camera_pos.y) * scale,
+        )
+    };
+
+    // Visible world-space bounds of the viewport rect, plus one extra step
+    // of margin so lines don't visibly pop in/out at the edges while panning.
+    let half_w_world = (viewport_rect.width() / 2.0) / scale + SCALE_GRID_STEP;
+    let half_h_world = (viewport_rect.height() / 2.0) / scale + SCALE_GRID_STEP;
+    let min_x = ((state.camera_pos.x - half_w_world) / SCALE_GRID_STEP).floor() * SCALE_GRID_STEP;
+    let max_x = ((state.camera_pos.x + half_w_world) / SCALE_GRID_STEP).ceil() * SCALE_GRID_STEP;
+    let min_y = ((state.camera_pos.y - half_h_world) / SCALE_GRID_STEP).floor() * SCALE_GRID_STEP;
+    let max_y = ((state.camera_pos.y + half_h_world) / SCALE_GRID_STEP).ceil() * SCALE_GRID_STEP;
+
+    let mut painter = ctx.layer_painter(egui::LayerId::background());
+    painter.set_clip_rect(viewport_rect);
+    let stroke = egui::Stroke::new(
+        1.0,
+        egui::Color32::from_rgba_premultiplied(255, 255, 255, 18),
+    );
+
+    let mut x = min_x;
+    while x <= max_x {
+        painter.line_segment([to_screen(x, min_y), to_screen(x, max_y)], stroke);
+        x += SCALE_GRID_STEP;
+    }
+    let mut y = min_y;
+    while y <= max_y {
+        painter.line_segment([to_screen(min_x, y), to_screen(max_x, y)], stroke);
+        y += SCALE_GRID_STEP;
+    }
+
+    // Scale readout, anchored to the viewport's bottom-left corner.
+    painter.text(
+        egui::pos2(
+            viewport_rect.left() + crate::theme::SPACE_SM,
+            viewport_rect.bottom() - crate::theme::SPACE_LG,
+        ),
+        egui::Align2::LEFT_BOTTOM,
+        format!("{:.0} units / grid", SCALE_GRID_STEP),
+        egui::FontId::monospace(crate::theme::SIZE_MICRO),
+        egui::Color32::from_rgba_premultiplied(255, 255, 255, 90),
+    );
+}
 
 /// Draws a rectangle outline at the world boundary (±[`WORLD_HALF_EXTENT`])
 /// using the same world→screen transform as the vision-cone overlay, so it
