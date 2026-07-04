@@ -176,15 +176,14 @@ fn genetics_panel(
             }
         });
         ui.add_space(8.0);
-
-        egui::CollapsingHeader::new(format!(
-            "{} Brain Network",
-            egui_remixicon::icons::BRAIN_LINE
-        ))
-        .default_open(true)
-        .show(ui, |ui| {
-            draw_cppn_graph(ui, &genome.brain_cppn);
-        });
+        ui.label(
+            egui::RichText::new(format!(
+                "{} Brain Network graph moved to the Neural Viewer panel",
+                egui_remixicon::icons::BRAIN_LINE
+            ))
+            .color(egui::Color32::GRAY)
+            .italics(),
+        );
 
         ui.add_space(8.0);
         if ui.button("Export Genome…").clicked() {
@@ -539,114 +538,3 @@ fn grid_row_colored(ui: &mut egui::Ui, key: &str, val: &str, color: egui::Color3
     ui.end_row();
 }
 
-// ─── CPPN / brain network visualization ─────────────────────────────────────
-
-/// Draws a CPPN (brain/morphology) graph: nodes as circles positioned by
-/// layer (left → right) and index-within-layer (top → bottom), connections
-/// as lines colored by weight sign and shaded by magnitude.
-fn draw_cppn_graph(ui: &mut egui::Ui, cppn: &genetics::cppn::Cppn) {
-    if cppn.nodes.is_empty() {
-        ui.label(
-            egui::RichText::new("Empty network.")
-                .italics()
-                .color(egui::Color32::GRAY),
-        );
-        return;
-    }
-
-    let height = 200.0_f32.max(cppn.nodes.len() as f32 * 4.0).min(360.0);
-    let (response, painter) = ui.allocate_painter(
-        egui::vec2(ui.available_width(), height),
-        egui::Sense::hover(),
-    );
-    let rect = response.rect;
-    painter.rect_filled(
-        rect,
-        egui::Rounding::same(4.0),
-        egui::Color32::from_rgb(16, 16, 20),
-    );
-
-    // Group node indices by layer, preserving genome order within a layer.
-    let max_layer = cppn.nodes.iter().map(|n| n.layer).max().unwrap_or(0);
-    let mut layers: Vec<Vec<usize>> = vec![Vec::new(); max_layer + 1];
-    for (idx, node) in cppn.nodes.iter().enumerate() {
-        layers[node.layer].push(idx);
-    }
-
-    let margin = 24.0;
-    let usable_w = (rect.width() - 2.0 * margin).max(1.0);
-    let usable_h = (rect.height() - 2.0 * margin).max(1.0);
-
-    let mut positions = vec![egui::Pos2::ZERO; cppn.nodes.len()];
-    for (layer_idx, indices) in layers.iter().enumerate() {
-        let x = rect.left()
-            + margin
-            + if max_layer > 0 {
-                usable_w * (layer_idx as f32 / max_layer as f32)
-            } else {
-                usable_w * 0.5
-            };
-        let n = indices.len();
-        for (slot, &node_idx) in indices.iter().enumerate() {
-            let y = rect.top()
-                + margin
-                + if n > 1 {
-                    usable_h * (slot as f32 / (n - 1) as f32)
-                } else {
-                    usable_h * 0.5
-                };
-            positions[node_idx] = egui::pos2(x, y);
-        }
-    }
-
-    // Edges first, so nodes render on top.
-    for conn in &cppn.connections {
-        if !conn.enabled || conn.source >= positions.len() || conn.target >= positions.len() {
-            continue;
-        }
-        let strength = conn.weight.abs().min(3.0) / 3.0;
-        let color = if conn.weight >= 0.0 {
-            egui::Color32::from_rgba_unmultiplied(90, 200, 255, (80.0 + 140.0 * strength) as u8)
-        } else {
-            egui::Color32::from_rgba_unmultiplied(255, 100, 100, (80.0 + 140.0 * strength) as u8)
-        };
-        painter.line_segment(
-            [positions[conn.source], positions[conn.target]],
-            egui::Stroke::new(0.5 + 2.0 * strength, color),
-        );
-    }
-
-    // Nodes.
-    let node_radius = 5.0;
-    for (idx, node) in cppn.nodes.iter().enumerate() {
-        let color = match node.layer {
-            0 => egui::Color32::from_rgb(120, 220, 120), // input
-            l if l == max_layer => egui::Color32::from_rgb(255, 180, 90), // output
-            _ => egui::Color32::from_rgb(150, 170, 255), // hidden
-        };
-        painter.circle_filled(positions[idx], node_radius, color);
-        painter.circle_stroke(
-            positions[idx],
-            node_radius,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(20)),
-        );
-    }
-
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("● input")
-                .small()
-                .color(egui::Color32::from_rgb(120, 220, 120)),
-        );
-        ui.label(
-            egui::RichText::new("● hidden")
-                .small()
-                .color(egui::Color32::from_rgb(150, 170, 255)),
-        );
-        ui.label(
-            egui::RichText::new("● output")
-                .small()
-                .color(egui::Color32::from_rgb(255, 180, 90)),
-        );
-    });
-}

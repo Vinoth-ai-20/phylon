@@ -93,7 +93,10 @@ impl<'a> Behavior<String> for WorkbenchBehavior<'a> {
                 let content_margin = if name == "Viewport" {
                     egui::Margin::ZERO
                 } else {
-                    egui::Margin::symmetric(crate::theme::PANEL_PADDING, crate::theme::PANEL_PADDING)
+                    egui::Margin::symmetric(
+                        crate::theme::PANEL_PADDING,
+                        crate::theme::PANEL_PADDING,
+                    )
                 };
 
                 egui::Frame::none()

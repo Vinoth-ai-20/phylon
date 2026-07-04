@@ -84,11 +84,13 @@ pub fn apply_style(ctx: &egui::Context) {
             TextStyle::Button,
             FontId::new(13.0, FontFamily::Proportional),
         );
-        style
-            .text_styles
-            .insert(TextStyle::Small, FontId::new(11.0, FontFamily::Proportional));
-        style
-            .text_styles
-            .insert(TextStyle::Monospace, FontId::new(13.0, FontFamily::Monospace));
+        style.text_styles.insert(
+            TextStyle::Small,
+            FontId::new(11.0, FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            TextStyle::Monospace,
+            FontId::new(13.0, FontFamily::Monospace),
+        );
     });
 }
