@@ -89,6 +89,38 @@ pub fn menu_ui(
                 ui.close_menu();
             }
             ui.separator();
+            if ui
+                .add(
+                    Button::new("Take Screenshot").shortcut_text(
+                        shortcuts
+                            .take_screenshot
+                            .format(&egui::ModifierNames::NAMES, false),
+                    ),
+                )
+                .clicked()
+            {
+                actions.push(MenuAction::TakeScreenshot);
+                ui.close_menu();
+            }
+            if ui
+                .add(
+                    Button::new(if state.recording_active {
+                        "Stop Recording"
+                    } else {
+                        "Start Recording"
+                    })
+                    .shortcut_text(
+                        shortcuts
+                            .toggle_recording
+                            .format(&egui::ModifierNames::NAMES, false),
+                    ),
+                )
+                .clicked()
+            {
+                actions.push(MenuAction::ToggleRecording);
+                ui.close_menu();
+            }
+            ui.separator();
             if ui.button("Quit").clicked() {
                 actions.push(MenuAction::Quit);
             }

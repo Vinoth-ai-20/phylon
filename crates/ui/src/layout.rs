@@ -249,7 +249,11 @@ fn panel_chrome(ui: &mut egui::Ui, name: &str, title: &str, commands: &mut Vec<M
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.add_space(crate::theme::SPACE_XS);
-            ui.label(egui::RichText::new(title).strong());
+            ui.label(
+                egui::RichText::new(title)
+                    .strong()
+                    .size(crate::theme::SIZE_SUBHEADING),
+            );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(crate::theme::SPACE_XS);
@@ -472,7 +476,7 @@ fn floating_chrome(
                 title
             ))
             .strong()
-            .size(13.0),
+            .size(crate::theme::SIZE_SUBHEADING),
         );
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

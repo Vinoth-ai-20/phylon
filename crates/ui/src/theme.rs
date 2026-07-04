@@ -27,6 +27,17 @@ pub const CHROME_HEIGHT: f32 = 22.0;
 /// Font family key for headings — IBM Plex Sans SemiBold.
 const HEADING_FAMILY: &str = "IBMPlexSans-SemiBold";
 
+/// Font size for section headings (`ui.heading()` / `TextStyle::Heading`).
+pub const SIZE_HEADING: f32 = 18.0;
+/// Font size for panel/window titles and CollapsingHeader-level
+/// sub-sections — one step down from a heading, one step up from body text.
+pub const SIZE_SUBHEADING: f32 = 14.0;
+/// Font size for standard body text, data-grid rows, and interactive
+/// options (buttons, toggles) — the app's default text size.
+pub const SIZE_BODY: f32 = 13.0;
+/// Font size for secondary/meta text — timestamps, counts, footers, hints.
+pub const SIZE_SMALL: f32 = 11.0;
+
 /// Registers the IBM Plex Sans (UI text) and IBM Plex Mono (tabular/numeric
 /// readouts — status bar, Inspector stats) font families.
 ///
@@ -75,22 +86,23 @@ pub fn apply_style(ctx: &egui::Context) {
 
         style.text_styles.insert(
             TextStyle::Heading,
-            FontId::new(18.0, FontFamily::Name(HEADING_FAMILY.into())),
+            FontId::new(SIZE_HEADING, FontFamily::Name(HEADING_FAMILY.into())),
         );
-        style
-            .text_styles
-            .insert(TextStyle::Body, FontId::new(13.0, FontFamily::Proportional));
+        style.text_styles.insert(
+            TextStyle::Body,
+            FontId::new(SIZE_BODY, FontFamily::Proportional),
+        );
         style.text_styles.insert(
             TextStyle::Button,
-            FontId::new(13.0, FontFamily::Proportional),
+            FontId::new(SIZE_BODY, FontFamily::Proportional),
         );
         style.text_styles.insert(
             TextStyle::Small,
-            FontId::new(11.0, FontFamily::Proportional),
+            FontId::new(SIZE_SMALL, FontFamily::Proportional),
         );
         style.text_styles.insert(
             TextStyle::Monospace,
-            FontId::new(13.0, FontFamily::Monospace),
+            FontId::new(SIZE_BODY, FontFamily::Monospace),
         );
     });
 }

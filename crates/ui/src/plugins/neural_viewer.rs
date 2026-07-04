@@ -112,6 +112,83 @@ pub fn neural_viewer_ui(
 
 // ─── Shared graph-drawing helpers ───────────────────────────────────────────
 
+/// Human-readable sense name for an input node, by its index within the
+/// input column — which corresponds 1:1 with `SensoryState.inputs`, since
+/// `brain.set_inputs(&sensory.inputs)` (`crates/app/src/simulation.rs`)
+/// copies that array straight into the brain's first `input_count` node
+/// states in order. Mirrors the exact assembly order in
+/// `sensing::sensing_system` (`crates/sensing/src/lib.rs`): olfaction/signal/
+/// hazard field samples, ATP/age proprioception, three vision bins, then the
+/// internal pacemaker. Falls back to a generic "Input N" for any index this
+/// organism's sensor set doesn't populate (e.g. no `HeadVision`, so no
+/// vision/pacemaker slots) or that's beyond this known layout.
+fn input_sense_name(index: usize) -> std::borrow::Cow<'static, str> {
+    const NAMES: &[&str] = &[
+        "Olfaction",
+        "Signal",
+        "Hazard",
+        "Energy (ATP)",
+        "Age",
+        "Vision - Left",
+        "Vision - Center",
+        "Vision - Right",
+        "Pacemaker",
+    ];
+    match NAMES.get(index) {
+        Some(name) => std::borrow::Cow::Borrowed(name),
+        None => std::borrow::Cow::Owned(format!("Input {index}")),
+    }
+}
+
+/// Human-readable name for a CPPN input node, by its index within the input
+/// layer. Unlike the CTRNN's inputs, these aren't senses — a CPPN is queried
+/// with normalized *positions* (HyperNEAT-style substrate coordinates), not
+/// live sensory readings. `crates/organisms/src/systems.rs`'s `growth_system`
+/// always calls `brain_cppn.evaluate(&[i, j])` with exactly these two
+/// normalized node-index positions: both set to the same node's position
+/// when querying that node's own bias/time-constant, or to the
+/// source/target pair when querying a connection weight between two nodes.
+fn cppn_input_name(index: usize) -> &'static str {
+    const NAMES: &[&str] = &["Source Position", "Target Position"];
+    NAMES.get(index).copied().unwrap_or("Input")
+}
+
+/// Human-readable name for a CTRNN output node, by its index within the
+/// output column. `growth_system` (`crates/organisms/src/systems.rs`) always
+/// builds `output_count = effectors.len() + 1`: one node per muscle/fin
+/// effector spring, followed by exactly one final node driving the
+/// organism's `SignalEmitter`. The neural viewer doesn't have the
+/// muscle-vs-fin split available (that mapping only exists transiently in
+/// `GrowthState` during wiring), so non-final effectors are just numbered.
+fn output_name(index: usize, output_count: usize) -> std::borrow::Cow<'static, str> {
+    if output_count > 0 && index == output_count - 1 {
+        std::borrow::Cow::Borrowed("Signal Emitter")
+    } else {
+        std::borrow::Cow::Owned(format!("Muscle {index}"))
+    }
+}
+
+/// Human-readable name for a CPPN output node, by its index within the
+/// output layer. `growth_system` always reads `brain_cppn.evaluate(...)`
+/// results in this fixed order: `[0]` as a connection weight, `[1]` as a
+/// node's bias, `[2]` as its time constant (see `cppn_input_name`'s doc for
+/// the matching input-side call sites).
+fn cppn_output_name(index: usize) -> std::borrow::Cow<'static, str> {
+    const NAMES: &[&str] = &["Weight", "Bias", "Time Constant"];
+    match NAMES.get(index) {
+        Some(name) => std::borrow::Cow::Borrowed(*name),
+        None => std::borrow::Cow::Owned(format!("Output {index}")),
+    }
+}
+
+/// Human-readable name for a hidden node (CTRNN or CPPN), by its index
+/// within the hidden layer/column. Hidden nodes have no fixed structural
+/// meaning — their role emerges from evolved weights — so this just gives
+/// each a distinct, numbered identity instead of a bare repeated "Hidden".
+fn hidden_name(index: usize) -> String {
+    format!("Hidden {index}")
+}
+
 /// Human-readable name for a [`brain::ActivationFn`] code, as used by
 /// `CtrnnNode::activation` (see `brain::Brain::apply_activation`).
 fn activation_name(act_id: u32) -> &'static str {
@@ -326,16 +403,27 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain) {
         if let Some(idx) = hit_test_node(pointer, &positions, node_radius) {
             let node = &b.nodes[idx];
             let col = column_of(idx);
+            // Every node gets a specific name, not just its generic column:
+            // inputs by sense (Olfaction, Age, Vision, ...), outputs by
+            // effector (Muscle N / Signal Emitter), hidden nodes numbered.
+            let node_name: std::borrow::Cow<'static, str> = match col {
+                0 => input_sense_name(number_in_column[idx]),
+                2 => output_name(number_in_column[idx], output_count),
+                _ => std::borrow::Cow::Owned(hidden_name(number_in_column[idx])),
+            };
             egui::show_tooltip_at_pointer(
                 ui.ctx(),
                 ui.layer_id(),
                 egui::Id::new("brain_node_tooltip"),
                 |ui| {
-                    ui.label(egui::RichText::new(column_name(col)).strong());
+                    ui.label(egui::RichText::new(node_name.as_ref()).strong());
                     egui::Grid::new("brain_node_tooltip_grid")
                         .num_columns(2)
                         .show(ui, |ui| {
                             ui.label("Name:");
+                            ui.label(node_name.as_ref());
+                            ui.end_row();
+                            ui.label("Role:");
                             ui.label(column_name(col));
                             ui.end_row();
                             ui.label("Number:");
@@ -498,7 +586,16 @@ fn draw_cppn_graph(ui: &mut egui::Ui, cppn: &genetics::cppn::Cppn) {
     if let Some(pointer) = response.hover_pos() {
         if let Some(idx) = hit_test_node(pointer, &positions, node_radius) {
             let node = &cppn.nodes[idx];
-            let name = layer_name(node.layer);
+            // Every node gets a specific name, not just its generic layer:
+            // inputs are Source/Target Position, outputs are what they
+            // configure (Weight/Bias/Time Constant), hidden nodes numbered.
+            let name: std::borrow::Cow<'static, str> = if node.layer == 0 {
+                std::borrow::Cow::Borrowed(cppn_input_name(number_in_layer[idx]))
+            } else if node.layer == max_layer {
+                cppn_output_name(number_in_layer[idx])
+            } else {
+                std::borrow::Cow::Owned(hidden_name(number_in_layer[idx]))
+            };
             egui::show_tooltip_at_pointer(
                 ui.ctx(),
                 ui.layer_id(),
@@ -508,7 +605,10 @@ fn draw_cppn_graph(ui: &mut egui::Ui, cppn: &genetics::cppn::Cppn) {
                         .num_columns(2)
                         .show(ui, |ui| {
                             ui.label("Name:");
-                            ui.label(name);
+                            ui.label(name.as_ref());
+                            ui.end_row();
+                            ui.label("Role:");
+                            ui.label(layer_name(node.layer));
                             ui.end_row();
                             ui.label("Number:");
                             ui.label(number_in_layer[idx].to_string());

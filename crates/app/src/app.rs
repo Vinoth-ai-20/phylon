@@ -160,6 +160,15 @@ pub(crate) struct PhylonApp {
     /// of this tick (paired with the entity/start-node/length each integrated
     /// node range belongs to). Same overlap rationale as `pending_physics`.
     pub(crate) pending_brain: Option<(gpu::brain_pipeline::PendingBrainReadback, BrainOffsets)>,
+
+    /// Set by `MenuAction::TakeScreenshot`; consumed at the start of the next
+    /// `render()` call, right before `output.present()`, since that's the
+    /// only place the live swapchain texture is available.
+    pub(crate) pending_screenshot: bool,
+
+    /// `Some` while a recording is in progress — accumulates captured frames
+    /// until `MenuAction::ToggleRecording` stops it and encodes them to GIF.
+    pub(crate) recording: Option<crate::capture::RecordingState>,
 }
 
 /// Per-entity `(start_node_index, node_count)` offsets into a batched
@@ -269,6 +278,8 @@ impl PhylonApp {
             task_tx: Some(task_tx),
             pending_physics: None,
             pending_brain: None,
+            pending_screenshot: false,
+            recording: None,
         }
     }
 
@@ -333,7 +344,13 @@ impl PhylonApp {
         };
 
         let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            // COPY_SRC (in addition to the required RENDER_ATTACHMENT) lets
+            // the screenshot/recording capture (`crate::capture`) read the
+            // presented frame back via `copy_texture_to_buffer` — without it
+            // the swapchain texture only supports being rendered into, and
+            // the copy is a validation-error panic (fatal by default in
+            // wgpu 22, since it treats GPU errors as fatal panics).
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             format: surface_format,
             width: size.width.max(1),
             height: size.height.max(1),

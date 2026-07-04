@@ -20,6 +20,7 @@
 //! the dependency rules in `docs/02_crate_dependency_graph.md`.
 
 pub mod app;
+pub mod capture;
 pub mod events;
 pub mod render;
 pub mod simulation;

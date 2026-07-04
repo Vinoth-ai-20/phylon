@@ -526,15 +526,27 @@ fn grid_row(ui: &mut egui::Ui, key: &str, val: &str) {
     ui.label(
         egui::RichText::new(key)
             .color(egui::Color32::GRAY)
-            .size(12.0),
+            .size(crate::theme::SIZE_BODY),
     );
-    ui.label(egui::RichText::new(val).strong().size(12.0));
+    ui.label(
+        egui::RichText::new(val)
+            .strong()
+            .size(crate::theme::SIZE_BODY),
+    );
     ui.end_row();
 }
 
 fn grid_row_colored(ui: &mut egui::Ui, key: &str, val: &str, color: egui::Color32) {
-    ui.label(egui::RichText::new(key).color(color).size(12.0));
-    ui.label(egui::RichText::new(val).color(color).strong().size(12.0));
+    ui.label(
+        egui::RichText::new(key)
+            .color(color)
+            .size(crate::theme::SIZE_BODY),
+    );
+    ui.label(
+        egui::RichText::new(val)
+            .color(color)
+            .strong()
+            .size(crate::theme::SIZE_BODY),
+    );
     ui.end_row();
 }
-

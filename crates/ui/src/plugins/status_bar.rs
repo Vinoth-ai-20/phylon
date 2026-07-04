@@ -63,8 +63,13 @@ pub fn status_bar_ui(
         ui.label(format!("{} P:{} H:{} C:{} O:{} D:{}", egui_remixicon::icons::TEAM_LINE, prod_count, herb_count, carn_count, omni_count, deco_count));
         ui.separator();
         ui.label(format!(
-            "Food: {}  Minerals: {}  Corpses: {}",
-            food_count, mineral_count, corpse_count
+            "{} Food: {}  {} Minerals: {}  {} Corpses: {}",
+            egui_remixicon::icons::RESTAURANT_LINE,
+            food_count,
+            egui_remixicon::icons::COPPER_DIAMOND_LINE,
+            mineral_count,
+            egui_remixicon::icons::SKULL_LINE,
+            corpse_count
         ));
 
         // ── Right side ────────────────────────────────────────────────────
@@ -124,7 +129,7 @@ pub fn status_bar_ui(
                 ui.label(
                     egui::RichText::new(format!("{} {:?}", egui_remixicon::icons::CURSOR_LINE, entity))
                         .color(egui::Color32::LIGHT_GREEN)
-                        .size(11.0),
+                        .size(crate::theme::SIZE_SMALL),
                 );
                 ui.separator();
             }
@@ -136,7 +141,7 @@ pub fn status_bar_ui(
                     state.camera_pos.x, state.camera_pos.y, state.camera_zoom
                 ))
                 .color(egui::Color32::GRAY)
-                .size(11.0),
+                .size(crate::theme::SIZE_SMALL),
             );
         });
     });

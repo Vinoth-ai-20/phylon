@@ -252,6 +252,19 @@ impl PhylonApp {
                     self.ui.selected_entity = None;
                     self.ui.tracked_entity = None;
 
+                    // Reset time/atmosphere/metrics — without this, a "fresh"
+                    // simulation kept the old tick count, day-night phase,
+                    // and Metrics history, so the status bar and graphs
+                    // looked like nothing had actually reset.
+                    self.total_sim_time = 0.0;
+                    self.accumulated_time = 0.0;
+                    self.world
+                        .ecs
+                        .insert_resource(metabolism::GlobalAtmosphere::default());
+                    self.world
+                        .ecs
+                        .insert_resource(analytics::MetricsState::new());
+
                     // Clear lineage tracker
                     if let Some(mut tracker) = self
                         .world
@@ -272,6 +285,24 @@ impl PhylonApp {
                     self.world.ecs.insert_resource(tracker);
                     self.world.ecs.insert_resource(global_tracker);
                 }
+                ui::MenuAction::TakeScreenshot => {
+                    // Actual capture happens in `render()`, right before
+                    // `output.present()` — that's the only place the live
+                    // swapchain texture is available. This just requests it.
+                    self.pending_screenshot = true;
+                }
+                ui::MenuAction::ToggleRecording => match self.recording.take() {
+                    None => {
+                        self.recording = Some(crate::capture::RecordingState::new());
+                        self.ui.recording_active = true;
+                        self.ui.recording_started_at = Some(self.ui.time);
+                    }
+                    Some(recording) => {
+                        self.ui.recording_active = false;
+                        self.ui.recording_started_at = None;
+                        crate::capture::finish_recording(&recording.frames, &mut self.ui);
+                    }
+                },
                 ui::MenuAction::SelectAll => {
                     // Just select the first head we find
                     let mut query = self

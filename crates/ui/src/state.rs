@@ -152,6 +152,13 @@ pub struct WorkbenchState {
     /// Whether to draw the world boundary outline (visual only — the
     /// simulation always hard-reflects organisms at the same bounds).
     pub show_world_boundary: bool,
+    /// Whether a GIF recording is currently in progress. The actual frame
+    /// buffer lives in `PhylonApp` (app crate) — this is just a lightweight
+    /// mirror so the toolbar can show a recording indicator.
+    pub recording_active: bool,
+    /// Wall-clock time (`WorkbenchState::time`) the current recording
+    /// started, for the toolbar's elapsed-time readout.
+    pub recording_started_at: Option<f64>,
     /// The active tab in the primary sidebar.
     pub active_tab: crate::SidebarTab,
     /// The active tab in the bottom panel.
@@ -280,6 +287,8 @@ impl Default for WorkbenchState {
             show_keybinds: false,
             show_vision_cones: false,
             show_world_boundary: false,
+            recording_active: false,
+            recording_started_at: None,
             active_tab: crate::SidebarTab::Inspector,
             active_bottom_tab: crate::BottomTab::Metrics,
             quit_confirm_time: None,

@@ -63,3 +63,4 @@ rand = { workspace = true }
 sysinfo = "0.39.3"
 rfd.workspace = true
 bincode.workspace = true
+image.workspace = true

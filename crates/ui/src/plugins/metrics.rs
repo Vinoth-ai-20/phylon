@@ -46,122 +46,133 @@ pub fn metrics_ui(
                 // below when the panel was resized or detached taller).
                 let plot_height = ((ui.available_height() - 60.0) / 2.0).max(80.0);
 
-                ui.columns(2, |cols| {
-                    // Column 1
-                    cols[0].vertical(|ui| {
-                        ui.label("Demographics");
-                        egui_plot::Plot::new("pop_plot")
-                            .height(plot_height)
-                            .legend(egui_plot::Legend::default())
-                            .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
-                            .show(ui, |plot_ui| {
-                                plot_ui.line(
-                                    egui_plot::Line::new(prod_pts)
-                                        .name("Producers")
-                                        .color(egui::Color32::from_rgb(100, 255, 100)),
-                                );
-                                plot_ui.line(
-                                    egui_plot::Line::new(herb_pts)
-                                        .name("Herbivores")
-                                        .color(egui::Color32::from_rgb(200, 255, 150)),
-                                );
-                                plot_ui.line(
-                                    egui_plot::Line::new(carn_pts)
-                                        .name("Carnivores")
-                                        .color(egui::Color32::from_rgb(255, 100, 100)),
-                                );
-                                plot_ui.line(
-                                    egui_plot::Line::new(omni_pts)
-                                        .name("Omnivores")
-                                        .color(egui::Color32::from_rgb(255, 200, 100)),
-                                );
-                                plot_ui.line(
-                                    egui_plot::Line::new(deco_pts)
-                                        .name("Decomposers")
-                                        .color(egui::Color32::from_rgb(200, 150, 200)),
-                                );
-                            });
+                // Plots use a tighter item spacing than the rest of the app:
+                // `theme::apply_style`'s app-wide `item_spacing.y` is sized
+                // for buttons/lists/panels, but `egui_plot::Legend` is a
+                // dense widget built from the same spacing token — at the
+                // wider app-wide value its legend rows grew tall enough to
+                // overlap the plot's own axis labels/gridlines. Scoped here
+                // rather than lowering the app-wide token globally.
+                ui.scope(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
 
-                        ui.add_space(8.0);
+                    ui.columns(2, |cols| {
+                        // Column 1
+                        cols[0].vertical(|ui| {
+                            ui.label("Demographics");
+                            egui_plot::Plot::new("pop_plot")
+                                .height(plot_height)
+                                .legend(egui_plot::Legend::default())
+                                .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
+                                .show(ui, |plot_ui| {
+                                    plot_ui.line(
+                                        egui_plot::Line::new(prod_pts)
+                                            .name("Producers")
+                                            .color(egui::Color32::from_rgb(100, 255, 100)),
+                                    );
+                                    plot_ui.line(
+                                        egui_plot::Line::new(herb_pts)
+                                            .name("Herbivores")
+                                            .color(egui::Color32::from_rgb(200, 255, 150)),
+                                    );
+                                    plot_ui.line(
+                                        egui_plot::Line::new(carn_pts)
+                                            .name("Carnivores")
+                                            .color(egui::Color32::from_rgb(255, 100, 100)),
+                                    );
+                                    plot_ui.line(
+                                        egui_plot::Line::new(omni_pts)
+                                            .name("Omnivores")
+                                            .color(egui::Color32::from_rgb(255, 200, 100)),
+                                    );
+                                    plot_ui.line(
+                                        egui_plot::Line::new(deco_pts)
+                                            .name("Decomposers")
+                                            .color(egui::Color32::from_rgb(200, 150, 200)),
+                                    );
+                                });
 
-                        ui.label("Performance (FPS, TPS, Mem)");
-                        egui_plot::Plot::new("perf_plot")
-                            .height(plot_height)
-                            .legend(egui_plot::Legend::default())
-                            .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
-                            .show(ui, |plot_ui| {
-                                plot_ui.line(
-                                    egui_plot::Line::new(fps_pts)
-                                        .name("FPS")
-                                        .color(egui::Color32::WHITE),
-                                );
-                                plot_ui.line(
-                                    egui_plot::Line::new(tps_pts)
-                                        .name("TPS")
-                                        .color(egui::Color32::LIGHT_GREEN),
-                                );
-                                plot_ui.line(
-                                    egui_plot::Line::new(mem_pts)
-                                        .name("Mem (MB)")
-                                        .color(egui::Color32::LIGHT_RED),
-                                );
-                            });
-                    });
+                            ui.add_space(8.0);
 
-                    // Column 2
-                    cols[1].vertical(|ui| {
-                        ui.label("Resources");
-                        egui_plot::Plot::new("res_plot")
-                            .height(plot_height)
-                            .legend(egui_plot::Legend::default())
-                            .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
-                            .show(ui, |plot_ui| {
-                                plot_ui.line(
-                                    egui_plot::Line::new(food_pts)
-                                        .name("Food")
-                                        .color(egui::Color32::from_rgb(150, 255, 255)),
-                                );
-                                plot_ui.line(
-                                    egui_plot::Line::new(min_pts)
-                                        .name("Minerals")
-                                        .color(egui::Color32::from_rgb(150, 150, 150)),
-                                );
-                                plot_ui.line(
-                                    egui_plot::Line::new(corp_pts)
-                                        .name("Corpses")
-                                        .color(egui::Color32::from_rgb(200, 100, 100)),
-                                );
-                            });
+                            ui.label("Performance (FPS, TPS, Mem)");
+                            egui_plot::Plot::new("perf_plot")
+                                .height(plot_height)
+                                .legend(egui_plot::Legend::default())
+                                .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
+                                .show(ui, |plot_ui| {
+                                    plot_ui.line(
+                                        egui_plot::Line::new(fps_pts)
+                                            .name("FPS")
+                                            .color(egui::Color32::WHITE),
+                                    );
+                                    plot_ui.line(
+                                        egui_plot::Line::new(tps_pts)
+                                            .name("TPS")
+                                            .color(egui::Color32::LIGHT_GREEN),
+                                    );
+                                    plot_ui.line(
+                                        egui_plot::Line::new(mem_pts)
+                                            .name("Mem (MB)")
+                                            .color(egui::Color32::LIGHT_RED),
+                                    );
+                                });
+                        });
 
-                        ui.add_space(8.0);
+                        // Column 2
+                        cols[1].vertical(|ui| {
+                            ui.label("Resources");
+                            egui_plot::Plot::new("res_plot")
+                                .height(plot_height)
+                                .legend(egui_plot::Legend::default())
+                                .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
+                                .show(ui, |plot_ui| {
+                                    plot_ui.line(
+                                        egui_plot::Line::new(food_pts)
+                                            .name("Food")
+                                            .color(egui::Color32::from_rgb(150, 255, 255)),
+                                    );
+                                    plot_ui.line(
+                                        egui_plot::Line::new(min_pts)
+                                            .name("Minerals")
+                                            .color(egui::Color32::from_rgb(150, 150, 150)),
+                                    );
+                                    plot_ui.line(
+                                        egui_plot::Line::new(corp_pts)
+                                            .name("Corpses")
+                                            .color(egui::Color32::from_rgb(200, 100, 100)),
+                                    );
+                                });
 
-                        ui.label("Environment");
-                        egui_plot::Plot::new("env_plot")
-                            .height(plot_height)
-                            .legend(egui_plot::Legend::default())
-                            .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
-                            .show(ui, |plot_ui| {
-                                plot_ui.line(
-                                    egui_plot::Line::new(sun_pts)
-                                        .name("Sunlight")
-                                        .color(egui::Color32::YELLOW),
-                                );
-                                plot_ui.line(
-                                    egui_plot::Line::new(o2_pts)
-                                        .name("O2")
-                                        .color(egui::Color32::LIGHT_BLUE),
-                                );
-                                plot_ui.line(
-                                    egui_plot::Line::new(co2_pts)
-                                        .name("CO2")
-                                        .color(egui::Color32::GRAY),
-                                );
-                                plot_ui.line(
-                                    egui_plot::Line::new(temp_pts)
-                                        .name("Temp (°C)")
-                                        .color(egui::Color32::from_rgb(255, 165, 0)),
-                                );
-                            });
+                            ui.add_space(8.0);
+
+                            ui.label("Environment");
+                            egui_plot::Plot::new("env_plot")
+                                .height(plot_height)
+                                .legend(egui_plot::Legend::default())
+                                .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
+                                .show(ui, |plot_ui| {
+                                    plot_ui.line(
+                                        egui_plot::Line::new(sun_pts)
+                                            .name("Sunlight")
+                                            .color(egui::Color32::YELLOW),
+                                    );
+                                    plot_ui.line(
+                                        egui_plot::Line::new(o2_pts)
+                                            .name("O2")
+                                            .color(egui::Color32::LIGHT_BLUE),
+                                    );
+                                    plot_ui.line(
+                                        egui_plot::Line::new(co2_pts)
+                                            .name("CO2")
+                                            .color(egui::Color32::GRAY),
+                                    );
+                                    plot_ui.line(
+                                        egui_plot::Line::new(temp_pts)
+                                            .name("Temp (°C)")
+                                            .color(egui::Color32::from_rgb(255, 165, 0)),
+                                    );
+                                });
+                        });
                     });
                 });
             } else {

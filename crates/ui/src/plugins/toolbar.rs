@@ -37,7 +37,7 @@ pub fn toolbar_ui(
         if ui
             .add(egui::Button::new(
                 egui::RichText::new(format!("{} {}", play_icon, play_label))
-                    .size(13.0)
+                    .size(crate::theme::SIZE_BODY)
                     .color(play_color),
             ))
             .on_hover_text("Play / Pause (Space)")
@@ -149,6 +149,48 @@ pub fn toolbar_ui(
             .clicked()
         {
             state.show_world_boundary = !state.show_world_boundary;
+        }
+
+        ui.separator();
+
+        // ── Screenshot / Recording ──────────────────────────────────────────
+        if ui
+            .button(egui::RichText::new(egui_remixicon::icons::SCREENSHOT_LINE).size(14.0))
+            .on_hover_text("Take Screenshot (Ctrl+Shift+S)")
+            .clicked()
+        {
+            actions.push(MenuAction::TakeScreenshot);
+        }
+
+        let (rec_icon, rec_color) = if state.recording_active {
+            (
+                egui_remixicon::icons::RECORD_CIRCLE_FILL,
+                egui::Color32::from_rgb(220, 60, 60),
+            )
+        } else {
+            (
+                egui_remixicon::icons::RECORD_CIRCLE_LINE,
+                egui::Color32::GRAY,
+            )
+        };
+        let rec_label =
+            if let (true, Some(started)) = (state.recording_active, state.recording_started_at) {
+                let elapsed = (state.time - started).max(0.0);
+                format!(
+                    "{} REC {:02}:{:02}",
+                    rec_icon,
+                    (elapsed as u64) / 60,
+                    (elapsed as u64) % 60
+                )
+            } else {
+                format!("{} Record", rec_icon)
+            };
+        if ui
+            .button(egui::RichText::new(rec_label).color(rec_color))
+            .on_hover_text("Start/Stop Recording (Ctrl+Shift+R)")
+            .clicked()
+        {
+            actions.push(MenuAction::ToggleRecording);
         }
 
         ui.separator();

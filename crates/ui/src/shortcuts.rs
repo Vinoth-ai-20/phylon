@@ -18,6 +18,10 @@ pub struct ShortcutManager {
     pub import_genome: KeyboardShortcut,
     /// Export the selected organism's genome.
     pub export_genome: KeyboardShortcut,
+    /// Capture a screenshot of the current viewport.
+    pub take_screenshot: KeyboardShortcut,
+    /// Start/stop recording an animated GIF of the viewport.
+    pub toggle_recording: KeyboardShortcut,
 
     /// Toggle between play and pause.
     pub play_pause: KeyboardShortcut,
@@ -52,6 +56,8 @@ impl Default for ShortcutManager {
             load_state: KeyboardShortcut::new(Modifiers::CTRL, Key::O),
             import_genome: KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::I),
             export_genome: KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::E),
+            take_screenshot: KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::S),
+            toggle_recording: KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::R),
 
             play_pause: KeyboardShortcut::new(Modifiers::NONE, Key::Space),
             step_forward: KeyboardShortcut::new(Modifiers::NONE, Key::ArrowRight),
@@ -76,17 +82,29 @@ impl ShortcutManager {
     /// Each matching shortcut is consumed and its [`MenuAction`] pushed into
     /// `actions`. Call this once per frame before processing actions.
     pub fn consume_all(&self, ctx: &egui::Context, actions: &mut Vec<MenuAction>) {
-        if ctx.input_mut(|i| i.consume_shortcut(&self.save_state)) {
-            actions.push(MenuAction::SaveState);
+        // `consume_shortcut` matches modifiers *logically* (extra Shift/Alt
+        // ignored), so e.g. Ctrl+Shift+S also satisfies plain Ctrl+S. The
+        // more specific Shift-combos must be checked (and consume the key
+        // event) before their less-specific counterparts, or the wrong
+        // action fires — check those first.
+        if ctx.input_mut(|i| i.consume_shortcut(&self.take_screenshot)) {
+            actions.push(MenuAction::TakeScreenshot);
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&self.load_state)) {
-            actions.push(MenuAction::LoadState);
+        if ctx.input_mut(|i| i.consume_shortcut(&self.toggle_recording)) {
+            actions.push(MenuAction::ToggleRecording);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&self.import_genome)) {
             actions.push(MenuAction::ImportGenome);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&self.export_genome)) {
             actions.push(MenuAction::ExportGenome);
+        }
+
+        if ctx.input_mut(|i| i.consume_shortcut(&self.save_state)) {
+            actions.push(MenuAction::SaveState);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&self.load_state)) {
+            actions.push(MenuAction::LoadState);
         }
 
         if ctx.input_mut(|i| i.consume_shortcut(&self.play_pause)) {

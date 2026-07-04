@@ -149,6 +149,23 @@ fn process_shortcuts(ctx: &egui::Context, actions: &mut Vec<MenuAction>) {
     let shortcut_select_all = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::A);
     let shortcut_deselect = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Escape);
     let shortcut_spawn = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::P);
+    let shortcut_screenshot =
+        egui::KeyboardShortcut::new(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::S);
+    let shortcut_recording =
+        egui::KeyboardShortcut::new(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::R);
+
+    // `consume_shortcut` matches modifiers *logically* — extra Shift/Alt are
+    // ignored — so Ctrl+Shift+S also satisfies plain Ctrl+S, and Ctrl+Shift+R
+    // also satisfies plain Ctrl+R. The more specific Shift-combos MUST be
+    // checked (and consume the key event) first, or Ctrl+Shift+S/R would
+    // fire Save/Reset instead of Screenshot/Recording — which is exactly the
+    // clash this was reported as.
+    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_screenshot)) {
+        actions.push(MenuAction::TakeScreenshot);
+    }
+    if ctx.input_mut(|i| i.consume_shortcut(&shortcut_recording)) {
+        actions.push(MenuAction::ToggleRecording);
+    }
 
     if ctx.input_mut(|i| i.consume_shortcut(&shortcut_save)) {
         actions.push(MenuAction::SaveState);

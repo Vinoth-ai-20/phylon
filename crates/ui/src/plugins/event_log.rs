@@ -161,17 +161,17 @@ pub fn event_log_ui(
                         egui::RichText::new(format!("[{}]", ev.tick))
                             .color(egui::Color32::DARK_GRAY)
                             .monospace()
-                            .size(11.0),
+                            .size(crate::theme::SIZE_SMALL),
                     );
                     ui.label(
                         egui::RichText::new(format!("[{}]", ev.event_type))
                             .color(color)
-                            .size(11.0),
+                            .size(crate::theme::SIZE_SMALL),
                     );
                     ui.label(
                         egui::RichText::new(&ev.description)
                             .color(egui::Color32::LIGHT_GRAY)
-                            .size(12.0),
+                            .size(crate::theme::SIZE_BODY),
                     );
                 });
             }
@@ -182,7 +182,7 @@ pub fn event_log_ui(
     ui.label(
         egui::RichText::new(format!("{} events", event_count))
             .color(egui::Color32::GRAY)
-            .size(10.0),
+            .size(crate::theme::SIZE_SMALL),
     );
 }
 

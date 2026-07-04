@@ -861,6 +861,26 @@ impl PhylonApp {
                     .unwrap_or((1280.0, 720.0))
             });
 
+        // Half-extent of the simulation world in world-space units — must
+        // match `field_overlay.wgsl`'s `world_bounds` (below) exactly, since
+        // that shader maps screen->world->grid-UV assuming this same value.
+        // The Glucose/ATP splat step below maps organism positions into grid
+        // space using this same constant so the two stay in registration;
+        // using the viewport's pixel size there instead (as it previously
+        // did) scaled the mapping by an arbitrary, resize-dependent factor,
+        // which is what made the heatmap appear misaligned/tiled well
+        // outside the actual world bounds.
+        const WORLD_BOUNDS: f32 = 1500.0;
+
+        // For Glucose/ATP, min/max are recomputed fresh below from this
+        // frame's actual values (rather than using `heatmap_state`'s stored
+        // min/max, which default to a fixed 0.0..1.0 that nothing updates —
+        // organism glucose/ATP commonly run into the tens of thousands, so
+        // normalizing against 0..1 clipped everything to the top of the
+        // colormap instead of showing a gradient).
+        let mut dynamic_min = heatmap_state.min_val;
+        let mut dynamic_max = heatmap_state.max_val;
+
         if heatmap_state.active != ui::ActiveHeatmap::None {
             match heatmap_state.active {
                 ui::ActiveHeatmap::Pheromones => {
@@ -886,6 +906,7 @@ impl PhylonApp {
                 ui::ActiveHeatmap::Glucose | ui::ActiveHeatmap::ATP => {
                     if let Some(splat_compute) = self.splat_compute.as_mut() {
                         let mut splats = Vec::new();
+                        let mut sample_max = 0.0f32;
                         let mut query = self
                             .world
                             .ecs
@@ -896,10 +917,14 @@ impl PhylonApp {
                             } else {
                                 chem.atp
                             };
+                            sample_max = sample_max.max(value);
 
-                            // Map world space to grid space
-                            let grid_x = (node.position.x / (screen_w * 0.5)) * 128.0 + 128.0;
-                            let grid_y = (-node.position.y / (screen_h * 0.5)) * 128.0 + 128.0;
+                            // Map world space to grid space — must use the
+                            // same WORLD_BOUNDS the fragment shader assumes,
+                            // not the viewport's pixel size (see comment on
+                            // WORLD_BOUNDS above).
+                            let grid_x = (node.position.x / WORLD_BOUNDS) * 128.0 + 128.0;
+                            let grid_y = (-node.position.y / WORLD_BOUNDS) * 128.0 + 128.0;
 
                             splats.push(rendering::GpuSplat {
                                 grid_pos: [grid_x, grid_y],
@@ -909,6 +934,8 @@ impl PhylonApp {
                         }
                         splat_compute.step(&gpu.device, &gpu.queue, &splats);
                         field_view_to_render = Some(&splat_compute.view);
+                        dynamic_min = 0.0;
+                        dynamic_max = sample_max.max(1.0);
                     }
                 }
                 _ => {}
@@ -921,15 +948,15 @@ impl PhylonApp {
             field_renderer.update_config(
                 &gpu.queue,
                 rendering::FieldConfig {
-                    min_val: heatmap_state.min_val,
-                    max_val: heatmap_state.max_val,
+                    min_val: dynamic_min,
+                    max_val: dynamic_max,
                     camera_pos: [self.ui.camera_pos.x, self.ui.camera_pos.y],
                     camera_zoom: self.ui.camera_zoom,
                     _pad0: 0,
                     screen_size: [screen_w, screen_h],
                     colormap: heatmap_state.colormap,
                     _pad: 0,
-                    world_bounds: [1500.0, 1500.0],
+                    world_bounds: [WORLD_BOUNDS, WORLD_BOUNDS],
                 },
             );
 
@@ -954,7 +981,7 @@ impl PhylonApp {
                     screen_size: [screen_w, screen_h],
                     colormap: heatmap_state.colormap,
                     _pad: 0,
-                    world_bounds: [1500.0, 1500.0],
+                    world_bounds: [WORLD_BOUNDS, WORLD_BOUNDS],
                 },
             );
             if let Some(diffusion) = self.diffusion_compute.as_ref() {
@@ -1096,6 +1123,82 @@ impl PhylonApp {
             for id in &output.textures_delta.free {
                 egui_renderer.free_texture(id);
             }
+        }
+
+        // Screenshot/recording readback — must happen here, after the egui
+        // pass has been submitted (so captured frames include the UI) but
+        // before `output.present()` below, since `output.texture` is only
+        // valid until it's presented.
+        let capture_size = gpu
+            .config
+            .as_ref()
+            .map(|c| (c.width, c.height))
+            .unwrap_or((0, 0));
+        let capture_format = gpu
+            .config
+            .as_ref()
+            .map(|c| c.format)
+            .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
+
+        if self.pending_screenshot && capture_size.0 > 0 && capture_size.1 > 0 {
+            self.pending_screenshot = false;
+            match crate::capture::read_texture_to_image(
+                &gpu.device,
+                &gpu.queue,
+                &output.texture,
+                capture_format,
+                capture_size.0,
+                capture_size.1,
+            )
+            .map(|img| crate::capture::save_screenshot(&img))
+            {
+                Some(Ok(path)) => self.ui.push_toast(
+                    format!("Saved screenshot to {}", path.display()),
+                    ui::ToastSeverity::Success,
+                    3.0,
+                ),
+                Some(Err(e)) => {
+                    tracing::error!("Failed to save screenshot: {e}");
+                    self.ui.push_toast(
+                        format!("Failed to save screenshot: {e}"),
+                        ui::ToastSeverity::Error,
+                        5.0,
+                    );
+                }
+                None => tracing::error!("Screenshot readback produced no image"),
+            }
+        }
+
+        if let Some(recording) = self.recording.as_mut() {
+            if capture_size.0 > 0
+                && capture_size.1 > 0
+                && recording.last_capture.elapsed() >= crate::capture::CAPTURE_INTERVAL
+            {
+                if let Some(img) = crate::capture::read_texture_to_image(
+                    &gpu.device,
+                    &gpu.queue,
+                    &output.texture,
+                    capture_format,
+                    capture_size.0,
+                    capture_size.1,
+                ) {
+                    recording.frames.push(img);
+                    recording.last_capture = std::time::Instant::now();
+                }
+            }
+        }
+
+        // Hit the recording cap — stop and save. Checked as a separate step
+        // (rather than inline above) so `self.recording.take()` and
+        // `self.ui.push_toast(...)` are plain disjoint-field accesses, not a
+        // `&mut self` method call, which would conflict with the `gpu`
+        // borrow (from `self.gpu.as_mut()`) still live in this scope.
+        if matches!(&self.recording, Some(r) if r.frames.len() >= crate::capture::MAX_RECORDING_FRAMES)
+        {
+            let recording = self.recording.take().unwrap();
+            self.ui.recording_active = false;
+            self.ui.recording_started_at = None;
+            crate::capture::finish_recording(&recording.frames, &mut self.ui);
         }
 
         output.present();

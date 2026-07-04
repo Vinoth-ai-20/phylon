@@ -100,6 +100,9 @@ tokio       = { version = "1.0", features = ["full"] }
 tokio-tungstenite = { version = "0.26" }
 futures-util = { version = "0.3" }
 
+# --- Image encoding (screenshots / recordings) ---
+image       = { version = "0.25", default-features = false, features = ["png", "gif"] }
+
 [profile.dev]
 opt-level = 1
 

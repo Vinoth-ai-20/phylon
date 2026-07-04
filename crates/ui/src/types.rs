@@ -124,6 +124,11 @@ pub enum MenuAction {
     StepForward,
     /// Reseed the entire ecosystem
     ReseedEcosystem,
+    /// Capture the current viewport as a PNG screenshot.
+    TakeScreenshot,
+    /// Start recording if not already recording, or stop and save (as an
+    /// animated GIF) if a recording is in progress.
+    ToggleRecording,
     /// Select all or cycle through organisms.
     SelectAll,
     /// Clear the current selection.
