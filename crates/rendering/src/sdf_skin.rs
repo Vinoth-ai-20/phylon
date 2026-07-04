@@ -86,6 +86,14 @@ pub struct SdfSkinRenderer {
     highlight_composite_pipeline: wgpu::RenderPipeline,
     highlight_color_buffer: wgpu::Buffer,
     highlight_color_bind_group: wgpu::BindGroup,
+
+    // Persistent, geometrically-grown vertex buffers for the bone instance
+    // lists — replaces recreating a fresh buffer every render call (cost
+    // scales with total bone/spring count across the whole population).
+    bone_capacity: usize,
+    bone_buffer: Option<wgpu::Buffer>,
+    highlight_bone_capacity: usize,
+    highlight_bone_buffer: Option<wgpu::Buffer>,
 }
 
 /// The texture format used for the intermediate density accumulation target.
@@ -350,7 +358,36 @@ impl SdfSkinRenderer {
             highlight_color_buffer,
             highlight_color_bind_group,
             current_height: height,
+            bone_capacity: 0,
+            bone_buffer: None,
+            highlight_bone_capacity: 0,
+            highlight_bone_buffer: None,
         }
+    }
+
+    /// Grows (never shrinks) a persistent vertex buffer to hold at least
+    /// `needed` `SdfBoneInstance`s, doubling capacity each time, and uploads
+    /// `bones` into it. Returns the buffer to bind for this draw call.
+    fn ensure_bone_buffer<'a>(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        buffer: &'a mut Option<wgpu::Buffer>,
+        capacity: &mut usize,
+        label: &'static str,
+        bones: &[SdfBoneInstance],
+    ) -> &'a wgpu::Buffer {
+        if bones.len() > *capacity || buffer.is_none() {
+            *capacity = bones.len().max(*capacity * 2).max(256);
+            *buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: (*capacity * std::mem::size_of::<SdfBoneInstance>()) as wgpu::BufferAddress,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+        let buf = buffer.as_ref().unwrap();
+        queue.write_buffer(buf, 0, bytemuck::cast_slice(bones));
+        buf
     }
 
     fn create_accum_texture(
@@ -451,11 +488,14 @@ impl SdfSkinRenderer {
             bytemuck::cast_slice(&proj.to_cols_array_2d()),
         );
 
-        let bone_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("SdfBoneBuffer"),
-            contents: bytemuck::cast_slice(bones),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        let bone_buffer = Self::ensure_bone_buffer(
+            device,
+            queue,
+            &mut self.bone_buffer,
+            &mut self.bone_capacity,
+            "SdfBoneBuffer",
+            bones,
+        );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("SdfEncoder"),
@@ -554,11 +594,14 @@ impl SdfSkinRenderer {
             bytemuck::cast_slice(&color),
         );
 
-        let bone_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("SdfHighlightBoneBuffer"),
-            contents: bytemuck::cast_slice(bones),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        let bone_buffer = Self::ensure_bone_buffer(
+            device,
+            queue,
+            &mut self.highlight_bone_buffer,
+            &mut self.highlight_bone_capacity,
+            "SdfHighlightBoneBuffer",
+            bones,
+        );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("SdfHighlightEncoder"),

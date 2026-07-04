@@ -5,7 +5,7 @@ use common::EntityId;
 use serde::{Deserialize, Serialize};
 
 /// The genome of an organism, containing independent CPPNs for body morphology and neural wiring.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(bevy_ecs::prelude::Component, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Genome {
     /// Schema version for serialization compatibility (currently 2).
     pub schema_version: u32,
@@ -162,16 +162,43 @@ impl Genome {
         }
     }
 
-    /// Performs a simple crossover with another genome.
-    pub fn crossover<R: rand::Rng>(&self, _other: &Genome, new_id: GenomeId, _rng: &mut R) -> Self {
+    /// Performs NEAT-style crossover with another genome, mixing genes from
+    /// both parents rather than cloning either one outright.
+    pub fn crossover<R: rand::Rng>(&self, other: &Genome, new_id: GenomeId, rng: &mut R) -> Self {
+        let hox = match (&self.hox, &other.hox) {
+            (Some(a), Some(b)) if a.genes.len() == b.genes.len() => Some(HoxSequence {
+                genes: a
+                    .genes
+                    .iter()
+                    .zip(b.genes.iter())
+                    .map(|(ga, gb)| {
+                        if rng.gen_bool(0.5) {
+                            ga.clone()
+                        } else {
+                            gb.clone()
+                        }
+                    })
+                    .collect(),
+                color: if rng.gen_bool(0.5) { a.color } else { b.color },
+            }),
+            (Some(_), Some(_)) => {
+                if rng.gen_bool(0.5) {
+                    self.hox.clone()
+                } else {
+                    other.hox.clone()
+                }
+            }
+            _ => self.hox.clone(),
+        };
+
         Self {
             schema_version: self.schema_version,
             id: new_id,
             origin: self.origin,
             ploidy: self.ploidy,
-            brain_cppn: self.brain_cppn.clone(),
-            morph_cppn: self.morph_cppn.clone(),
-            hox: self.hox.clone(),
+            brain_cppn: self.brain_cppn.crossover(&other.brain_cppn, rng),
+            morph_cppn: self.morph_cppn.crossover(&other.morph_cppn, rng),
+            hox,
         }
     }
 

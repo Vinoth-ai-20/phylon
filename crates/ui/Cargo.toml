@@ -19,9 +19,11 @@ analytics  = { workspace = true }
 world      = { workspace = true }
 egui       = { workspace = true }
 egui_plot  = { workspace = true }
-egui_dock  = { workspace = true }
+egui_tiles = { workspace = true }
+rfd        = { workspace = true }
 sensing    = { workspace = true }
 ecology = { version = "0.1.0", path = "../ecology" }
 evolution = { version = "0.1.0", path = "../evolution" }
 sysinfo = "0.39.3"
 egui-remixicon = "0.29.1"
+behavior = { version = "0.1.0", path = "../behavior" }

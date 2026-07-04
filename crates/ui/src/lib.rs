@@ -10,12 +10,24 @@
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 
+pub mod shortcuts;
 /// UI state types and enums.
 pub mod types;
 pub use types::{
     ActiveHeatmap, AppState, BottomTab, CanvasInteraction, HeatmapState, MenuAction, SidebarTab,
     UiError,
 };
+
+pub mod layout;
+/// Workbench UI state (dock tree, panel visibility, playback, toasts).
+pub mod state;
+pub use state::{
+    EventLogFilter, PanelMode, PlaybackState, Toast, ToastSeverity, WorkbenchCommand,
+    WorkbenchState, Workspace,
+};
+
+/// Per-panel UI plugins (sidebar, viewport, metrics, event log, menu, etc.).
+pub mod plugins;
 
 /// UI helper utilities.
 pub mod utils;

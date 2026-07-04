@@ -69,9 +69,20 @@ impl PhylonApp {
             }
         }
 
+        // Advance the accumulator by real elapsed wall-clock time (not by a
+        // fixed per-redraw amount), so the tick rate tracks real time even
+        // when frame time fluctuates or stalls.
+        let now = std::time::Instant::now();
+        let real_frame_dt = (now - self.last_frame_instant).as_secs_f32();
+        self.last_frame_instant = now;
+
+        // Guard against huge jumps (e.g. window was minimized/dragged) so we
+        // don't try to catch up on minutes of missed simulation at once.
+        let real_frame_dt = real_frame_dt.min(0.25);
+
         // Only step simulation if we're in the simulation state and not paused
-        if self.ui.app_state == ui::AppState::Simulation && !self.ui.is_paused {
-            self.accumulated_time += self.simulation_speed;
+        if self.app_state == ui::AppState::Simulation && !self.ui.is_paused {
+            self.accumulated_time += (real_frame_dt / DT) * self.simulation_speed;
         }
 
         let mut physics_duration_ms = 0.0;
@@ -81,13 +92,37 @@ impl PhylonApp {
         let ticks_to_run = ticks_this_frame.min(self.max_ticks_per_frame);
         self.accumulated_time -= ticks_this_frame as f32;
 
+        // Wall-clock time budget: on top of the tick-count cap above, stop
+        // running queued ticks once we've spent too long simulating this
+        // frame. Without this, an overloaded simulation (tick cost > DT)
+        // keeps trying to run up to `max_ticks_per_frame` ticks every frame
+        // regardless of how long each one takes — e.g. 50 ticks at 20ms each
+        // is a full second per rendered frame (~1 FPS). With the budget, the
+        // simulation visibly falls behind real time under sustained load
+        // instead of freezing the whole app; unrun ticks are credited back
+        // to `accumulated_time` so they're retried next frame, not lost.
+        const MAX_TICK_TIME_BUDGET: std::time::Duration = std::time::Duration::from_millis(20);
+        let tick_budget_start = std::time::Instant::now();
+        let mut ticks_run = 0u32;
         for _ in 0..ticks_to_run {
             let (phys_ms, diff_ms) = self.update_simulation();
             physics_duration_ms += phys_ms;
             diffusion_duration_ms += diff_ms;
+            ticks_run += 1;
+            if tick_budget_start.elapsed() > MAX_TICK_TIME_BUDGET {
+                break;
+            }
         }
+        if ticks_run < ticks_to_run {
+            self.accumulated_time += (ticks_to_run - ticks_run) as f32;
+        }
+        let ticks_to_run = ticks_run;
 
-        if ticks_to_run > 0 {
+        // The timestamp-query readback below is a blocking `device.poll(Wait)`
+        // purely for the profiling display — skip it entirely when the
+        // Metrics panel isn't visible so we don't pay a GPU stall every frame
+        // for numbers nobody's looking at.
+        if ticks_to_run > 0 && self.ui.metrics_visible {
             if let Some(gpu) = self.gpu.as_ref() {
                 if let (Some(qs), Some(rb), Some(readback)) =
                     (&gpu.query_set, &gpu.resolve_buffer, &gpu.readback_buffer)
@@ -142,27 +177,36 @@ impl PhylonApp {
             }
         }
 
-        // Record analytics — read entity_count before mutably borrowing the resource
+        // Record analytics. `smoothed_fps`/`smoothed_tps`/`sim_time` (updated
+        // by `record_frame`/`record_env_perf` below) are always kept current
+        // since the always-visible status bar reads them — but the ~4 full-
+        // population ECS scans that feed the Metrics panel's demographic
+        // history plots are skipped when that panel isn't visible (same
+        // rationale as the GPU timestamp-query gating above): nobody's
+        // looking at the graphs, and at high entity counts these scans
+        // aren't free.
         let mut counts = analytics::PopulationCounts::default();
-        let mut diet_query = self.world.ecs.query::<&ecology::Diet>();
-        for diet in diet_query.iter(&self.world.ecs) {
-            match diet {
-                ecology::Diet::Producer => counts.producers += 1,
-                ecology::Diet::Herbivore => counts.herbivores += 1,
-                ecology::Diet::Carnivore => counts.carnivores += 1,
-                ecology::Diet::Omnivore => counts.omnivores += 1,
-                ecology::Diet::Decomposer => counts.decomposers += 1,
+        if self.ui.metrics_visible {
+            let mut diet_query = self.world.ecs.query::<&ecology::Diet>();
+            for diet in diet_query.iter(&self.world.ecs) {
+                match diet {
+                    ecology::Diet::Producer => counts.producers += 1,
+                    ecology::Diet::Herbivore => counts.herbivores += 1,
+                    ecology::Diet::Carnivore => counts.carnivores += 1,
+                    ecology::Diet::Omnivore => counts.omnivores += 1,
+                    ecology::Diet::Decomposer => counts.decomposers += 1,
+                }
             }
+
+            let mut food_query = self.world.ecs.query::<&ecology::FoodPellet>();
+            counts.food_pellets = food_query.iter(&self.world.ecs).count();
+
+            let mut mineral_query = self.world.ecs.query::<&ecology::MineralPellet>();
+            counts.minerals = mineral_query.iter(&self.world.ecs).count();
+
+            let mut corpse_query = self.world.ecs.query::<&ecology::Corpse>();
+            counts.corpses = corpse_query.iter(&self.world.ecs).count();
         }
-
-        let mut food_query = self.world.ecs.query::<&ecology::FoodPellet>();
-        counts.food_pellets = food_query.iter(&self.world.ecs).count();
-
-        let mut mineral_query = self.world.ecs.query::<&ecology::MineralPellet>();
-        counts.minerals = mineral_query.iter(&self.world.ecs).count();
-
-        let mut corpse_query = self.world.ecs.query::<&ecology::Corpse>();
-        counts.corpses = corpse_query.iter(&self.world.ecs).count();
 
         let mut env_sunlight = 0.0;
         let mut env_o2 = 0.0;
@@ -181,7 +225,7 @@ impl PhylonApp {
 
         if let Some(mut metrics) = self.world.ecs.get_resource_mut::<analytics::MetricsState>() {
             let sim_dt = (ticks_to_run as f64) * f64::from(DT);
-            let real_dt = f64::from(DT); // Fixed render step for now
+            let real_dt = f64::from(real_frame_dt);
             metrics.record_frame(counts, sim_dt, real_dt);
 
             // Calculate TPS
@@ -265,6 +309,37 @@ impl PhylonApp {
 
         let selected_component = self.ui.selected_entity.map(&mut get_connected_component);
         let hovered_component = self.ui.hovered_entity.map(&mut get_connected_component);
+
+        // Camera-frustum culling for the (potentially whole-population-sized)
+        // SDF bone list: skip gathering/uploading/instancing bones that fall
+        // entirely outside the visible viewport. Uses the last known canvas
+        // rect (one frame stale at worst — negligible) since the current
+        // frame's egui layout hasn't run yet at this point in `render()`.
+        let (cull_w, cull_h) = self
+            .ui
+            .canvas_rect
+            .map(|[_, _, w, h]| (w as f32, h as f32))
+            .unwrap_or_else(|| {
+                self.gpu
+                    .as_ref()
+                    .and_then(|g| g.config.as_ref())
+                    .map(|c| (c.width as f32, c.height as f32))
+                    .unwrap_or((1280.0, 720.0))
+            });
+        const CULL_MARGIN: f32 = 100.0; // generous slack for bone radius + node_radius
+        let cull_half_w = cull_w / 2.0 / self.ui.camera_zoom + CULL_MARGIN;
+        let cull_half_h = cull_h / 2.0 / self.ui.camera_zoom + CULL_MARGIN;
+        let cull_min_x = self.ui.camera_pos.x - cull_half_w;
+        let cull_max_x = self.ui.camera_pos.x + cull_half_w;
+        let cull_min_y = self.ui.camera_pos.y - cull_half_h;
+        let cull_max_y = self.ui.camera_pos.y + cull_half_h;
+        let bone_visible = |pa: [f32; 2], pb: [f32; 2]| -> bool {
+            let min_x = pa[0].min(pb[0]);
+            let max_x = pa[0].max(pb[0]);
+            let min_y = pa[1].min(pb[1]);
+            let max_y = pa[1].max(pb[1]);
+            max_x >= cull_min_x && min_x <= cull_max_x && max_y >= cull_min_y && min_y <= cull_max_y
+        };
 
         // Build node position lookup for bone endpoint resolution
         let mut node_positions: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 2]> =
@@ -390,7 +465,7 @@ impl PhylonApp {
                         })
                         .unwrap_or([0.4, 0.4, 0.4]);
 
-                    if should_draw_sdf {
+                    if should_draw_sdf && bone_visible(pa, pb) {
                         sdf_bones.push(rendering::SdfBoneInstance {
                             pos_a: pa,
                             pos_b: pb,
@@ -418,7 +493,7 @@ impl PhylonApp {
                     node_positions.get(&spring.node_b),
                 ) {
                     let color = opt_color.map(|c| c.0).unwrap_or([0.5, 0.5, 0.8]);
-                    if should_draw_sdf {
+                    if should_draw_sdf && bone_visible(pa, pb) {
                         sdf_bones.push(rendering::SdfBoneInstance {
                             pos_a: pa,
                             pos_b: pb,
@@ -453,7 +528,7 @@ impl PhylonApp {
                     (if spring.is_fin == 1 { 4.0 } else { 8.0 }) * (self.ui.skin_thickness / 3.0);
 
                 let color = opt_color.map(|c| c.0).unwrap_or([0.8, 0.8, 0.8]);
-                if should_draw_sdf {
+                if should_draw_sdf && bone_visible(pa, pb) {
                     sdf_bones.push(rendering::SdfBoneInstance {
                         pos_a: pa,
                         pos_b: pb,
@@ -497,7 +572,7 @@ impl PhylonApp {
                     segment_type: 0,
                 });
             }
-            if should_draw_sdf {
+            if should_draw_sdf && bone_visible(pos, pos) {
                 sdf_bones.push(rendering::SdfBoneInstance {
                     pos_a: pos,
                     pos_b: pos,
@@ -553,7 +628,7 @@ impl PhylonApp {
                     segment_type: 0,
                 });
             }
-            if should_draw_sdf {
+            if should_draw_sdf && bone_visible(pos, pos) {
                 sdf_bones.push(rendering::SdfBoneInstance {
                     pos_a: pos,
                     pos_b: pos,
@@ -609,7 +684,7 @@ impl PhylonApp {
                     segment_type: 0,
                 });
             }
-            if should_draw_sdf {
+            if should_draw_sdf && bone_visible(pos, pos) {
                 sdf_bones.push(rendering::SdfBoneInstance {
                     pos_a: pos,
                     pos_b: pos,
@@ -676,47 +751,10 @@ impl PhylonApp {
             let ctx = egui_state.egui_ctx().clone();
 
             let output = ctx.run(raw_input, |ctx| {
-                let (canvas_interact, acts) = ui::render_ui(
-                    ctx,
-                    &mut self.ui.app_state,
-                    &mut self.world,
-                    self.ui.camera_pos,
-                    self.ui.camera_zoom,
-                    &mut self.ui.selected_entity,
-                    &mut self.ui.tracked_entity,
-                    &mut self.ui.debug_structural,
-                    &mut self.ui.bone_line_thickness,
-                    &mut self.ui.skin_thickness,
-                    &mut self.ui.node_radius,
-                    &mut self.ui.active_tab,
-                    &mut self.ui.active_bottom_tab,
-                    &mut self.simulation_speed,
-                    &mut self.ui.is_paused,
-                    &mut self.ui.show_about,
-                    &mut self.ui.show_docs,
-                    &mut self.ui.show_vision_cones,
-                    self.ui.hovered_entity,
-                    &mut self.ui.quit_confirm_time,
-                    &mut self.ui.main_menu_confirm_time,
-                    &mut self.ui.spectator_mode,
-                    &mut self.ui.last_spectator_switch_time,
-                );
+                let (canvas_interact, acts) =
+                    ui::render_ui(ctx, &mut self.app_state, &mut self.world, &mut self.ui);
                 ui_actions.extend(acts);
                 interaction = canvas_interact;
-
-                // Render active toast if present
-                if let Some((msg, progress)) = &self.ui.active_toast {
-                    egui::Window::new("Progress")
-                        .title_bar(false)
-                        .resizable(false)
-                        .collapsible(false)
-                        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-20.0, -20.0))
-                        .show(ctx, |ui| {
-                            ui.label(egui::RichText::new(msg).strong());
-                            ui.add_space(4.0);
-                            ui.add(egui::ProgressBar::new(*progress).animate(true));
-                        });
-                }
             });
 
             scale = window.scale_factor() as f32;
@@ -810,8 +848,18 @@ impl PhylonApp {
             .unwrap_or_default();
         let mut field_view_to_render: Option<&wgpu::TextureView> = None;
 
-        let screen_w = gpu.config.as_ref().map(|c| c.width).unwrap_or(1280) as f32;
-        let screen_h = gpu.config.as_ref().map(|c| c.height).unwrap_or(720) as f32;
+        // Use the cropped central viewport (not the full window) so the
+        // heatmap's world-space<->screen-space conversion matches the
+        // organism (sdf_skin) projection below and the two don't drift
+        // apart ("parallax") when panning with a sidebar/toolbar open.
+        let (screen_w, screen_h) = central_rect_px
+            .map(|[_, _, w, h]| (w as f32, h as f32))
+            .unwrap_or_else(|| {
+                gpu.config
+                    .as_ref()
+                    .map(|c| (c.width as f32, c.height as f32))
+                    .unwrap_or((1280.0, 720.0))
+            });
 
         if heatmap_state.active != ui::ActiveHeatmap::None {
             match heatmap_state.active {
@@ -925,14 +973,7 @@ impl PhylonApp {
         // the other renderers, which rely on LoadOp::Load and submit their own encoders.
         gpu.queue.submit(std::iter::once(encoder.finish()));
 
-        let (view_w, view_h) = central_rect_px
-            .map(|[_, _, w, h]| (w as f32, h as f32))
-            .unwrap_or_else(|| {
-                gpu.config
-                    .as_ref()
-                    .map(|c| (c.width as f32, c.height as f32))
-                    .unwrap_or((1280.0, 720.0))
-            });
+        let (view_w, view_h) = (screen_w, screen_h);
 
         // ── Organism rendering — always run sdf_renderer if there are bones ─────────
         if !sdf_bones.is_empty() {

@@ -1,3 +1,5 @@
+/// Recursively draws the segment / spring tree of an organism in the inspector.
+#[allow(dead_code)]
 pub(crate) fn draw_segment_tree(
     ui: &mut egui::Ui,
     current_node: bevy_ecs::entity::Entity,

@@ -1,0 +1,22 @@
+/// UI plugin modules.
+pub mod dialogs;
+/// Event log panel — recent births, deaths, hazard events.
+pub mod event_log;
+/// Entity inspector panel — single organism and environment details.
+pub mod inspector;
+/// Top menu bar.
+pub mod menu;
+/// Metrics dashboard and event log bottom-panel tabs.
+pub mod metrics;
+/// Navigation rail helpers.
+pub mod navigation;
+/// Neural Viewer panel — CTRNN brain node-link graph for the selected organism.
+pub mod neural_viewer;
+/// Sidebar activity bar and per-workspace content panels.
+pub mod sidebar;
+/// Bottom status bar.
+pub mod status_bar;
+/// Top toolbar.
+pub mod toolbar;
+/// Central simulation viewport.
+pub mod viewport;

@@ -24,7 +24,14 @@ struct Spring {
 struct PhysicsConfig {
     dt: f32,
     time: f32,
-    _padding: vec2<f32>,
+    // The nodes/springs buffers are capacity-sized (grown geometrically to
+    // avoid reallocating every tick as population changes) so they can hold
+    // more than the currently-live population — these two counts are the
+    // actual number of live entries this tick, and must be used instead of
+    // `arrayLength()` (which reflects buffer capacity, not live count) for
+    // every loop bound / entry guard below.
+    active_node_count: u32,
+    active_spring_count: u32,
 }
 
 @group(0) @binding(0) var<storage, read_write> nodes: array<ParticleNode>;
@@ -32,14 +39,58 @@ struct PhysicsConfig {
 @group(0) @binding(2) var<uniform> config: PhysicsConfig;
 @group(0) @binding(3) var<storage, read_write> atomic_forces_x: array<atomic<i32>>;
 @group(0) @binding(4) var<storage, read_write> atomic_forces_y: array<atomic<i32>>;
+// Broad-phase spatial grid for the steric-hindrance repulsion loop below —
+// fixed-size (not grown with population): `cell_counts[c]` is how many
+// nodes have been binned into cell `c` this tick (capped for storage at
+// GRID_CELL_CAPACITY, see `bin_nodes`), and `cell_nodes` holds up to
+// GRID_CELL_CAPACITY node indices per cell, laid out as
+// `cell_nodes[c * GRID_CELL_CAPACITY + slot]`.
+@group(0) @binding(5) var<storage, read_write> cell_counts: array<atomic<u32>>;
+@group(0) @binding(6) var<storage, read_write> cell_nodes: array<u32>;
 
 const FORCE_SCALE: f32 = 10000.0;
+
+// Grid dimensions MUST match `GRID_DIM`/`GRID_HALF_EXTENT`/`GRID_CELL_SIZE`/
+// `GRID_CELL_CAPACITY` in physics_pipeline.rs — they size the fixed
+// `cell_counts`/`cell_nodes` buffers allocated on the Rust side.
+const GRID_DIM: i32 = 128;
+const GRID_HALF_EXTENT: f32 = 2048.0;
+const GRID_CELL_SIZE: f32 = 32.0;
+const GRID_CELL_CAPACITY: u32 = 64u;
+
+// Maps a world position to its (clamped) grid cell coordinate. Clamping
+// means nodes that drift outside +/-GRID_HALF_EXTENT still get binned into
+// the border cells rather than binned out of bounds — fine, since it only
+// affects broad-phase repulsion candidates, not correctness elsewhere.
+fn grid_cell_coord(pos: vec2<f32>) -> vec2<i32> {
+    let gx = i32(floor((pos.x + GRID_HALF_EXTENT) / GRID_CELL_SIZE));
+    let gy = i32(floor((pos.y + GRID_HALF_EXTENT) / GRID_CELL_SIZE));
+    return vec2<i32>(clamp(gx, 0, GRID_DIM - 1), clamp(gy, 0, GRID_DIM - 1));
+}
+
+fn grid_cell_index(c: vec2<i32>) -> u32 {
+    return u32(c.y) * u32(GRID_DIM) + u32(c.x);
+}
+
+// Pass 0: Bin every live node into its spatial grid cell for this tick's
+// broad-phase repulsion queries (see `integrate` below).
+@compute @workgroup_size(64)
+fn bin_nodes(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let index = global_id.x;
+    if (index >= config.active_node_count) { return; }
+
+    let cell = grid_cell_index(grid_cell_coord(nodes[index].position));
+    let slot = atomicAdd(&cell_counts[cell], 1u);
+    if (slot < GRID_CELL_CAPACITY) {
+        cell_nodes[cell * GRID_CELL_CAPACITY + slot] = index;
+    }
+}
 
 // Pass 1: Compute Forces
 @compute @workgroup_size(64)
 fn compute_forces(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
-    if (index >= arrayLength(&springs)) { return; }
+    if (index >= config.active_spring_count) { return; }
 
     let spring = springs[index];
     let a_idx = spring.node_a;
@@ -63,7 +114,16 @@ fn compute_forces(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let damp_force = dir * (dot(rel_vel, dir) * spring.damping);
             
             var total_force = spring_force + damp_force;
-            
+
+            // Clamp force magnitude — an entangled high-relative-velocity pair
+            // can otherwise produce an oversized damp_force from last tick's
+            // already-large velocity, ratcheting energy upward tick over tick.
+            let max_spring_force = spring.stiffness * 50.0 + 5000.0;
+            let force_mag = length(total_force);
+            if (force_mag > max_spring_force) {
+                total_force = total_force * (max_spring_force / force_mag);
+            }
+
             // Apply anisotropic drag if it's a Fin
             if (spring.is_fin == 1u) {
                 let mid_vel = (vel_a + vel_b) * 0.5; // Velocity relative to fluid
@@ -98,26 +158,50 @@ fn compute_forces(@builtin(global_invocation_id) global_id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn integrate(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
-    if (index >= arrayLength(&nodes)) { return; }
+    if (index >= config.active_node_count) { return; }
 
     var node = nodes[index];
     
     // --- STERIC HINDRANCE (Node Repulsion) ---
-    // Only repel nodes of the SAME organism to give it volume
-    let R = 15.0; // Rest distance threshold
+    // Same-organism nodes repel strongly to give the body volume; different
+    // organisms repel more gently (just enough to stop visual overlap
+    // without fighting locomotion/actuation forces).
+    let R = 15.0; // Rest distance threshold (intra-organism)
     let k_repel = 2000.0; // Repulsion strength. High enough to counter springs.
+    let R_CROSS = 15.0; // Rest distance threshold (inter-organism)
+    let k_repel_cross = 400.0; // Weaker: only needed to keep bodies apart
     var repel_force = vec2<f32>(0.0, 0.0);
-    
-    let num_nodes = arrayLength(&nodes);
-    for (var i = 0u; i < num_nodes; i = i + 1u) {
-        if (i == index) { continue; }
-        let other = nodes[i];
-        if (other.organism_id == node.organism_id) {
-            let delta = node.position - other.position;
-            let d = length(delta);
-            if (d > 0.0001 && d < R) {
-                let dir = delta / d;
-                repel_force = repel_force + dir * (k_repel * (R - d));
+
+    // Broad-phase: only check nodes in the 3x3 grid-cell neighborhood around
+    // this node instead of every node in the simulation. Correct as long as
+    // GRID_CELL_SIZE >= max(R, R_CROSS) (checked: both are 15.0 <= 32.0), so
+    // any node within repulsion range of this one is guaranteed to fall in
+    // the center cell or one of its 8 neighbors.
+    let my_cell = grid_cell_coord(node.position);
+    for (var dy = -1; dy <= 1; dy = dy + 1) {
+        for (var dx = -1; dx <= 1; dx = dx + 1) {
+            let cx = my_cell.x + dx;
+            let cy = my_cell.y + dy;
+            if (cx < 0 || cx >= GRID_DIM || cy < 0 || cy >= GRID_DIM) { continue; }
+            let cell = grid_cell_index(vec2<i32>(cx, cy));
+            let count = min(atomicLoad(&cell_counts[cell]), GRID_CELL_CAPACITY);
+            for (var s = 0u; s < count; s = s + 1u) {
+                let i = cell_nodes[cell * GRID_CELL_CAPACITY + s];
+                if (i == index) { continue; }
+                let other = nodes[i];
+                let delta = node.position - other.position;
+                let d = length(delta);
+                if (other.organism_id == node.organism_id) {
+                    if (d > 0.0001 && d < R) {
+                        let dir = delta / d;
+                        repel_force = repel_force + dir * (k_repel * (R - d));
+                    }
+                } else {
+                    if (d > 0.0001 && d < R_CROSS) {
+                        let dir = delta / d;
+                        repel_force = repel_force + dir * (k_repel_cross * (R_CROSS - d));
+                    }
+                }
             }
         }
     }
@@ -172,7 +256,7 @@ fn integrate(@builtin(global_invocation_id) global_id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn pbd_projection(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
-    if (index >= arrayLength(&springs)) { return; }
+    if (index >= config.active_spring_count) { return; }
 
     let spring = springs[index];
     
@@ -210,7 +294,7 @@ fn pbd_projection(@builtin(global_invocation_id) global_id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn apply_pbd(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
-    if (index >= arrayLength(&nodes)) { return; }
+    if (index >= config.active_node_count) { return; }
 
     var node = nodes[index];
 
@@ -223,13 +307,28 @@ fn apply_pbd(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Inject velocity from PBD correction — clamp to prevent explosion.
     // Without clamping, large corrections (from nodes far apart) inject
     // huge velocities that accumulate across ticks and cause fly-off.
+    // Clamped by magnitude (not per-axis) — a per-axis clamp lets diagonal
+    // corrections overshoot to max_pbd_vel * sqrt(2), which was one source
+    // of the entanglement "lock and spiral" energy ratchet.
     let raw_vel_correction = correction / config.dt;
     let max_pbd_vel = 150.0; // world-units/s cap on PBD velocity injection
-    let pbd_vel = clamp(raw_vel_correction, vec2<f32>(-max_pbd_vel, -max_pbd_vel), vec2<f32>(max_pbd_vel, max_pbd_vel));
+    let raw_vel_mag = length(raw_vel_correction);
+    var pbd_vel = raw_vel_correction;
+    if (raw_vel_mag > max_pbd_vel) {
+        pbd_vel = raw_vel_correction * (max_pbd_vel / raw_vel_mag);
+    }
     node.velocity = node.velocity + pbd_vel;
 
-    // Hard velocity cap — prevents runaway accumulation regardless of cause.
-    let max_speed = 300.0;
+    // Damping — this pass runs 3x/tick (PBD iteration loop); without damping
+    // here too, injected velocity compounds undamped across iterations
+    // within a single tick, on top of the once-per-tick damping in
+    // `integrate`. This was the primary cause of entangled organisms
+    // spiraling apart with escalating rather than settling energy.
+    node.velocity = node.velocity * 0.99;
+
+    // Hard velocity cap — matches `integrate`'s cap so PBD injection can
+    // never push a node faster than a normal tick's own ceiling allows.
+    let max_speed = 200.0;
     let speed = length(node.velocity);
     if (speed > max_speed) {
         node.velocity = node.velocity * (max_speed / speed);

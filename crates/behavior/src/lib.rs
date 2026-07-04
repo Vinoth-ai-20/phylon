@@ -65,6 +65,33 @@ impl Default for BehaviorConfig {
     }
 }
 
+/// The high-level behavioral state of the organism.
+#[derive(bevy_ecs::prelude::Component, Debug, Clone, PartialEq, Eq, Default)]
+pub enum BehaviorState {
+    /// Organism is inactive or resting.
+    #[default]
+    Idle,
+    /// Organism is actively seeking food or resources.
+    Foraging,
+    /// Organism is actively hunting prey.
+    Hunting,
+    /// Organism is fleeing from a hazard or predator.
+    Fleeing,
+    /// Organism is seeking a mate.
+    Mating,
+    /// Organism is sleeping to conserve energy.
+    Sleeping,
+}
+
+/// The current goal/target the behavior is trying to satisfy.
+#[derive(bevy_ecs::prelude::Component, Debug, Clone)]
+pub struct CurrentGoal {
+    /// A human-readable description of the current goal (e.g. "Seeking Glucose").
+    pub description: String,
+    /// An optional target entity.
+    pub target_entity: Option<bevy_ecs::entity::Entity>,
+}
+
 /// # Core Behavior Translation System
 ///
 /// ## 1. What Happens
@@ -203,6 +230,84 @@ pub fn behavior_system(
                         chem.atp = (chem.atp - cost).max(0.0);
                     }
                 }
+            }
+        }
+    }
+}
+
+/// # Physiological State Update System
+///
+/// ## 1. What Happens
+/// Each tick, `Hydration` decreases by `loss_rate`, `BodyTemperature` moves toward the
+/// local environment temperature, and `BehaviorState` / `CurrentGoal` are set based on
+/// the current metabolic reading. This ensures the Inspector always shows live data.
+///
+/// ## 2. Why It Happens
+/// `BehaviorState` is a top-level observable: a researcher can tell at a glance whether
+/// an organism is foraging, fleeing, or sleeping. Without a dedicated update pass it would
+/// always read `Idle` — the default set at spawn.
+///
+/// ## 3. How It Happens
+/// Metabolic urgency is evaluated in priority order:
+/// 1. Very low ATP (< 10 %) → **Fleeing** (stress response / looking for energy)
+/// 2. Low glucose (< 20 %) → **Foraging**
+/// 3. Low hydration (< 0.2) → **Foraging** (seeking water)
+/// 4. Otherwise → **Idle**
+#[allow(clippy::type_complexity)]
+pub fn physiological_state_update_system(
+    mut query: bevy_ecs::prelude::Query<(
+        bevy_ecs::entity::Entity,
+        &physics::ParticleNode,
+        Option<&mut metabolism::Hydration>,
+        Option<&mut metabolism::BodyTemperature>,
+        Option<&metabolism::ChemicalEconomy>,
+        Option<&mut BehaviorState>,
+        Option<&mut CurrentGoal>,
+    )>,
+    env: Option<bevy_ecs::prelude::Res<environment::EnvironmentManager>>,
+) {
+    for (_entity, node, hydration_opt, temp_opt, chem_opt, state_opt, goal_opt) in query.iter_mut()
+    {
+        // 1. Tick Hydration
+        if let Some(mut hydration) = hydration_opt {
+            hydration.level = (hydration.level - hydration.loss_rate).clamp(0.0, 1.0);
+        }
+
+        // 2. Move BodyTemperature toward environment temperature
+        if let Some(mut body_temp) = temp_opt {
+            let env_temp = env
+                .as_ref()
+                .map(|e| e.get_temperature_at(node.position.x, node.position.y))
+                .unwrap_or(22.0);
+            // Lerp 2 % per tick toward the environment temperature
+            body_temp.current += (env_temp - body_temp.current) * 0.02;
+        }
+
+        // 3. Derive BehaviorState from metabolic urgency
+        if let (Some(mut bstate), Some(mut goal), Some(chem)) = (state_opt, goal_opt, chem_opt) {
+            let atp_fraction = if chem.max_atp > 0.0 {
+                chem.atp / chem.max_atp
+            } else {
+                0.0
+            };
+            let glucose_fraction = if chem.max_glucose > 0.0 {
+                chem.glucose / chem.max_glucose
+            } else {
+                0.0
+            };
+
+            if atp_fraction < 0.10 {
+                *bstate = BehaviorState::Fleeing;
+                goal.description = "Critical ATP – seeking energy".to_string();
+                goal.target_entity = None;
+            } else if glucose_fraction < 0.20 {
+                *bstate = BehaviorState::Foraging;
+                goal.description = "Low glucose – foraging".to_string();
+                goal.target_entity = None;
+            } else {
+                *bstate = BehaviorState::Idle;
+                goal.description = "Nominal".to_string();
+                goal.target_entity = None;
             }
         }
     }

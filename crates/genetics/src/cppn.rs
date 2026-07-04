@@ -57,6 +57,51 @@ pub struct Cppn {
 }
 
 impl Cppn {
+    /// Performs NEAT-style crossover with another CPPN.
+    ///
+    /// Nodes are only mixed when both parents share the same node count
+    /// (guaranteeing connection indices stay valid); otherwise `self`'s nodes
+    /// are kept. Matching connection genes (same `innovation` number) are
+    /// inherited from a random parent; disjoint/excess genes always come from
+    /// `self`. Any inherited connection referencing an out-of-range node
+    /// index (possible when node counts differ) is dropped.
+    pub fn crossover<R: rand::Rng>(&self, other: &Cppn, rng: &mut R) -> Cppn {
+        let nodes = if self.nodes.len() == other.nodes.len() {
+            self.nodes
+                .iter()
+                .zip(other.nodes.iter())
+                .map(|(a, b)| {
+                    if rng.gen_bool(0.5) {
+                        a.clone()
+                    } else {
+                        b.clone()
+                    }
+                })
+                .collect()
+        } else {
+            self.nodes.clone()
+        };
+        let node_count = nodes.len();
+
+        let other_by_innovation: std::collections::HashMap<usize, &CppnConnection> = other
+            .connections
+            .iter()
+            .map(|c| (c.innovation, c))
+            .collect();
+
+        let connections = self
+            .connections
+            .iter()
+            .map(|c| match other_by_innovation.get(&c.innovation) {
+                Some(other_c) if rng.gen_bool(0.5) => (*other_c).clone(),
+                _ => c.clone(),
+            })
+            .filter(|c| c.source < node_count && c.target < node_count)
+            .collect();
+
+        Cppn { nodes, connections }
+    }
+
     /// Creates a new empty CPPN.
     pub fn new() -> Self {
         Self::default()

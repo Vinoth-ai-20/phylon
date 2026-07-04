@@ -1,0 +1,279 @@
+//! Toolbar plugin — playback controls, speed slider, overlay selector, camera controls.
+//!
+//! This module implements the simulation toolbar row that appears below the main menu bar.
+//! Overlay changes are dispatched as `MenuAction::SetOverlay(ActiveHeatmap)` so the
+//! `HeatmapState` ECS resource remains the single source of truth.
+
+use crate::types::*;
+
+/// Render the simulation toolbar strip.
+///
+/// Should be called inside a `TopBottomPanel` row after the main menu bar.
+#[allow(clippy::too_many_arguments)]
+pub fn toolbar_ui(
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    state: &mut crate::WorkbenchState,
+    world: &mut world::World,
+    actions: &mut Vec<MenuAction>,
+) {
+    let _ = ctx; // may be used for context menus later
+    ui.horizontal(|ui| {
+        // ── Playback Controls ──────────────────────────────────────────────
+        ui.separator();
+
+        // Play / Pause
+        let play_icon = if state.is_paused {
+            egui_remixicon::icons::PLAY_FILL
+        } else {
+            egui_remixicon::icons::PAUSE_FILL
+        };
+        let play_color = if state.is_paused {
+            egui::Color32::from_rgb(255, 150, 50)
+        } else {
+            egui::Color32::LIGHT_GREEN
+        };
+        let play_label = if state.is_paused { "PAUSED" } else { "LIVE" };
+        if ui
+            .add(egui::Button::new(
+                egui::RichText::new(format!("{} {}", play_icon, play_label))
+                    .size(13.0)
+                    .color(play_color),
+            ))
+            .on_hover_text("Play / Pause (Space)")
+            .clicked()
+        {
+            // MenuAction::TogglePlayPause's handler flips `is_paused` — don't
+            // also do it here, or the two toggles cancel out.
+            actions.push(MenuAction::TogglePlayPause);
+        }
+
+        // Step forward
+        if ui
+            .add(egui::Button::new(
+                egui::RichText::new(egui_remixicon::icons::SKIP_FORWARD_FILL).size(16.0),
+            ))
+            .on_hover_text("Step Forward (→)")
+            .clicked()
+        {
+            actions.push(MenuAction::StepForward);
+        }
+
+        // Restart
+        if ui
+            .add(egui::Button::new(
+                egui::RichText::new(egui_remixicon::icons::RESTART_FILL).size(16.0),
+            ))
+            .on_hover_text("Reset Simulation")
+            .clicked()
+        {
+            actions.push(MenuAction::ReseedEcosystem);
+        }
+
+        ui.separator();
+
+        // ── Speed Controls ────────────────────────────────────────────────
+        ui.label("Speed:");
+        ui.add(
+            egui::Slider::new(&mut state.simulation_speed, 0.1..=10.0)
+                .logarithmic(true)
+                .text("×")
+                .max_decimals(1),
+        );
+        // Speed presets
+        for (label, speed) in [("1×", 1.0f32), ("2×", 2.0), ("5×", 5.0), ("10×", 10.0)] {
+            if ui
+                .selectable_label((state.simulation_speed - speed).abs() < 0.05, label)
+                .clicked()
+            {
+                state.simulation_speed = speed;
+            }
+        }
+
+        ui.separator();
+
+        // ── Overlay Selector ─────────────────────────────────────────────
+        let current_heatmap = world
+            .ecs
+            .get_resource::<HeatmapState>()
+            .map(|h| h.active)
+            .unwrap_or(ActiveHeatmap::None);
+
+        let overlay_label = heatmap_label(current_heatmap);
+        egui::ComboBox::from_id_salt("overlay_selector")
+            .selected_text(format!(
+                "{} {}",
+                egui_remixicon::icons::MAP_LINE,
+                overlay_label
+            ))
+            .show_ui(ui, |ui| {
+                for (variant, label) in HEATMAP_VARIANTS {
+                    let selected = current_heatmap == variant;
+                    if ui.selectable_label(selected, label).clicked() {
+                        actions.push(MenuAction::SetOverlay(variant));
+                    }
+                }
+            });
+
+        // ── Colormap Selector ──────────────────────────────────────────────
+        // Always visible (not gated on an overlay being active) so the user
+        // can pick a colormap ahead of choosing a field to display.
+        let current_colormap = world
+            .ecs
+            .get_resource::<HeatmapState>()
+            .map(|h| h.colormap)
+            .unwrap_or(0);
+
+        egui::ComboBox::from_id_salt("colormap_selector")
+            .selected_text(colormap_label(current_colormap))
+            .show_ui(ui, |ui| {
+                for (index, label) in COLORMAP_VARIANTS {
+                    if ui
+                        .selectable_label(current_colormap == index, label)
+                        .clicked()
+                    {
+                        actions.push(MenuAction::SetColormap(index));
+                    }
+                }
+            });
+
+        ui.separator();
+
+        // ── World Boundary Toggle ──────────────────────────────────────────
+        if ui
+            .selectable_label(
+                state.show_world_boundary,
+                egui::RichText::new(egui_remixicon::icons::CROP_LINE).size(14.0),
+            )
+            .on_hover_text("Show world boundary")
+            .clicked()
+        {
+            state.show_world_boundary = !state.show_world_boundary;
+        }
+
+        ui.separator();
+
+        // ── Camera Controls (right-aligned) ───────────────────────────────
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Zoom in/out
+            if ui.button("-").on_hover_text("Zoom Out (−)").clicked() {
+                actions.push(MenuAction::CameraZoomOut);
+            }
+            ui.label(format!("{:.0}%", state.camera_zoom * 100.0));
+            if ui.button("+").on_hover_text("Zoom In (+)").clicked() {
+                actions.push(MenuAction::CameraZoomIn);
+            }
+            // Home
+            if ui
+                .button(egui_remixicon::icons::HOME_LINE)
+                .on_hover_text("Reset Camera (Home)")
+                .clicked()
+            {
+                actions.push(MenuAction::CameraHome);
+            }
+            ui.separator();
+            // Spectator mode
+            let spec_text = if state.spectator_mode {
+                egui::RichText::new(format!("{} Spectator", egui_remixicon::icons::FILM_LINE))
+                    .color(egui::Color32::LIGHT_GREEN)
+            } else {
+                egui::RichText::new(format!("{} Spectator", egui_remixicon::icons::FILM_LINE))
+                    .color(egui::Color32::GRAY)
+            };
+            if ui
+                .selectable_label(state.spectator_mode, spec_text)
+                .on_hover_text("Automatically follow the most interesting organism")
+                .clicked()
+            {
+                state.spectator_mode = !state.spectator_mode;
+                if !state.spectator_mode {
+                    state.tracked_entity = None;
+                }
+            }
+
+            // Follow selected
+            if state.selected_entity.is_some() {
+                ui.separator();
+                if ui
+                    .button(format!("{} Follow", egui_remixicon::icons::FOCUS_LINE))
+                    .on_hover_text("Follow selected organism (F)")
+                    .clicked()
+                {
+                    state.tracked_entity = state.selected_entity;
+                    state.spectator_mode = false;
+                }
+            }
+
+            // Camera position readout
+            ui.separator();
+            let track_str = if let Some(e) = state.tracked_entity {
+                format!(" [Tracking {:?}]", e)
+            } else {
+                String::new()
+            };
+            ui.label(
+                egui::RichText::new(format!(
+                    "Cam ({:.0}, {:.0}){}",
+                    state.camera_pos.x, state.camera_pos.y, track_str
+                ))
+                .color(egui::Color32::GRAY)
+                .size(11.0),
+            );
+
+            // Sunlight indicator (from atmosphere)
+            if let Some(atmosphere) = world.ecs.get_resource::<metabolism::GlobalAtmosphere>() {
+                ui.separator();
+                ui.label(format!(
+                    "{} {:.0}%",
+                    egui_remixicon::icons::SUN_LINE,
+                    atmosphere.sunlight * 100.0
+                ));
+            }
+        });
+    });
+}
+
+/// Human-readable label for each heatmap variant.
+pub fn heatmap_label(h: ActiveHeatmap) -> &'static str {
+    match h {
+        ActiveHeatmap::None => "None",
+        ActiveHeatmap::Glucose => "Glucose",
+        ActiveHeatmap::ATP => "ATP",
+        ActiveHeatmap::Pheromones => "Pheromones",
+        ActiveHeatmap::EnergyDensity => "Energy Density",
+        ActiveHeatmap::O2 => "Oxygen",
+        ActiveHeatmap::CO2 => "CO₂",
+    }
+}
+
+/// All selectable heatmap variants with their display labels.
+const HEATMAP_VARIANTS: [(ActiveHeatmap, &str); 7] = [
+    (ActiveHeatmap::None, "None"),
+    (ActiveHeatmap::Glucose, "Glucose"),
+    (ActiveHeatmap::ATP, "ATP"),
+    (ActiveHeatmap::Pheromones, "Pheromones"),
+    (ActiveHeatmap::EnergyDensity, "Energy Density"),
+    (ActiveHeatmap::O2, "Oxygen"),
+    (ActiveHeatmap::CO2, "CO₂"),
+];
+
+/// Human-readable label for each colormap variant (must match the shader's
+/// `config.colormap` index switch in `field_overlay.wgsl`).
+pub fn colormap_label(index: u32) -> &'static str {
+    match index {
+        0 => "Viridis",
+        1 => "Magma",
+        2 => "Plasma",
+        3 => "Inferno",
+        _ => "Turbo",
+    }
+}
+
+/// All selectable colormap variants with their display labels.
+const COLORMAP_VARIANTS: [(u32, &str); 5] = [
+    (0, "Viridis"),
+    (1, "Magma"),
+    (2, "Plasma"),
+    (3, "Inferno"),
+    (4, "Turbo"),
+];

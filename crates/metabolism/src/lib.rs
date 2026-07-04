@@ -88,6 +88,33 @@ pub struct Metabolism {
     pub is_plant: bool,
 }
 
+/// Tracks physical damage and overall vitality.
+#[derive(Component, Debug, Clone)]
+pub struct Health {
+    /// Current health points (e.g. 0.0 to 100.0).
+    pub current: f32,
+    /// Maximum health points.
+    pub max: f32,
+}
+
+/// Tracks water levels for ecological rules.
+#[derive(Component, Debug, Clone)]
+pub struct Hydration {
+    /// Current hydration level (0.0 to 1.0).
+    pub level: f32,
+    /// Rate of water loss per tick.
+    pub loss_rate: f32,
+}
+
+/// Tracks body temperature for thermoregulation.
+#[derive(Component, Debug, Clone)]
+pub struct BodyTemperature {
+    /// Current body temperature in degrees Celsius.
+    pub current: f32,
+    /// Ideal body temperature for optimal metabolic function.
+    pub ideal: f32,
+}
+
 /// # Cellular Respiration and Aging System
 ///
 /// ## 1. What Happens
@@ -111,7 +138,7 @@ pub struct Metabolism {
 /// If $ATP \le 0.0$ or $Age \ge \text{max\_lifespan}$, the entity is marked `Dead`.
 pub fn metabolism_system(
     mut commands: Commands,
-    atmosphere: Res<GlobalAtmosphere>,
+    mut atmosphere: ResMut<GlobalAtmosphere>,
     cpu_field: Option<Res<diffusion::CpuFieldState>>,
     mut query: Query<(
         Entity,
@@ -142,10 +169,17 @@ pub fn metabolism_system(
         let o2_needed = (chem.max_o2 - chem.o2).min(metabolism.mass * 2.0); // Max inhalation rate
         let o2_absorbed = o2_needed.min(local_o2);
         chem.o2 += o2_absorbed;
+        atmosphere.o2 = (atmosphere.o2 - o2_absorbed).max(0.0);
 
-        // Exhale CO2 (we just dump it from internal stores; actual grid addition happens in simulation.rs)
+        // Exhale CO2 into the shared planetary pool (in addition to the local
+        // spatial grid emission handled in simulation.rs) — this is the
+        // missing return path that closes the carbon cycle: photosynthesis
+        // draws from `GlobalAtmosphere.co2`, so respiration must feed it
+        // back or the pool only drains (see corpse_decay_system's outgassing
+        // for the other return path).
         let co2_exhale = chem.co2.min(metabolism.mass * 2.0);
         chem.co2 -= co2_exhale;
+        atmosphere.co2 += co2_exhale;
 
         // 2. Cellular Respiration (Glucose + O2 -> ATP + CO2)
         // How much ATP they want to generate to fill their tank
@@ -195,6 +229,31 @@ pub fn metabolism_system(
 /// Marker component for dead organisms. App logic should catch this to clean up the physical body.
 #[derive(Component)]
 pub struct Dead;
+
+/// # Atmospheric Homeostasis
+///
+/// ## 1. What Happens
+/// Slowly drifts `GlobalAtmosphere.co2`/`o2` toward their starting-baseline levels each tick.
+///
+/// ## 2. Why It Happens
+/// Respiration and photosynthesis exchange gas through the shared pool, but a transient
+/// imbalance — e.g. a population crash leaving no respirators to replenish `co2` — could
+/// otherwise drain it to zero and permanently stall photosynthesis with no organisms left to
+/// recover it. This models a minimal planetary buffer (geological/oceanic carbon reservoirs)
+/// standing in for processes this simulation doesn't otherwise model.
+///
+/// ## 3. How It Happens
+/// Each tick, both gases move a small fraction of the way toward their baseline:
+///
+/// $$ X_{new} = X + (X_{baseline} - X) \times \text{drift\_rate} $$
+pub fn atmosphere_homeostasis_system(mut atmosphere: ResMut<GlobalAtmosphere>) {
+    const CO2_BASELINE: f32 = 400.0;
+    const O2_BASELINE: f32 = 10_000_000.0;
+    const DRIFT_RATE: f32 = 0.005;
+
+    atmosphere.co2 += (CO2_BASELINE - atmosphere.co2) * DRIFT_RATE;
+    atmosphere.o2 += (O2_BASELINE - atmosphere.o2) * DRIFT_RATE;
+}
 
 /// Evaluates the day/night cycle using a shifted cosine wave.
 /// A full cycle takes exactly 60 seconds (3600 ticks at 60 Hz).

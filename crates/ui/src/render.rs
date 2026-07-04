@@ -1,53 +1,148 @@
-use crate::types::*;
-use crate::utils::*;
+//! # Phylon Research Interface — Render Entry Point
+//!
+//! `render_ui` is the single entry point for the egui layer. It arranges
+//! all panels, dispatches all `MenuAction` events, and returns a
+//! `CanvasInteraction` describing what the user did in the viewport.
+//!
+//! ## Panel Layout (from outermost to innermost)
+//!
+//! ```text
+//! ┌─ Top: Menu Bar ─────────────────────────────────────────────────────────┐
+//! ├─ Top: Toolbar ──────────────────────────────────────────────────────────┤
+//! │ L:ActivityBar │ L:Sidebar │         Central (Viewport)       │          │
+//! │               │           │                                  │          │
+//! │               │           │                                  │          │
+//! ├───────────────┴───────────┴──────────────────────────────────┴──────────┤
+//! ├─ Bottom: Metrics / Event Log ───────────────────────────────────────────┤
+//! └─ Bottom: Status Bar ────────────────────────────────────────────────────┘
+//! Toast overlay: floating top-right cards, outside all panels
+//! ```
 
-/// # Phylon Research Interface
-///
-/// ## 1. What Happens
-/// The `render_ui` function executes the immediate-mode `egui` layer over the simulation canvas,
-/// dispatching commands via `MenuAction` and parsing user gestures into `CanvasInteraction`.
-///
-/// ## 2. Why It Happens
-/// We need to separate the visual control panels (Tuning, Genetics, Environment) from the core
-/// ECS so the simulation can be run in headless batch mode. Immediate-mode GUIs allow us to
-/// easily draw dynamic data (like neural network graphs) without maintaining a complex DOM.
-///
-/// ## 3. How It Happens
-/// Every frame, the app calls `render_ui`, passing in mutable references to shared state.
-/// It constructs panels (Top, Bottom, Sidebar). Any empty space left over becomes the
-/// `CentralPanel`, over which we calculate `CanvasInteraction` (clicks, drags, scroll zooms)
-/// for the `wgpu` camera to consume.
+use crate::types::*;
+
+/// Main UI render entry point. Called every frame by the app.
 #[allow(clippy::too_many_arguments)]
 pub fn render_ui(
     ctx: &egui::Context,
     app_state: &mut AppState,
     world: &mut world::World,
-    camera_pos: common::Vec2,
-    camera_zoom: f32,
-    selected_entity: &mut Option<bevy_ecs::entity::Entity>,
-    tracked_entity: &mut Option<bevy_ecs::entity::Entity>,
-    debug_structural: &mut bool,
-    bone_line_thickness: &mut f32,
-    skin_thickness: &mut f32,
-    node_radius: &mut f32,
-    active_tab: &mut SidebarTab,
-    active_bottom_tab: &mut BottomTab,
-    simulation_speed: &mut f32,
-    is_paused: &mut bool,
-    show_about: &mut bool,
-    show_docs: &mut bool,
-    show_vision_cones: &mut bool,
-    _hovered_entity: Option<bevy_ecs::entity::Entity>,
-    quit_confirm_time: &mut Option<f64>,
-    main_menu_confirm_time: &mut Option<f64>,
-    spectator_mode: &mut bool,
-    last_spectator_switch_time: &mut f64,
+    state: &mut crate::WorkbenchState,
 ) -> (CanvasInteraction, Vec<MenuAction>) {
     let mut actions = Vec::new();
 
+    // ── Update internal clock ────────────────────────────────────────────────
+    state.time = ctx.input(|i| i.time);
+    state.cleanup_toasts();
+
+    // ── Global keyboard shortcuts ────────────────────────────────────────────
+    process_shortcuts(ctx, &mut actions);
+
+    // ── Main Menu screen ─────────────────────────────────────────────────────
+    if *app_state == AppState::MainMenu {
+        render_main_menu(ctx, state, &mut actions);
+        render_toasts(ctx, state);
+        crate::plugins::dialogs::show_dialogs(ctx, state, &mut actions);
+        return (CanvasInteraction::default(), actions);
+    }
+
+    // ── Dialogs (About, Docs, Keybinds) ─────────────────────────────────────
+    crate::plugins::dialogs::show_dialogs(ctx, state, &mut actions);
+
+    // ── Spectator mode logic ─────────────────────────────────────────────────
+    tick_spectator(ctx, state, world);
+
+    // ── Top: Menu Bar ────────────────────────────────────────────────────────
+    egui::TopBottomPanel::top("top_menu_bar").show(ctx, |ui| {
+        crate::plugins::menu::menu_ui(ctx, ui, state, world, &mut actions);
+    });
+
+    // ── Top: Toolbar (conditionally shown) ──────────────────────────────────
+    if state.toolbar_visible {
+        egui::TopBottomPanel::top("toolbar_panel")
+            .exact_height(32.0)
+            .show(ctx, |ui| {
+                crate::plugins::toolbar::toolbar_ui(ctx, ui, state, world, &mut actions);
+            });
+    }
+
+    // ── Bottom: Status Bar ──────────────────────────────────────────────────
+    if state.status_bar_visible {
+        egui::TopBottomPanel::bottom("status_bar")
+            .exact_height(24.0)
+            .show(ctx, |ui| {
+                crate::plugins::status_bar::status_bar_ui(ctx, ui, state, world, &mut actions);
+            });
+    }
+
+    // ── Left: Activity Bar (narrow icon strip) ──────────────────────────────
+    // The activity bar switches the active_tab; the Inspector tile inside the
+    // egui_tiles tree reads state.active_tab and renders the appropriate content.
+    egui::SidePanel::left("activity_bar")
+        .exact_width(40.0)
+        .resizable(false)
+        .show(ctx, |ui| {
+            crate::plugins::sidebar::activity_bar_ui(ctx, ui, state, world, &mut actions);
+        });
+
+    // ── Central Panel (egui_tiles viewport tree) ─────────────────────────────
+    let interact_response = egui::CentralPanel::default()
+        .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
+        .show(ctx, |ui| {
+            let mut tree = std::mem::replace(&mut state.dock_tree, egui_tiles::Tree::empty("tmp"));
+
+            let mut behavior = crate::layout::WorkbenchBehavior {
+                state,
+                world,
+                commands: &mut actions,
+                canvas_interaction: None,
+            };
+
+            tree.ui(&mut behavior, ui);
+            let canvas_interaction = behavior.canvas_interaction;
+            // behavior ends here naturally; no explicit drop needed
+            state.dock_tree = tree;
+
+            canvas_interaction.unwrap_or_else(|| {
+                let rect = ui.max_rect();
+                CanvasInteraction {
+                    rect,
+                    clicked: false,
+                    click_pos: None,
+                    hover_pos: None,
+                    drag_delta: egui::Vec2::ZERO,
+                    zoom_delta: 1.0,
+                }
+            })
+        })
+        .inner;
+
+    // ── Floating panels (Detached windows) ─────────────────────────────────
+    let mut floating_canvas = None::<crate::types::CanvasInteraction>;
+    crate::layout::render_floating_panels(ctx, state, world, &mut actions, &mut floating_canvas);
+    // If the Viewport is floating, prefer its interaction over the fallback
+    let interact_response = floating_canvas.unwrap_or(interact_response);
+
+    // ── Vision cones overlay ────────────────────────────────────────────────
+    if state.show_vision_cones {
+        render_vision_cones(ctx, state, world, interact_response.rect);
+    }
+
+    // ── World boundary overlay ──────────────────────────────────────────────
+    if state.show_world_boundary {
+        render_world_boundary(ctx, state, interact_response.rect);
+    }
+
+    // ── Toast notifications overlay ─────────────────────────────────────────
+    render_toasts(ctx, state);
+
+    (interact_response, actions)
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+fn process_shortcuts(ctx: &egui::Context, actions: &mut Vec<MenuAction>) {
     let shortcut_save = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::S);
     let shortcut_load = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::O);
-    // Undo/Redo are manually handled via key_pressed when focus is none
     let shortcut_play_pause = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Space);
     let shortcut_step = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::ArrowRight);
     let shortcut_reset = egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::R);
@@ -62,7 +157,10 @@ pub fn render_ui(
         actions.push(MenuAction::LoadState);
     }
     if ctx.input_mut(|i| i.consume_shortcut(&shortcut_play_pause)) {
-        *is_paused = !*is_paused;
+        // Don't flip `is_paused` here too — MenuAction::TogglePlayPause's
+        // handler already does it, and doing both cancels out (this is
+        // exactly why Space appeared to do nothing).
+        actions.push(MenuAction::TogglePlayPause);
     }
     if ctx.input_mut(|i| i.consume_shortcut(&shortcut_step)) {
         actions.push(MenuAction::StepForward);
@@ -80,95 +178,7 @@ pub fn render_ui(
         actions.push(MenuAction::SpawnProtoFish);
     }
 
-    if *app_state == AppState::MainMenu {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(ui.available_height() / 4.0);
-                ui.heading(egui::RichText::new("PHYLON").size(64.0).strong());
-                ui.add_space(40.0);
-
-                let btn_size = egui::vec2(200.0, 40.0);
-
-                if ui
-                    .add_sized(
-                        btn_size,
-                        egui::Button::new(egui::RichText::new("New").size(24.0)),
-                    )
-                    .clicked()
-                {
-                    actions.push(MenuAction::StartSimulation);
-                }
-                ui.add_space(10.0);
-
-                if ui
-                    .add_sized(
-                        btn_size,
-                        egui::Button::new(egui::RichText::new("Continue").size(24.0)),
-                    )
-                    .clicked()
-                {
-                    // Placeholder for when Save/Load is fully implemented
-                    actions.push(MenuAction::StartSimulation);
-                }
-                ui.add_space(10.0);
-
-                ui.allocate_ui_with_layout(
-                    btn_size,
-                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                    |ui| {
-                        ui.menu_button(egui::RichText::new("Open Recent").size(24.0), |ui| {
-                            if ui.button("save_01.ron").clicked() {
-                                actions.push(MenuAction::LoadState);
-                                actions.push(MenuAction::StartSimulation);
-                            }
-                            if ui.button("save_02.ron").clicked() {
-                                actions.push(MenuAction::LoadState);
-                                actions.push(MenuAction::StartSimulation);
-                            }
-                        });
-                    },
-                );
-                ui.add_space(10.0);
-
-                if ui
-                    .add_sized(
-                        btn_size,
-                        egui::Button::new(egui::RichText::new("Load").size(24.0)),
-                    )
-                    .clicked()
-                {
-                    actions.push(MenuAction::LoadState);
-                }
-                ui.add_space(10.0);
-
-                if ui
-                    .add_sized(
-                        btn_size,
-                        egui::Button::new(egui::RichText::new("Settings").size(24.0)),
-                    )
-                    .clicked()
-                {
-                    *active_tab = SidebarTab::Settings;
-                    actions.push(MenuAction::StartSimulation);
-                }
-                ui.add_space(10.0);
-
-                if ui
-                    .add_sized(
-                        btn_size,
-                        egui::Button::new(egui::RichText::new("Quit").size(24.0)),
-                    )
-                    .clicked()
-                {
-                    actions.push(MenuAction::Quit);
-                }
-            });
-        });
-
-        // Return early with empty interaction
-        return (CanvasInteraction::default(), actions);
-    }
-
+    // Raw key shortcuts (only when egui doesn't need keyboard)
     if !ctx.wants_keyboard_input() {
         if ctx.input(|i| i.key_pressed(egui::Key::Z)) {
             actions.push(MenuAction::Undo);
@@ -196,7 +206,7 @@ pub fn render_ui(
         }
     }
 
-    // Hardcode camera zoom keys
+    // Camera zoom shortcuts (always active)
     if ctx.input(|i| i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals)) {
         actions.push(MenuAction::CameraZoomIn);
     }
@@ -206,1731 +216,343 @@ pub fn render_ui(
     if ctx.input(|i| i.key_pressed(egui::Key::Home) || i.key_pressed(egui::Key::Num0)) {
         actions.push(MenuAction::CameraHome);
     }
+}
 
-    egui::Window::new("About Phylon")
-        .open(show_about)
-        .show(ctx, |ui| {
-            ui.heading("Phylon Artificial Life Simulator");
-            ui.label("A GPU-accelerated ALife simulation.");
-            ui.label("Version: 0.1.0");
-        });
+fn render_main_menu(
+    ctx: &egui::Context,
+    state: &mut crate::WorkbenchState,
+    actions: &mut Vec<MenuAction>,
+) {
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.vertical_centered(|ui| {
+            ui.add_space(ui.available_height() / 4.0);
+            ui.heading(
+                egui::RichText::new("PHYLON")
+                    .size(64.0)
+                    .strong()
+                    .color(egui::Color32::from_rgb(100, 200, 255)),
+            );
+            ui.label(
+                egui::RichText::new("Artificial Life Simulation Engine")
+                    .italics()
+                    .color(egui::Color32::GRAY),
+            );
+            ui.add_space(40.0);
 
-    egui::Window::new("Documentation")
-        .open(show_docs)
-        .show(ctx, |ui| {
-            ui.heading("Documentation");
-            ui.label("Welcome to Phylon. The core architecture uses continuous space and compute shaders.");
-            ui.label("Features:");
-            ui.label("- Hox-driven procedural generation");
-            ui.label("- Neural network control via CTRNNs");
-            ui.label("- Diffusion based metabolism");
-        });
+            let btn_size = egui::vec2(200.0, 40.0);
 
-    // ── Top menu bar ───────────────────────────────────────────────────────
-    egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-        egui::menu::bar(ui, |ui| {
-            let bar_rect = ui.max_rect();
+            if ui
+                .add_sized(
+                    btn_size,
+                    egui::Button::new(egui::RichText::new("New Simulation").size(20.0)),
+                )
+                .clicked()
+            {
+                actions.push(MenuAction::StartSimulation);
+            }
+            ui.add_space(10.0);
 
-            // Left Aligned Items (Menus, Speed, Sunlight)
-            ui.horizontal(|ui| {
-                ui.menu_button("File", |ui| {
-                    if ui
-                        .add(
-                            egui::Button::new("Save State")
-                                .shortcut_text(ctx.format_shortcut(&shortcut_save)),
-                        )
-                        .clicked()
-                    {
-                        actions.push(MenuAction::SaveState);
-                    }
-                    if ui
-                        .add(
-                            egui::Button::new("Load State")
-                                .shortcut_text(ctx.format_shortcut(&shortcut_load)),
-                        )
-                        .clicked()
-                    {
-                        actions.push(MenuAction::LoadState);
-                    }
-                    ui.separator();
-                    if ui.button("Settings").clicked() {
-                        *active_tab = SidebarTab::Settings;
-                    }
+            if ui
+                .add_sized(
+                    btn_size,
+                    egui::Button::new(egui::RichText::new("Load State…").size(20.0)),
+                )
+                .clicked()
+            {
+                actions.push(MenuAction::LoadState);
+            }
+            ui.add_space(10.0);
 
-                    let current_time = ui.input(|i| i.time);
+            if ui
+                .add_sized(
+                    btn_size,
+                    egui::Button::new(egui::RichText::new("Settings").size(20.0)),
+                )
+                .clicked()
+            {
+                state.active_tab = SidebarTab::Settings;
+                actions.push(MenuAction::StartSimulation);
+            }
+            ui.add_space(10.0);
 
-                    if let Some(t) = *main_menu_confirm_time {
-                        if current_time - t < 3.0 {
-                            if ui.button("Click again to confirm Main Menu").clicked() {
-                                actions.push(MenuAction::GoToMainMenu);
-                                *main_menu_confirm_time = None;
-                            }
-                        } else {
-                            *main_menu_confirm_time = None;
-                            if ui.button("Main Menu").clicked() {
-                                *main_menu_confirm_time = Some(current_time);
-                            }
-                        }
-                    } else {
-                        if ui.button("Main Menu").clicked() {
-                            *main_menu_confirm_time = Some(current_time);
-                        }
-                    }
+            if ui
+                .add_sized(
+                    btn_size,
+                    egui::Button::new(egui::RichText::new("About").size(20.0)),
+                )
+                .clicked()
+            {
+                state.show_about = true;
+            }
+            ui.add_space(10.0);
 
-                    if let Some(t) = *quit_confirm_time {
-                        if current_time - t < 3.0 {
-                            if ui.button("Click again to confirm Quit").clicked() {
-                                actions.push(MenuAction::Quit);
-                                *quit_confirm_time = None;
-                            }
-                        } else {
-                            *quit_confirm_time = None;
-                            if ui.button("Quit").clicked() {
-                                *quit_confirm_time = Some(current_time);
-                            }
-                        }
-                    } else {
-                        if ui.button("Quit").clicked() {
-                            *quit_confirm_time = Some(current_time);
-                        }
-                    }
-                });
-                ui.menu_button("Edit", |ui| {
-                    if ui
-                        .add(egui::Button::new("Undo").shortcut_text("Z"))
-                        .clicked()
-                    {
-                        actions.push(MenuAction::Undo);
-                    }
-                    if ui
-                        .add(egui::Button::new("Redo").shortcut_text("Y"))
-                        .clicked()
-                    {
-                        actions.push(MenuAction::Redo);
-                    }
-                });
-                ui.menu_button("View", |ui| {
-                    ui.checkbox(debug_structural, "Debug Structural View");
-                    ui.checkbox(show_vision_cones, "Show Vision Cones");
-                });
-                ui.menu_button("Selection", |ui| {
-                    if ui
-                        .add(
-                            egui::Button::new("Select All")
-                                .shortcut_text(ctx.format_shortcut(&shortcut_select_all)),
-                        )
-                        .clicked()
-                    {
-                        actions.push(MenuAction::SelectAll);
-                    }
-                    if ui
-                        .add(
-                            egui::Button::new("Deselect")
-                                .shortcut_text(ctx.format_shortcut(&shortcut_deselect)),
-                        )
-                        .clicked()
-                    {
-                        actions.push(MenuAction::Deselect);
-                    }
-                });
-                ui.menu_button("Tools", |ui| {
-                    if ui
-                        .add(
-                            egui::Button::new("Spawn Proto-Fish")
-                                .shortcut_text(ctx.format_shortcut(&shortcut_spawn)),
-                        )
-                        .clicked()
-                    {
-                        actions.push(MenuAction::SpawnProtoFish);
-                    }
-                });
-                ui.menu_button("Help", |ui| {
-                    if ui.button("Documentation").clicked() {
-                        actions.push(MenuAction::ShowDocumentation);
-                    }
-                    if ui.button("About").clicked() {
-                        actions.push(MenuAction::ShowAbout);
-                    }
-                });
-
-                ui.separator();
-                ui.label("Speed:");
-                ui.add(
-                    egui::Slider::new(simulation_speed, 0.1..=10.0)
-                        .text("x")
-                        .logarithmic(true),
-                );
-
-                if let Some(atmosphere) = world.ecs.get_resource::<metabolism::GlobalAtmosphere>() {
-                    ui.separator();
-                    ui.label(format!(
-                        "{} {:.0}%",
-                        egui_remixicon::icons::SUN_LINE,
-                        atmosphere.sunlight * 100.0
-                    ));
-                }
-
-                let left_menus_width = ui.min_rect().width();
-                let center_offset = bar_rect.width() / 2.0 - left_menus_width - 120.0;
-                if center_offset > 0.0 {
-                    ui.add_space(center_offset);
-                }
-
-                let play_icon = if *is_paused {
-                    egui_remixicon::icons::PLAY_FILL
-                } else {
-                    egui_remixicon::icons::PAUSE_FILL
-                };
-                let play_color = if *is_paused {
-                    egui::Color32::from_rgb(255, 150, 50)
-                } else {
-                    egui::Color32::LIGHT_GREEN
-                };
-                let play_text = if *is_paused { "PAUSED" } else { "PLAYING" };
-
-                if ui
-                    .add(egui::Button::new(
-                        egui::RichText::new(format!("{} {}", play_icon, play_text))
-                            .size(14.0)
-                            .color(play_color),
-                    ))
-                    .on_hover_text("Play/Pause")
-                    .clicked()
-                {
-                    *is_paused = !*is_paused;
-                }
-                if ui
-                    .add(egui::Button::new(
-                        egui::RichText::new(egui_remixicon::icons::SKIP_FORWARD_FILL).size(18.0),
-                    ))
-                    .on_hover_text("Step Forward")
-                    .clicked()
-                {
-                    actions.push(MenuAction::StepForward);
-                }
-                if ui
-                    .add(egui::Button::new(
-                        egui::RichText::new(egui_remixicon::icons::RESTART_FILL).size(18.0),
-                    ))
-                    .on_hover_text("Reset Simulation")
-                    .clicked()
-                {
-                    actions.push(MenuAction::ReseedEcosystem);
-                }
-            });
-
-            // Right Aligned Camera Controls
-            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(bar_rect), |ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("+").on_hover_text("Zoom In (+/=)").clicked() {
-                        actions.push(MenuAction::CameraZoomIn);
-                    }
-                    if ui
-                        .button(egui_remixicon::icons::HOME_LINE)
-                        .on_hover_text("Reset Camera (Home/0)")
-                        .clicked()
-                    {
-                        actions.push(MenuAction::CameraHome);
-                    }
-                    if ui.button("-").on_hover_text("Zoom Out (-)").clicked() {
-                        actions.push(MenuAction::CameraZoomOut);
-                    }
-
-                    let track_str = if let Some(e) = tracked_entity {
-                        format!(" - Tracking {:?}", e)
-                    } else {
-                        String::new()
-                    };
-
-                    ui.add_space(8.0);
-                    ui.checkbox(
-                        spectator_mode,
-                        format!("{} Spectator", egui_remixicon::icons::FILM_LINE),
-                    )
-                    .on_hover_text("Automatically follow interesting organisms");
-
-                    ui.add_space(8.0);
-                    ui.label(format!(
-                        "Cam: ({:.0}, {:.0})  ×{:.1}{}",
-                        camera_pos.x, camera_pos.y, camera_zoom, track_str
-                    ));
-                });
-            });
+            if ui
+                .add_sized(
+                    btn_size,
+                    egui::Button::new(
+                        egui::RichText::new("Quit")
+                            .size(20.0)
+                            .color(egui::Color32::from_rgb(220, 100, 100)),
+                    ),
+                )
+                .clicked()
+            {
+                actions.push(MenuAction::Quit);
+            }
         });
     });
-
-    // ── Activity bar (narrow icon strip, far left) ─────────────────────────
-    egui::SidePanel::left("activity_bar")
-        .exact_width(40.0)
-        .resizable(false)
-        .show(ctx, |ui| {
-            ui.add_space(8.0);
-            ui.vertical_centered(|ui| {
-                if ui
-                    .selectable_label(
-                        *active_tab == SidebarTab::Inspector,
-                        egui_remixicon::icons::SEARCH_LINE,
-                    )
-                    .on_hover_text("Inspector")
-                    .clicked()
-                {
-                    *active_tab = SidebarTab::Inspector;
-                }
-                ui.add_space(4.0);
-                if ui
-                    .selectable_label(
-                        *active_tab == SidebarTab::Genetics,
-                        egui_remixicon::icons::TEST_TUBE_LINE,
-                    )
-                    .on_hover_text("Genetics")
-                    .clicked()
-                {
-                    *active_tab = SidebarTab::Genetics;
-                }
-                ui.add_space(4.0);
-                if ui
-                    .selectable_label(
-                        *active_tab == SidebarTab::Analytics,
-                        egui_remixicon::icons::LINE_CHART_LINE,
-                    )
-                    .on_hover_text("Analytics")
-                    .clicked()
-                {
-                    *active_tab = SidebarTab::Analytics;
-                }
-                ui.add_space(4.0);
-                if ui
-                    .selectable_label(
-                        *active_tab == SidebarTab::Sandbox,
-                        egui_remixicon::icons::TOOLS_LINE,
-                    )
-                    .on_hover_text("Sandbox")
-                    .clicked()
-                {
-                    *active_tab = SidebarTab::Sandbox;
-                }
-                ui.add_space(4.0);
-                if ui
-                    .selectable_label(
-                        *active_tab == SidebarTab::Tuning,
-                        egui_remixicon::icons::SETTINGS_3_LINE,
-                    )
-                    .on_hover_text("Tuning")
-                    .clicked()
-                {
-                    *active_tab = SidebarTab::Tuning;
-                }
-                ui.add_space(4.0);
-                if ui
-                    .selectable_label(
-                        *active_tab == SidebarTab::Ecology,
-                        egui_remixicon::icons::EARTH_LINE,
-                    )
-                    .on_hover_text("Ecology")
-                    .clicked()
-                {
-                    *active_tab = SidebarTab::Ecology;
-                }
-                ui.add_space(4.0);
-                if ui
-                    .selectable_label(
-                        *active_tab == SidebarTab::Settings,
-                        egui_remixicon::icons::SETTINGS_3_LINE,
-                    )
-                    .on_hover_text("Settings")
-                    .clicked()
-                {
-                    *active_tab = SidebarTab::Settings;
-                }
-            });
-        });
-
-    // ── Primary sidebar ────────────────────────────────────────────────────
-    egui::SidePanel::left("primary_sidebar")
-        .resizable(true)
-        .default_width(260.0)
-        .show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                match active_tab {
-                    SidebarTab::Inspector => {
-                    ui.heading(format!("{} Inspector", egui_remixicon::icons::SEARCH_LINE));
-                    ui.separator();
-                    ui.checkbox(debug_structural, format!("{} Debug Structural View", egui_remixicon::icons::SHAPE_LINE));
-                    if *debug_structural {
-                        ui.add(
-                            egui::Slider::new(bone_line_thickness, 0.5..=5.0)
-                                .text("Bone Line Thickness"),
-                        );
-                    }
-                    ui.checkbox(show_vision_cones, format!("{} Show Vision Cones", egui_remixicon::icons::EYE_LINE));
-                    ui.separator();
-                    if let Some(entity) = *selected_entity {
-                        ui.label(
-                            egui::RichText::new(format!("Selected: {:?}", entity))
-                                .heading()
-                                .color(egui::Color32::LIGHT_GREEN),
-                        );
-                        let mut is_tracked = *tracked_entity == Some(entity);
-                        if ui.checkbox(&mut is_tracked, "Track Selected").changed() {
-                            if is_tracked {
-                                *tracked_entity = Some(entity);
-                            } else {
-                                if *tracked_entity == Some(entity) {
-                                    *tracked_entity = None;
-                                }
-                            }
-                        }
-
-                        ui.separator(); // Physics node
-                        let mut node_q = world.ecs.query::<&physics::ParticleNode>();
-                        let mut food_q = world.ecs.query::<&ecology::FoodPellet>();
-                        let mut mineral_q = world.ecs.query::<&ecology::MineralPellet>();
-                        let mut corpse_q = world.ecs.query::<&ecology::Corpse>();
-
-                        let mut find_head_for = None;
-                        if let Ok(node) = node_q.get(&world.ecs, entity) {
-                            egui::CollapsingHeader::new(format!("{} Physics Node", egui_remixicon::icons::SETTINGS_4_LINE))
-                                .default_open(true)
-                                .show(ui, |ui| {
-                                    let seg_name = match node.segment_type {
-                                        0 => "Head",
-                                        1 => "Torso",
-                                        2 => "Muscle",
-                                        3 => "Tail",
-                                        4 => "Fin",
-                                        _ => "Unknown",
-                                    };
-                                    ui.label(format!("Segment  : {seg_name}"));
-                                    ui.label(format!(
-                                        "Position : ({:.1}, {:.1})",
-                                        node.position.x, node.position.y
-                                    ));
-                                    ui.label(format!(
-                                        "Velocity : ({:.2}, {:.2})",
-                                        node.velocity.x, node.velocity.y
-                                    ));
-                                    ui.label(format!("Mass     : {:.2}", node.mass));
-                                    if node.segment_type != 0 {
-                                        ui.add_space(5.0);
-                                        if ui.button(format!("{} Go to Head", egui_remixicon::icons::ARROW_UP_LINE)).clicked() {
-                                            find_head_for = Some(entity);
-                                        }
-                                    }
-                                });
-                        } else if let Ok(food) = food_q.get(&world.ecs, entity) {
-                            egui::CollapsingHeader::new(format!("{} Food Pellet", egui_remixicon::icons::LEAF_LINE))
-                                .default_open(true)
-                                .show(ui, |ui| {
-                                    ui.label(format!("Position: ({:.1}, {:.1})", food.position.x, food.position.y));
-                                    ui.label(format!("Energy: {:.1}", food.energy_value));
-                                });
-                        } else if let Ok(mineral) = mineral_q.get(&world.ecs, entity) {
-                            egui::CollapsingHeader::new(format!("{} Mineral Pellet", egui_remixicon::icons::VIP_DIAMOND_LINE))
-                                .default_open(true)
-                                .show(ui, |ui| {
-                                    ui.label(format!("Position: ({:.1}, {:.1})", mineral.position.x, mineral.position.y));
-                                    ui.label(format!("Energy: {:.1}", mineral.energy_value));
-                                });
-                        } else if let Ok(corpse) = corpse_q.get(&world.ecs, entity) {
-                            egui::CollapsingHeader::new(format!("{} Corpse", egui_remixicon::icons::SKULL_LINE))
-                                .default_open(true)
-                                .show(ui, |ui| {
-                                    ui.label(format!("Position: ({:.1}, {:.1})", corpse.position.x, corpse.position.y));
-                                    ui.label(format!("Energy: {:.1}", corpse.energy_value));
-                                    ui.label(format!("Decay: {} / {}", corpse.decay_timer, corpse.max_decay));
-                                });
-                        }
-
-                        if let Some(target) = find_head_for {
-                            let mut head_entity = None;
-                            let mut visited = std::collections::HashSet::new();
-                            let mut queue = std::collections::VecDeque::new();
-                            queue.push_back(target);
-
-                            let mut spring_q = world.ecs.query::<&physics::Spring>();
-                            while let Some(curr) = queue.pop_front() {
-                                if !visited.insert(curr) { continue; }
-                                if let Ok(n) = node_q.get(&world.ecs, curr) {
-                                    if n.segment_type == 0 {
-                                        head_entity = Some(curr);
-                                        break;
-                                    }
-                                }
-                                for spring in spring_q.iter(&world.ecs) {
-                                    if spring.node_a == curr && !visited.contains(&spring.node_b) {
-                                        queue.push_back(spring.node_b);
-                                    } else if spring.node_b == curr && !visited.contains(&spring.node_a) {
-                                        queue.push_back(spring.node_a);
-                                    }
-                                }
-                            }
-                            if let Some(h) = head_entity {
-                                *selected_entity = Some(h);
-                            }
-                        }
-
-                        // Metabolism — Chemistry
-                        let mut chem_q = world.ecs.query::<&metabolism::ChemicalEconomy>();
-                        let mut age_q = world.ecs.query::<&metabolism::Age>();
-                        let mut meta_q = world.ecs.query::<&metabolism::Metabolism>();
-                        let has_meta = chem_q.get(&world.ecs, entity).is_ok();
-
-                        if has_meta {
-                            egui::CollapsingHeader::new(format!("{} Biology", egui_remixicon::icons::MICROSCOPE_LINE))
-                                .default_open(true)
-                                .show(ui, |ui| {
-                                    if let Ok(chem) = chem_q.get(&world.ecs, entity) {
-                                        let gluc_pct = chem.glucose / chem.max_glucose;
-                                        let atp_pct = chem.atp / chem.max_atp;
-                                        let o2_pct = chem.o2 / chem.max_o2;
-                                        let co2_pct = chem.co2 / chem.max_co2;
-
-                                        ui.label(format!("Glucose: {:.0} / {:.0}", chem.glucose, chem.max_glucose));
-                                        ui.add(egui::ProgressBar::new(gluc_pct).text("Glucose"));
-
-                                        ui.label(format!("ATP: {:.0} / {:.0}", chem.atp, chem.max_atp));
-                                        ui.add(egui::ProgressBar::new(atp_pct).text("ATP").fill(egui::Color32::from_rgb(255, 150, 50)));
-
-                                        ui.label(format!("O2: {:.0} / {:.0}", chem.o2, chem.max_o2));
-                                        ui.add(egui::ProgressBar::new(o2_pct).text("O2").fill(egui::Color32::from_rgb(100, 150, 255)));
-
-                                        ui.label(format!("CO2: {:.0} / {:.0}", chem.co2, chem.max_co2));
-                                        ui.add(egui::ProgressBar::new(co2_pct).text("CO2").fill(egui::Color32::from_rgb(150, 150, 150)));
-                                    }
-                                    if let Ok(age) = age_q.get(&world.ecs, entity) {
-                                        ui.label(format!(
-                                            "Age    : {} / {} ticks",
-                                            age.ticks, age.max_lifespan
-                                        ));
-                                    }
-                                    if let Ok(meta) = meta_q.get(&world.ecs, entity) {
-                                        ui.label(format!("Mass   : {:.2}", meta.mass));
-                                        ui.label(format!("Rate   : {:.3} /tick", meta.base_rate));
-                                    }
-                                });
-                        }
-
-                        // Biological components (ecology)
-                        let mut diet_q = world.ecs.query::<&ecology::Diet>();
-                        if let Ok(diet) = diet_q.get(&world.ecs, entity) {
-                            ui.label(format!("Diet   : {:?}", diet));
-                        }
-                        let mut category_q = world.ecs.query::<&ecology::EcologicalCategory>();
-                        if let Ok(cat) = category_q.get(&world.ecs, entity) {
-                            ui.label(format!("Category: {:?}", cat));
-                        }
-
-                        let mut gen_q = world.ecs.query::<&organisms::Generation>();
-                        if let Ok(gen) = gen_q.get(&world.ecs, entity) {
-                            ui.label(format!("Generation: {}", gen.0));
-                        }
-
-                        let mut spawn_q = world.ecs.query::<&organisms::SpawnTick>();
-                        if let Ok(spawn) = spawn_q.get(&world.ecs, entity) {
-                            ui.label(format!("Spawn tick: {}", spawn.0));
-                        }
-
-                        let mut traits_q = world.ecs.query::<&organisms::SandboxTraits>();
-                        if let Ok(traits) = traits_q.get(&world.ecs, entity) {
-                            egui::CollapsingHeader::new(format!("{} Active Components", egui_remixicon::icons::PRICE_TAG_3_LINE))
-                                .default_open(true)
-                                .show(ui, |ui| {
-                                    if traits.is_membrane_seed { ui.label("Membrane Seed"); }
-                                    if traits.link_duplicate { ui.label("Link Duplicate"); }
-                                    if traits.sends_energy { ui.label("Sends Energy"); }
-                                    if traits.respires { ui.label("Respires"); }
-                                    if traits.photosynthesis { ui.label("Photosynthesis"); }
-                                    if traits.has_tail { ui.label("Has Tail"); }
-                                    if traits.kills_animals { ui.label("Kills Animals"); }
-                                    if traits.edible_plant { ui.label("Edible Plant"); }
-                                    if traits.edible_animal { ui.label("Edible Animal"); }
-                                    if traits.repels { ui.label("Repels"); }
-                                    if traits.grabbable { ui.label("Grabbable"); }
-                                    if traits.fixable { ui.label("Fixable"); }
-                                    if traits.velocity_tear { ui.label("Velocity Tear"); }
-                                    if traits.mesh { ui.label("Mesh"); }
-                                });
-                        }
-
-                        // Entity Graph / Segment Tree
-                        egui::CollapsingHeader::new(format!("{} Body Structure", egui_remixicon::icons::TREE_LINE))
-                            .default_open(true)
-                            .show(ui, |ui| {
-                                // Build adjacency list from springs
-                                let mut adj: std::collections::HashMap<
-                                    bevy_ecs::entity::Entity,
-                                    Vec<(bevy_ecs::entity::Entity, physics::Spring)>,
-                                > = std::collections::HashMap::new();
-                                let mut spring_q = world.ecs.query::<&physics::Spring>();
-                                for spring in spring_q.iter(&world.ecs) {
-                                    adj.entry(spring.node_a)
-                                        .or_default()
-                                        .push((spring.node_b, spring.clone()));
-                                    adj.entry(spring.node_b)
-                                        .or_default()
-                                        .push((spring.node_a, spring.clone()));
-                                }
-
-                                // Find the root of this connected component (the Head node)
-                                let mut visited = std::collections::HashSet::new();
-                                let mut component = Vec::new();
-                                let mut queue = std::collections::VecDeque::new();
-                                queue.push_back(entity);
-                                visited.insert(entity);
-
-                                while let Some(curr) = queue.pop_front() {
-                                    component.push(curr);
-                                    if let Some(neighbors) = adj.get(&curr) {
-                                        for (neighbor, _) in neighbors {
-                                            if visited.insert(*neighbor) {
-                                                queue.push_back(*neighbor);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Try to find the head (segment_type == 0) in the component
-                                let mut root = entity; // fallback
-                                let mut node_q = world.ecs.query::<&physics::ParticleNode>();
-                                for &node_entity in &component {
-                                    if let Ok(n) = node_q.get(&world.ecs, node_entity) {
-                                        if n.segment_type == 0 {
-                                            // Head
-                                            root = node_entity;
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                let mut tree_visited = std::collections::HashSet::new();
-                                draw_segment_tree(
-                                    ui,
-                                    root,
-                                    &adj,
-                                    &world.ecs,
-                                    &mut tree_visited,
-                                    selected_entity,
-                                );
-                            });
-                    } else {
-                        ui.label(
-                            egui::RichText::new("Click a node to inspect")
-                                .italics()
-                                .color(egui::Color32::GRAY),
-                        );
-                        ui.separator();
-                    }
-                }
-                SidebarTab::Genetics => {
-                    ui.heading(format!("{} Genetics", egui_remixicon::icons::TEST_TUBE_LINE));
-                    ui.separator();
-                    if let Some(entity) = *selected_entity {
-                        // Find the head node for this organism to get the genome
-                        let mut adj: std::collections::HashMap<
-                            bevy_ecs::entity::Entity,
-                            Vec<bevy_ecs::entity::Entity>,
-                        > = std::collections::HashMap::new();
-                        let mut spring_q = world.ecs.query::<&physics::Spring>();
-                        for spring in spring_q.iter(&world.ecs) {
-                            adj.entry(spring.node_a).or_default().push(spring.node_b);
-                            adj.entry(spring.node_b).or_default().push(spring.node_a);
-                        }
-
-                        let mut head_node = None;
-                        let mut queue = std::collections::VecDeque::new();
-                        let mut visited = std::collections::HashSet::new();
-                        queue.push_back(entity);
-                        visited.insert(entity);
-
-                        let mut repro_q = world.ecs.query::<&reproduction::ReproductionStrategy>();
-                        let mut growth_q = world.ecs.query::<&organisms::GrowthState>();
-                        let mut brain_q = world.ecs.query::<&brain::Brain>();
-
-                        while let Some(curr) = queue.pop_front() {
-                            if repro_q.get(&world.ecs, curr).is_ok()
-                                || growth_q.get(&world.ecs, curr).is_ok()
-                            {
-                                head_node = Some(curr);
-                                break;
-                            }
-                            if let Some(neighbors) = adj.get(&curr) {
-                                for neighbor in neighbors {
-                                    if visited.insert(*neighbor) {
-                                        queue.push_back(*neighbor);
-                                    }
-                                }
-                            }
-                        }
-
-                        let mut found_genome = false;
-                        if let Some(head) = head_node {
-                            let mut genome_ref = None;
-                            if let Ok(repro) = repro_q.get(&world.ecs, head) {
-                                genome_ref = Some(repro.genome.clone());
-                            } else if let Ok(growth) = growth_q.get(&world.ecs, head) {
-                                genome_ref = Some(growth.genome.clone());
-                            }
-
-                            let mut pending_mutation = None;
-
-                            if let Some(genome) = genome_ref {
-                                found_genome = true;
-                                ui.label(
-                                    egui::RichText::new(format!("Genome ID: {}", genome.id.0))
-                                        .strong(),
-                                );
-                                ui.label(format!("Ploidy: {:?}", genome.ploidy));
-                                ui.label(format!("Origin: {:?}", genome.origin));
-
-                                ui.add_space(8.0);
-                                if genome.hox.is_some() {
-                                    ui.label(
-                                        egui::RichText::new(format!("{} This organism's morphology is hardcoded by its Hox Sequence, but its brain is wired by the evolving CPPN.", egui_remixicon::icons::INFORMATION_LINE))
-                                            .color(egui::Color32::LIGHT_BLUE),
-                                    );
-                                }
-                                ui.horizontal(|ui| {
-                                    if ui.button(format!("{} Mutate Add Node", egui_remixicon::icons::DICE_LINE)).clicked() {
-                                        pending_mutation = Some("add_node");
-                                    }
-                                    if ui.button(format!("{} Mutate Add Connection", egui_remixicon::icons::DICE_LINE)).clicked() {
-                                        pending_mutation = Some("add_conn");
-                                    }
-                                    if ui.button(format!("{} Mutate Weights", egui_remixicon::icons::DICE_LINE)).clicked() {
-                                        pending_mutation = Some("mutate_weight");
-                                    }
-                                });
-                                ui.separator();
-
-                                if let Some(hox) = &genome.hox {
-                                    ui.horizontal(|ui| {
-                                        ui.heading("Hox Sequence");
-                                        ui.add_space(8.0);
-                                        let mut color = [hox.color[0], hox.color[1], hox.color[2]];
-                                        ui.color_edit_button_rgb(&mut color);
-                                    });
-                                    egui::ScrollArea::vertical()
-                                        .id_salt("hox_scroll")
-                                        .max_height(250.0)
-                                        .show(ui, |ui| {
-                                            egui::Grid::new("hox_grid")
-                                                .num_columns(2)
-                                                .spacing([8.0, 8.0])
-                                                .show(ui, |ui| {
-                                                    for (i, gene) in hox.genes.iter().enumerate() {
-                                                        ui.group(|ui| {
-                                                            ui.set_min_width(180.0);
-                                                            let mut text = format!("[{}] {:?}", i, gene.segment);
-                                                            if gene.branching_signal > 0.0 {
-                                                                text.push_str(&format!("\nBranching Signal: {:.2}", gene.branching_signal));
-                                                            }
-                                                            if gene.actuation_amplitude > 0.0 {
-                                                                text.push_str(&format!("\nActuation Amp: {:.2}", gene.actuation_amplitude));
-                                                                text.push_str(&format!("\nActuation Phase: {:.2}", gene.actuation_phase));
-                                                            }
-                                                            ui.label(egui::RichText::new(text).size(12.0));
-                                                        });
-                                                        if (i + 1) % 2 == 0 {
-                                                            ui.end_row();
-                                                        }
-                                                    }
-                                                });
-                                        });
-                                } else {
-                                    ui.label("No explicit Hox sequence (CPPN driven).");
-                                }
-
-                                ui.separator();
-                                ui.heading("CPPN Topology");
-                                ui.label(format!("Nodes: {}", genome.brain_cppn.nodes.len()));
-                                ui.label(format!("Connections: {}", genome.brain_cppn.connections.len()));
-
-                                // Draw CPPN Graph
-                                let (response, painter) = ui.allocate_painter(
-                                    egui::vec2(ui.available_width(), 300.0),
-                                    egui::Sense::hover(),
-                                );
-                                let rect = response.rect;
-                                painter.rect_filled(rect, 4.0, egui::Color32::from_black_alpha(50));
-
-                                // Find max layer
-                                let max_layer =
-                                    genome.brain_cppn.nodes.iter().map(|n| n.layer).max().unwrap_or(0);
-
-                                // Group nodes by layer
-                                let mut layer_counts = std::collections::HashMap::new();
-                                let mut node_positions = std::collections::HashMap::new();
-
-                                for n in &genome.brain_cppn.nodes {
-                                    *layer_counts.entry(n.layer).or_insert(0) += 1;
-                                }
-
-                                let mut current_layer_idx = std::collections::HashMap::new();
-
-                                for (i, node) in genome.brain_cppn.nodes.iter().enumerate() {
-                                    let layer_idx =
-                                        *current_layer_idx.entry(node.layer).or_insert(0);
-                                    let count = *layer_counts.get(&node.layer).unwrap();
-
-                                    let x = if max_layer == 0 {
-                                        rect.center().x
-                                    } else {
-                                        rect.left()
-                                            + 20.0
-                                            + (rect.width() - 40.0)
-                                                * (node.layer as f32 / max_layer as f32)
-                                    };
-
-                                    let y = if count == 1 {
-                                        rect.center().y
-                                    } else {
-                                        rect.top()
-                                            + 20.0
-                                            + (rect.height() - 40.0)
-                                                * (layer_idx as f32 / (count - 1) as f32)
-                                    };
-
-                                    node_positions.insert(i, egui::pos2(x, y));
-                                    current_layer_idx.insert(node.layer, layer_idx + 1);
-                                }
-
-                                // Draw edges
-                                for conn in &genome.brain_cppn.connections {
-                                    if !conn.enabled {
-                                        continue;
-                                    }
-                                    if let (Some(&p1), Some(&p2)) = (
-                                        node_positions.get(&conn.source),
-                                        node_positions.get(&conn.target),
-                                    ) {
-                                        let color = if conn.weight > 0.0 {
-                                            egui::Color32::from_rgba_premultiplied(0, 255, 0, 150)
-                                        } else {
-                                            egui::Color32::from_rgba_premultiplied(255, 0, 0, 150)
-                                        };
-                                        let thickness = (conn.weight.abs() * 2.0).clamp(1.0, 5.0);
-                                        painter.line_segment([p1, p2], (thickness, color));
-                                    }
-                                }
-
-                                // Draw nodes
-                                for (i, node) in genome.brain_cppn.nodes.iter().enumerate() {
-                                    if let Some(&pos) = node_positions.get(&i) {
-                                        let fill = if node.layer == 0 {
-                                            egui::Color32::LIGHT_BLUE
-                                        } else if node.layer == max_layer {
-                                            egui::Color32::LIGHT_RED
-                                        } else {
-                                            egui::Color32::GRAY
-                                        };
-                                        painter.circle_filled(pos, 6.0, fill);
-                                        painter.circle_stroke(
-                                            pos,
-                                            6.0,
-                                            (1.0, egui::Color32::WHITE),
-                                        );
-
-                                        // Tooltip for activation/bias
-                                        if response
-                                            .hover_pos()
-                                            .is_some_and(|p| p.distance(pos) < 6.0)
-                                        {
-                                            egui::show_tooltip(
-                                                ctx,
-                                                ui.layer_id(),
-                                                ui.id().with("tooltip"),
-                                                |ui| {
-                                                    let is_input = node.layer == 0;
-                                                    let is_output = node.layer == max_layer;
-                                                    let label = if is_input {
-                                                        match i {
-                                                            0 => "Input: Source Node",
-                                                            1 => "Input: Target Node",
-                                                            _ => "Input: Hidden/Recurrent",
-                                                        }
-                                                    } else if is_output {
-                                                        match i {
-                                                            2 => "Output: Synapse Weight",
-                                                            3 => "Output: Node Bias",
-                                                            4 => "Output: Time Constant",
-                                                            _ => "Output",
-                                                        }
-                                                    } else {
-                                                        "Hidden Node"
-                                                    };
-
-                                                    ui.label(egui::RichText::new(label).strong());
-                                                    ui.label(format!("Node ID: {}", i));
-                                                    ui.label(format!("Layer: {}", node.layer));
-                                                    ui.label(format!(
-                                                        "Activation: {:?}",
-                                                        node.activation
-                                                    ));
-                                                    ui.label(format!("Bias: {:.2}", node.bias));
-                                                },
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-
-                            if let Ok(brain) = brain_q.get(&world.ecs, head) {
-                                ui.add_space(10.0);
-                                ui.separator();
-                                ui.heading("CTRNN Topology (Live Brain)");
-                                ui.label(format!("Nodes: {}", brain.nodes.len()));
-                                ui.label(format!("Synapses: {}", brain.synapses.len()));
-
-                                let (resp, p) = ui.allocate_painter(egui::vec2(ui.available_width(), 300.0), egui::Sense::hover());
-                                p.rect_filled(resp.rect, 4.0, egui::Color32::from_black_alpha(50));
-
-                                let mut b_pos = std::collections::HashMap::new();
-                                for (i, _node) in brain.nodes.iter().enumerate() {
-                                    let is_in = i < brain.input_count;
-                                    let is_out = i >= brain.nodes.len() - brain.output_count;
-                                    let x = if is_in { resp.rect.left() + 20.0 } else if is_out { resp.rect.right() - 20.0 } else { resp.rect.center().x };
-
-                                    let (idx, total) = if is_in {
-                                        (i, brain.input_count)
-                                    } else if is_out {
-                                        (i - (brain.nodes.len() - brain.output_count), brain.output_count)
-                                    } else {
-                                        let hidden_count = brain.nodes.len() - brain.input_count - brain.output_count;
-                                        (i - brain.input_count, hidden_count)
-                                    };
-
-                                    let y = if total <= 1 {
-                                        resp.rect.center().y
-                                    } else {
-                                        resp.rect.top() + 20.0 + (resp.rect.height() - 40.0) * (idx as f32 / (total - 1) as f32)
-                                    };
-                                    b_pos.insert(i, egui::pos2(x, y));
-                                }
-
-                                for syn in &brain.synapses {
-                                    if let (Some(&p1), Some(&p2)) = (b_pos.get(&(syn.source as usize)), b_pos.get(&(syn.target as usize))) {
-                                        let c = if syn.weight > 0.0 { egui::Color32::from_rgba_premultiplied(0,255,0,100) } else { egui::Color32::from_rgba_premultiplied(255,0,0,100) };
-                                        p.line_segment([p1, p2], ((syn.weight.abs() * 2.0).clamp(1.0, 5.0), c));
-                                    }
-                                }
-
-                                for (i, node) in brain.nodes.iter().enumerate() {
-                                    if let Some(&pos) = b_pos.get(&i) {
-                                        let act = brain::Brain::apply_activation(node.state + node.bias, node.activation);
-                                        let intensity = ((act + 1.0) / 2.0).clamp(0.0, 1.0) * 255.0;
-                                        p.circle_filled(pos, 8.0, egui::Color32::from_rgb(intensity as u8, intensity as u8, 255));
-
-                                        if resp.hover_pos().is_some_and(|h| h.distance(pos) < 8.0) {
-                                            egui::show_tooltip(ctx, ui.layer_id(), ui.id().with(format!("brain_tt_{}", i)), |ui| {
-                                                let is_in = i < brain.input_count;
-                                                let is_out = i >= brain.nodes.len() - brain.output_count;
-                                                let node_name = if is_in {
-                                                    match i {
-                                                        0 => "Olfaction".to_string(),
-                                                        1 => "Signals".to_string(),
-                                                        2 => "Hazards".to_string(),
-                                                        3 => "Energy".to_string(),
-                                                        4 => "Age".to_string(),
-                                                        5 => "Vision Left".to_string(),
-                                                        6 => "Vision Center".to_string(),
-                                                        7 => "Vision Right".to_string(),
-                                                        8 => "Pacemaker".to_string(),
-                                                        _ => format!("Input {}", i),
-                                                    }
-                                                } else if is_out {
-                                                    format!("Effector {}", i - (brain.nodes.len() - brain.output_count))
-                                                } else {
-                                                    format!("Hidden {}", i - brain.input_count)
-                                                };
-
-                                                ui.label(egui::RichText::new(node_name).strong());
-                                                ui.label(format!("State: {:.2}", node.state));
-                                                ui.label(format!("Activation: {:.2}", act));
-                                                ui.label(format!("Bias: {:.2}", node.bias));
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-
-
-                            // Apply pending mutation
-                            if let Some(action) = pending_mutation {
-                                drop(repro_q);
-                                drop(growth_q);
-                                drop(spring_q);
-                                drop(brain_q);
-
-                                let mut repro_mut =
-                                    world.ecs.query::<&mut reproduction::ReproductionStrategy>();
-                                let mut growth_mut =
-                                    world.ecs.query::<&mut organisms::GrowthState>();
-
-                                if let Ok(mut r) = repro_mut.get_mut(&mut world.ecs, head) {
-                                    let mut next_innov = r.genome.brain_cppn.connections.len() * 100;
-                                    match action {
-                                        "add_node" => r.genome.brain_cppn.mutate_add_node(&mut next_innov),
-                                        "add_conn" => {
-                                            r.genome.brain_cppn.mutate_add_connection(&mut next_innov)
-                                        }
-                                        "mutate_weight" => r.genome.brain_cppn.mutate_weight(),
-                                        _ => {}
-                                    }
-                                } else if let Ok(mut g) = growth_mut.get_mut(&mut world.ecs, head) {
-                                    let mut next_innov = g.genome.brain_cppn.connections.len() * 100;
-                                    match action {
-                                        "add_node" => g.genome.brain_cppn.mutate_add_node(&mut next_innov),
-                                        "add_conn" => {
-                                            g.genome.brain_cppn.mutate_add_connection(&mut next_innov)
-                                        }
-                                        "mutate_weight" => g.genome.brain_cppn.mutate_weight(),
-                                        _ => {}
-                                    }
-                                }
-                            }
-                        }
-
-                        if !found_genome {
-                            ui.label("Selected entity has no Genome component.");
-                        }
-                    } else {
-                        ui.label(
-                            egui::RichText::new("Select an organism's head to view its genome.")
-                                .italics(),
-                        );
-                    }
-                }
-                SidebarTab::Analytics => {
-                    ui.heading(format!("{} Analytics", egui_remixicon::icons::LINE_CHART_LINE));
-                    ui.separator();
-                    if let Some(metrics) = world.ecs.get_resource::<analytics::MetricsState>() {
-                        ui.label(egui::RichText::new("Compute Profiling").strong());
-                        ui.label(egui::RichText::new("(CPU-side estimate)").italics().small());
-
-                        egui::Frame::none()
-                            .fill(egui::Color32::from_black_alpha(20))
-                            .inner_margin(8.0)
-                            .rounding(4.0)
-                            .show(ui, |ui| {
-                                for pass in &metrics.compute_profiles {
-                                    ui.horizontal(|ui| {
-                                        ui.label(&pass.name);
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                ui.label(
-                                                    egui::RichText::new(format!(
-                                                        "{:.2} ms",
-                                                        pass.duration_ms
-                                                    ))
-                                                    .monospace(),
-                                                );
-                                            },
-                                        );
-                                    });
-                                }
-                            });
-
-                        ui.add_space(16.0);
-                        ui.label(egui::RichText::new("Global Simulation Metrics").strong());
-                        ui.label(format!("Total Entities: {}", world.ecs.entities().len()));
-
-                        let avg_fps = metrics.smoothed_fps;
-                        let avg_frame_time = if avg_fps > 0.0 { 1000.0 / avg_fps } else { 0.0 };
-                        // To accurately get max frame time we'd need to look at fps_history
-                        // For now we just use the smoothed frame time
-                        ui.label(format!("Avg Frame Time: {:.1} ms", avg_frame_time));
-                        ui.label("Target TPS: 60");
-
-                        let ticks = (metrics.sim_time / 0.016).round() as u64;
-                        ui.label(format!("Ticks Elapsed: {}", ticks));
-
-                        ui.label(format!("Smoothed FPS: {:.1}", avg_fps));
-                    } else {
-                        ui.label("Analytics data not available.");
-                    }
-                }
-                SidebarTab::Sandbox => {
-                    ui.heading(format!("{} Sandbox & Presets", egui_remixicon::icons::TOOLS_LINE));
-                    ui.separator();
-
-                    egui::CollapsingHeader::new("Entity Presets")
-                        .default_open(true)
-                        .show(ui, |ui| {
-                            ui.label(egui::RichText::new("Click to spawn under camera.").small());
-                            ui.add_space(8.0);
-                            for preset in organisms::sandbox::PresetDefinition::standard_presets() {
-                                if ui.button(&preset.name).clicked() {
-                                    actions.push(MenuAction::SpawnPreset(preset.name.clone()));
-                                }
-                            }
-
-                            ui.separator();
-                            if ui.button(format!("{} Re-seed Ecosystem", egui_remixicon::icons::SEEDLING_LINE)).clicked() {
-                                actions.push(MenuAction::ReseedEcosystem);
-                            }
-                        });
-
-                    ui.add_space(10.0);
-
-                    egui::CollapsingHeader::new("Structure Generator")
-                        .default_open(true)
-                        .show(ui, |ui| {
-                            ui.label(egui::RichText::new("Procedural hex-mesh builder.").small());
-                            ui.add_space(8.0);
-
-                            // Temporary UI state for the builder parameters
-                            let id = egui::Id::new("hex_mesh_builder_state");
-                            let mut cols = ui.data_mut(|d| d.get_temp::<usize>(id).unwrap_or(5));
-                            let mut rows = ui.data_mut(|d| d.get_temp::<usize>(id.with("rows")).unwrap_or(5));
-                            let mut spacing = ui.data_mut(|d| d.get_temp::<f32>(id.with("spacing")).unwrap_or(20.0));
-                            let mut stiffness = ui.data_mut(|d| d.get_temp::<f32>(id.with("stiffness")).unwrap_or(20.0));
-                            let mut is_fixed = ui.data_mut(|d| d.get_temp::<bool>(id.with("fixed")).unwrap_or(true));
-
-                            ui.add(egui::Slider::new(&mut cols, 1..=20).text("Columns"));
-                            ui.add(egui::Slider::new(&mut rows, 1..=20).text("Rows"));
-                            ui.add(egui::Slider::new(&mut spacing, 10.0..=50.0).text("Spacing"));
-                            ui.add(egui::Slider::new(&mut stiffness, 1.0..=100.0).text("Stiffness"));
-                            ui.checkbox(&mut is_fixed, "Fixed (Anchored)");
-
-                            ui.data_mut(|d| d.insert_temp(id, cols));
-                            ui.data_mut(|d| d.insert_temp(id.with("rows"), rows));
-                            ui.data_mut(|d| d.insert_temp(id.with("spacing"), spacing));
-                            ui.data_mut(|d| d.insert_temp(id.with("stiffness"), stiffness));
-                            ui.data_mut(|d| d.insert_temp(id.with("fixed"), is_fixed));
-
-                            ui.add_space(8.0);
-                            if ui.button("Generate Test Mesh").clicked() {
-                                actions.push(MenuAction::GenerateHexMesh {
-                                    cols,
-                                    rows,
-                                    spacing,
-                                    stiffness,
-                                    is_fixed,
-                                });
-                            }
-                        });
-                }
-                SidebarTab::Tuning => {
-                    ui.heading(format!("{} Physics Tuning", egui_remixicon::icons::SETTINGS_4_LINE));
-                    ui.separator();
-                    if let Some(mut phys) = world.ecs.get_resource_mut::<physics::PhysicsConfig>() {
-                        egui::Grid::new("tuning_grid").num_columns(2).show(ui, |ui| {
-                            ui.label("Substeps");
-                            ui.add(egui::Slider::new(&mut phys.substep_count, 1..=10));
-                            ui.end_row();
-
-                            ui.label("Dampening");
-                            ui.add(egui::Slider::new(&mut phys.dampening, 0.8..=1.0));
-                            ui.end_row();
-
-                            ui.label("Centering Force");
-                            ui.add(egui::Slider::new(&mut phys.centering_force, 0.0..=10.0));
-                            ui.end_row();
-
-                            ui.label("Gravity");
-                            ui.add(egui::Slider::new(&mut phys.gravity, -20.0..=20.0));
-                            ui.end_row();
-
-                            ui.label("Collision Force");
-                            ui.add(egui::Slider::new(&mut phys.collision_force, 0.0..=5.0));
-                            ui.end_row();
-
-                            ui.label("Repel Force");
-                            ui.add(egui::Slider::new(&mut phys.repel_force, 0.0..=5.0));
-                            ui.end_row();
-
-                            ui.label("Links Force");
-                            ui.add(egui::Slider::new(&mut phys.links_force, 0.0..=5.0));
-                            ui.end_row();
-
-                            ui.label("Wall Force");
-                            ui.add(egui::Slider::new(&mut phys.wall_force, 0.0..=5.0));
-                            ui.end_row();
-
-                            ui.label("Bone Thickness");
-                            ui.add(egui::Slider::new(bone_line_thickness, 1.0..=10.0));
-                            ui.end_row();
-
-                            ui.label("Skin Thickness");
-                            ui.add(egui::Slider::new(skin_thickness, 0.5..=20.0));
-                            ui.end_row();
-
-                            ui.label("Node Radius");
-                            ui.add(egui::Slider::new(node_radius, 0.5..=10.0));
-                            ui.end_row();
-                        });
-                    } else {
-                        ui.label("Physics resource not found.");
-                    }
-                }
-                SidebarTab::Environment => {
-                    ui.heading(format!("{} Heatmaps & Overlays", egui_remixicon::icons::MAP_PIN_LINE));
-                    ui.separator();
-                    if let Some(mut heatmap_state) = world.ecs.get_resource_mut::<HeatmapState>() {
-                        ui.label("Select Active Heatmap:");
-                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::None, "None");
-                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::Glucose, "Glucose (Splatted)");
-                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::ATP, "ATP (Splatted)");
-                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::Pheromones, "Pheromones (Grid)");
-                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::EnergyDensity, "Energy Density (Grid)");
-                        if heatmap_state.active != ActiveHeatmap::None {
-                            ui.add_space(16.0);
-                            ui.heading("Legend");
-                            ui.label(format!("Min: {:.2}", heatmap_state.min_val));
-                            ui.label(format!("Max: {:.2}", heatmap_state.max_val));
-                            // Draw a basic gradient rect for the colormap
-                            let rect = ui.allocate_space(egui::vec2(ui.available_width(), 20.0)).1;
-                            if ui.is_rect_visible(rect) {
-                                ui.painter().rect_filled(rect, 4.0, egui::Color32::from_rgb(100, 100, 200));
-                                let galley = ui.painter().layout_no_wrap(
-                                    "Viridis Gradient".to_owned(),
-                                    egui::FontId::proportional(14.0),
-                                    egui::Color32::WHITE,
-                                );
-                                let text_pos = rect.center() - galley.size() / 2.0;
-                                ui.painter().galley(text_pos, galley, egui::Color32::WHITE);
-                            }
-                        }
-                    }
-                }
-                SidebarTab::Ecology => {
-                    ui.heading(format!("{} Ecology & Environment", egui_remixicon::icons::EARTH_LINE));
-                    ui.separator();
-                    ui.label("Global Sunlight: 100%");
-                    ui.label("Ambient CO2: 400 ppm");
-                    ui.label("Soil Fertility: High");
-                    ui.label("Temperature: 22°C");
-                    ui.add_space(16.0);
-
-                    // Heatmap Overlay Controls
-                    ui.heading("Field Analytics");
-                    ui.label("Toggle specialized biological field overlays:");
-                    ui.add_space(8.0);
-                    let mut heatmap_state = world.ecs.get_resource_mut::<HeatmapState>().unwrap();
-
-                    ui.horizontal(|ui| {
-                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::None, "None");
-                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::Pheromones, "Pheromones");
-                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::EnergyDensity, "Energy Density");
-                    });
-                    ui.horizontal(|ui| {
-                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::O2, "O2");
-                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::CO2, "CO2");
-                    });
-                    ui.horizontal(|ui| {
-                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::ATP, "ATP Biomass");
-                        ui.radio_value(&mut heatmap_state.active, ActiveHeatmap::Glucose, "Glucose Biomass");
-                    });
-
-                    if heatmap_state.active != ActiveHeatmap::None {
-                        ui.add_space(8.0);
-                        egui::ComboBox::from_label("Colormap")
-                            .selected_text(match heatmap_state.colormap {
-                                0 => "Viridis",
-                                1 => "Magma",
-                                2 => "Plasma",
-                                3 => "Inferno",
-                                4 => "Turbo",
-                                _ => "Unknown",
-                            })
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut heatmap_state.colormap, 0, "Viridis");
-                                ui.selectable_value(&mut heatmap_state.colormap, 1, "Magma");
-                                ui.selectable_value(&mut heatmap_state.colormap, 2, "Plasma");
-                                ui.selectable_value(&mut heatmap_state.colormap, 3, "Inferno");
-                                ui.selectable_value(&mut heatmap_state.colormap, 4, "Turbo");
-                            });
-
-                        // Gradient Legend
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            ui.label(format!("{:.1}", heatmap_state.min_val));
-                            // Draw the gradient
-                            let (rect, _response) = ui.allocate_exact_size(
-                                egui::vec2(ui.available_width() - 40.0, 16.0),
-                                egui::Sense::hover(),
-                            );
-                            // Simple multi-stop gradient based on colormap (Viridis approximation)
-                            let (c0, c1, c2, c3, c4) = match heatmap_state.colormap {
-                                // Just a simple approximation for the UI legend
-                                1 => (
-                                    egui::Color32::from_rgb(0, 0, 4),
-                                    egui::Color32::from_rgb(59, 15, 112),
-                                    egui::Color32::from_rgb(140, 41, 129),
-                                    egui::Color32::from_rgb(222, 73, 104),
-                                    egui::Color32::from_rgb(253, 231, 37),
-                                ), // Magma roughly
-                                _ => (
-                                    egui::Color32::from_rgb(68, 1, 84),
-                                    egui::Color32::from_rgb(59, 82, 139),
-                                    egui::Color32::from_rgb(33, 145, 140),
-                                    egui::Color32::from_rgb(94, 201, 98),
-                                    egui::Color32::from_rgb(253, 231, 37),
-                                ), // Viridis roughly
-                            };
-                            let mut mesh = egui::Mesh::default();
-                            let w = rect.width() / 4.0;
-                            for (i, (ca, cb)) in [(c0, c1), (c1, c2), (c2, c3), (c3, c4)].iter().enumerate() {
-                                let x0 = rect.left() + w * (i as f32);
-                                let x1 = x0 + w;
-                                let y0 = rect.top();
-                                let y1 = rect.bottom();
-                                let idx = mesh.vertices.len() as u32;
-                                mesh.vertices.push(egui::epaint::Vertex { pos: egui::pos2(x0, y0), uv: egui::pos2(0.0, 0.0), color: *ca });
-                                mesh.vertices.push(egui::epaint::Vertex { pos: egui::pos2(x1, y0), uv: egui::pos2(0.0, 0.0), color: *cb });
-                                mesh.vertices.push(egui::epaint::Vertex { pos: egui::pos2(x1, y1), uv: egui::pos2(0.0, 0.0), color: *cb });
-                                mesh.vertices.push(egui::epaint::Vertex { pos: egui::pos2(x0, y1), uv: egui::pos2(0.0, 0.0), color: *ca });
-                                mesh.indices.extend_from_slice(&[idx, idx+1, idx+2, idx, idx+2, idx+3]);
-                            }
-                            ui.painter().add(egui::Shape::mesh(mesh));
-                            ui.label(format!("{:.1}", heatmap_state.max_val));
-                        });
-                    }
-                    ui.add_space(16.0);
-                    ui.heading("Catastrophes");
-                    ui.label("Trigger a localized spatial hazard to test organism resilience.");
-                    if ui.button(format!("{} Spawn Local Hazard", egui_remixicon::icons::ERROR_WARNING_LINE)).clicked() {
-                        actions.push(MenuAction::SpawnManualHazard);
-                    }
-                }
-                SidebarTab::Settings => {
-                    ui.heading(format!("{} Settings", egui_remixicon::icons::SETTINGS_3_LINE));
-                    ui.separator();
-                    ui.label("Application Settings");
-                    ui.add_space(10.0);
-                    // Add some dummy settings for now
-                    let mut dummy_vsync = true;
-                    ui.checkbox(&mut dummy_vsync, "VSync Enabled");
-                    let mut dummy_volume = 0.5;
-                    ui.add(egui::Slider::new(&mut dummy_volume, 0.0..=1.0).text("Master Volume"));
-                    ui.add_space(10.0);
-                    if ui.button("Reset Settings").clicked() {
-                        // Reset
-                    }
-                }
-            }
-            });
-        });
-
-    // ── Status bar (bottom strip) ──────────────────────────────────────────
-    egui::TopBottomPanel::bottom("status_bar")
-        .exact_height(24.0)
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let entity_count = world.ecs.entities().len();
-                let fps = world
-                    .ecs
-                    .get_resource::<analytics::MetricsState>()
-                    .map(|m| m.smoothed_fps)
-                    .unwrap_or(0.0);
-
-                let sim_time = world
-                    .ecs
-                    .get_resource::<analytics::MetricsState>()
-                    .map(|m| m.sim_time)
-                    .unwrap_or(0.0);
-                let tick_count = (sim_time / 0.016).round() as u64;
-
-                ui.label(format!("{} Tick: {}", egui_remixicon::icons::TIMER_LINE, tick_count));
-                ui.separator();
-                ui.label(format!("{} FPS: {:.0}", egui_remixicon::icons::SPEED_LINE, fps));
-                ui.separator();
-                ui.label(format!("{} Entities: {}", egui_remixicon::icons::BUG_LINE, entity_count));
-                ui.separator();
-                ui.label(if *debug_structural {
-                    format!("{} Mode: Structural", egui_remixicon::icons::EYE_LINE)
-                } else {
-                    format!("{} Mode: SDF Skin", egui_remixicon::icons::EYE_LINE)
-                });
-                ui.separator();
-
-                let food_count = world.ecs.query::<&ecology::FoodPellet>().iter(&world.ecs).count();
-                let mineral_count = world.ecs.query::<&ecology::MineralPellet>().iter(&world.ecs).count();
-                let corpse_count = world.ecs.query::<&ecology::Corpse>().iter(&world.ecs).count();
-
-                let mut prod_count = 0;
-                let mut herb_count = 0;
-                let mut carn_count = 0;
-                let mut omni_count = 0;
-                let mut deco_count = 0;
-
-                for diet in world.ecs.query::<&ecology::Diet>().iter(&world.ecs) {
-                    match diet {
-                        ecology::Diet::Producer => prod_count += 1,
-                        ecology::Diet::Herbivore => herb_count += 1,
-                        ecology::Diet::Carnivore => carn_count += 1,
-                        ecology::Diet::Omnivore => omni_count += 1,
-                        ecology::Diet::Decomposer => deco_count += 1,
-                    }
-                }
-
-                ui.label(format!("{} Food: {}", egui_remixicon::icons::LEAF_LINE, food_count));
-                ui.label(format!("{} Min: {}", egui_remixicon::icons::VIP_DIAMOND_LINE, mineral_count));
-                ui.label(format!("{} Corpse: {}", egui_remixicon::icons::SKULL_LINE, corpse_count));
-                ui.separator();
-                ui.label(format!("{} Prod: {}", egui_remixicon::icons::SEEDLING_LINE, prod_count));
-                ui.label(format!("{} Herb: {}", egui_remixicon::icons::BUG_LINE, herb_count));
-                ui.label(format!("{} Carn: {}", egui_remixicon::icons::ALIENS_LINE, carn_count));
-                ui.label(format!("{} Omni: {}", egui_remixicon::icons::BEAR_SMILE_LINE, omni_count));
-                ui.label(format!("{} Deco: {}", egui_remixicon::icons::RECYCLE_LINE, deco_count));
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    thread_local! {
-                        static SYS: std::cell::RefCell<sysinfo::System> = std::cell::RefCell::new(sysinfo::System::new());
-                    }
-                    let mem_mb = SYS.with(|sys_cell| {
-                        let mut sys = sys_cell.borrow_mut();
-                        if let Ok(pid) = sysinfo::get_current_pid() {
-                            sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
-                            if let Some(process) = sys.process(pid) {
-                                return process.memory() / 1024 / 1024;
-                            }
-                        }
-                        0
-                    });
-                    ui.label(format!("Mem: {}MB", mem_mb));
-                    ui.separator();
-                    ui.label(egui::RichText::new(format!("{} Engine Online", egui_remixicon::icons::SERVER_LINE)).color(egui::Color32::GREEN));
+}
+
+/// Render all active toast notifications as floating cards in the bottom-right.
+fn render_toasts(ctx: &egui::Context, state: &crate::WorkbenchState) {
+    // Show at most 5 toasts stacked upward from bottom-right
+    let visible: Vec<_> = state.notifications.iter().rev().take(5).collect();
+
+    let total = visible.len();
+    for (idx, toast) in visible.into_iter().enumerate() {
+        let offset_y = -(idx as f32) * 60.0 - 10.0;
+        let (bg_color, border_color) = toast_colors(toast.severity);
+
+        egui::Window::new(format!("__toast_{}", idx))
+            .title_bar(false)
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-16.0, offset_y))
+            .fixed_size(egui::vec2(280.0, 44.0))
+            .frame(
+                egui::Frame::none()
+                    .fill(bg_color)
+                    .stroke(egui::Stroke::new(1.5, border_color))
+                    .rounding(egui::Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(10.0, 8.0)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(toast_icon(toast.severity));
+                    ui.label(
+                        egui::RichText::new(&toast.message)
+                            .color(egui::Color32::WHITE)
+                            .size(13.0),
+                    );
                 });
             });
-        });
 
-    // ── Bottom panel — Metrics plots & Event Log ───────────────────────────
-    egui::TopBottomPanel::bottom("bottom_panel")
-        .resizable(true)
-        .default_height(180.0)
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.selectable_value(active_bottom_tab, BottomTab::Metrics, "Metrics Dashboard");
-                ui.selectable_value(active_bottom_tab, BottomTab::EventLog, "Event Log");
-            });
-            ui.separator();
+        let _ = total;
+    }
+}
 
-            match active_bottom_tab {
-                BottomTab::Metrics => {
-                    if let Some(metrics) = world.ecs.get_resource::<analytics::MetricsState>() {
-                        let to_pts =
-                            |hist: &std::collections::VecDeque<[f64; 2]>| -> egui_plot::PlotPoints {
-                                hist.iter().copied().collect()
-                            };
+fn toast_colors(severity: crate::ToastSeverity) -> (egui::Color32, egui::Color32) {
+    use crate::ToastSeverity::*;
+    match severity {
+        Info => (
+            egui::Color32::from_rgba_premultiplied(30, 50, 80, 220),
+            egui::Color32::from_rgb(80, 140, 220),
+        ),
+        Success => (
+            egui::Color32::from_rgba_premultiplied(20, 60, 30, 220),
+            egui::Color32::from_rgb(60, 180, 80),
+        ),
+        Warning => (
+            egui::Color32::from_rgba_premultiplied(70, 55, 20, 220),
+            egui::Color32::from_rgb(220, 160, 40),
+        ),
+        Error => (
+            egui::Color32::from_rgba_premultiplied(80, 20, 20, 220),
+            egui::Color32::from_rgb(220, 60, 60),
+        ),
+    }
+}
 
-                        let prod_pts = to_pts(&metrics.producers_history);
-                        let herb_pts = to_pts(&metrics.herbivores_history);
-                        let carn_pts = to_pts(&metrics.carnivores_history);
-                        let omni_pts = to_pts(&metrics.omnivores_history);
-                        let deco_pts = to_pts(&metrics.decomposers_history);
-                        let food_pts = to_pts(&metrics.food_history);
-                        let min_pts = to_pts(&metrics.minerals_history);
-                        let corp_pts = to_pts(&metrics.corpses_history);
+fn toast_icon(severity: crate::ToastSeverity) -> &'static str {
+    use crate::ToastSeverity::*;
+    match severity {
+        Info => egui_remixicon::icons::INFORMATION_LINE,
+        Success => egui_remixicon::icons::CHECKBOX_CIRCLE_LINE,
+        Warning => egui_remixicon::icons::ALERT_LINE,
+        Error => egui_remixicon::icons::ERROR_WARNING_LINE,
+    }
+}
 
-                        let fps_pts = to_pts(&metrics.fps_history);
-                        let tps_pts = to_pts(&metrics.tps_history);
-                        let mem_pts = to_pts(&metrics.memory_history);
-                        let sun_pts = to_pts(&metrics.sunlight_history);
-                        let o2_pts = to_pts(&metrics.o2_history);
-                        let co2_pts = to_pts(&metrics.co2_history);
-                        let temp_pts = to_pts(&metrics.temp_history);
+/// Spectator mode: automatically switch to the most interesting alive organism.
+fn tick_spectator(
+    ctx: &egui::Context,
+    state: &mut crate::WorkbenchState,
+    world: &mut world::World,
+) {
+    if !state.spectator_mode {
+        return;
+    }
 
-                        ui.columns(2, |cols| {
-                            // Column 1
-                            cols[0].vertical(|ui| {
-                                ui.label("Demographics");
-                                egui_plot::Plot::new("pop_plot")
-                                    .height(120.0)
-                                    .legend(egui_plot::Legend::default())
-                                    .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
-                                    .show(ui, |plot_ui| {
-                                        plot_ui.line(
-                                            egui_plot::Line::new(prod_pts)
-                                                .name("Producers")
-                                                .color(egui::Color32::from_rgb(100, 255, 100)),
-                                        );
-                                        plot_ui.line(
-                                            egui_plot::Line::new(herb_pts)
-                                                .name("Herbivores")
-                                                .color(egui::Color32::from_rgb(200, 255, 150)),
-                                        );
-                                        plot_ui.line(
-                                            egui_plot::Line::new(carn_pts)
-                                                .name("Carnivores")
-                                                .color(egui::Color32::from_rgb(255, 100, 100)),
-                                        );
-                                        plot_ui.line(
-                                            egui_plot::Line::new(omni_pts)
-                                                .name("Omnivores")
-                                                .color(egui::Color32::from_rgb(255, 200, 100)),
-                                        );
-                                        plot_ui.line(
-                                            egui_plot::Line::new(deco_pts)
-                                                .name("Decomposers")
-                                                .color(egui::Color32::from_rgb(200, 150, 200)),
-                                        );
-                                    });
+    let current_time = ctx.input(|i| i.time);
 
-                                ui.add_space(8.0);
+    let is_tracked_dead = state
+        .tracked_entity
+        .is_none_or(|e| world.ecs.get_entity(e).is_none());
 
-                                ui.label("Performance (FPS, TPS, Mem)");
-                                egui_plot::Plot::new("perf_plot")
-                                    .height(120.0)
-                                    .legend(egui_plot::Legend::default())
-                                    .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
-                                    .show(ui, |plot_ui| {
-                                        plot_ui.line(
-                                            egui_plot::Line::new(fps_pts)
-                                                .name("FPS")
-                                                .color(egui::Color32::WHITE),
-                                        );
-                                        plot_ui.line(
-                                            egui_plot::Line::new(tps_pts)
-                                                .name("TPS")
-                                                .color(egui::Color32::LIGHT_GREEN),
-                                        );
-                                        plot_ui.line(
-                                            egui_plot::Line::new(mem_pts)
-                                                .name("Mem (MB)")
-                                                .color(egui::Color32::LIGHT_RED),
-                                        );
-                                    });
-                            });
+    if is_tracked_dead || current_time - state.last_spectator_switch_time > 15.0 {
+        let mut best_entity = None;
+        let mut highest_generation = 0u64;
 
-                            // Column 2
-                            cols[1].vertical(|ui| {
-                                ui.label("Resources");
-                                egui_plot::Plot::new("res_plot")
-                                    .height(120.0)
-                                    .legend(egui_plot::Legend::default())
-                                    .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
-                                    .show(ui, |plot_ui| {
-                                        plot_ui.line(
-                                            egui_plot::Line::new(food_pts)
-                                                .name("Food")
-                                                .color(egui::Color32::from_rgb(150, 255, 255)),
-                                        );
-                                        plot_ui.line(
-                                            egui_plot::Line::new(min_pts)
-                                                .name("Minerals")
-                                                .color(egui::Color32::from_rgb(150, 150, 150)),
-                                        );
-                                        plot_ui.line(
-                                            egui_plot::Line::new(corp_pts)
-                                                .name("Corpses")
-                                                .color(egui::Color32::from_rgb(200, 100, 100)),
-                                        );
-                                    });
+        let mut query = world
+            .ecs
+            .query::<(bevy_ecs::entity::Entity, &organisms::OrganismColor)>();
 
-                                ui.add_space(8.0);
-
-                                ui.label("Environment");
-                                egui_plot::Plot::new("env_plot")
-                                    .height(120.0)
-                                    .legend(egui_plot::Legend::default())
-                                    .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
-                                    .show(ui, |plot_ui| {
-                                        plot_ui.line(
-                                            egui_plot::Line::new(sun_pts)
-                                                .name("Sunlight")
-                                                .color(egui::Color32::YELLOW),
-                                        );
-                                        plot_ui.line(
-                                            egui_plot::Line::new(o2_pts)
-                                                .name("O2")
-                                                .color(egui::Color32::LIGHT_BLUE),
-                                        );
-                                        plot_ui.line(
-                                            egui_plot::Line::new(co2_pts)
-                                                .name("CO2")
-                                                .color(egui::Color32::GRAY),
-                                        );
-                                        plot_ui.line(
-                                            egui_plot::Line::new(temp_pts)
-                                                .name("Temp (°C)")
-                                                .color(egui::Color32::from_rgb(255, 165, 0)),
-                                        );
-                                    });
-                            });
-                        });
-                    } else {
-                        ui.label("Metrics not yet available.");
+        if let Some(tracker) = world.ecs.get_resource::<evolution::LineageTracker>() {
+            for (entity, _) in query.iter(&world.ecs) {
+                if let Some(record) = tracker.get_record(common::EntityId(entity.to_bits())) {
+                    if record.generation >= highest_generation {
+                        highest_generation = record.generation;
+                        best_entity = Some(entity);
                     }
-                }
-                BottomTab::EventLog => {
-                    if let Some(log) = world.ecs.get_resource::<analytics::NarrationLog>() {
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false, false])
-                            .stick_to_bottom(true)
-                            .show(ui, |ui| {
-                                for event in &log.events {
-                                    ui.label(
-                                        egui::RichText::new(&event.description)
-                                            .color(egui::Color32::LIGHT_GRAY)
-                                            .size(13.0),
-                                    );
-                                }
-                            });
-                    } else {
-                        ui.label("Event log not yet available.");
-                    }
-                }
-            }
-        });
-
-    if *spectator_mode {
-        let current_time = ctx.input(|i| i.time);
-
-        let is_tracked_dead = tracked_entity.is_none_or(|e| world.ecs.get_entity(e).is_none());
-
-        if is_tracked_dead || current_time - *last_spectator_switch_time > 15.0 {
-            // Find most "interesting" organism (e.g. oldest alive or highest generation)
-            let mut best_entity = None;
-            let mut highest_generation = 0;
-            let mut query = world
-                .ecs
-                .query::<(bevy_ecs::entity::Entity, &organisms::OrganismColor)>();
-            if let Some(tracker) = world.ecs.get_resource::<evolution::LineageTracker>() {
-                for (entity, _) in query.iter(&world.ecs) {
-                    if let Some(record) = tracker.get_record(common::EntityId(entity.to_bits())) {
-                        if record.generation >= highest_generation {
-                            highest_generation = record.generation;
-                            best_entity = Some(entity);
-                        }
-                    } else if best_entity.is_none() {
-                        best_entity = Some(entity); // fallback
-                    }
-                }
-            }
-
-            if let Some(new_target) = best_entity {
-                if tracked_entity.is_none() || new_target != tracked_entity.unwrap() {
-                    *tracked_entity = Some(new_target);
-                    *last_spectator_switch_time = current_time;
+                } else if best_entity.is_none() {
+                    best_entity = Some(entity);
                 }
             }
         }
+
+        if let Some(new_target) = best_entity {
+            if state.tracked_entity != Some(new_target) {
+                state.tracked_entity = Some(new_target);
+                state.last_spectator_switch_time = current_time;
+            }
+        }
     }
+}
 
-    // ── Central panel (transparent — simulation renders underneath) ────────
-    let central = egui::CentralPanel::default()
-        .frame(
-            egui::Frame::none()
-                .fill(egui::Color32::TRANSPARENT)
-                .inner_margin(8.0)
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(120)))
-                .rounding(4.0),
-        )
-        .show(ctx, |ui| {
-            ui.allocate_response(ui.available_size(), egui::Sense::click_and_drag())
-        });
-
-    let interact_response = central.inner;
-    let zoom_delta = ctx.input(|i| i.zoom_delta());
-    let hover_pos = interact_response.hover_pos();
-
-    let screen_center = interact_response.rect.center();
+/// Render vision cone overlays on the painter layer.
+fn render_vision_cones(
+    ctx: &egui::Context,
+    state: &mut crate::WorkbenchState,
+    world: &mut world::World,
+    viewport_rect: egui::Rect,
+) {
+    let screen_center = viewport_rect.center();
     let ppp = ctx.pixels_per_point();
 
     let to_screen = |pos: common::Vec2| {
         egui::pos2(
-            screen_center.x + (pos.x - camera_pos.x) * camera_zoom / ppp,
-            screen_center.y - (pos.y - camera_pos.y) * camera_zoom / ppp,
+            screen_center.x + (pos.x - state.camera_pos.x) * state.camera_zoom / ppp,
+            screen_center.y - (pos.y - state.camera_pos.y) * state.camera_zoom / ppp,
         )
     };
 
-    // We need get_connected_component earlier for vision cones
-    let mut get_connected_component = |entity: bevy_ecs::entity::Entity| {
-        let mut adj: std::collections::HashMap<
-            bevy_ecs::entity::Entity,
-            Vec<bevy_ecs::entity::Entity>,
-        > = std::collections::HashMap::new();
-        let mut query_springs = world.ecs.query::<&physics::Spring>();
-        for spring in query_springs.iter(&world.ecs) {
-            adj.entry(spring.node_a).or_default().push(spring.node_b);
-            adj.entry(spring.node_b).or_default().push(spring.node_a);
-        }
+    // Build selected component set for contextual filtering
+    let selected_component: Option<std::collections::HashSet<bevy_ecs::entity::Entity>> =
+        if let Some(entity) = state.selected_entity {
+            let mut adj: std::collections::HashMap<
+                bevy_ecs::entity::Entity,
+                Vec<bevy_ecs::entity::Entity>,
+            > = std::collections::HashMap::new();
+            let mut query_springs = world.ecs.query::<&physics::Spring>();
+            for spring in query_springs.iter(&world.ecs) {
+                adj.entry(spring.node_a).or_default().push(spring.node_b);
+                adj.entry(spring.node_b).or_default().push(spring.node_a);
+            }
 
-        let mut queue = std::collections::VecDeque::new();
-        let mut visited = std::collections::HashSet::new();
-        queue.push_back(entity);
-        visited.insert(entity);
-
-        while let Some(curr) = queue.pop_front() {
-            if let Some(neighbors) = adj.get(&curr) {
-                for neighbor in neighbors {
-                    if visited.insert(*neighbor) {
-                        queue.push_back(*neighbor);
+            let mut visited = std::collections::HashSet::new();
+            let mut queue = std::collections::VecDeque::new();
+            queue.push_back(entity);
+            visited.insert(entity);
+            while let Some(curr) = queue.pop_front() {
+                if let Some(neighbors) = adj.get(&curr) {
+                    for &n in neighbors {
+                        if visited.insert(n) {
+                            queue.push_back(n);
+                        }
                     }
                 }
             }
+            Some(visited)
+        } else {
+            None
+        };
+
+    let mut painter = ctx.layer_painter(egui::LayerId::background());
+    painter.set_clip_rect(viewport_rect);
+
+    let mut query = world.ecs.query::<(
+        bevy_ecs::entity::Entity,
+        &physics::ParticleNode,
+        &sensing::HeadVision,
+    )>();
+
+    for (ent, node, vision) in query.iter(&world.ecs) {
+        if let Some(ref comp) = selected_component {
+            if !comp.contains(&ent) {
+                continue;
+            }
         }
-        visited
+
+        let fwd = vision.last_forward;
+        let head_radius = 12.0;
+        let origin_pos = common::Vec2::new(
+            node.position.x + fwd.x * head_radius,
+            node.position.y + fwd.y * head_radius,
+        );
+        let origin = to_screen(origin_pos);
+        let base_angle = fwd.y.atan2(fwd.x);
+        let half_fov = vision.fov / 2.0;
+        let segments = 16;
+
+        let mut points = Vec::with_capacity(segments + 2);
+        points.push(origin);
+        for i in 0..=segments {
+            let t = i as f32 / segments as f32;
+            let angle = base_angle - half_fov + (vision.fov * t);
+            let x = origin_pos.x + angle.cos() * vision.range;
+            let y = origin_pos.y + angle.sin() * vision.range;
+            points.push(to_screen(common::Vec2::new(x, y)));
+        }
+
+        painter.add(egui::Shape::closed_line(
+            points,
+            egui::Stroke::new(
+                2.0,
+                egui::Color32::from_rgba_premultiplied(0, 255, 255, 200),
+            ),
+        ));
+    }
+}
+
+/// World half-extent in simulation units. Must match the hard physics/
+/// diffusion/render bounds (`physics.wgsl`, `simulation.rs`, `render.rs`),
+/// which are all ±1500.
+const WORLD_HALF_EXTENT: f32 = 1500.0;
+
+/// Draws a rectangle outline at the world boundary (±[`WORLD_HALF_EXTENT`])
+/// using the same world→screen transform as the vision-cone overlay, so it
+/// stays put under panning/zooming. Visual only — does not affect physics.
+fn render_world_boundary(
+    ctx: &egui::Context,
+    state: &crate::WorkbenchState,
+    viewport_rect: egui::Rect,
+) {
+    let screen_center = viewport_rect.center();
+    let ppp = ctx.pixels_per_point();
+
+    let to_screen = |pos: common::Vec2| {
+        egui::pos2(
+            screen_center.x + (pos.x - state.camera_pos.x) * state.camera_zoom / ppp,
+            screen_center.y - (pos.y - state.camera_pos.y) * state.camera_zoom / ppp,
+        )
     };
 
-    let selected_component = (*selected_entity).map(&mut get_connected_component);
+    let mut painter = ctx.layer_painter(egui::LayerId::background());
+    painter.set_clip_rect(viewport_rect);
 
-    // Render vision cones if enabled
-    if *show_vision_cones {
-        let mut query = world.ecs.query::<(
-            bevy_ecs::entity::Entity,
-            &physics::ParticleNode,
-            &sensing::HeadVision,
-        )>();
-        let mut painter = ctx.layer_painter(egui::LayerId::background());
-        painter.set_clip_rect(interact_response.rect);
+    let e = WORLD_HALF_EXTENT;
+    let corners = [
+        to_screen(common::Vec2::new(-e, -e)),
+        to_screen(common::Vec2::new(e, -e)),
+        to_screen(common::Vec2::new(e, e)),
+        to_screen(common::Vec2::new(-e, e)),
+    ];
 
-        for (ent, node, vision) in query.iter(&world.ecs) {
-            // Contextual filtering: if an organism is selected, only show its vision cone.
-            if let Some(ref sel_comp) = selected_component {
-                if !sel_comp.contains(&ent) {
-                    continue;
-                }
-            }
-
-            let fwd = vision.last_forward;
-
-            // Offset the cone's origin to the edge of the head
-            let head_radius = 12.0;
-            let origin_pos = common::Vec2::new(
-                node.position.x + fwd.x * head_radius,
-                node.position.y + fwd.y * head_radius,
-            );
-
-            let origin = to_screen(origin_pos);
-
-            // Angle of the forward direction
-            let base_angle = fwd.y.atan2(fwd.x);
-            let half_fov = vision.fov / 2.0;
-
-            // Generate an arc polygon
-            let segments = 16;
-            let mut points = Vec::with_capacity(segments + 2);
-            points.push(origin);
-            for i in 0..=segments {
-                let t = i as f32 / segments as f32;
-                let angle = base_angle - half_fov + (vision.fov * t);
-                let x = origin_pos.x + angle.cos() * vision.range;
-                let y = origin_pos.y + angle.sin() * vision.range;
-                points.push(to_screen(common::Vec2::new(x, y)));
-            }
-
-            painter.add(egui::Shape::closed_line(
-                points,
-                egui::Stroke::new(
-                    2.0,
-                    egui::Color32::from_rgba_premultiplied(0, 255, 255, 255),
-                ),
-            ));
-        }
-    }
-
-    (
-        CanvasInteraction {
-            rect: interact_response.rect,
-            clicked: interact_response.clicked(),
-            click_pos: interact_response.interact_pointer_pos(),
-            hover_pos,
-            drag_delta: interact_response.drag_delta(),
-            zoom_delta,
-        },
-        actions,
-    )
+    painter.add(egui::Shape::closed_line(
+        corners.to_vec(),
+        egui::Stroke::new(
+            2.0,
+            egui::Color32::from_rgba_premultiplied(255, 200, 0, 220),
+        ),
+    ));
 }

@@ -26,6 +26,25 @@ pub enum Diet {
     Decomposer,
 }
 
+impl Diet {
+    /// The one canonical skin color for this diet, used everywhere an
+    /// organism is spawned (sandbox tool and simulation-start seeding) so
+    /// the same diet always looks the same regardless of spawn path.
+    ///
+    /// Values are linear-space RGB, gamma-decoded from the sRGB hex swatch
+    /// noted in each comment (matching the convention already used by
+    /// existing color literals in this codebase, e.g. `x_linear = (x_srgb/255)^2.2`).
+    pub fn standard_color(&self) -> [f32; 3] {
+        match self {
+            Diet::Producer => [0.070, 0.437, 0.078],   // #4CAF50 green
+            Diet::Herbivore => [0.065, 0.591, 0.776],  // #48CAE4 blue
+            Diet::Carnivore => [0.871, 0.089, 0.089],  // #F05454 red
+            Diet::Omnivore => [1.0, 0.482, 0.0],       // #FFB703 amber
+            Diet::Decomposer => [0.334, 0.109, 0.789], // #9B5DE5 purple
+        }
+    }
+}
+
 /// Identifies special ecological traits of an organism.
 #[derive(Component, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EcologicalCategory {
@@ -124,6 +143,59 @@ pub fn food_spawner_system(
     }
 }
 
+/// Grid cell size for the broad-phase indices built each tick. Only affects
+/// bucket occupancy, not correctness — final eat/predation checks still do
+/// an exact distance comparison.
+const FORAGING_CELL_SIZE: f32 = 50.0;
+
+/// Spatial index over environmental resource pellets (food/minerals/
+/// corpses), rebuilt once per tick by [`build_resource_grids_system`] and
+/// shared by `sensing::sensing_system` and [`foraging_system`] so neither
+/// has to independently rebuild the same 3 grids from the same underlying
+/// data every tick.
+#[derive(Resource)]
+pub struct ResourceSpatialGrids {
+    /// Broad-phase index over `FoodPellet` positions.
+    pub food: spatial::UniformGrid,
+    /// Broad-phase index over `MineralPellet` positions.
+    pub minerals: spatial::UniformGrid,
+    /// Broad-phase index over `Corpse` positions.
+    pub corpses: spatial::UniformGrid,
+}
+
+impl ResourceSpatialGrids {
+    /// Creates empty grids with the given cell size.
+    pub fn new(cell_size: f32) -> Self {
+        Self {
+            food: spatial::UniformGrid::new(cell_size).unwrap(),
+            minerals: spatial::UniformGrid::new(cell_size).unwrap(),
+            corpses: spatial::UniformGrid::new(cell_size).unwrap(),
+        }
+    }
+}
+
+/// Rebuilds [`ResourceSpatialGrids`] from this tick's pellet positions. Must
+/// run before both `sensing::sensing_system` and [`foraging_system`].
+pub fn build_resource_grids_system(
+    mut grids: ResMut<ResourceSpatialGrids>,
+    food_query: Query<(Entity, &FoodPellet)>,
+    mineral_query: Query<(Entity, &MineralPellet)>,
+    corpse_query: Query<(Entity, &Corpse)>,
+) {
+    grids.food.clear();
+    for (entity, food) in food_query.iter() {
+        let _ = grids.food.insert(entity, food.position);
+    }
+    grids.minerals.clear();
+    for (entity, mineral) in mineral_query.iter() {
+        let _ = grids.minerals.insert(entity, mineral.position);
+    }
+    grids.corpses.clear();
+    for (entity, corpse) in corpse_query.iter() {
+        let _ = grids.corpses.insert(entity, corpse.position);
+    }
+}
+
 /// # Predation and Biomass Transfer System
 ///
 /// ## 1. What Happens
@@ -138,9 +210,9 @@ pub fn food_spawner_system(
 /// for speed, armor, and vision.
 ///
 /// ## 3. How It Happens
-/// The system uses an $O(N^2)$ distance check (optimized by chunking in Phase 4) to find collisions
-/// between entities. When the distance between a predator node $P_1$ and prey node $P_2$ is less than
-/// the threshold $R$:
+/// Broad-phase candidates come from a per-tick spatial grid keyed on each organism's core-entity
+/// position (replacing the previous full $O(N^2)$ pairwise scan); the exact minimum inter-segment
+/// distance check between a predator node $P_1$ and prey node $P_2$ still gates the interaction:
 ///
 /// $$ | \vec{P_1} - \vec{P_2} | \le R $$
 ///
@@ -160,6 +232,7 @@ pub fn foraging_system(
     food_query: Query<(Entity, &FoodPellet)>,
     mineral_query: Query<(Entity, &MineralPellet)>,
     corpse_query: Query<(Entity, &Corpse)>,
+    resource_grids: Res<ResourceSpatialGrids>,
 ) {
     // Collect all nodes per organism to allow eating any segment
     let mut organism_nodes: std::collections::HashMap<u32, Vec<common::Vec2>> =
@@ -171,56 +244,90 @@ pub fn foraging_system(
             .push(node.position);
     }
 
-    // Phase 1: Organism vs Organism predation
+    // Phase 1: Organism vs Organism predation.
+    // Broad-phase via spatial grid (keyed on each organism's core-entity
+    // position) replaces the previous O(N^2) `iter_combinations_mut` scan;
+    // the exact minimum inter-segment distance check below is unchanged.
     let organism_eat_radius = 40.0;
-    let mut combos = organism_query.iter_combinations_mut();
-    while let Some([(e1, mut chem1, diet1, node1), (e2, mut chem2, diet2, node2)]) =
-        combos.fetch_next()
-    {
-        if chem1.atp <= 0.0 || chem2.atp <= 0.0 {
-            continue;
-        }
+    // Generous margin over the eat radius to account for body extent beyond
+    // the core node before the exact per-segment distance check narrows it.
+    let broadphase_radius = organism_eat_radius + 150.0;
 
-        let mut dist = node1.position.distance(node2.position);
+    let mut core_entities: Vec<(Entity, common::Vec2)> = Vec::new();
+    let mut organism_grid = spatial::UniformGrid::new(FORAGING_CELL_SIZE).unwrap();
+    for (entity, _chem, _diet, node) in organism_query.iter() {
+        core_entities.push((entity, node.position));
+        let _ = organism_grid.insert(entity, node.position);
+    }
 
-        if let Some(nodes2) = organism_nodes.get(&e2.index()) {
-            for pos in nodes2 {
-                dist = dist.min(node1.position.distance(*pos));
+    let mut processed_pairs: std::collections::HashSet<(Entity, Entity)> =
+        std::collections::HashSet::new();
+
+    for (e1, p1) in &core_entities {
+        for e2 in organism_grid.query_radius(*p1, broadphase_radius) {
+            if e2 == *e1 {
+                continue;
             }
-        }
-        if let Some(nodes1) = organism_nodes.get(&e1.index()) {
-            for pos in nodes1 {
-                dist = dist.min(node2.position.distance(*pos));
+            let pair_key = if e1.index() < e2.index() {
+                (*e1, e2)
+            } else {
+                (e2, *e1)
+            };
+            if !processed_pairs.insert(pair_key) {
+                continue;
             }
-        }
 
-        if dist <= organism_eat_radius {
-            let one_eats_two = matches!(
-                (diet1, diet2),
-                (Diet::Carnivore, Diet::Herbivore | Diet::Omnivore)
-                    | (Diet::Herbivore | Diet::Omnivore, Diet::Producer)
-            );
-            let two_eats_one = matches!(
-                (diet2, diet1),
-                (Diet::Carnivore, Diet::Herbivore | Diet::Omnivore)
-                    | (Diet::Herbivore | Diet::Omnivore, Diet::Producer)
-            );
+            let Ok([(_, mut chem1, diet1, node1), (_, mut chem2, diet2, node2)]) =
+                organism_query.get_many_mut([*e1, e2])
+            else {
+                continue;
+            };
 
-            if one_eats_two {
-                chem1.glucose =
-                    (chem1.glucose + chem2.max_glucose + chem2.max_atp).min(chem1.max_glucose);
-                chem2.glucose = 0.0;
-                chem2.atp = 0.0;
-                if let Some(mut entity_cmds) = commands.get_entity(e2) {
-                    entity_cmds.insert(Eaten);
+            if chem1.atp <= 0.0 || chem2.atp <= 0.0 {
+                continue;
+            }
+
+            let mut dist = node1.position.distance(node2.position);
+
+            if let Some(nodes2) = organism_nodes.get(&e2.index()) {
+                for pos in nodes2 {
+                    dist = dist.min(node1.position.distance(*pos));
                 }
-            } else if two_eats_one {
-                chem2.glucose =
-                    (chem2.glucose + chem1.max_glucose + chem1.max_atp).min(chem2.max_glucose);
-                chem1.glucose = 0.0;
-                chem1.atp = 0.0;
-                if let Some(mut entity_cmds) = commands.get_entity(e1) {
-                    entity_cmds.insert(Eaten);
+            }
+            if let Some(nodes1) = organism_nodes.get(&e1.index()) {
+                for pos in nodes1 {
+                    dist = dist.min(node2.position.distance(*pos));
+                }
+            }
+
+            if dist <= organism_eat_radius {
+                let one_eats_two = matches!(
+                    (diet1, diet2),
+                    (Diet::Carnivore, Diet::Herbivore | Diet::Omnivore)
+                        | (Diet::Herbivore | Diet::Omnivore, Diet::Producer)
+                );
+                let two_eats_one = matches!(
+                    (diet2, diet1),
+                    (Diet::Carnivore, Diet::Herbivore | Diet::Omnivore)
+                        | (Diet::Herbivore | Diet::Omnivore, Diet::Producer)
+                );
+
+                if one_eats_two {
+                    chem1.glucose =
+                        (chem1.glucose + chem2.max_glucose + chem2.max_atp).min(chem1.max_glucose);
+                    chem2.glucose = 0.0;
+                    chem2.atp = 0.0;
+                    if let Some(mut entity_cmds) = commands.get_entity(e2) {
+                        entity_cmds.insert(Eaten);
+                    }
+                } else if two_eats_one {
+                    chem2.glucose =
+                        (chem2.glucose + chem1.max_glucose + chem1.max_atp).min(chem2.max_glucose);
+                    chem1.glucose = 0.0;
+                    chem1.atp = 0.0;
+                    if let Some(mut entity_cmds) = commands.get_entity(*e1) {
+                        entity_cmds.insert(Eaten);
+                    }
                 }
             }
         }
@@ -237,8 +344,11 @@ pub fn foraging_system(
         match diet {
             Diet::Producer => {
                 // Producers eat Minerals for structural growth
-                for (mineral_entity, mineral) in mineral_query.iter() {
-                    if node.position.distance(mineral.position) <= eat_radius {
+                for mineral_entity in resource_grids
+                    .minerals
+                    .query_radius(node.position, eat_radius)
+                {
+                    if let Ok((_, mineral)) = mineral_query.get(mineral_entity) {
                         chem.glucose = (chem.glucose + mineral.energy_value).min(chem.max_glucose);
                         if let Some(mut e) = commands.get_entity(mineral_entity) {
                             e.despawn();
@@ -249,8 +359,8 @@ pub fn foraging_system(
             }
             Diet::Herbivore | Diet::Omnivore => {
                 // Herbivores eat FoodPellets
-                for (food_entity, food) in food_query.iter() {
-                    if node.position.distance(food.position) <= eat_radius {
+                for food_entity in resource_grids.food.query_radius(node.position, eat_radius) {
+                    if let Ok((_, food)) = food_query.get(food_entity) {
                         chem.glucose = (chem.glucose + food.energy_value).min(chem.max_glucose);
                         if let Some(mut e) = commands.get_entity(food_entity) {
                             e.despawn();
@@ -261,8 +371,11 @@ pub fn foraging_system(
             }
             Diet::Decomposer => {
                 // Decomposers eat Corpses and spawn Minerals
-                for (corpse_entity, corpse) in corpse_query.iter() {
-                    if node.position.distance(corpse.position) <= eat_radius {
+                for corpse_entity in resource_grids
+                    .corpses
+                    .query_radius(node.position, eat_radius)
+                {
+                    if let Ok((_, corpse)) = corpse_query.get(corpse_entity) {
                         chem.glucose = (chem.glucose + corpse.energy_value).min(chem.max_glucose);
                         if let Some(mut e) = commands.get_entity(corpse_entity) {
                             e.despawn();
@@ -330,9 +443,12 @@ pub fn photosynthesis_system(
             let actual_co2 = atmosphere.co2.min(co2_needed);
             atmosphere.co2 -= actual_co2;
 
-            // 1 CO2 -> 1 Glucose + 1 O2 (simplified)
+            // 1 CO2 -> 1 Glucose + 1 O2 (simplified). O2 output feeds back
+            // into the shared atmosphere pool as well as the organism's own
+            // tank, closing the loop with metabolism_system's O2 draw.
             chem.glucose = (chem.glucose + actual_co2).min(chem.max_glucose);
             chem.o2 = (chem.o2 + actual_co2).min(chem.max_o2);
+            atmosphere.o2 += actual_co2;
         }
     }
 }

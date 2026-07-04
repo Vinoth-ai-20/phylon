@@ -422,6 +422,11 @@ pub fn producer_growth_system(
     // Threshold to grow a new node
     let growth_cost = 5000.0;
     let branch_cost_atp = 2000.0;
+    // Ceiling on structural mass — without this a producer's own growth
+    // accelerates its future CO2 demand indefinitely (mass feeds directly
+    // into `co2_needed = 4.0 * mass * sunlight` in photosynthesis_system),
+    // outrunning any amount the atmosphere can replenish.
+    let max_producer_mass = 300.0;
 
     // We need adjacency map to find all nodes of an organism starting from head.
     let mut adj: std::collections::HashMap<Entity, Vec<Entity>> = std::collections::HashMap::new();
@@ -436,6 +441,7 @@ pub fn producer_growth_system(
             && chem.glucose >= growth_cost
             && chem.atp > branch_cost_atp + 500.0
             && atmosphere.co2 > 50.0
+            && metabolism.mass < max_producer_mass
         {
             chem.glucose -= growth_cost;
             chem.atp -= branch_cost_atp;

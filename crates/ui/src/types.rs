@@ -149,6 +149,8 @@ pub enum MenuAction {
     ShowDocumentation,
     /// Show the About Phylon dialog.
     ShowAbout,
+    /// Show keybinds.
+    ShowKeybinds,
     /// Zoom camera in.
     CameraZoomIn,
     /// Zoom camera out.
@@ -177,6 +179,59 @@ pub enum MenuAction {
     GrabSelection,
     /// Spawn a localized catastrophe hazard.
     SpawnManualHazard,
+
+    // Viewport & Shortcut extensions
+    /// Toggle between play and pause states.
+    TogglePlayPause,
+    /// Increase simulation speed by one step.
+    SetSpeedUp,
+    /// Decrease simulation speed by one step.
+    SetSpeedDown,
+    /// Toggle the Metrics panel visibility.
+    ToggleMetrics,
+    /// Toggle the Event Log panel visibility.
+    ToggleLog,
+    /// Toggle the Sidebar panel visibility.
+    ToggleSidebar,
+    /// Pan/zoom the viewport to the selected entity.
+    FocusSelection,
+    /// Open an import dialog for genome files.
+    ImportGenome,
+    /// Open an export dialog for the selected organism's genome.
+    ExportGenome,
+
+    // Overlay — canonical command routed through HeatmapState
+    /// Set the active simulation overlay (updates HeatmapState ECS resource).
+    SetOverlay(ActiveHeatmap),
+    /// Set the heatmap colormap variant (updates HeatmapState ECS resource).
+    SetColormap(u32),
+
+    // Entity interaction
+    /// Kill (despawn) a specific entity.
+    KillEntity(bevy_ecs::entity::Entity),
+    /// Track (follow camera) a specific entity.
+    TrackEntity(bevy_ecs::entity::Entity),
+    /// Select a specific entity.
+    SelectEntity(bevy_ecs::entity::Entity),
+    /// Copy an entity's ID to clipboard.
+    CopyEntityId(bevy_ecs::entity::Entity),
+
+    // Selection by diet
+    /// Select first organism matching a given diet type.
+    SelectByDiet(ecology::Diet),
+    /// Invert the current selection.
+    InvertSelection,
+    /// Select the head node (`segment_type == 0`) of the organism identified
+    /// by this `organism_id`.
+    SelectHeadOf(u32),
+
+    // Panel window management
+    /// Move a named panel from Docked → Floating (pop it out of the tile tree).
+    DetachPanel(String),
+    /// Move a named panel from Floating/Closed → Docked (re-insert into tile tree).
+    DockPanel(String),
+    /// Move a named panel to Closed state (hidden; reopen via Windows menu).
+    ClosePanel(String),
 }
 
 /// The currently active heatmap overlay.

@@ -84,7 +84,22 @@ pub struct HeadVision {
     pub last_forward: common::Vec2,
     /// Distance within which nodes are ignored (self-occlusion heuristic).
     pub self_occlusion_radius: f32,
+    /// The food/prey entity currently being steered towards, if any.
+    ///
+    /// Kept from tick to tick so the organism commits to one target instead
+    /// of flickering between whichever candidate happens to dominate a
+    /// vision bin that tick — the lock is only dropped (and a new target
+    /// picked) once this entity is no longer a valid candidate (eaten,
+    /// despawned, or out of range/FOV).
+    pub locked_target: Option<bevy_ecs::entity::Entity>,
 }
+
+/// Grid cell size used for the broad-phase spatial indices built each tick.
+///
+/// Correctness doesn't depend on this value (queries always filter by exact
+/// distance afterwards) — it only affects how many candidates fall in each
+/// bucket, so it's picked close to typical `HeadVision::range` values.
+const SPATIAL_CELL_SIZE: f32 = 100.0;
 
 /// # Sensory Acquisition System
 ///
@@ -114,11 +129,12 @@ pub fn sensing_system(
         Option<&metabolism::Age>,
         Option<&ecology::Diet>,
     )>,
-    node_query: bevy_ecs::prelude::Query<&physics::ParticleNode>,
+    node_query: bevy_ecs::prelude::Query<(bevy_ecs::entity::Entity, &physics::ParticleNode)>,
     diet_query: bevy_ecs::prelude::Query<(&physics::ParticleNode, &ecology::Diet)>,
-    food_query: bevy_ecs::prelude::Query<&ecology::FoodPellet>,
-    mineral_query: bevy_ecs::prelude::Query<&ecology::MineralPellet>,
-    corpse_query: bevy_ecs::prelude::Query<&ecology::Corpse>,
+    food_query: bevy_ecs::prelude::Query<(bevy_ecs::entity::Entity, &ecology::FoodPellet)>,
+    mineral_query: bevy_ecs::prelude::Query<(bevy_ecs::entity::Entity, &ecology::MineralPellet)>,
+    corpse_query: bevy_ecs::prelude::Query<(bevy_ecs::entity::Entity, &ecology::Corpse)>,
+    resource_grids: bevy_ecs::prelude::Res<ecology::ResourceSpatialGrids>,
     cpu_field: Option<bevy_ecs::prelude::Res<diffusion::CpuFieldState>>,
     cpu_signal_field: Option<bevy_ecs::prelude::Res<diffusion::CpuSignalFieldState>>,
     cpu_hazard_field: Option<bevy_ecs::prelude::Res<diffusion::CpuHazardFieldState>>,
@@ -127,6 +143,17 @@ pub fn sensing_system(
     let mut diet_map = std::collections::HashMap::new();
     for (node, diet) in diet_query.iter() {
         diet_map.insert(node.organism_id, diet.clone());
+    }
+
+    // Broad-phase spatial index over organisms, rebuilt fresh each tick from
+    // current positions — replaces the O(N * M) "scan every node for every
+    // organism" pattern with a bucketed radius query. Food/mineral/corpse
+    // grids are shared via `ecology::ResourceSpatialGrids` (built once per
+    // tick by `build_resource_grids_system`) since `foraging_system` needs
+    // the exact same indices — no reason to rebuild them twice.
+    let mut organism_grid = spatial::UniformGrid::new(SPATIAL_CELL_SIZE).unwrap();
+    for (entity, node) in node_query.iter() {
+        let _ = organism_grid.insert(entity, node.position);
     }
 
     for (mut state, node, mut vision_opt, energy_opt, age_opt, diet_opt) in query.iter_mut() {
@@ -189,57 +216,43 @@ pub fn sensing_system(
                 vision.last_forward = common::Vec2::X; // Fallback
             }
             let forward = vision.last_forward;
-
-            let mut food_left = 0.0f32;
-            let mut food_center = 0.0f32;
-            let mut food_right = 0.0f32;
+            let half_fov = vision.fov / 2.0;
+            let third_fov = half_fov / 1.5; // Divide FOV into 3 bins
 
             let mut obs_left = 0.0f32;
             let mut obs_center = 0.0f32;
             let mut obs_right = 0.0f32;
 
-            let mut process_vision_target = |target_pos: common::Vec2, is_food: bool| {
+            // Returns `Some((angle, strength))` if `target_pos` is visible
+            // (outside self-occlusion radius, within range and FOV).
+            let vision_check = |target_pos: common::Vec2| -> Option<(f32, f32)> {
                 let diff = target_pos - node.position;
                 let dist = diff.length();
-
-                // Ignore self (heuristic), very close nodes, or nodes beyond range
                 if dist < vision.self_occlusion_radius || dist > vision.range {
-                    return;
+                    return None;
                 }
-
                 let dir = diff / dist;
-                // Angle between forward and dir
                 let angle = forward.angle_to(dir);
-
-                // If within FOV
-                let half_fov = vision.fov / 2.0;
-                if angle >= -half_fov && angle <= half_fov {
-                    // Vision strength is inverse to distance
-                    let strength = 1.0 - (dist / vision.range);
-
-                    let third_fov = half_fov / 1.5; // Divide FOV into 3 bins
-                    if is_food {
-                        if angle < -third_fov {
-                            food_left = food_left.max(strength);
-                        } else if angle > third_fov {
-                            food_right = food_right.max(strength);
-                        } else {
-                            food_center = food_center.max(strength);
-                        }
-                    } else {
-                        if angle < -third_fov {
-                            obs_left = obs_left.max(strength);
-                        } else if angle > third_fov {
-                            obs_right = obs_right.max(strength);
-                        } else {
-                            obs_center = obs_center.max(strength);
-                        }
-                    }
+                if angle < -half_fov || angle > half_fov {
+                    return None;
                 }
+                let strength = 1.0 - (dist / vision.range);
+                Some((angle, strength))
             };
 
+            // Candidate food/prey targets seen this tick — the actual bin
+            // values are populated from a single *chosen* candidate below,
+            // not accumulated across all of them, so the organism commits to
+            // one target (see `HeadVision::locked_target`) instead of
+            // flip-flopping between whichever candidate is momentarily
+            // strongest.
+            let mut food_candidates: Vec<(bevy_ecs::entity::Entity, f32, f32)> = Vec::new();
+
             // 1. See other organisms (mating, collision avoidance, predation)
-            for other_node in node_query.iter() {
+            for other_entity in organism_grid.query_radius(node.position, vision.range) {
+                let Ok((_, other_node)) = node_query.get(other_entity) else {
+                    continue;
+                };
                 let mut is_food = false;
                 if let (Some(my_diet), Some(other_diet)) =
                     (diet_opt, diet_map.get(&other_node.organism_id))
@@ -255,25 +268,57 @@ pub fn sensing_system(
                         )
                     );
                 }
-                process_vision_target(other_node.position, is_food);
+                let Some((angle, strength)) = vision_check(other_node.position) else {
+                    continue;
+                };
+                if is_food {
+                    food_candidates.push((other_entity, angle, strength));
+                } else if angle < -third_fov {
+                    obs_left = obs_left.max(strength);
+                } else if angle > third_fov {
+                    obs_right = obs_right.max(strength);
+                } else {
+                    obs_center = obs_center.max(strength);
+                }
             }
 
-            // 2. Diet-specific target vision
+            // 2. Diet-specific target vision (all treated as food candidates)
             if let Some(diet) = diet_opt {
                 match diet {
                     ecology::Diet::Producer => {
-                        for mineral in mineral_query.iter() {
-                            process_vision_target(mineral.position, true);
+                        for entity in resource_grids
+                            .minerals
+                            .query_radius(node.position, vision.range)
+                        {
+                            if let Ok((_, mineral)) = mineral_query.get(entity) {
+                                if let Some((angle, strength)) = vision_check(mineral.position) {
+                                    food_candidates.push((entity, angle, strength));
+                                }
+                            }
                         }
                     }
                     ecology::Diet::Herbivore | ecology::Diet::Omnivore => {
-                        for food in food_query.iter() {
-                            process_vision_target(food.position, true);
+                        for entity in resource_grids
+                            .food
+                            .query_radius(node.position, vision.range)
+                        {
+                            if let Ok((_, food)) = food_query.get(entity) {
+                                if let Some((angle, strength)) = vision_check(food.position) {
+                                    food_candidates.push((entity, angle, strength));
+                                }
+                            }
                         }
                     }
                     ecology::Diet::Decomposer => {
-                        for corpse in corpse_query.iter() {
-                            process_vision_target(corpse.position, true);
+                        for entity in resource_grids
+                            .corpses
+                            .query_radius(node.position, vision.range)
+                        {
+                            if let Ok((_, corpse)) = corpse_query.get(entity) {
+                                if let Some((angle, strength)) = vision_check(corpse.position) {
+                                    food_candidates.push((entity, angle, strength));
+                                }
+                            }
                         }
                     }
                     ecology::Diet::Carnivore => {
@@ -281,6 +326,30 @@ pub fn sensing_system(
                     }
                 }
             }
+
+            // Keep steering at the locked target as long as it's still a
+            // valid candidate this tick; only pick a new one (closest/
+            // strongest) once the lock is lost.
+            let locked_candidate = vision
+                .locked_target
+                .and_then(|locked| food_candidates.iter().find(|(e, _, _)| *e == locked))
+                .copied();
+
+            let chosen = locked_candidate.or_else(|| {
+                food_candidates
+                    .iter()
+                    .copied()
+                    .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+            });
+
+            vision.locked_target = chosen.map(|(entity, _, _)| entity);
+
+            let (food_left, food_center, food_right) = match chosen {
+                Some((_, angle, strength)) if angle < -third_fov => (strength, 0.0, 0.0),
+                Some((_, angle, strength)) if angle > third_fov => (0.0, 0.0, strength),
+                Some((_, _, strength)) => (0.0, strength, 0.0),
+                None => (0.0, 0.0, 0.0),
+            };
 
             if idx < state.inputs.len() {
                 state.inputs[idx] = food_left - obs_left;

@@ -1,7 +1,5 @@
 //! GPU compute pipeline for 2D field diffusion.
 
-use wgpu::util::DeviceExt;
-
 /// Configuration for a single diffusion layer (e.g. Pheromones, Energy, O2, CO2).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -57,11 +55,17 @@ pub struct DiffusionComputePipeline {
     /// Pre-created 2D views for each layer of the current read texture.
     layer_views_a: Vec<wgpu::TextureView>,
     layer_views_b: Vec<wgpu::TextureView>,
-    #[allow(dead_code)]
     bind_group_a: wgpu::BindGroup,
-    #[allow(dead_code)]
     bind_group_b: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
+
+    // Persistent, geometrically-grown emitter buffer — replaces recreating
+    // a fresh buffer + bind group every tick. `bind_group_a`/`bind_group_b`
+    // are rebuilt only when `emitter_capacity` grows (see
+    // `ensure_emitter_capacity`), same pattern as the physics/brain
+    // pipelines.
+    emitter_capacity: usize,
+    emitter_buffer: wgpu::Buffer,
     /// Keeps track of which texture is currently the "read" texture.
     /// If true, texture A is read and B is written. If false, B is read and A is written.
     pub read_a: bool,
@@ -200,16 +204,14 @@ impl DiffusionComputePipeline {
             mapped_at_creation: false,
         });
 
-        // Dummy emitter buffer (must be at least 1 byte if we bind it, let's just make it sized for 1 emitter)
-        let dummy_emitters = [GpuEmitter {
-            grid_pos: [0.0, 0.0],
-            value: 0.0,
-            grid_radius: 0.0,
-        }];
-        let dummy_emitter_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("DummyEmitterBuffer"),
-            contents: bytemuck::cast_slice(&dummy_emitters),
+        // Persistent emitter buffer, grown geometrically as needed (see
+        // `ensure_emitter_capacity`) instead of recreated every tick.
+        let emitter_capacity = 256usize;
+        let emitter_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("DiffusionEmittersBuffer"),
+            size: (emitter_capacity * std::mem::size_of::<GpuEmitter>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let bind_group_a = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -230,7 +232,7 @@ impl DiffusionComputePipeline {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: dummy_emitter_buffer.as_entire_binding(),
+                    resource: emitter_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -253,7 +255,7 @@ impl DiffusionComputePipeline {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: dummy_emitter_buffer.as_entire_binding(),
+                    resource: emitter_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -288,6 +290,8 @@ impl DiffusionComputePipeline {
             bind_group_a,
             bind_group_b,
             uniform_buffer,
+            emitter_capacity,
+            emitter_buffer,
             read_a: true,
             width,
             height,
@@ -320,73 +324,15 @@ impl DiffusionComputePipeline {
     ) {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        // Create buffer for emitters and update bind groups if needed
-        // For simplicity, we create a new buffer every frame if there are emitters
-        // In a real engine, we'd reuse this buffer
-        let emitter_buffer = if !emitters.is_empty() {
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("DiffusionEmittersBuffer"),
-                contents: bytemuck::cast_slice(emitters),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            })
-        } else {
-            // Dummy buffer if no emitters
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("DummyEmittersBuffer"),
-                size: 16, // Must be > 0
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        };
+        self.ensure_emitter_capacity(device, emitters.len());
+        if !emitters.is_empty() {
+            queue.write_buffer(&self.emitter_buffer, 0, bytemuck::cast_slice(emitters));
+        }
 
-        // Recreate the active bind group with the current emitter buffer
-        // Note: we'd normally just update it once, but since emitters can change every frame:
         let active_bind_group = if self.read_a {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("DiffusionBindGroupA_Dynamic"),
-                layout: &self.bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&self.view_a),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&self.view_b),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.uniform_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: emitter_buffer.as_entire_binding(),
-                    },
-                ],
-            })
+            &self.bind_group_a
         } else {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("DiffusionBindGroupB_Dynamic"),
-                layout: &self.bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&self.view_b),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&self.view_a),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.uniform_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: emitter_buffer.as_entire_binding(),
-                    },
-                ],
-            })
+            &self.bind_group_b
         };
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -403,7 +349,7 @@ impl DiffusionComputePipeline {
                 timestamp_writes: None,
             });
             cpass.set_pipeline(&self.pipeline);
-            cpass.set_bind_group(0, &active_bind_group, &[]);
+            cpass.set_bind_group(0, active_bind_group, &[]);
 
             cpass.dispatch_workgroups(self.width / 16, self.height / 16, 4);
         }
@@ -462,6 +408,70 @@ impl DiffusionComputePipeline {
         // Swap ping-pong direction
         self.read_a = !self.read_a;
         self.frame_index += 1;
+    }
+
+    /// Grows (never shrinks) the persistent emitter buffer to hold at least
+    /// `emitter_count` entries, doubling capacity each time. Rebuilds both
+    /// ping-pong bind groups only when the buffer is actually replaced.
+    fn ensure_emitter_capacity(&mut self, device: &wgpu::Device, emitter_count: usize) {
+        if emitter_count <= self.emitter_capacity {
+            return;
+        }
+
+        self.emitter_capacity = emitter_count.max(self.emitter_capacity * 2).max(256);
+        self.emitter_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("DiffusionEmittersBuffer"),
+            size: (self.emitter_capacity * std::mem::size_of::<GpuEmitter>())
+                as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        self.bind_group_a = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("DiffusionBindGroupA"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.view_a),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.view_b),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.emitter_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        self.bind_group_b = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("DiffusionBindGroupB"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.view_b),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.view_a),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.emitter_buffer.as_entire_binding(),
+                },
+            ],
+        });
     }
 
     /// Tries to read the latest available field state from the GPU.

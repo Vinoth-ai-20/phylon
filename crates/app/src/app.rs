@@ -53,66 +53,7 @@ pub struct GpuContext {
     pub(crate) readback_buffer: Option<wgpu::Buffer>,
 }
 
-/// UI-specific state for the Phylon application.
-pub(crate) struct PhylonUIState {
-    pub(crate) camera_pos: common::Vec2,
-    pub(crate) camera_zoom: f32,
-    pub(crate) selected_entity: Option<bevy_ecs::entity::Entity>,
-    pub(crate) tracked_entity: Option<bevy_ecs::entity::Entity>,
-    pub(crate) modifiers: winit::keyboard::ModifiersState,
-    pub(crate) pending_click: Option<common::Vec2>,
-    pub(crate) current_hover_pos: Option<common::Vec2>,
-    pub(crate) canvas_rect: Option<[u32; 4]>,
-    pub(crate) debug_structural: bool,
-    pub(crate) bone_line_thickness: f32,
-    pub(crate) skin_thickness: f32,
-    pub(crate) node_radius: f32,
-    pub(crate) active_tab: ui::SidebarTab,
-    pub(crate) active_bottom_tab: ui::BottomTab,
-    pub(crate) app_state: ui::AppState,
-    pub(crate) is_paused: bool,
-    pub(crate) show_about: bool,
-    pub(crate) show_docs: bool,
-    pub(crate) show_vision_cones: bool,
-    pub(crate) hovered_entity: Option<bevy_ecs::entity::Entity>,
-    pub(crate) quit_confirm_time: Option<f64>,
-    pub(crate) main_menu_confirm_time: Option<f64>,
-    pub(crate) active_toast: Option<(String, f32)>, // (message, progress 0..1)
-    pub(crate) spectator_mode: bool,
-    pub(crate) last_spectator_switch_time: f64,
-}
-
-impl Default for PhylonUIState {
-    fn default() -> Self {
-        Self {
-            camera_pos: common::Vec2::new(0.0, 0.0),
-            camera_zoom: 1.0,
-            selected_entity: None,
-            tracked_entity: None,
-            modifiers: winit::keyboard::ModifiersState::default(),
-            pending_click: None,
-            current_hover_pos: None,
-            canvas_rect: None,
-            debug_structural: false,
-            bone_line_thickness: 1.0,
-            skin_thickness: 3.0,
-            node_radius: 5.0,
-            active_tab: ui::SidebarTab::Inspector,
-            active_bottom_tab: ui::BottomTab::Metrics,
-            app_state: ui::AppState::MainMenu,
-            is_paused: false,
-            show_about: false,
-            show_docs: false,
-            show_vision_cones: false,
-            hovered_entity: None,
-            quit_confirm_time: None,
-            main_menu_confirm_time: None,
-            active_toast: None,
-            spectator_mode: false,
-            last_spectator_switch_time: 0.0,
-        }
-    }
-}
+// PhylonUIState was removed in favor of ui::WorkbenchState.
 
 /// # Phylon Application Orchestrator
 ///
@@ -175,7 +116,8 @@ pub(crate) struct PhylonApp {
     pub(crate) egui_renderer: Option<egui_wgpu::Renderer>,
 
     /// The UI State bundle
-    pub(crate) ui: PhylonUIState,
+    pub(crate) ui: ui::WorkbenchState,
+    pub(crate) app_state: ui::AppState,
 
     /// Maximum number of simulation ticks fired per frame.
     #[allow(dead_code)]
@@ -190,6 +132,11 @@ pub(crate) struct PhylonApp {
     /// Accumulator for sub-frame simulation steps.
     pub(crate) accumulated_time: f32,
 
+    /// Wall-clock time of the previous `render()` call, used to compute the
+    /// real elapsed time driving `accumulated_time` instead of a fixed
+    /// per-redraw increment.
+    pub(crate) last_frame_instant: std::time::Instant,
+
     /// Storage manager for snapshots and database logs
     #[allow(dead_code)]
     pub(crate) storage: storage::StorageManager,
@@ -199,7 +146,26 @@ pub(crate) struct PhylonApp {
 
     /// Channel for sending background task results
     pub(crate) task_tx: Option<std::sync::mpsc::Sender<BackgroundTaskResult>>,
+
+    /// Physics GPU readback dispatched last tick, resolved at the start of
+    /// this tick (paired with the entities each returned node belongs to) —
+    /// lets the GPU work for tick N overlap with tick N's CPU-side systems
+    /// instead of stalling on it immediately after submission.
+    pub(crate) pending_physics: Option<(
+        gpu::physics_pipeline::PendingPhysicsReadback,
+        Vec<bevy_ecs::entity::Entity>,
+    )>,
+
+    /// Brain (CTRNN) GPU readback dispatched last tick, resolved at the start
+    /// of this tick (paired with the entity/start-node/length each integrated
+    /// node range belongs to). Same overlap rationale as `pending_physics`.
+    pub(crate) pending_brain: Option<(gpu::brain_pipeline::PendingBrainReadback, BrainOffsets)>,
 }
+
+/// Per-entity `(start_node_index, node_count)` offsets into a batched
+/// `GpuCtrnnNode` upload, used to scatter the resolved brain readback back
+/// into each organism's `Brain` component.
+pub(crate) type BrainOffsets = Vec<(bevy_ecs::entity::Entity, u32, usize)>;
 
 pub(crate) enum BackgroundTaskResult {
     SaveComplete(Result<(), String>),
@@ -232,6 +198,9 @@ impl PhylonApp {
         world.ecs.insert_resource(ecology::EcologyConfig::default());
         world
             .ecs
+            .insert_resource(ecology::ResourceSpatialGrids::new(50.0));
+        world
+            .ecs
             .insert_resource(ecology::catastrophe::CatastropheConfig::default());
         world
             .ecs
@@ -256,8 +225,12 @@ impl PhylonApp {
         let env_manager = environment::EnvironmentManager::new(
             sim_config.simulation.rng_seed,
             sim_config.simulation.toroidal_world,
-            2000.0, // World width for procedural generation
-            2000.0, // World height
+            // Must match the hard physics/diffusion/render bounds (±1500,
+            // physics.wgsl / simulation.rs / render.rs) so procedurally
+            // generated resources never land outside the playable/rendered
+            // area.
+            1500.0, // World width for procedural generation
+            1500.0, // World height
         );
         world.ecs.insert_resource(env_manager);
 
@@ -284,14 +257,18 @@ impl PhylonApp {
             window: None,
             egui_state: None,
             egui_renderer: None,
-            ui: PhylonUIState::default(),
+            ui: ui::WorkbenchState::default(),
+            app_state: ui::AppState::default(),
             max_ticks_per_frame: 50,
             total_sim_time: 0.0,
             simulation_speed: 1.0,
             accumulated_time: 0.0,
+            last_frame_instant: std::time::Instant::now(),
             storage,
             task_rx: Some(task_rx),
             task_tx: Some(task_tx),
+            pending_physics: None,
+            pending_brain: None,
         }
     }
 
@@ -647,16 +624,19 @@ pub(crate) fn seed_ecosystem(
     let mut rng = rand::thread_rng();
 
     // 1. Define Prototypes
+    // Colors come from `Diet::standard_color()` — the single canonical
+    // per-diet palette shared with the sandbox spawn tool, so an organism
+    // looks the same regardless of how it was spawned.
     let worm_genome = genetics::Genome::new_hox_driven(
         genetics::GenomeId(1),
         common::EntityId(0),
-        genetics::HoxSequence::worm(6, [0.863, 0.397, 0.235]), // #EFA985
+        genetics::HoxSequence::worm(6, ecology::Diet::Herbivore.standard_color()),
     );
 
     let fish_genome = genetics::Genome::new_hox_driven(
         genetics::GenomeId(2),
         common::EntityId(0),
-        genetics::HoxSequence::fish(5, 2, [0.871, 0.089, 0.089]), // #F05454
+        genetics::HoxSequence::fish(5, 2, ecology::Diet::Carnivore.standard_color()),
     );
 
     let branchy_genome = genetics::Genome::new_hox_driven(
@@ -673,26 +653,26 @@ pub(crate) fn seed_ecosystem(
                 genetics::HoxGene::muscle(1.2, std::f32::consts::PI * 1.5),
                 genetics::HoxGene::tail(),
             ],
-            [0.065, 0.591, 0.776], // #48CAE4
+            ecology::Diet::Herbivore.standard_color(),
         ),
     );
 
     let omnivore_genome = genetics::Genome::new_hox_driven(
         genetics::GenomeId(4),
         common::EntityId(0),
-        genetics::HoxSequence::fish(4, 1, [0.451, 0.246, 0.831]), // #B388EB
+        genetics::HoxSequence::fish(4, 1, ecology::Diet::Omnivore.standard_color()),
     );
 
     let decomposer_genome = genetics::Genome::new_hox_driven(
         genetics::GenomeId(5),
         common::EntityId(0),
-        genetics::HoxSequence::worm(3, [0.658, 0.366, 0.171]), // #D4A373
+        genetics::HoxSequence::worm(3, ecology::Diet::Decomposer.standard_color()),
     );
 
     let producer_genome = genetics::Genome::new_hox_driven(
         genetics::GenomeId(6),
         common::EntityId(0),
-        genetics::HoxSequence::plant([0.068, 0.730, 0.216]), // #4ADE80
+        genetics::HoxSequence::plant(ecology::Diet::Producer.standard_color()),
     );
 
     // 2. Helper to spawn a population

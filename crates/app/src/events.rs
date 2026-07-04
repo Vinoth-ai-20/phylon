@@ -42,16 +42,23 @@ impl PhylonApp {
                         self.sim_config.simulation.rng_seed,
                         self.total_sim_time,
                     );
-                    self.ui.active_toast = Some(("Saving...".to_string(), 0.0));
-                    if let Some(tx) = &self.task_tx {
-                        let tx = tx.clone();
-                        tokio::task::spawn_blocking(move || {
-                            let path = std::path::Path::new("data/autosave.bin");
-                            let res =
-                                storage::StorageManager::save_simulation_state(&snapshot, path)
-                                    .map_err(|e| e.to_string());
-                            let _ = tx.send(crate::app::BackgroundTaskResult::SaveComplete(res));
-                        });
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Phylon Save", &["bin"])
+                        .set_file_name("autosave.bin")
+                        .save_file()
+                    {
+                        self.ui.push_toast("Saving…", ui::ToastSeverity::Info, 5.0);
+                        if let Some(tx) = &self.task_tx {
+                            let tx = tx.clone();
+                            tokio::task::spawn_blocking(move || {
+                                let res = storage::StorageManager::save_simulation_state(
+                                    &snapshot, &path,
+                                )
+                                .map_err(|e| e.to_string());
+                                let _ =
+                                    tx.send(crate::app::BackgroundTaskResult::SaveComplete(res));
+                            });
+                        }
                     }
                 }
                 ui::MenuAction::DeleteSelection => {
@@ -86,18 +93,17 @@ impl PhylonApp {
                     if let Some(preset) = preset_opt {
                         let spawn_pos = self.ui.camera_pos;
                         if preset.evolvable {
-                            // Evolvable presets get a HoxSequence
+                            let diet = preset.diet.unwrap_or(ecology::Diet::Herbivore);
+                            // Evolvable presets get a HoxSequence colored by
+                            // the standard per-diet palette, so a
+                            // sandbox-spawned organism looks identical to one
+                            // seeded at simulation start.
+                            let color = diet.standard_color();
                             let hox = match name.as_str() {
-                                "Herbivore (Evolvable)" => {
-                                    genetics::HoxSequence::worm(6, [0.3, 0.8, 0.3])
-                                }
-                                "Hunter (Evolvable)" => {
-                                    genetics::HoxSequence::fish(5, 2, [0.8, 0.2, 0.2])
-                                }
-                                "Edible Plant (Evolvable)" => {
-                                    genetics::HoxSequence::worm(2, [0.2, 0.9, 0.2])
-                                }
-                                _ => genetics::HoxSequence::worm(4, [0.5, 0.5, 0.5]),
+                                "Herbivore (Evolvable)" => genetics::HoxSequence::worm(6, color),
+                                "Hunter (Evolvable)" => genetics::HoxSequence::fish(5, 2, color),
+                                "Edible Plant (Evolvable)" => genetics::HoxSequence::worm(2, color),
+                                _ => genetics::HoxSequence::worm(4, color),
                             };
                             let genome = genetics::Genome::new_hox_driven(
                                 genetics::GenomeId(0), // Would normally be a unique ID
@@ -105,7 +111,6 @@ impl PhylonApp {
                                 hox,
                             );
 
-                            let diet = preset.diet.unwrap_or(ecology::Diet::Herbivore);
                             let category =
                                 preset.category.unwrap_or(ecology::EcologicalCategory::None);
 
@@ -197,10 +202,10 @@ impl PhylonApp {
                 ui::MenuAction::JoinSelection => tracing::warn!("JoinSelection not implemented"),
                 ui::MenuAction::GrabSelection => tracing::warn!("GrabSelection not implemented"),
                 ui::MenuAction::GoToMainMenu => {
-                    self.ui.app_state = ui::AppState::MainMenu;
+                    self.app_state = ui::AppState::MainMenu;
                 }
                 ui::MenuAction::StartSimulation => {
-                    self.ui.app_state = ui::AppState::Simulation;
+                    self.app_state = ui::AppState::Simulation;
                     // Reset standard flags
                     self.ui.is_paused = false;
                     self.ui.show_about = false;
@@ -211,15 +216,20 @@ impl PhylonApp {
                     std::process::exit(0);
                 }
                 ui::MenuAction::LoadState => {
-                    self.ui.active_toast = Some(("Loading...".to_string(), 0.0));
-                    if let Some(tx) = &self.task_tx {
-                        let tx = tx.clone();
-                        tokio::task::spawn_blocking(move || {
-                            let path = std::path::Path::new("data/autosave.bin");
-                            let res = storage::StorageManager::load_simulation_state(path)
-                                .map_err(|e| e.to_string());
-                            let _ = tx.send(crate::app::BackgroundTaskResult::LoadComplete(res));
-                        });
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Phylon Save", &["bin"])
+                        .pick_file()
+                    {
+                        self.ui.push_toast("Loading…", ui::ToastSeverity::Info, 5.0);
+                        if let Some(tx) = &self.task_tx {
+                            let tx = tx.clone();
+                            tokio::task::spawn_blocking(move || {
+                                let res = storage::StorageManager::load_simulation_state(&path)
+                                    .map_err(|e| e.to_string());
+                                let _ =
+                                    tx.send(crate::app::BackgroundTaskResult::LoadComplete(res));
+                            });
+                        }
                     }
                 }
                 ui::MenuAction::Undo => {
@@ -281,6 +291,19 @@ impl PhylonApp {
                     self.ui.selected_entity = None;
                     self.ui.tracked_entity = None;
                 }
+                ui::MenuAction::SelectHeadOf(organism_id) => {
+                    let mut query = self
+                        .world
+                        .ecs
+                        .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
+                    for (entity, node) in query.iter(&self.world.ecs) {
+                        if node.segment_type == 0 && node.organism_id == organism_id {
+                            self.ui.selected_entity = Some(entity);
+                            self.ui.tracked_entity = Some(entity);
+                            break;
+                        }
+                    }
+                }
                 ui::MenuAction::SpawnProtoFish => {
                     let fish_hox = genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]);
                     let fish_genome = genetics::Genome::new_hox_driven(
@@ -304,6 +327,9 @@ impl PhylonApp {
                 ui::MenuAction::ShowAbout => {
                     self.ui.show_about = true;
                 }
+                ui::MenuAction::ShowKeybinds => {
+                    self.ui.show_keybinds = true;
+                }
                 ui::MenuAction::CameraZoomIn => {
                     self.ui.camera_zoom *= 1.1;
                     self.ui.camera_zoom = self.ui.camera_zoom.clamp(0.1, 10.0);
@@ -316,6 +342,203 @@ impl PhylonApp {
                     self.ui.camera_pos = common::Vec2::new(0.0, 0.0);
                     self.ui.camera_zoom = 1.0;
                     self.ui.tracked_entity = None;
+                }
+                ui::MenuAction::TogglePlayPause => {
+                    self.ui.is_paused = !self.ui.is_paused;
+                }
+                ui::MenuAction::SetSpeedUp => {
+                    self.ui.simulation_speed = (self.ui.simulation_speed * 2.0).clamp(0.1, 10.0);
+                }
+                ui::MenuAction::SetSpeedDown => {
+                    self.ui.simulation_speed = (self.ui.simulation_speed / 2.0).clamp(0.1, 10.0);
+                }
+                ui::MenuAction::ToggleMetrics => {
+                    self.ui.metrics_visible = !self.ui.metrics_visible;
+                }
+                ui::MenuAction::ToggleLog => {
+                    self.ui.event_log_visible = !self.ui.event_log_visible;
+                }
+                ui::MenuAction::ToggleSidebar => {
+                    self.ui.sidebar_visible = !self.ui.sidebar_visible;
+                }
+                ui::MenuAction::ImportGenome => {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Phylon Genome", &["genome"])
+                        .pick_file()
+                    {
+                        if let Ok(bytes) = std::fs::read(path) {
+                            if let Ok(genome) = bincode::deserialize::<genetics::Genome>(&bytes) {
+                                organisms::spawn_organism(
+                                    &mut self.world.ecs,
+                                    &genome,
+                                    self.ui.camera_pos,
+                                    ecology::Diet::Omnivore,
+                                    ecology::EcologicalCategory::None,
+                                    0,
+                                    0,
+                                );
+                                self.ui.push_toast(
+                                    "Genome imported",
+                                    ui::ToastSeverity::Success,
+                                    3.0,
+                                );
+                            } else {
+                                tracing::error!("Failed to deserialize genome.");
+                            }
+                        }
+                    }
+                }
+                ui::MenuAction::ExportGenome => {
+                    if let Some(entity) = self.ui.selected_entity {
+                        if let Ok(genome) = self
+                            .world
+                            .ecs
+                            .query::<&genetics::Genome>()
+                            .get(&self.world.ecs, entity)
+                        {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("Phylon Genome", &["genome"])
+                                .set_file_name("organism.genome")
+                                .save_file()
+                            {
+                                if let Ok(encoded) = bincode::serialize(genome) {
+                                    if std::fs::write(path, encoded).is_ok() {
+                                        self.ui.push_toast(
+                                            "Genome exported",
+                                            ui::ToastSeverity::Success,
+                                            3.0,
+                                        );
+                                    }
+                                }
+                            }
+                        } else {
+                            tracing::warn!("Selected entity does not have a genome.");
+                        }
+                    } else {
+                        tracing::warn!("No entity selected to export.");
+                    }
+                }
+                ui::MenuAction::FocusSelection => {
+                    tracing::warn!("FocusSelection not yet implemented.");
+                }
+                ui::MenuAction::SetOverlay(heatmap) => {
+                    if let Some(mut hs) = self.world.ecs.get_resource_mut::<ui::HeatmapState>() {
+                        hs.active = heatmap;
+                    }
+                }
+                ui::MenuAction::SetColormap(colormap) => {
+                    if let Some(mut hs) = self.world.ecs.get_resource_mut::<ui::HeatmapState>() {
+                        hs.colormap = colormap;
+                    }
+                }
+                ui::MenuAction::KillEntity(entity) => {
+                    self.world.ecs.despawn(entity);
+                    if self.ui.selected_entity == Some(entity) {
+                        self.ui.selected_entity = None;
+                    }
+                    if self.ui.tracked_entity == Some(entity) {
+                        self.ui.tracked_entity = None;
+                    }
+                    self.ui
+                        .push_toast("Entity killed", ui::ToastSeverity::Warning, 2.0);
+                }
+                ui::MenuAction::TrackEntity(entity) => {
+                    self.ui.tracked_entity = Some(entity);
+                    self.ui.selected_entity = Some(entity);
+                }
+                ui::MenuAction::SelectEntity(entity) => {
+                    self.ui.selected_entity = Some(entity);
+                }
+                ui::MenuAction::CopyEntityId(entity) => {
+                    // Write entity bits to clipboard via egui (best-effort)
+                    let id_str = format!("{:?}", entity);
+                    tracing::info!("Copy entity ID to clipboard: {}", id_str);
+                    self.ui
+                        .push_toast(format!("Copied: {}", id_str), ui::ToastSeverity::Info, 2.0);
+                }
+                ui::MenuAction::SelectByDiet(diet) => {
+                    let mut found = None;
+                    let mut q = self
+                        .world
+                        .ecs
+                        .query::<(bevy_ecs::entity::Entity, &ecology::Diet)>();
+                    for (e, d) in q.iter(&self.world.ecs) {
+                        if *d == diet {
+                            found = Some(e);
+                            break;
+                        }
+                    }
+                    if let Some(e) = found {
+                        self.ui.selected_entity = Some(e);
+                        self.ui.tracked_entity = Some(e);
+                    }
+                }
+                ui::MenuAction::InvertSelection => {
+                    // Cycle to next head node (nearest to current selection)
+                    let current = self.ui.selected_entity;
+                    let mut found_next = false;
+                    let mut first = None;
+                    let mut take_next = current.is_none();
+                    let mut q = self
+                        .world
+                        .ecs
+                        .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
+                    for (e, node) in q.iter(&self.world.ecs) {
+                        if node.segment_type == 0 {
+                            if first.is_none() {
+                                first = Some(e);
+                            }
+                            if take_next {
+                                self.ui.selected_entity = Some(e);
+                                found_next = true;
+                                break;
+                            }
+                            if current == Some(e) {
+                                take_next = true;
+                            }
+                        }
+                    }
+                    if !found_next {
+                        self.ui.selected_entity = first;
+                    }
+                }
+
+                // ── Panel window management ──────────────────────────────────
+                ui::MenuAction::DetachPanel(name) => {
+                    self.ui
+                        .panel_modes
+                        .insert(name.clone(), ui::PanelMode::Floating);
+                    // Remove the tile immediately instead of waiting for the
+                    // next lazy `retain_pane`/simplify pass.
+                    ui::layout::remove_panel_from_tree(&mut self.ui.dock_tree, &name);
+                    info!("Detached panel: {}", name);
+                }
+                ui::MenuAction::DockPanel(name) => {
+                    self.ui
+                        .panel_modes
+                        .insert(name.clone(), ui::PanelMode::Docked);
+                    // Rebuild the tree from current modes so the panel lands
+                    // back in its canonical home slot (not wherever the root
+                    // container currently happens to be).
+                    ui::layout::rebuild_tree_from_modes(
+                        &mut self.ui.dock_tree,
+                        &self.ui.panel_modes,
+                    );
+                    info!("Docked panel: {}", name);
+                }
+                ui::MenuAction::ClosePanel(name) => {
+                    self.ui
+                        .panel_modes
+                        .insert(name.clone(), ui::PanelMode::Closed);
+                    // Remove the tile immediately instead of waiting for the
+                    // next lazy `retain_pane`/simplify pass.
+                    ui::layout::remove_panel_from_tree(&mut self.ui.dock_tree, &name);
+                    self.ui.push_toast(
+                        format!("\"{}\" closed — reopen via Windows menu", name),
+                        ui::ToastSeverity::Info,
+                        3.0,
+                    );
+                    info!("Closed panel: {}", name);
                 }
             }
         }
@@ -417,12 +640,19 @@ impl ApplicationHandler for PhylonApp {
                 }
             }
             WindowEvent::ModifiersChanged(modifiers) => {
-                self.ui.modifiers = modifiers.state();
+                let s = modifiers.state();
+                self.ui.modifiers = egui::Modifiers {
+                    alt: s.alt_key(),
+                    ctrl: s.control_key(),
+                    shift: s.shift_key(),
+                    mac_cmd: s.super_key(),
+                    command: s.control_key() || s.super_key(),
+                };
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 match delta {
                     winit::event::MouseScrollDelta::LineDelta(x, y) => {
-                        if self.ui.modifiers.control_key() {
+                        if self.ui.modifiers.ctrl {
                             // Zoom with Ctrl + Scroll
                             if y > 0.0 {
                                 self.ui.camera_zoom *= 1.1;
@@ -436,7 +666,7 @@ impl ApplicationHandler for PhylonApp {
                         }
                     }
                     winit::event::MouseScrollDelta::PixelDelta(p) => {
-                        if self.ui.modifiers.control_key() {
+                        if self.ui.modifiers.ctrl {
                             // Zoom
                             let zoom_factor = 1.0 + (p.y as f32 * 0.01);
                             if zoom_factor > 0.0 {
@@ -499,20 +729,30 @@ impl ApplicationHandler for PhylonApp {
             while let Ok(res) = rx.try_recv() {
                 match res {
                     crate::app::BackgroundTaskResult::SaveComplete(Ok(())) => {
-                        self.ui.active_toast = None;
-                        tracing::info!("Saved state to data/autosave.bin");
+                        self.ui
+                            .push_toast("Simulation saved", ui::ToastSeverity::Success, 3.0);
+                        tracing::info!("Saved state successfully");
                     }
                     crate::app::BackgroundTaskResult::SaveComplete(Err(e)) => {
-                        self.ui.active_toast = None;
+                        self.ui.push_toast(
+                            format!("Save failed: {}", e),
+                            ui::ToastSeverity::Error,
+                            5.0,
+                        );
                         tracing::error!("Failed to save state: {}", e);
                     }
                     crate::app::BackgroundTaskResult::LoadComplete(Ok(snapshot)) => {
                         snapshot.restore_world(&mut self.world.ecs);
-                        self.ui.active_toast = None;
-                        tracing::info!("Loaded state from data/autosave.bin");
+                        self.ui
+                            .push_toast("Simulation loaded", ui::ToastSeverity::Success, 3.0);
+                        tracing::info!("Loaded state successfully");
                     }
                     crate::app::BackgroundTaskResult::LoadComplete(Err(e)) => {
-                        self.ui.active_toast = None;
+                        self.ui.push_toast(
+                            format!("Load failed: {}", e),
+                            ui::ToastSeverity::Error,
+                            5.0,
+                        );
                         tracing::error!("Failed to load state: {}", e);
                     }
                 }

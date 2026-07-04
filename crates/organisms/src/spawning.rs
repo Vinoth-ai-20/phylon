@@ -94,6 +94,31 @@ pub fn spawn_organism(
                 .map(|hox| hox.genes.len() as f32 * segment_length)
                 .unwrap_or(5.0 * segment_length)
                 * 1.5, // Add a 50% margin
+            locked_target: None,
+        },
+    ));
+
+    // Attach Genome as a standalone ECS component so Inspector and ExportGenome can query it.
+    world.entity_mut(head_node).insert(genome.clone());
+
+    // Attach extended physiology components required by the Inspector.
+    world.entity_mut(head_node).insert((
+        metabolism::Health {
+            current: 100.0,
+            max: 100.0,
+        },
+        metabolism::Hydration {
+            level: 1.0,
+            loss_rate: 0.0001,
+        },
+        metabolism::BodyTemperature {
+            current: 22.0,
+            ideal: 22.0,
+        },
+        behavior::BehaviorState::Idle,
+        behavior::CurrentGoal {
+            description: "Initialising".to_string(),
+            target_entity: None,
         },
     ));
 

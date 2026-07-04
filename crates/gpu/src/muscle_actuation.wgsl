@@ -16,7 +16,8 @@ struct Spring {
 struct PhysicsConfig {
     dt: f32,
     time: f32,
-    _padding: vec2<f32>,
+    active_node_count: u32,
+    active_spring_count: u32,
 }
 
 @group(0) @binding(1) var<storage, read_write> springs: array<Spring>;
@@ -25,7 +26,7 @@ struct PhysicsConfig {
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
-    if (index >= arrayLength(&springs)) {
+    if (index >= config.active_spring_count) {
         return;
     }
 

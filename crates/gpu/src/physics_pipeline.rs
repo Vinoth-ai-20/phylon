@@ -1,5 +1,3 @@
-use wgpu::util::DeviceExt;
-
 /// A GPU-friendly representation of a ParticleNode.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -51,8 +49,16 @@ pub struct GpuPhysicsSpring {
 struct PhysicsConfigUniform {
     dt: f32,
     time: f32,
-    _padding: [u32; 2],
+    active_node_count: u32,
+    active_spring_count: u32,
 }
+
+/// Broad-phase spatial grid dimensions for the steric-hindrance repulsion
+/// pass. MUST match `GRID_DIM`/`GRID_CELL_CAPACITY` in `physics.wgsl` — they
+/// size a fixed pair of buffers (not grown with population, since the grid
+/// covers a fixed world area regardless of how many organisms are in it).
+const GRID_DIM: u32 = 128;
+const GRID_CELL_CAPACITY: u32 = 64;
 
 /// # GPU Physics Compute Pipeline
 ///
@@ -77,10 +83,32 @@ struct PhysicsConfigUniform {
 pub struct PhysicsComputePipeline {
     muscle_actuation_pipeline: wgpu::ComputePipeline,
     compute_forces_pipeline: wgpu::ComputePipeline,
+    bin_nodes_pipeline: wgpu::ComputePipeline,
     integrate_pipeline: wgpu::ComputePipeline,
     pbd_projection_pipeline: wgpu::ComputePipeline,
     apply_pbd_pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
+
+    // Fixed-size spatial-grid buffers for the repulsion broad-phase —
+    // allocated once (grid covers a fixed world area, independent of
+    // population) and never resized.
+    cell_counts_buffer: wgpu::Buffer,
+    cell_nodes_buffer: wgpu::Buffer,
+
+    // Persistent, geometrically-grown GPU buffers — recreated only when the
+    // population outgrows current capacity, instead of every single tick.
+    // Buffers may be larger than the live node/spring count; the shader is
+    // told the live counts via `PhysicsConfigUniform` and must never rely on
+    // `arrayLength()` (which reflects capacity) for loop bounds.
+    node_capacity: usize,
+    spring_capacity: usize,
+    nodes_buffer: Option<wgpu::Buffer>,
+    springs_buffer: Option<wgpu::Buffer>,
+    config_buffer: Option<wgpu::Buffer>,
+    atomic_forces_x: Option<wgpu::Buffer>,
+    atomic_forces_y: Option<wgpu::Buffer>,
+    staging_buffer: Option<wgpu::Buffer>,
+    bind_group: Option<wgpu::BindGroup>,
 }
 
 impl PhysicsComputePipeline {
@@ -149,6 +177,28 @@ impl PhysicsComputePipeline {
                     },
                     count: None,
                 },
+                // cell_counts (spatial grid, broad-phase repulsion)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // cell_nodes (spatial grid, broad-phase repulsion)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -183,6 +233,15 @@ impl PhysicsComputePipeline {
                 cache: None,
             });
 
+        let bin_nodes_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("BinNodesPipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "bin_nodes",
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
         let integrate_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("IntegratePipeline"),
             layout: Some(&pipeline_layout),
@@ -211,13 +270,42 @@ impl PhysicsComputePipeline {
             cache: None,
         });
 
+        // Fixed-size spatial grid buffers — the grid covers a fixed world
+        // area (see GRID_DIM/GRID_CELL_CAPACITY doc comment above) so these
+        // never need to grow with population, unlike the node/spring buffers.
+        let cell_count = (GRID_DIM * GRID_DIM) as wgpu::BufferAddress;
+        let cell_counts_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PhysicsCellCountsBuffer"),
+            size: cell_count * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let cell_nodes_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PhysicsCellNodesBuffer"),
+            size: cell_count * (GRID_CELL_CAPACITY as wgpu::BufferAddress) * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             muscle_actuation_pipeline,
             compute_forces_pipeline,
+            bin_nodes_pipeline,
             integrate_pipeline,
             pbd_projection_pipeline,
             apply_pbd_pipeline,
             bind_group_layout,
+            cell_counts_buffer,
+            cell_nodes_buffer,
+            node_capacity: 0,
+            spring_capacity: 0,
+            nodes_buffer: None,
+            springs_buffer: None,
+            config_buffer: None,
+            atomic_forces_x: None,
+            atomic_forces_y: None,
+            staging_buffer: None,
+            bind_group: None,
         }
     }
 
@@ -225,8 +313,11 @@ impl PhysicsComputePipeline {
     ///
     /// ## 1. What Happens
     /// `compute_step` marshals the CPU-side `GpuParticleNode` and `GpuPhysicsSpring` arrays
-    /// into GPU Storage Buffers, dispatches the compute workloads, and performs an asynchronous
-    /// readback to the CPU.
+    /// into GPU Storage Buffers, dispatches the compute workloads, and performs a **blocking**
+    /// readback to the CPU. Kept for callers that need same-tick results (e.g. tests); the
+    /// simulation's hot path uses [`Self::dispatch`] + [`Self::resolve`] instead, which lets the
+    /// GPU work for tick N overlap with CPU work and get collected at the start of tick N+1
+    /// instead of stalling the CPU immediately after submission.
     ///
     /// ## 2. Why It Happens
     /// The ECS needs the updated physics positions to render the organisms and calculate
@@ -243,8 +334,9 @@ impl PhysicsComputePipeline {
     ///
     /// The final mapped buffer is cast back to a `Vec<GpuParticleNode>` using `bytemuck` and returned.
     #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)]
     pub fn compute_step(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         nodes: &[GpuParticleNode],
@@ -253,6 +345,27 @@ impl PhysicsComputePipeline {
         global_time: f32,
         query_set: Option<&wgpu::QuerySet>,
     ) -> Vec<GpuParticleNode> {
+        let pending = self.dispatch(device, queue, nodes, springs, dt, global_time, query_set);
+        self.resolve(device, pending)
+    }
+
+    /// Submits the physics compute passes and kicks off an asynchronous
+    /// buffer readback, returning immediately without blocking on the GPU.
+    ///
+    /// Call [`Self::resolve`] on the returned [`PendingPhysicsReadback`] once
+    /// the GPU has plausibly finished (the simulation loop does this at the
+    /// start of the *next* tick) to collect the updated node data.
+    #[allow(clippy::too_many_arguments)]
+    pub fn dispatch(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        nodes: &[GpuParticleNode],
+        springs: &[GpuPhysicsSpring],
+        dt: f32,
+        global_time: f32,
+        query_set: Option<&wgpu::QuerySet>,
+    ) -> PendingPhysicsReadback {
         if nodes.is_empty() || springs.is_empty() {
             if let Some(qs) = query_set {
                 let mut encoder =
@@ -261,85 +374,43 @@ impl PhysicsComputePipeline {
                 encoder.write_timestamp(qs, 1);
                 queue.submit(Some(encoder.finish()));
             }
-            return nodes.to_vec();
+            return PendingPhysicsReadback::Ready(nodes.to_vec());
         }
+
+        self.ensure_capacity(device, nodes.len(), springs.len());
+
+        let nodes_buffer = self.nodes_buffer.as_ref().unwrap();
+        let springs_buffer = self.springs_buffer.as_ref().unwrap();
+        let config_buffer = self.config_buffer.as_ref().unwrap();
+        let atomic_forces_x = self.atomic_forces_x.as_ref().unwrap();
+        let atomic_forces_y = self.atomic_forces_y.as_ref().unwrap();
+        let staging_buffer = self.staging_buffer.as_ref().unwrap();
+        let bind_group = self.bind_group.as_ref().unwrap();
 
         let nodes_bytes = bytemuck::cast_slice(nodes);
         let springs_bytes = bytemuck::cast_slice(springs);
-
-        let nodes_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("PhysicsNodesBuffer"),
-            contents: nodes_bytes,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let springs_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("PhysicsSpringsBuffer"),
-            contents: springs_bytes,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
+        queue.write_buffer(nodes_buffer, 0, nodes_bytes);
+        queue.write_buffer(springs_buffer, 0, springs_bytes);
 
         let config = PhysicsConfigUniform {
             dt,
             time: global_time,
-            _padding: [0; 2],
+            active_node_count: nodes.len() as u32,
+            active_spring_count: springs.len() as u32,
         };
-        let config_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("PhysicsConfigBuffer"),
-            contents: bytemuck::cast_slice(&[config]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let atomic_forces_x = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("AtomicForcesX"),
-            size: (nodes.len() * 4) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let atomic_forces_y = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("AtomicForcesY"),
-            size: (nodes.len() * 4) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("PhysicsBindGroup"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: nodes_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: springs_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: config_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: atomic_forces_x.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: atomic_forces_y.as_entire_binding(),
-                },
-            ],
-        });
+        queue.write_buffer(config_buffer, 0, bytemuck::cast_slice(&[config]));
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("PhysicsEncoder"),
         });
 
-        // Zero out atomics
-        encoder.clear_buffer(&atomic_forces_x, 0, None);
-        encoder.clear_buffer(&atomic_forces_y, 0, None);
+        // Zero out atomics (whole capacity — cheap GPU-side clear, and any
+        // stale tail values beyond the live count are never read since the
+        // shader gates on `config.active_node_count`).
+        encoder.clear_buffer(atomic_forces_x, 0, None);
+        encoder.clear_buffer(atomic_forces_y, 0, None);
+        // Zero the spatial grid's per-cell counters before rebinning below.
+        encoder.clear_buffer(&self.cell_counts_buffer, 0, None);
 
         let node_workgroups = ((nodes.len() as f32) / 64.0).ceil() as u32;
         let spring_workgroups = ((springs.len() as f32) / 64.0).ceil() as u32;
@@ -354,7 +425,7 @@ impl PhysicsComputePipeline {
                 timestamp_writes: None,
             });
             cpass.set_pipeline(&self.muscle_actuation_pipeline);
-            cpass.set_bind_group(0, &bind_group, &[]);
+            cpass.set_bind_group(0, bind_group, &[]);
             cpass.dispatch_workgroups(spring_workgroups, 1, 1);
         }
 
@@ -364,8 +435,22 @@ impl PhysicsComputePipeline {
                 timestamp_writes: None,
             });
             cpass.set_pipeline(&self.compute_forces_pipeline);
-            cpass.set_bind_group(0, &bind_group, &[]);
+            cpass.set_bind_group(0, bind_group, &[]);
             cpass.dispatch_workgroups(spring_workgroups, 1, 1);
+        }
+
+        {
+            // Bin nodes into the spatial grid so `integrate`'s repulsion pass
+            // can query a bounded 3x3-cell neighborhood instead of scanning
+            // every node in the simulation (was the dominant O(N^2) cost at
+            // high entity counts).
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("BinNodesPass"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.bin_nodes_pipeline);
+            cpass.set_bind_group(0, bind_group, &[]);
+            cpass.dispatch_workgroups(node_workgroups, 1, 1);
         }
 
         {
@@ -374,7 +459,7 @@ impl PhysicsComputePipeline {
                 timestamp_writes: None,
             });
             cpass.set_pipeline(&self.integrate_pipeline);
-            cpass.set_bind_group(0, &bind_group, &[]);
+            cpass.set_bind_group(0, bind_group, &[]);
             cpass.dispatch_workgroups(node_workgroups, 1, 1);
         }
 
@@ -386,7 +471,7 @@ impl PhysicsComputePipeline {
                     timestamp_writes: None,
                 });
                 cpass.set_pipeline(&self.pbd_projection_pipeline);
-                cpass.set_bind_group(0, &bind_group, &[]);
+                cpass.set_bind_group(0, bind_group, &[]);
                 cpass.dispatch_workgroups(spring_workgroups, 1, 1);
             }
             {
@@ -395,7 +480,7 @@ impl PhysicsComputePipeline {
                     timestamp_writes: None,
                 });
                 cpass.set_pipeline(&self.apply_pbd_pipeline);
-                cpass.set_bind_group(0, &bind_group, &[]);
+                cpass.set_bind_group(0, bind_group, &[]);
                 cpass.dispatch_workgroups(node_workgroups, 1, 1);
             }
         }
@@ -404,37 +489,165 @@ impl PhysicsComputePipeline {
             encoder.write_timestamp(qs, 1);
         }
 
-        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("PhysicsStagingBuffer"),
-            size: nodes_bytes.len() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
+        let byte_len = nodes_bytes.len();
         encoder.copy_buffer_to_buffer(
-            &nodes_buffer,
+            nodes_buffer,
             0,
-            &staging_buffer,
+            staging_buffer,
             0,
-            nodes_bytes.len() as wgpu::BufferAddress,
+            byte_len as wgpu::BufferAddress,
         );
 
         queue.submit(Some(encoder.finish()));
 
-        let buffer_slice = staging_buffer.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+        staging_buffer
+            .slice(..byte_len as wgpu::BufferAddress)
+            .map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-        device.poll(wgpu::Maintain::Wait);
+        PendingPhysicsReadback::Mapping { receiver, byte_len }
+    }
 
-        if receiver.recv().unwrap().is_ok() {
-            let data = buffer_slice.get_mapped_range();
-            let result: Vec<GpuParticleNode> = bytemuck::cast_slice(&data).to_vec();
-            drop(data);
-            staging_buffer.unmap();
-            result
-        } else {
-            panic!("failed to map physics staging buffer");
+    /// Grows (never shrinks) the persistent GPU buffers/bind group to hold
+    /// at least `node_count`/`spring_count` entries, doubling capacity each
+    /// time to amortize reallocation across many ticks of gradual population
+    /// growth rather than reallocating on every single birth/death.
+    fn ensure_capacity(&mut self, device: &wgpu::Device, node_count: usize, spring_count: usize) {
+        let needs_growth = node_count > self.node_capacity || spring_count > self.spring_capacity;
+        if !needs_growth && self.bind_group.is_some() {
+            return;
+        }
+
+        if needs_growth {
+            self.node_capacity = node_count.max(self.node_capacity * 2).max(256);
+            self.spring_capacity = spring_count.max(self.spring_capacity * 2).max(256);
+        }
+
+        let node_bytes =
+            (self.node_capacity * std::mem::size_of::<GpuParticleNode>()) as wgpu::BufferAddress;
+        let spring_bytes =
+            (self.spring_capacity * std::mem::size_of::<GpuPhysicsSpring>()) as wgpu::BufferAddress;
+
+        self.nodes_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PhysicsNodesBuffer"),
+            size: node_bytes,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        self.springs_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PhysicsSpringsBuffer"),
+            size: spring_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        self.atomic_forces_x = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("AtomicForcesX"),
+            size: (self.node_capacity * 4) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        self.atomic_forces_y = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("AtomicForcesY"),
+            size: (self.node_capacity * 4) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        self.staging_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PhysicsStagingBuffer"),
+            size: node_bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        if self.config_buffer.is_none() {
+            self.config_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("PhysicsConfigBuffer"),
+                size: std::mem::size_of::<PhysicsConfigUniform>() as wgpu::BufferAddress,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+
+        self.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("PhysicsBindGroup"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.nodes_buffer.as_ref().unwrap().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.springs_buffer.as_ref().unwrap().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.config_buffer.as_ref().unwrap().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.atomic_forces_x.as_ref().unwrap().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.atomic_forces_y.as_ref().unwrap().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.cell_counts_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: self.cell_nodes_buffer.as_entire_binding(),
+                },
+            ],
+        }));
+    }
+
+    /// Blocks (briefly — see [`Self::dispatch`]) until the GPU work behind a
+    /// [`PendingPhysicsReadback`] is complete, then returns the updated nodes.
+    pub fn resolve(
+        &self,
+        device: &wgpu::Device,
+        pending: PendingPhysicsReadback,
+    ) -> Vec<GpuParticleNode> {
+        match pending {
+            PendingPhysicsReadback::Ready(nodes) => nodes,
+            PendingPhysicsReadback::Mapping { receiver, byte_len } => {
+                device.poll(wgpu::Maintain::Wait);
+                if receiver.recv().unwrap().is_ok() {
+                    let staging_buffer = self
+                        .staging_buffer
+                        .as_ref()
+                        .expect("staging buffer must exist after a Mapping dispatch");
+                    let data = staging_buffer
+                        .slice(..byte_len as wgpu::BufferAddress)
+                        .get_mapped_range();
+                    let result: Vec<GpuParticleNode> = bytemuck::cast_slice(&data).to_vec();
+                    drop(data);
+                    staging_buffer.unmap();
+                    result
+                } else {
+                    panic!("failed to map physics staging buffer");
+                }
+            }
         }
     }
+}
+
+/// A physics readback that's either already resolved (empty-input fast path)
+/// or in flight on the GPU, to be collected later via
+/// [`PhysicsComputePipeline::resolve`].
+pub enum PendingPhysicsReadback {
+    /// No GPU work was dispatched; the result is the (unchanged) input.
+    Ready(Vec<GpuParticleNode>),
+    /// A staging buffer is being asynchronously mapped for read access;
+    /// `byte_len` is how many bytes (from the start) are valid to read.
+    Mapping {
+        /// Fires once `map_async` completes.
+        receiver: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+        /// Number of valid bytes at the start of the pipeline's staging buffer.
+        byte_len: usize,
+    },
 }

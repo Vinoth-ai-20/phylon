@@ -62,6 +62,11 @@ pub struct DebugRenderer {
     pipeline: wgpu::RenderPipeline,
     camera_bind_group: wgpu::BindGroup,
     camera_buffer: wgpu::Buffer,
+
+    // Persistent, geometrically-grown vertex buffer for the instance list —
+    // replaces recreating a fresh buffer every render call.
+    instance_capacity: usize,
+    instance_buffer: Option<wgpu::Buffer>,
 }
 
 impl DebugRenderer {
@@ -149,13 +154,15 @@ impl DebugRenderer {
             pipeline,
             camera_bind_group,
             camera_buffer,
+            instance_capacity: 0,
+            instance_buffer: None,
         }
     }
 
     /// Renders instances.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
@@ -177,11 +184,18 @@ impl DebugRenderer {
         let view_proj: [[f32; 4]; 4] = proj.to_cols_array_2d();
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&view_proj));
 
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("InstanceBuffer"),
-            contents: bytemuck::cast_slice(instances),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        if instances.len() > self.instance_capacity || self.instance_buffer.is_none() {
+            self.instance_capacity = instances.len().max(self.instance_capacity * 2).max(256);
+            self.instance_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("InstanceBuffer"),
+                size: (self.instance_capacity * std::mem::size_of::<DebugInstance>())
+                    as wgpu::BufferAddress,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+        let instance_buffer = self.instance_buffer.as_ref().unwrap();
+        queue.write_buffer(instance_buffer, 0, bytemuck::cast_slice(instances));
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("DebugRenderEncoder"),

@@ -21,18 +21,41 @@ impl PhylonApp {
     ///
     /// ## 3. How It Happens
     /// The ECS `World` executes systems sequentially:
-    /// 1. **Biology**: Organism growth and sensory data gathering.
-    /// 2. **Neural Compute**: Batched ECS `Brain` data is mapped to `GpuCtrnnNode` buffers and dispatched to the GPU for numerical integration via Euler's method:
+    /// 1. **GPU readback resolution**: physics/brain results dispatched *last* tick are collected
+    ///    and written into the ECS first, so this tick's systems see them as their starting state.
+    /// 2. **Biology**: Organism growth and sensory data gathering.
+    /// 3. **Neural Compute**: Batched ECS `Brain` data is mapped to `GpuCtrnnNode` buffers and
+    ///    dispatched to the GPU for numerical integration via Euler's method — asynchronously;
+    ///    the result is collected at the start of the *next* tick (see step 1):
     ///    $$ y_{i}(t + DT) = y_{i}(t) + \frac{DT}{\tau_i} \left( -y_i + \sum_{j} w_{ji} \sigma(y_j + \theta_j) + I_i \right) $$
-    /// 3. **Behavior & Physics**: Node forces are accumulated and integrated into velocity/position vectors.
-    /// 4. **Spatial Dynamics**: Pheromones and gases diffuse across the `texture_2d_array`.
+    /// 4. **Behavior & Physics**: Node forces are accumulated and integrated into velocity/position
+    ///    vectors, dispatched asynchronously the same way as brain compute.
+    /// 5. **Spatial Dynamics**: Pheromones and gases diffuse across the `texture_2d_array`.
+    ///
+    /// Dispatching brain/physics asynchronously means their GPU work for tick N overlaps with
+    /// tick N's CPU-side ECS systems instead of stalling the CPU immediately after submission;
+    /// the tradeoff is a one-tick lag between when a value is computed and when dependent systems
+    /// observe it (e.g. `behavior_system` acts on brain state that's one tick behind the neural
+    /// integration dispatched this same tick). At `DT = 0.016s` this lag is ~16ms.
     pub(crate) fn update_simulation(&mut self) -> (f64, f64) {
         let mut physics_duration_ms = 0.0;
         let mut diffusion_duration_ms = 0.0;
         self.total_sim_time += DT;
 
+        // 0. Resolve GPU work dispatched last tick before anything reads
+        // positions/brain state this tick.
+        self.resolve_pending_physics();
+        self.resolve_pending_brain();
+
         // 1. Run Biology Systems (Sensing, Brain, Behavior)
         self.world.ecs.run_system_once(organisms::growth_system);
+        // Rebuilds the shared food/mineral/corpse spatial grids once for
+        // this tick — must run before both sensing_system and
+        // ecology::foraging_system, which otherwise would each rebuild the
+        // same 3 grids from the same data independently.
+        self.world
+            .ecs
+            .run_system_once(ecology::build_resource_grids_system);
         self.world.ecs.run_system_once(sensing::sensing_system);
 
         // -- GPU CTRNN EVALUATION --
@@ -74,29 +97,21 @@ impl PhylonApp {
             brain_offsets.push((entity, start_node, brain.nodes.len()));
         }
 
-        if let Some(gpu) = self.gpu.as_ref() {
-            if let Some(brain_compute) = self.brain_compute.as_ref() {
-                brain_compute.compute_step(
-                    &gpu.device,
-                    &gpu.queue,
-                    &mut gpu_brain_nodes,
-                    &gpu_brain_synapses,
-                    DT,
-                );
-            }
-        }
-
-        // Readback integrated node state
-        let mut query = self.world.ecs.query::<&mut brain::Brain>();
-        for (entity, start_node, len) in brain_offsets {
-            if let Ok(mut brain) = query.get_mut(&mut self.world.ecs, entity) {
-                for i in 0..len {
-                    brain.nodes[i].state = gpu_brain_nodes[(start_node as usize) + i].state;
-                }
-            }
+        if let (Some(gpu), Some(brain_compute)) = (self.gpu.as_ref(), self.brain_compute.as_mut()) {
+            let pending = brain_compute.dispatch(
+                &gpu.device,
+                &gpu.queue,
+                &gpu_brain_nodes,
+                &gpu_brain_synapses,
+                DT,
+            );
+            self.pending_brain = Some((pending, brain_offsets));
         }
 
         self.world.ecs.run_system_once(behavior::behavior_system);
+        self.world
+            .ecs
+            .run_system_once(behavior::physiological_state_update_system);
 
         // 2. Gather Nodes and build Entity -> Index map
         let mut entity_to_index = std::collections::HashMap::new();
@@ -153,17 +168,17 @@ impl PhylonApp {
             });
         }
 
-        // 4. Compute GPU Physics
+        // 4. Dispatch GPU Physics (async — collected at the start of next tick)
         if let (Some(gpu), Some(physics_compute)) =
-            (self.gpu.as_ref(), self.physics_compute.as_ref())
+            (self.gpu.as_ref(), self.physics_compute.as_mut())
         {
-            let physics_start = std::time::Instant::now();
+            let dispatch_start = std::time::Instant::now();
             let global_time = self
                 .world
                 .ecs
                 .resource::<diffusion::DiffusionConfig>()
                 .global_time;
-            let updated_nodes = physics_compute.compute_step(
+            let pending = physics_compute.dispatch(
                 &gpu.device,
                 &gpu.queue,
                 &gpu_nodes,
@@ -172,25 +187,17 @@ impl PhylonApp {
                 global_time,
                 gpu.query_set.as_ref(),
             );
-            physics_duration_ms += physics_start.elapsed().as_secs_f64() * 1000.0;
-
-            // 5. Update ECS Nodes
-            for (i, entity) in node_entities.iter().enumerate() {
-                if let Some(mut node) = self.world.ecs.get_mut::<physics::ParticleNode>(*entity) {
-                    node.position.x = updated_nodes[i].position[0];
-                    node.position.y = updated_nodes[i].position[1];
-                    node.velocity.x = updated_nodes[i].velocity[0];
-                    node.velocity.y = updated_nodes[i].velocity[1];
-                    // Clear forces for next tick
-                    node.force = common::Vec2::new(0.0, 0.0);
-                }
-            }
+            physics_duration_ms += dispatch_start.elapsed().as_secs_f64() * 1000.0;
+            self.pending_physics = Some((pending, node_entities));
         }
 
-        // 6. Run remaining biological systems
+        // 5. Run remaining biological systems
         self.world
             .ecs
             .run_system_once(metabolism::day_night_cycle_system);
+        self.world
+            .ecs
+            .run_system_once(metabolism::atmosphere_homeostasis_system);
         self.world.ecs.run_system_once(ecology::food_spawner_system);
         self.world
             .ecs
@@ -199,6 +206,7 @@ impl PhylonApp {
             .ecs
             .run_system_once(organisms::systems::producer_growth_system);
         self.world.ecs.run_system_once(ecology::foraging_system);
+        self.world.ecs.run_system_once(ecology::corpse_decay_system);
         self.world
             .ecs
             .run_system_once(metabolism::metabolism_system);
@@ -389,5 +397,58 @@ impl PhylonApp {
         }
 
         (physics_duration_ms, diffusion_duration_ms)
+    }
+
+    /// Collects the physics GPU readback dispatched last tick (if any) and
+    /// writes the updated positions/velocities into the ECS. A brief
+    /// `device.poll(Wait)` is still required to actually collect the mapped
+    /// buffer, but because a full tick's worth of CPU work has run since the
+    /// dispatch, the GPU has almost always already finished — unlike the
+    /// previous same-tick blocking readback, which stalled immediately.
+    fn resolve_pending_physics(&mut self) {
+        let Some((pending, node_entities)) = self.pending_physics.take() else {
+            return;
+        };
+        let Some(gpu) = self.gpu.as_ref() else {
+            return;
+        };
+        let Some(physics_compute) = self.physics_compute.as_ref() else {
+            return;
+        };
+        let updated_nodes = physics_compute.resolve(&gpu.device, pending);
+        for (i, entity) in node_entities.iter().enumerate() {
+            if let Some(mut node) = self.world.ecs.get_mut::<physics::ParticleNode>(*entity) {
+                node.position.x = updated_nodes[i].position[0];
+                node.position.y = updated_nodes[i].position[1];
+                node.velocity.x = updated_nodes[i].velocity[0];
+                node.velocity.y = updated_nodes[i].velocity[1];
+                // Clear forces for next tick
+                node.force = common::Vec2::new(0.0, 0.0);
+            }
+        }
+    }
+
+    /// Collects the brain (CTRNN) GPU readback dispatched last tick (if any)
+    /// and writes the integrated node states into the ECS. Same non-blocking
+    /// rationale as [`Self::resolve_pending_physics`].
+    fn resolve_pending_brain(&mut self) {
+        let Some((pending, brain_offsets)) = self.pending_brain.take() else {
+            return;
+        };
+        let Some(gpu) = self.gpu.as_ref() else {
+            return;
+        };
+        let Some(brain_compute) = self.brain_compute.as_ref() else {
+            return;
+        };
+        let gpu_brain_nodes = brain_compute.resolve(&gpu.device, pending);
+        let mut query = self.world.ecs.query::<&mut brain::Brain>();
+        for (entity, start_node, len) in brain_offsets {
+            if let Ok(mut brain) = query.get_mut(&mut self.world.ecs, entity) {
+                for i in 0..len {
+                    brain.nodes[i].state = gpu_brain_nodes[(start_node as usize) + i].state;
+                }
+            }
+        }
     }
 }

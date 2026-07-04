@@ -174,19 +174,32 @@ pub fn reproduction_system(
         }
     }
 
-    // Second pass: sexual mating (requires another organism)
+    // Second pass: sexual mating (requires another organism). Broad-phase via
+    // a spatial grid (same pattern as `ecology::foraging_system`) replaces
+    // the previous O(S^2) scan over every pair of mating-ready organisms.
     let mut mated = std::collections::HashSet::new();
 
+    let mut mate_grid = spatial::UniformGrid::new(64.0).unwrap();
+    let mut entity_to_ready_idx: std::collections::HashMap<Entity, usize> =
+        std::collections::HashMap::new();
+    for (idx, (entity, pos, ..)) in ready_sexuals.iter().enumerate() {
+        let _ = mate_grid.insert(*entity, *pos);
+        entity_to_ready_idx.insert(*entity, idx);
+    }
+
     for i in 0..ready_sexuals.len() {
-        if mated.contains(&ready_sexuals[i].0) {
+        let (e1, p1, g1, d1, c1) = &ready_sexuals[i];
+        if mated.contains(e1) {
             continue;
         }
-        for j in (i + 1)..ready_sexuals.len() {
-            if mated.contains(&ready_sexuals[j].0) {
+
+        for candidate in mate_grid.query_radius(*p1, 50.0) {
+            if candidate == *e1 || mated.contains(&candidate) {
                 continue;
             }
-
-            let (e1, p1, g1, d1, c1) = &ready_sexuals[i];
+            let Some(&j) = entity_to_ready_idx.get(&candidate) else {
+                continue;
+            };
             let (e2, p2, g2, _d2, _c2) = &ready_sexuals[j];
 
             // Distance check (collision radius approx 50.0)
