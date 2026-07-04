@@ -86,56 +86,68 @@ impl<'a> Behavior<String> for WorkbenchBehavior<'a> {
                 };
                 panel_chrome(ui, &name, &chrome_title, self.commands);
 
-                match name.as_str() {
-                    "Viewport" => {
-                        crate::plugins::viewport::viewport_ui(
-                            &ctx,
-                            ui,
-                            self.state,
-                            &mut self.canvas_interaction,
-                            self.commands,
-                        );
-                    }
-                    "Sidebar" | "Inspector" => {
-                        crate::plugins::sidebar::sidebar_content_ui(
-                            &ctx,
-                            ui,
-                            self.state,
-                            self.world,
-                            self.commands,
-                        );
-                    }
-                    "Metrics" => {
-                        crate::plugins::metrics::metrics_ui(
-                            &ctx,
-                            ui,
-                            self.state,
-                            self.world,
-                            self.commands,
-                        );
-                    }
-                    "Event Log" => {
-                        crate::plugins::event_log::event_log_ui(
-                            &ctx,
-                            ui,
-                            self.state,
-                            self.world,
-                            self.commands,
-                        );
-                    }
-                    "Neural Viewer" => {
-                        crate::plugins::neural_viewer::neural_viewer_ui(
-                            &ctx,
-                            ui,
-                            self.state,
-                            self.world,
-                            self.commands,
-                        );
-                    }
-                    _ => {
-                        ui.label(format!("Unknown pane: {}", name));
-                    }
-                }
+                // Content padding: every panel except the Viewport (a
+                // full-bleed canvas) gets consistent breathing room from
+                // `theme::PANEL_PADDING` here, instead of each plugin adding
+                // its own ad hoc `ui.add_space(...)` at the top.
+                let content_margin = if name == "Viewport" {
+                    egui::Margin::ZERO
+                } else {
+                    egui::Margin::symmetric(crate::theme::PANEL_PADDING, crate::theme::PANEL_PADDING)
+                };
+
+                egui::Frame::none()
+                    .inner_margin(content_margin)
+                    .show(ui, |ui| match name.as_str() {
+                        "Viewport" => {
+                            crate::plugins::viewport::viewport_ui(
+                                &ctx,
+                                ui,
+                                self.state,
+                                &mut self.canvas_interaction,
+                                self.commands,
+                            );
+                        }
+                        "Sidebar" | "Inspector" => {
+                            crate::plugins::sidebar::sidebar_content_ui(
+                                &ctx,
+                                ui,
+                                self.state,
+                                self.world,
+                                self.commands,
+                            );
+                        }
+                        "Metrics" => {
+                            crate::plugins::metrics::metrics_ui(
+                                &ctx,
+                                ui,
+                                self.state,
+                                self.world,
+                                self.commands,
+                            );
+                        }
+                        "Event Log" => {
+                            crate::plugins::event_log::event_log_ui(
+                                &ctx,
+                                ui,
+                                self.state,
+                                self.world,
+                                self.commands,
+                            );
+                        }
+                        "Neural Viewer" => {
+                            crate::plugins::neural_viewer::neural_viewer_ui(
+                                &ctx,
+                                ui,
+                                self.state,
+                                self.world,
+                                self.commands,
+                            );
+                        }
+                        _ => {
+                            ui.label(format!("Unknown pane: {}", name));
+                        }
+                    });
             });
 
         UiResponse::None
@@ -229,16 +241,15 @@ fn panel_chrome(ui: &mut egui::Ui, name: &str, title: &str, commands: &mut Vec<M
         return;
     }
 
-    let chrome_height = 22.0;
     ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), chrome_height),
+        egui::vec2(ui.available_width(), crate::theme::CHROME_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             ui.label(egui::RichText::new(title).strong());
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(4.0);
+                ui.add_space(crate::theme::SPACE_XS);
 
                 // Close button
                 if ui
@@ -314,7 +325,7 @@ pub fn render_floating_panels(
             .frame(
                 egui::Frame::window(&ctx.style())
                     .fill(PANEL_BG)
-                    .inner_margin(egui::Margin::same(6.0)),
+                    .inner_margin(egui::Margin::same(crate::theme::PANEL_PADDING)),
             );
 
         // One-shot position correction from a snap computed on the previous
@@ -344,6 +355,7 @@ pub fn render_floating_panels(
             // Only render content when NOT minimized
             if !minimized {
                 ui.separator();
+                ui.add_space(crate::theme::SPACE_XS);
 
                 match name.as_str() {
                     "Sidebar" | "Inspector" => {

@@ -360,8 +360,10 @@ impl PhylonApp {
 
         let egui_context = egui::Context::default();
         let mut fonts = egui::FontDefinitions::default();
+        ui::theme::install_fonts(&mut fonts);
         egui_remixicon::add_to_fonts(&mut fonts);
         egui_context.set_fonts(fonts);
+        ui::theme::apply_style(&egui_context);
         egui_context.options_mut(|o| {
             o.zoom_with_keyboard = false;
         });

@@ -29,6 +29,9 @@ pub use state::{
 /// Per-panel UI plugins (sidebar, viewport, metrics, event log, menu, etc.).
 pub mod plugins;
 
+/// Shared design tokens — fonts, spacing, and global style.
+pub mod theme;
+
 /// UI helper utilities.
 pub mod utils;
 
