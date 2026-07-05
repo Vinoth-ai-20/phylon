@@ -11,10 +11,14 @@
 //! - **Simulation unit newtypes**: [`SimLength`], [`SimMass`], [`SimEnergy`], [`SimTime`]
 //! - **Math re-exports**: [`Vec2`], [`IVec2`]
 //! - **Error base**: [`PhylonError`] trait and [`PhylonResult`] type alias
+//! - **Determinism**: [`SimRng`], the single seeded source of randomness
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 
+use bevy_ecs::prelude::Resource;
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -174,6 +178,65 @@ pub struct SimEnergy(pub f32);
 pub struct SimTime(pub f32);
 
 // ────────────────────────────────────────────────────────────────────────────
+// Deterministic RNG
+// ────────────────────────────────────────────────────────────────────────────
+
+/// # The Single Seeded Source of Randomness
+///
+/// ## 1. What Happens
+/// `SimRng` wraps a `ChaCha8Rng` instance. It is inserted into the ECS
+/// `World` exactly once, as a [`bevy_ecs::prelude::Resource`], and is the one
+/// shared generator every stochastic system draws from: mutation, crossover,
+/// spawn placement, mate selection, and any future stochastic decision.
+///
+/// ## 2. Why It Happens
+/// Reproducible research requires that identical seed + identical recorded
+/// interventions produce an identical simulation trajectory. An unseeded,
+/// platform/thread-dependent source of randomness (`rand::thread_rng()`)
+/// breaks this guarantee silently — two runs of "the same" experiment
+/// diverge from tick 0 with no way to tell why. Centralizing every draw
+/// through one seeded generator closes that gap at its root.
+///
+/// ## 3. How It Happens
+/// `SimRng::from_seed` is called once, at application startup, using the
+/// seed recorded in `PhylonConfig::simulation::rng_seed`. Systems that need
+/// randomness take `ResMut<SimRng>` as an ECS system parameter (or receive
+/// `&mut ChaCha8Rng` passed down from a caller already holding the
+/// resource) instead of reaching for `rand::thread_rng()`.
+#[derive(Resource, Debug)]
+pub struct SimRng(pub ChaCha8Rng);
+
+impl SimRng {
+    /// Constructs a `SimRng` seeded deterministically from a 64-bit seed.
+    ///
+    /// The same seed always produces the same sequence of draws on any
+    /// platform — `ChaCha8Rng` is explicitly designed for cross-platform,
+    /// cross-version bit-for-bit reproducibility, unlike
+    /// `rand::thread_rng()`, whose output depends on OS entropy and thread
+    /// state.
+    #[inline]
+    pub fn from_seed(seed: u64) -> Self {
+        Self(ChaCha8Rng::seed_from_u64(seed))
+    }
+}
+
+impl std::ops::Deref for SimRng {
+    type Target = ChaCha8Rng;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for SimRng {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Error foundation
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -236,5 +299,31 @@ mod tests {
         let e1 = SimEnergy(1.0);
         let e2 = SimEnergy(2.0);
         assert!(e1 < e2);
+    }
+
+    #[test]
+    fn sim_rng_same_seed_produces_same_sequence() {
+        use rand::Rng;
+
+        let mut a = SimRng::from_seed(42);
+        let mut b = SimRng::from_seed(42);
+
+        let draws_a: Vec<u32> = (0..16).map(|_| a.gen()).collect();
+        let draws_b: Vec<u32> = (0..16).map(|_| b.gen()).collect();
+
+        assert_eq!(draws_a, draws_b);
+    }
+
+    #[test]
+    fn sim_rng_different_seeds_diverge() {
+        use rand::Rng;
+
+        let mut a = SimRng::from_seed(1);
+        let mut b = SimRng::from_seed(2);
+
+        let draws_a: Vec<u32> = (0..16).map(|_| a.gen()).collect();
+        let draws_b: Vec<u32> = (0..16).map(|_| b.gen()).collect();
+
+        assert_ne!(draws_a, draws_b);
     }
 }

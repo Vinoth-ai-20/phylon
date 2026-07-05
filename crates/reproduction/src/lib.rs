@@ -4,9 +4,10 @@
 #![warn(clippy::all)]
 
 use bevy_ecs::prelude::*;
-use common::Vec2;
+use common::{SimRng, Vec2};
 use genetics::Genome;
 use metabolism::ChemicalEconomy;
+use rand::Rng;
 
 /// Reproduction mode.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +107,7 @@ pub fn reproduction_system(
     )>,
     config: Res<ecology::EcologyConfig>,
     mut tracker: ResMut<genetics::GlobalInnovationTracker>,
+    mut rng: ResMut<SimRng>,
     all_organisms: Query<(), With<ReproductionStrategy>>,
     mut birth_events: EventWriter<BirthRequest>,
 ) {
@@ -145,12 +147,12 @@ pub fn reproduction_system(
 
                 let mut child_genome = strategy.genome.clone();
                 // Introduce structural mutation
-                child_genome.mutate(0.2, &mut rand::thread_rng(), &mut tracker);
+                child_genome.mutate(0.2, &mut rng.0, &mut tracker);
 
                 // Spawn child slightly offset
                 let offset = Vec2::new(
-                    (fastrand::f32() - 0.5) * 50.0,
-                    (fastrand::f32() - 0.5) * 50.0,
+                    (rng.gen::<f32>() - 0.5) * 50.0,
+                    (rng.gen::<f32>() - 0.5) * 50.0,
                 );
 
                 birth_events.send(BirthRequest {
@@ -213,11 +215,9 @@ pub fn reproduction_system(
                     mated.insert(*e1);
                     mated.insert(*e2);
 
-                    let mut rng = rand::thread_rng();
-                    use rand::Rng;
                     let mut child_genome =
-                        g1.crossover(g2, genetics::GenomeId(rng.gen()), &mut rng);
-                    child_genome.mutate(0.1, &mut rng, &mut tracker);
+                        g1.crossover(g2, genetics::GenomeId(rng.gen()), &mut rng.0);
+                    child_genome.mutate(0.1, &mut rng.0, &mut tracker);
 
                     let mut offset_pos = *p1;
                     offset_pos.x += (rng.gen::<f32>() - 0.5) * 50.0;

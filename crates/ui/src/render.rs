@@ -148,14 +148,15 @@ pub fn render_ui(
         render_vision_cones(ctx, state, world, interact_response.rect);
     }
 
-    // ── World-space scale grid (always on) ──────────────────────────────────
+    // ── World-space scale grid ───────────────────────────────────────────────
     // Low-opacity, so it reads as a subtle scale reference rather than
     // competing with the simulation — the audit's "no viewport scale
-    // reference" finding. Unlike the boundary/vision-cone overlays, this one
-    // is never gated behind a toggle: it's cheap (line count is bounded by
+    // reference" finding. On by default (cheap — line count is bounded by
     // the visible world extent divided by the grid step, not by zoom level)
-    // and useful at every zoom.
-    render_scale_grid(ctx, state, interact_response.rect);
+    // but toggleable, e.g. for a clean screenshot/recording.
+    if state.show_scale_grid {
+        render_scale_grid(ctx, state, interact_response.rect);
+    }
 
     // ── World boundary overlay ──────────────────────────────────────────────
     if state.show_world_boundary {

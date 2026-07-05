@@ -229,6 +229,13 @@ impl PhylonApp {
             signal_energy_cost_per_unit: sim_config.simulation.signal_energy_cost_per_unit,
         });
 
+        // The single seeded source of randomness for every stochastic system
+        // (genetics mutation/crossover, spawn placement, mate selection, ...)
+        // — see common::SimRng's doc comment for the determinism rationale.
+        world
+            .ecs
+            .insert_resource(common::SimRng::from_seed(sim_config.simulation.rng_seed));
+
         let mut lineage_tracker = evolution::LineageTracker::new();
 
         let env_manager = environment::EnvironmentManager::new(
@@ -244,7 +251,11 @@ impl PhylonApp {
         world.ecs.insert_resource(env_manager);
 
         let mut tracker = genetics::GlobalInnovationTracker::default();
-        seed_ecosystem(&mut world.ecs, &mut lineage_tracker, &mut tracker);
+        world
+            .ecs
+            .resource_scope::<common::SimRng, _>(|ecs, mut sim_rng| {
+                seed_ecosystem(ecs, &mut lineage_tracker, &mut tracker, &mut sim_rng.0);
+            });
         world.ecs.insert_resource(lineage_tracker);
         world.ecs.insert_resource(tracker);
 
@@ -638,10 +649,8 @@ pub(crate) fn seed_ecosystem(
     world: &mut bevy_ecs::world::World,
     lineage_tracker: &mut evolution::LineageTracker,
     tracker: &mut genetics::GlobalInnovationTracker,
+    rng: &mut impl rand::Rng,
 ) {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-
     // 1. Define Prototypes
     // Colors come from `Diet::standard_color()` — the single canonical
     // per-diet palette shared with the sandbox spawn tool, so an organism
@@ -705,7 +714,7 @@ pub(crate) fn seed_ecosystem(
             let mut ind_genome = genome.clone();
             if diet != ecology::Diet::Producer {
                 for _ in 0..10 {
-                    ind_genome.mutate(1.0, &mut rng, tracker);
+                    ind_genome.mutate(1.0, rng, tracker);
                 }
             }
 
@@ -717,6 +726,7 @@ pub(crate) fn seed_ecosystem(
                 ecology::EcologicalCategory::None,
                 0,
                 0,
+                rng,
             );
             lineage_tracker.register_birth(
                 common::EntityId(e.to_bits()),

@@ -2,6 +2,11 @@ use crate::components::{Generation, GrowthState, OrganismColor, SpawnTick};
 use common::Vec2;
 
 /// Spawns an organism's zygote based on its genome.
+///
+/// `rng` must be the caller's handle onto the single shared `common::SimRng`
+/// resource (see its doc comment) — never a fresh `rand::thread_rng()` —
+/// so spawn placement is reproducible for a given experiment seed.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_organism(
     world: &mut bevy_ecs::world::World,
     genome: &genetics::Genome,
@@ -10,12 +15,12 @@ pub fn spawn_organism(
     category: ecology::EcologicalCategory,
     generation: u32,
     spawn_tick: u64,
+    rng: &mut impl rand::Rng,
 ) -> bevy_ecs::entity::Entity {
     use physics::ParticleNode;
-    use rand::Rng;
 
     let segment_length = 20.0;
-    let heading = rand::thread_rng().gen_range(0.0..std::f32::consts::TAU);
+    let heading = rng.gen_range(0.0..std::f32::consts::TAU);
 
     // Determine color and initial head segment from HoxSequence when available.
     let (color, head_seg_u32) = if let Some(hox) = genome.hox.as_ref() {
@@ -151,14 +156,14 @@ pub fn spawn_proto_fish(
     category: ecology::EcologicalCategory,
     generation: u32,
     spawn_tick: u64,
+    rng: &mut impl rand::Rng,
 ) {
     use physics::{ConstraintType, ParticleNode, Spring};
-    use rand::Rng;
 
     // Geometry constants — all in world units
     let segment_len: f32 = 20.0;
     let fin_spread: f32 = 15.0;
-    let heading: f32 = rand::thread_rng().gen_range(0.0..std::f32::consts::TAU);
+    let heading: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
     let dir = Vec2::new(heading.cos(), heading.sin());
 
     // ── Spine (5 nodes along −X axis, head at pos, tail to the left) ──────

@@ -115,14 +115,19 @@ impl PhylonApp {
                                 preset.category.unwrap_or(ecology::EcologicalCategory::None);
 
                             // Spawn the organism
-                            organisms::spawn_organism(
-                                &mut self.world.ecs,
-                                &genome,
-                                spawn_pos,
-                                diet,
-                                category,
-                                0,
-                                0,
+                            self.world.ecs.resource_scope::<common::SimRng, _>(
+                                |ecs, mut sim_rng| {
+                                    organisms::spawn_organism(
+                                        ecs,
+                                        &genome,
+                                        spawn_pos,
+                                        diet,
+                                        category,
+                                        0,
+                                        0,
+                                        &mut sim_rng.0,
+                                    );
+                                },
                             );
 
                             // We would attach the sandbox traits to the root node if possible,
@@ -277,11 +282,16 @@ impl PhylonApp {
                     // Respawn defaults
                     let mut tracker = evolution::LineageTracker::new();
                     let mut global_tracker = genetics::GlobalInnovationTracker::default();
-                    crate::app::seed_ecosystem(
-                        &mut self.world.ecs,
-                        &mut tracker,
-                        &mut global_tracker,
-                    );
+                    self.world
+                        .ecs
+                        .resource_scope::<common::SimRng, _>(|ecs, mut sim_rng| {
+                            crate::app::seed_ecosystem(
+                                ecs,
+                                &mut tracker,
+                                &mut global_tracker,
+                                &mut sim_rng.0,
+                            );
+                        });
                     self.world.ecs.insert_resource(tracker);
                     self.world.ecs.insert_resource(global_tracker);
                 }
@@ -342,15 +352,20 @@ impl PhylonApp {
                         common::EntityId(0),
                         fish_hox,
                     );
-                    organisms::spawn_organism(
-                        &mut self.world.ecs,
-                        &fish_genome,
-                        self.ui.camera_pos,
-                        ecology::Diet::Carnivore,
-                        ecology::EcologicalCategory::None,
-                        0,
-                        0,
-                    );
+                    self.world
+                        .ecs
+                        .resource_scope::<common::SimRng, _>(|ecs, mut sim_rng| {
+                            organisms::spawn_organism(
+                                ecs,
+                                &fish_genome,
+                                self.ui.camera_pos,
+                                ecology::Diet::Carnivore,
+                                ecology::EcologicalCategory::None,
+                                0,
+                                0,
+                                &mut sim_rng.0,
+                            );
+                        });
                 }
                 ui::MenuAction::ShowDocumentation => {
                     self.ui.show_docs = true;
@@ -399,14 +414,19 @@ impl PhylonApp {
                     {
                         if let Ok(bytes) = std::fs::read(path) {
                             if let Ok(genome) = bincode::deserialize::<genetics::Genome>(&bytes) {
-                                organisms::spawn_organism(
-                                    &mut self.world.ecs,
-                                    &genome,
-                                    self.ui.camera_pos,
-                                    ecology::Diet::Omnivore,
-                                    ecology::EcologicalCategory::None,
-                                    0,
-                                    0,
+                                self.world.ecs.resource_scope::<common::SimRng, _>(
+                                    |ecs, mut sim_rng| {
+                                        organisms::spawn_organism(
+                                            ecs,
+                                            &genome,
+                                            self.ui.camera_pos,
+                                            ecology::Diet::Omnivore,
+                                            ecology::EcologicalCategory::None,
+                                            0,
+                                            0,
+                                            &mut sim_rng.0,
+                                        );
+                                    },
                                 );
                                 self.ui.push_toast(
                                     "Genome imported",

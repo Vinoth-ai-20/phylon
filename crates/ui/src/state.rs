@@ -152,6 +152,11 @@ pub struct WorkbenchState {
     /// Whether to draw the world boundary outline (visual only — the
     /// simulation always hard-reflects organisms at the same bounds).
     pub show_world_boundary: bool,
+    /// Whether to draw the low-opacity world-space scale grid (see
+    /// `render::render_scale_grid`). Defaults on (a permanent scale
+    /// reference was the audit's finding), but toggleable since a research
+    /// screenshot/recording may want a clean, grid-free viewport.
+    pub show_scale_grid: bool,
     /// Whether a GIF recording is currently in progress. The actual frame
     /// buffer lives in `PhylonApp` (app crate) — this is just a lightweight
     /// mirror so the toolbar can show a recording indicator.
@@ -333,6 +338,7 @@ impl Default for WorkbenchState {
             show_keybinds: false,
             show_vision_cones: false,
             show_world_boundary: false,
+            show_scale_grid: true,
             recording_active: false,
             recording_started_at: None,
             activity_bar_expanded: true,

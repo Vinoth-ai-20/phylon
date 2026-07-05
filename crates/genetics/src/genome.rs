@@ -213,11 +213,11 @@ impl Genome {
             // Mutate Brain CPPN
             if rng.gen::<f32>() < 0.05 {
                 self.brain_cppn
-                    .mutate_add_node(&mut tracker.next_innovation);
+                    .mutate_add_node(&mut tracker.next_innovation, rng);
             }
             if rng.gen::<f32>() < 0.10 {
                 self.brain_cppn
-                    .mutate_add_connection(&mut tracker.next_innovation);
+                    .mutate_add_connection(&mut tracker.next_innovation, rng);
             }
             for conn in &mut self.brain_cppn.connections {
                 if rng.gen::<f32>() < 0.2 {
@@ -228,11 +228,11 @@ impl Genome {
             // Mutate Morph CPPN
             if rng.gen::<f32>() < 0.05 {
                 self.morph_cppn
-                    .mutate_add_node(&mut tracker.next_innovation);
+                    .mutate_add_node(&mut tracker.next_innovation, rng);
             }
             if rng.gen::<f32>() < 0.10 {
                 self.morph_cppn
-                    .mutate_add_connection(&mut tracker.next_innovation);
+                    .mutate_add_connection(&mut tracker.next_innovation, rng);
             }
             for conn in &mut self.morph_cppn.connections {
                 if rng.gen::<f32>() < 0.2 {

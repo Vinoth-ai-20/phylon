@@ -44,15 +44,18 @@ impl bevy_ecs::world::Command for SpawnOrganismCommand {
             }
         };
 
-        let entity = organisms::spawn_organism(
-            world,
-            &self.genome,
-            self.position,
-            self.diet,
-            self.category,
-            generation as u32,
-            0,
-        );
+        let entity = world.resource_scope::<common::SimRng, _>(|world, mut sim_rng| {
+            organisms::spawn_organism(
+                world,
+                &self.genome,
+                self.position,
+                self.diet,
+                self.category,
+                generation as u32,
+                0,
+                &mut sim_rng.0,
+            )
+        });
 
         if let Some(mut tracker) = world.get_resource_mut::<evolution::LineageTracker>() {
             tracker.register_birth(

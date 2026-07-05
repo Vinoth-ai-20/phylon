@@ -898,7 +898,10 @@ dependencies = [
 name = "common"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "glam",
+ "rand 0.8.6",
+ "rand_chacha 0.3.1",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -3441,7 +3444,6 @@ dependencies = [
  "common",
  "ecology",
  "events",
- "fastrand",
  "genetics",
  "metabolism",
  "physics",

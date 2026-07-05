@@ -164,24 +164,35 @@ impl Cppn {
     }
 
     /// Mutates a random existing connection's weight.
-    pub fn mutate_weight(&mut self) {
+    ///
+    /// Draws from the caller-supplied `rng` rather than a global source, so
+    /// the same seed always produces the same mutation (see `common::SimRng`
+    /// for the determinism policy this supports).
+    pub fn mutate_weight<R: rand::Rng>(&mut self, rng: &mut R) {
         if self.connections.is_empty() {
             return;
         }
-        let idx = rand::random::<usize>() % self.connections.len();
-        let delta = rand::random::<f32>() - 0.5;
+        let idx = rng.gen_range(0..self.connections.len());
+        let delta = rng.gen::<f32>() - 0.5;
         self.connections[idx].weight += delta;
     }
 
     /// Adds a random connection between two unconnected nodes.
-    pub fn mutate_add_connection(&mut self, next_innovation: &mut usize) {
+    ///
+    /// Draws from the caller-supplied `rng` rather than a global source —
+    /// see [`mutate_weight`](Self::mutate_weight)'s doc comment.
+    pub fn mutate_add_connection<R: rand::Rng>(
+        &mut self,
+        next_innovation: &mut usize,
+        rng: &mut R,
+    ) {
         if self.nodes.len() < 2 {
             return;
         }
 
         for _ in 0..10 {
-            let src = rand::random::<usize>() % self.nodes.len();
-            let tgt = rand::random::<usize>() % self.nodes.len();
+            let src = rng.gen_range(0..self.nodes.len());
+            let tgt = rng.gen_range(0..self.nodes.len());
 
             if self.nodes[src].layer >= self.nodes[tgt].layer {
                 continue;
@@ -195,7 +206,7 @@ impl Cppn {
                 self.connections.push(CppnConnection {
                     source: src,
                     target: tgt,
-                    weight: (rand::random::<f32>() - 0.5) * 2.0,
+                    weight: (rng.gen::<f32>() - 0.5) * 2.0,
                     enabled: true,
                     innovation: *next_innovation,
                 });
@@ -206,7 +217,10 @@ impl Cppn {
     }
 
     /// Splits a connection and inserts a new hidden node.
-    pub fn mutate_add_node(&mut self, next_innovation: &mut usize) {
+    ///
+    /// Draws from the caller-supplied `rng` rather than a global source —
+    /// see [`mutate_weight`](Self::mutate_weight)'s doc comment.
+    pub fn mutate_add_node<R: rand::Rng>(&mut self, next_innovation: &mut usize, rng: &mut R) {
         if self.connections.is_empty() {
             return;
         }
@@ -222,7 +236,7 @@ impl Cppn {
             return;
         }
 
-        let idx = enabled_indices[rand::random::<usize>() % enabled_indices.len()];
+        let idx = enabled_indices[rng.gen_range(0..enabled_indices.len())];
         let conn = self.connections[idx].clone();
 
         self.connections[idx].enabled = false;
@@ -280,5 +294,82 @@ impl Default for GlobalInnovationTracker {
         Self {
             next_innovation: 100, // Reserve 0-99 for initial topologies
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
+    /// A minimal two-node, one-connection CPPN — just enough structure for
+    /// `mutate_add_connection` (needs >=2 nodes) and `mutate_add_node`
+    /// (needs >=1 connection) to actually do something, rather than hitting
+    /// their early-return guards.
+    fn sample_cppn() -> Cppn {
+        Cppn {
+            nodes: vec![
+                CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 0,
+                },
+                CppnNode {
+                    activation: brain::ActivationFn::Tanh,
+                    bias: 0.0,
+                    layer: 1,
+                },
+            ],
+            connections: vec![CppnConnection {
+                source: 0,
+                target: 1,
+                weight: 0.5,
+                enabled: true,
+                innovation: 0,
+            }],
+        }
+    }
+
+    #[test]
+    fn mutate_weight_is_deterministic_for_same_seed() {
+        let mut a = sample_cppn();
+        let mut b = sample_cppn();
+        a.mutate_weight(&mut ChaCha8Rng::seed_from_u64(7));
+        b.mutate_weight(&mut ChaCha8Rng::seed_from_u64(7));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn mutate_add_connection_is_deterministic_for_same_seed() {
+        let mut a = sample_cppn();
+        let mut b = sample_cppn();
+        let mut next_innovation_a = 10;
+        let mut next_innovation_b = 10;
+        a.mutate_add_connection(&mut next_innovation_a, &mut ChaCha8Rng::seed_from_u64(3));
+        b.mutate_add_connection(&mut next_innovation_b, &mut ChaCha8Rng::seed_from_u64(3));
+        assert_eq!(a, b);
+        assert_eq!(next_innovation_a, next_innovation_b);
+    }
+
+    #[test]
+    fn mutate_add_node_is_deterministic_for_same_seed() {
+        let mut a = sample_cppn();
+        let mut b = sample_cppn();
+        let mut next_innovation_a = 10;
+        let mut next_innovation_b = 10;
+        a.mutate_add_node(&mut next_innovation_a, &mut ChaCha8Rng::seed_from_u64(11));
+        b.mutate_add_node(&mut next_innovation_b, &mut ChaCha8Rng::seed_from_u64(11));
+        assert_eq!(a, b);
+        assert_eq!(next_innovation_a, next_innovation_b);
+    }
+
+    #[test]
+    fn mutate_weight_diverges_across_different_seeds() {
+        let mut a = sample_cppn();
+        let mut b = sample_cppn();
+        a.mutate_weight(&mut ChaCha8Rng::seed_from_u64(1));
+        b.mutate_weight(&mut ChaCha8Rng::seed_from_u64(2));
+        assert_ne!(a, b);
     }
 }

@@ -27,6 +27,21 @@ jobs:
       - name: Cache cargo registry and build artefacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Determinism guardrail — no unseeded RNG in simulation crates
+        # Every stochastic decision must derive from the single seeded
+        # `common::SimRng` resource (see its doc comment), never a fresh
+        # `rand::thread_rng()` or `rand::random()` — those bypass the
+        # experiment seed and silently break run-to-run reproducibility.
+        # This mirrors the audit finding that caused Epic 1 of the
+        # implementation roadmap; keep it red if the pattern reappears.
+        run: |
+          MATCHES=$(grep -rnE "rand::thread_rng\(\)|rand::random(::<|\()" crates/ --include='*.rs' | grep -vE ':[[:space:]]*//' || true)
+          if [ -n "$MATCHES" ]; then
+            echo "$MATCHES"
+            echo "::error::Found rand::thread_rng()/rand::random() above — draw from the seeded common::SimRng resource instead."
+            exit 1
+          fi
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 

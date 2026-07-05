@@ -179,6 +179,10 @@ pub fn menu_ui(
                     egui_remixicon::icons::RECTANGLE_LINE
                 ),
             );
+            ui.checkbox(
+                &mut state.show_scale_grid,
+                format!("{} Show Scale Grid", egui_remixicon::icons::GRID_LINE),
+            );
             ui.separator();
 
             // Colormap selector — moved out of the always-visible toolbar
