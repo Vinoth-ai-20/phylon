@@ -115,6 +115,111 @@ pub struct BodyTemperature {
     pub ideal: f32,
 }
 
+/// Per-entity result of the parallel metabolism computation — pure data,
+/// no shared state — produced by [`compute_metabolism`] and applied back
+/// to the ECS by `metabolism_system` in a fixed, deterministic order. See
+/// `metabolism_system`'s doc comment for why the parallel/sequential split
+/// is shaped this way.
+struct MetabolismResult {
+    entity: Entity,
+    new_glucose: f32,
+    new_o2: f32,
+    new_co2: f32,
+    new_atp: f32,
+    new_age_ticks: u64,
+    /// Amount subtracted from `GlobalAtmosphere.o2` for this entity's
+    /// inhalation (always ≥ 0).
+    atmosphere_o2_consumed: f32,
+    /// Amount added to `GlobalAtmosphere.co2` for this entity's exhalation
+    /// (always ≥ 0).
+    atmosphere_co2_exhaled: f32,
+    should_die: bool,
+}
+
+/// Pure per-entity metabolism computation — reads only its own snapshot of
+/// component state plus the two read-only environment values (`sunlight`,
+/// the sampled local field), and touches no shared mutable state. Safe to
+/// call from any thread; `metabolism_system` runs this via `rayon`'s
+/// `par_iter`.
+#[allow(clippy::too_many_arguments)]
+fn compute_metabolism(
+    entity: Entity,
+    chem: &ChemicalEconomy,
+    age_ticks: u64,
+    max_lifespan: u64,
+    metabolism: &Metabolism,
+    local_o2: f32,
+    local_co2: f32,
+    sunlight: f32,
+) -> MetabolismResult {
+    let mut chem_glucose = chem.glucose;
+    let mut chem_o2 = chem.o2;
+    let mut chem_co2 = chem.co2;
+    let mut chem_atp = chem.atp;
+    let new_age_ticks = age_ticks + 1;
+
+    // 1. Gas Exchange (Organism <-> Atmosphere)
+    // Instead of GlobalAtmosphere, we sample the local spatial grid.
+    let o2_needed = (chem.max_o2 - chem_o2).min(metabolism.mass * 2.0); // Max inhalation rate
+    let o2_absorbed = o2_needed.min(local_o2);
+    chem_o2 += o2_absorbed;
+
+    // Exhale CO2 into the shared planetary pool (in addition to the local
+    // spatial grid emission handled in simulation.rs) — this is the
+    // missing return path that closes the carbon cycle: photosynthesis
+    // draws from `GlobalAtmosphere.co2`, so respiration must feed it
+    // back or the pool only drains (see corpse_decay_system's outgassing
+    // for the other return path).
+    let co2_exhale = chem_co2.min(metabolism.mass * 2.0);
+    chem_co2 -= co2_exhale;
+
+    // 2. Cellular Respiration (Glucose + O2 -> ATP + CO2)
+    // How much ATP they want to generate to fill their tank
+    let atp_needed = chem.max_atp - chem_atp;
+    // Limit by available Glucose and O2 (let's say 1 Glucose + 2 O2 -> 5 ATP + 2 CO2)
+    // Rate is limited by mass
+    let max_reaction = (metabolism.mass * 1.0).min(atp_needed / 5.0);
+    let actual_reaction = max_reaction
+        .min(chem_glucose)
+        .min(chem_o2 / 2.0)
+        .min((chem.max_co2 - chem_co2) / 2.0);
+
+    if actual_reaction > 0.0 {
+        chem_glucose -= actual_reaction;
+        chem_o2 -= actual_reaction * 2.0;
+        chem_atp += actual_reaction * 5.0;
+        chem_co2 += actual_reaction * 2.0;
+    }
+
+    // 3. Basal Metabolic Cost
+    // Deduct ATP: superlinear scaling mass^1.2
+    let mut active_base_rate = metabolism.base_rate;
+
+    // Phase 2: Metabolic Dormancy (Night/Scarcity Mode)
+    if metabolism.is_plant && (sunlight < 0.2 || local_co2 < 10.0) {
+        // Sleep through the night or CO2 droughts without burning entire Glucose supply.
+        active_base_rate *= 0.2;
+    }
+
+    let cost = active_base_rate * metabolism.mass.powf(1.2);
+    chem_atp -= cost;
+
+    // Check starvation/suffocation (ATP hit 0) or old age.
+    let should_die = chem_atp <= 0.0 || new_age_ticks >= max_lifespan;
+
+    MetabolismResult {
+        entity,
+        new_glucose: chem_glucose,
+        new_o2: chem_o2,
+        new_co2: chem_co2,
+        new_atp: chem_atp,
+        new_age_ticks,
+        atmosphere_o2_consumed: o2_absorbed,
+        atmosphere_co2_exhaled: co2_exhale,
+        should_die,
+    }
+}
+
 /// # Cellular Respiration and Aging System
 ///
 /// ## 1. What Happens
@@ -136,6 +241,29 @@ pub struct BodyTemperature {
 /// $$ ATP_{cost} = \text{base\_rate} \times M^{1.2} $$
 ///
 /// If $ATP \le 0.0$ or $Age \ge \text{max\_lifespan}$, the entity is marked `Dead`.
+///
+/// ## Parallel/sequential split (determinism)
+///
+/// Each organism's own biology (steps 1-3 above) depends only on its own
+/// components plus two read-only environment values (`sunlight`, the
+/// sampled local field) — no organism's computation depends on any other
+/// organism's result, so this half is computed in parallel via `rayon`
+/// ([`compute_metabolism`]).
+///
+/// The one piece of genuinely shared state is `GlobalAtmosphere.o2`/`.co2`,
+/// which every organism accumulates into. Floating-point addition is not
+/// associative, so summing these contributions in whatever order threads
+/// happen to finish would make the final atmosphere value (and everything
+/// that reads it) depend on scheduling — a real determinism hazard, not a
+/// hypothetical one. This system avoids it by collecting per-entity results
+/// into a `Vec` that preserves the original query iteration order (`rayon`'s
+/// indexed `map`/`collect` guarantees this regardless of which thread
+/// computed which element), then applying every mutation — component
+/// writeback, atmosphere accumulation, `Dead` marking — in a single
+/// sequential pass over that ordered `Vec`. The result is bit-identical to
+/// the pre-parallelization implementation for a given world state, whether
+/// run with one thread or many (see the crate's `metabolism_is_deterministic_regardless_of_thread_count`
+/// test).
 pub fn metabolism_system(
     mut commands: Commands,
     mut atmosphere: ResMut<GlobalAtmosphere>,
@@ -148,80 +276,75 @@ pub fn metabolism_system(
         &Metabolism,
     )>,
 ) {
-    for (entity, node, mut chem, mut age, metabolism) in query.iter_mut() {
-        // Increment age
-        age.ticks += 1;
+    use rayon::prelude::*;
 
-        // 1. Gas Exchange (Organism <-> Atmosphere)
-        // Instead of GlobalAtmosphere, we sample the local spatial grid.
-        let local_o2 = if let Some(field) = &cpu_field {
-            field.sample(node.position, 2)
-        } else {
-            1000.0 // fallback
-        };
-        let local_co2 = if let Some(field) = &cpu_field {
-            field.sample(node.position, 3)
-        } else {
-            0.0 // fallback
-        };
+    let sunlight = atmosphere.sunlight;
 
-        // Organisms want to keep their O2 full and CO2 empty.
-        let o2_needed = (chem.max_o2 - chem.o2).min(metabolism.mass * 2.0); // Max inhalation rate
-        let o2_absorbed = o2_needed.min(local_o2);
-        chem.o2 += o2_absorbed;
-        atmosphere.o2 = (atmosphere.o2 - o2_absorbed).max(0.0);
+    // Snapshot phase (sequential, cheap): gather each entity's own component
+    // values plus its local field sample. Iteration order here is
+    // `bevy_ecs`'s normal deterministic archetype order — the same order
+    // the reduction phase below replays.
+    let snapshots: Vec<_> = query
+        .iter()
+        .map(|(entity, node, chem, age, metabolism)| {
+            let local_o2 = cpu_field
+                .as_ref()
+                .map_or(1000.0, |field| field.sample(node.position, 2));
+            let local_co2 = cpu_field
+                .as_ref()
+                .map_or(0.0, |field| field.sample(node.position, 3));
+            (
+                entity,
+                chem.clone(),
+                age.ticks,
+                age.max_lifespan,
+                metabolism.clone(),
+                local_o2,
+                local_co2,
+            )
+        })
+        .collect();
 
-        // Exhale CO2 into the shared planetary pool (in addition to the local
-        // spatial grid emission handled in simulation.rs) — this is the
-        // missing return path that closes the carbon cycle: photosynthesis
-        // draws from `GlobalAtmosphere.co2`, so respiration must feed it
-        // back or the pool only drains (see corpse_decay_system's outgassing
-        // for the other return path).
-        let co2_exhale = chem.co2.min(metabolism.mass * 2.0);
-        chem.co2 -= co2_exhale;
-        atmosphere.co2 += co2_exhale;
+    // Parallel phase: pure per-entity computation, no shared state touched.
+    let results: Vec<MetabolismResult> = snapshots
+        .par_iter()
+        .map(
+            |(entity, chem, age_ticks, max_lifespan, metabolism, local_o2, local_co2)| {
+                compute_metabolism(
+                    *entity,
+                    chem,
+                    *age_ticks,
+                    *max_lifespan,
+                    metabolism,
+                    *local_o2,
+                    *local_co2,
+                    sunlight,
+                )
+            },
+        )
+        .collect();
 
-        // 2. Cellular Respiration (Glucose + O2 -> ATP + CO2)
-        // How much ATP they want to generate to fill their tank
-        let atp_needed = chem.max_atp - chem.atp;
-        // Limit by available Glucose and O2 (let's say 1 Glucose + 2 O2 -> 5 ATP + 2 CO2)
-        // Rate is limited by mass
-        let max_reaction = (metabolism.mass * 1.0).min(atp_needed / 5.0);
-        let actual_reaction = max_reaction
-            .min(chem.glucose)
-            .min(chem.o2 / 2.0)
-            .min((chem.max_co2 - chem.co2) / 2.0);
+    // Sequential reduction phase: apply every result in the same fixed
+    // order every time, regardless of thread count — see this function's
+    // doc comment.
+    for result in results {
+        atmosphere.o2 = (atmosphere.o2 - result.atmosphere_o2_consumed).max(0.0);
+        atmosphere.co2 += result.atmosphere_co2_exhaled;
 
-        if actual_reaction > 0.0 {
-            chem.glucose -= actual_reaction;
-            chem.o2 -= actual_reaction * 2.0;
-            chem.atp += actual_reaction * 5.0;
-            chem.co2 += actual_reaction * 2.0;
+        // Write the final tick's values back regardless of `should_die` —
+        // matches the pre-parallelization behavior, which mutated `chem`/
+        // `age` in place before checking whether the entity died this
+        // tick, not conditionally on survival.
+        if let Ok((_, _, mut chem, mut age, _)) = query.get_mut(result.entity) {
+            chem.glucose = result.new_glucose;
+            chem.o2 = result.new_o2;
+            chem.co2 = result.new_co2;
+            chem.atp = result.new_atp;
+            age.ticks = result.new_age_ticks;
         }
 
-        // 3. Basal Metabolic Cost
-        // Deduct ATP: superlinear scaling mass^1.2
-        let mut active_base_rate = metabolism.base_rate;
-
-        // Phase 2: Metabolic Dormancy (Night/Scarcity Mode)
-        if metabolism.is_plant && (atmosphere.sunlight < 0.2 || local_co2 < 10.0) {
-            // Sleep through the night or CO2 droughts without burning entire Glucose supply.
-            active_base_rate *= 0.2;
-        }
-
-        let cost = active_base_rate * metabolism.mass.powf(1.2);
-        chem.atp -= cost;
-
-        // Check starvation / suffocation (ATP hit 0)
-        if chem.atp <= 0.0 {
-            commands.entity(entity).insert(Dead);
-            continue;
-        }
-
-        // Check old age
-        if age.ticks >= age.max_lifespan {
-            commands.entity(entity).insert(Dead);
-            continue;
+        if result.should_die {
+            commands.entity(result.entity).insert(Dead);
         }
     }
 }
@@ -278,4 +401,163 @@ pub fn day_night_cycle_system(mut atmosphere: ResMut<GlobalAtmosphere>) {
     const THERMAL_LAG: f32 = 0.02; // fraction of the gap closed per tick
     let target_temp = TEMP_MIN + (TEMP_MAX - TEMP_MIN) * atmosphere.sunlight;
     atmosphere.temp += (target_temp - atmosphere.temp) * THERMAL_LAG;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy_ecs::system::RunSystemOnce;
+
+    fn build_world_with_organisms(n: u32) -> bevy_ecs::world::World {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(GlobalAtmosphere::default());
+        for i in 0..n {
+            world.spawn((
+                physics::ParticleNode::new(common::Vec2::new(i as f32 * 3.0, 0.0), 1.0, 0, i),
+                ChemicalEconomy {
+                    glucose: 500.0 + i as f32,
+                    o2: 300.0,
+                    co2: 50.0,
+                    atp: 400.0,
+                    max_glucose: 1000.0,
+                    max_o2: 1000.0,
+                    max_co2: 1000.0,
+                    max_atp: 1000.0,
+                },
+                Age {
+                    ticks: 0,
+                    max_lifespan: 10_000,
+                },
+                Metabolism {
+                    mass: 5.0 + (i as f32 * 0.1),
+                    base_rate: 0.01,
+                    is_plant: i % 3 == 0,
+                },
+            ));
+        }
+        world
+    }
+
+    /// (glucose, o2, co2, atp, age_ticks) for one organism after a
+    /// `metabolism_system` tick.
+    type OrganismOutcome = (f32, f32, f32, f32, u64);
+
+    /// Runs `metabolism_system` once, inside a `rayon` thread pool with a
+    /// caller-chosen thread count, and returns the resulting atmosphere
+    /// gases plus every organism's final chemical-economy/age state (sorted
+    /// by entity index, so the comparison below doesn't depend on
+    /// `bevy_ecs`'s own entity storage order).
+    fn run_metabolism_with_thread_count(
+        n_threads: usize,
+        organism_count: u32,
+    ) -> (f32, f32, Vec<OrganismOutcome>) {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(n_threads)
+            .build()
+            .unwrap();
+        let mut world = build_world_with_organisms(organism_count);
+
+        pool.install(|| {
+            world.run_system_once(metabolism_system);
+        });
+
+        let atmosphere = world.resource::<GlobalAtmosphere>();
+        let (o2, co2) = (atmosphere.o2, atmosphere.co2);
+
+        let mut query = world.query::<(&physics::ParticleNode, &ChemicalEconomy, &Age)>();
+        let mut results: Vec<_> = query
+            .iter(&world)
+            .map(|(node, chem, age)| {
+                (
+                    node.organism_id,
+                    (chem.glucose, chem.o2, chem.co2, chem.atp, age.ticks),
+                )
+            })
+            .collect();
+        results.sort_by_key(|(id, _)| *id);
+
+        (o2, co2, results.into_iter().map(|(_, r)| r).collect())
+    }
+
+    #[test]
+    fn metabolism_is_deterministic_regardless_of_thread_count() {
+        // 200 organisms is enough to actually spread across multiple rayon
+        // worker threads, not just fit in one batch.
+        let (o2_1, co2_1, results_1) = run_metabolism_with_thread_count(1, 200);
+        let (o2_8, co2_8, results_8) = run_metabolism_with_thread_count(8, 200);
+
+        assert_eq!(
+            o2_1, o2_8,
+            "GlobalAtmosphere.o2 diverged between 1 and 8 threads"
+        );
+        assert_eq!(
+            co2_1, co2_8,
+            "GlobalAtmosphere.co2 diverged between 1 and 8 threads"
+        );
+        assert_eq!(
+            results_1, results_8,
+            "per-organism chemical economy/age diverged between 1 and 8 threads"
+        );
+    }
+
+    #[test]
+    fn compute_metabolism_marks_death_on_atp_depletion() {
+        let chem = ChemicalEconomy {
+            glucose: 0.0,
+            o2: 0.0,
+            co2: 0.0,
+            atp: 0.001,
+            max_glucose: 1000.0,
+            max_o2: 1000.0,
+            max_co2: 1000.0,
+            max_atp: 1000.0,
+        };
+        let metabolism = Metabolism {
+            mass: 10.0,
+            base_rate: 1.0,
+            is_plant: false,
+        };
+        let result = compute_metabolism(
+            Entity::from_raw(0),
+            &chem,
+            0,
+            10_000,
+            &metabolism,
+            0.0,
+            0.0,
+            1.0,
+        );
+        assert!(result.should_die);
+    }
+
+    #[test]
+    fn compute_metabolism_marks_death_on_old_age() {
+        let chem = ChemicalEconomy {
+            glucose: 1000.0,
+            o2: 1000.0,
+            co2: 0.0,
+            atp: 1000.0,
+            max_glucose: 1000.0,
+            max_o2: 1000.0,
+            max_co2: 1000.0,
+            max_atp: 1000.0,
+        };
+        let metabolism = Metabolism {
+            mass: 1.0,
+            base_rate: 0.001,
+            is_plant: false,
+        };
+        let result = compute_metabolism(
+            Entity::from_raw(0),
+            &chem,
+            999,
+            1000,
+            &metabolism,
+            1000.0,
+            0.0,
+            1.0,
+        );
+        assert!(result.should_die);
+        assert_eq!(result.new_age_ticks, 1000);
+    }
 }

@@ -5,13 +5,21 @@ edition = "2021"
 description = "criterion benchmark harness for Phylon subsystems."
 
 [dependencies]
-common    = { workspace = true }
-config    = { workspace = true }
-scheduler = { workspace = true }
+common     = { workspace = true }
+config     = { workspace = true }
+scheduler  = { workspace = true }
+metabolism = { workspace = true }
+physics    = { workspace = true }
+bevy_ecs   = { workspace = true }
+rayon      = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 
 [[bench]]
 name = "scheduler_throughput"
+harness = false
+
+[[bench]]
+name = "metabolism_parallel"
 harness = false

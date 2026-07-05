@@ -72,6 +72,9 @@ rand        = { version = "0.8" }
 rand_chacha = { version = "0.3" }
 crossbeam   = { version = "0.8" }
 
+# --- Parallelism ---
+rayon       = { version = "1.10" }
+
 # --- GPU / Windowing ---
 wgpu        = { version = "22" }
 winit       = { version = "0.30" }

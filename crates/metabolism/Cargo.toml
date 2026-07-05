@@ -11,3 +11,4 @@ thiserror = { workspace = true }
 bevy_ecs  = { workspace = true }
 diffusion = { workspace = true }
 physics   = { workspace = true }
+rayon     = { workspace = true }

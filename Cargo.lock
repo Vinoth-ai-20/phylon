@@ -430,9 +430,13 @@ dependencies = [
 name = "benchmarks"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "common",
  "config",
  "criterion",
+ "metabolism",
+ "physics",
+ "rayon",
  "scheduler",
 ]
 
@@ -2391,6 +2395,7 @@ dependencies = [
  "common",
  "diffusion",
  "physics",
+ "rayon",
  "thiserror 2.0.18",
  "world",
 ]
