@@ -2,23 +2,25 @@
 //!
 //! Spatial indexing structures for efficient entity neighbourhood queries.
 //!
-//! Three complementary indexing strategies are provided, all sharing a common
-//! `SpatialQuery` interface:
+//! ## Currently implemented
 //!
 //! - **[`UniformGrid`]** — O(1) insert and radius query for dense, uniformly
-//!   distributed entities. The primary structure for active chunks.
-//! - **`SpatialHash`** — same asymptotic complexity as the uniform grid but
-//!   with dynamic bucketing; preferred when entity density is uneven.
-//! - **Quadtree** — sparse, logarithmic-depth structure for long-range queries
-//!   on static or slow-moving objects. Implemented in Phase 2.
+//!   distributed entities, via cell-bucketed `HashMap` storage. This is the
+//!   index every current caller (physics broad-phase, sensing, reproduction
+//!   proximity search, ecology foraging) actually uses today.
 //!
-//! All structures synchronise with [`common::EntityId`] via position updates
-//! and support batch queries for rayon-parallel sensing workloads.
+//! ## Not yet implemented
 //!
-//! ## Phase 0 scope
-//!
-//! Type signatures and public API surface are declared. Implementations are
-//! `// TODO(phase-1)` stubs — filled in when `world` integration is ready.
+//! Two complementary strategies named in the original design are not yet
+//! written: a `SpatialHash` (same asymptotic complexity as the uniform grid
+//! but with dynamic bucketing, preferred when entity density is uneven) and
+//! a `Quadtree` (sparse, logarithmic-depth structure for long-range queries
+//! on static or slow-moving objects). Neither has a type in this crate yet —
+//! see the implementation roadmap's "Spatial Acceleration" epic. There is
+//! also no shared trait/interface across indices yet (only `UniformGrid`
+//! exists, so there's nothing to share an interface with); one should be
+//! extracted once a second index type lands, rather than speculatively
+//! designed now.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]

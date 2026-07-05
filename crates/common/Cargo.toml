@@ -7,7 +7,6 @@ description = "Shared types, entity IDs, math newtypes, and error base traits fo
 [dependencies]
 glam  = { workspace = true }
 serde = { workspace = true }
-thiserror = { workspace = true }
 bevy_ecs = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }

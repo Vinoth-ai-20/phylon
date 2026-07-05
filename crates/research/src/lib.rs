@@ -7,9 +7,15 @@
 //! and comparing experiments. It coordinates the scheduler (for headless
 //! execution), the analytics accumulator, and the storage manager.
 //!
-//! ## Phase 0 scope
+//! ## Current scope
 //!
-//! Experiment manifest type. Implementation: Phase 9.
+//! [`ExperimentManifest`] only — a plain data record with no batch-run
+//! orchestration, scenario editor, or report generation implemented yet,
+//! and (notably) not yet constructed anywhere outside this crate's own
+//! tests: `app` does not currently depend on `research` at all, so the
+//! seed/manifest recording described in the type's own doc comment below
+//! doesn't happen in practice today. See the implementation roadmap's
+//! "Research Infrastructure" epic.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]

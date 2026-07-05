@@ -1,16 +1,27 @@
 //! # Phylon GPU
 //!
-//! `wgpu` device and queue management, compute pipeline registry, staging
-//! buffer pool, and GPU resource allocator.
+//! Compute pipeline modules — the boundary between the CPU-authoritative
+//! simulation and the GPU accelerator, per the spec's GPU policy: this
+//! crate holds only compute *pipelines* (dispatch + readback for physics,
+//! diffusion, CTRNN brain integration, and muscle actuation), not a
+//! device/queue-owning context of its own.
 //!
-//! This crate is the boundary between the CPU-authoritative simulation and
-//! the GPU accelerator. All GPU resources are created and managed here.
-//! Simulation crates never touch `wgpu` directly — they call into `gpu`
-//! through typed interfaces.
+//! ## Currently implemented
 //!
-//! ## Phase 0 scope
+//! - [`physics_pipeline`] — particle-spring force/constraint integration.
+//! - [`diffusion_pipeline`] — chemical/atmospheric field diffusion.
+//! - [`brain_pipeline`] — batched CTRNN neural integration.
+//! - [`muscle`] — muscle/spring actuation.
+//! - [`GpuError`] — the crate's typed error enum.
 //!
-//! GpuContext placeholder. Full wgpu initialisation and compute pipelines: Phase 3.
+//! Each pipeline module owns its own `dispatch`/`step` entry point, taking
+//! an already-acquired `&wgpu::Device`/`&wgpu::Queue` from the caller
+//! rather than owning them — device/queue lifecycle (surface
+//! configuration, adapter selection, resize handling) lives in
+//! `app::app::GpuContext` today, a separate type from anything in this
+//! crate despite the similar name. Consolidating device/queue ownership
+//! into this crate, if ever done, is a distinct future change, not
+//! reflected here as a claim about current behavior.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -43,26 +54,3 @@ pub enum GpuError {
 }
 
 impl common::PhylonError for GpuError {}
-
-/// Placeholder for the GPU context.
-///
-/// TODO(phase-3): Hold `wgpu::Device`, `wgpu::Queue`, and the compute
-/// pipeline registry.
-pub struct GpuContext;
-
-impl GpuContext {
-    /// Creates a placeholder GPU context (no real device is acquired yet).
-    pub fn placeholder() -> Self {
-        Self
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gpu_context_placeholder_creates() {
-        let _ctx = GpuContext::placeholder();
-    }
-}

@@ -8,9 +8,12 @@
 //! so that multiple backends (`burn`, external Python via `pyo3`, etc.) can
 //! implement the policy trait without coupling the rest of the simulation.
 //!
-//! ## Phase 0 scope
+//! ## Current scope
 //!
-//! Interface trait declarations only. Implementation: Phase 11.
+//! Interface trait declarations only ([`ObservationVector`], [`ActionVector`],
+//! [`PolicyProvider`]) — no RL algorithm, training loop, or `burn`/`pyo3`
+//! backend is implemented here yet. See the implementation roadmap's
+//! "Learning Framework" epic.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]

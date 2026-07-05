@@ -1,23 +1,31 @@
 //! # Phylon World
 //!
-//! The central world state, entity registry, graph model, and snapshot
-//! coordination layer.
+//! The central world state and entity-spawning entry point.
 //!
-//! The `world` crate owns the canonical simulation state:
+//! ## Currently implemented
 //!
-//! - **Entity registry**: maps [`EntityId`] to ECS component storage.
-//! - **Chunk manager**: tracks which chunks are active and loads/unloads them.
-//! - **Interaction graph**: edges between entities (springs, lineage, colony bonds).
-//! - **Snapshot coordinator**: orchestrates binary serialisation of world state.
+//! - [`World`]: a thin wrapper around `bevy_ecs::world::World` providing
+//!   `spawn_empty`/an entity counter — the single instantiation point the
+//!   `app` crate holds and passes down to every simulation system.
+//! - [`WorldError`]: the crate's typed error enum (entity-not-found,
+//!   chunk-not-active).
+//!
+//! ## Not yet implemented
+//!
+//! The crate's eventual scope is broader than the above: a real chunk
+//! manager (tracking which [`ChunkId`]s are active and loading/unloading
+//! them dynamically — [`WorldError::ChunkNotActive`] already exists in
+//! anticipation of this), an explicit interaction graph (edges between
+//! entities: springs, lineage, colony bonds — today these relationships
+//! live as plain components on individual entities instead, e.g.
+//! `physics::Spring`), and a snapshot coordinator (today `storage` drives
+//! serialization directly against the ECS World rather than through this
+//! crate). See the implementation roadmap's "Chunked World" epic.
 //!
 //! ## Dependency rules
 //!
 //! No rendering, UI, or storage types may appear in this crate. The world is
 //! a pure data layer consumed by all simulation subsystems.
-//!
-//! ## Phase 0 scope
-//!
-//! Minimal type skeleton. Full entity registry and chunk management: Phase 1.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -51,7 +59,7 @@ impl common::PhylonError for WorldError {}
 /// spans across components (like tracking global IDs for deterministic snapshots).
 ///
 /// ## 3. How It Happens
-/// In Phase 0, it holds the raw `ecs` World. The `app` crate instantiates this and
+/// It holds the raw `ecs` World. The `app` crate instantiates this once and
 /// passes mutable references down to the `SimulationScheduler`, which executes systems
 /// via `bevy_ecs::world::World::query`.
 pub struct World {

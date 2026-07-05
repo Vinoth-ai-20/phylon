@@ -8,6 +8,22 @@
 //! (analytics, storage, UI) consume events without modifying the simulation
 //! world.
 //!
+//! ## Current wiring caveat
+//!
+//! `scheduler::SimulationScheduler` does own an [`EventBus`] instance as
+//! described above, but the live `app` binary's actual per-tick driver
+//! (`PhylonApp::update_simulation`) calls simulation systems directly via
+//! `bevy_ecs::system::RunSystemOnce` rather than ticking through
+//! `SimulationScheduler` — so today, nothing in the running application
+//! actually publishes or drains a [`PhylonEvent`]. Real cross-system
+//! communication currently happens through bevy_ecs's own native
+//! `Event`/`EventWriter`/`EventReader` machinery instead (e.g.
+//! `reproduction::BirthRequest`). Some [`PhylonEvent`] variants — notably
+//! [`FieldType::Disease`], reflecting the not-yet-implemented disease/
+//! pathogen system — describe intended future mechanics rather than
+//! anything a system emits today. Treat this crate as a designed-but-not-
+//! yet-integrated interface, not a description of the live event flow.
+//!
 //! ## Design
 //!
 //! - [`EventBus`] holds one [`crossbeam::channel`] pair per event variant.
