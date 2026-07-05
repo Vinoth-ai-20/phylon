@@ -32,10 +32,11 @@ impl PhylonApp {
     /// and dispatches the final WGPU render passes (Splatting, Heatmaps, UI).
     ///
     /// ## 2. Why It Happens
-    /// Simulation physics must run at a fixed, deterministic timestep (`DT`) to ensure biological
-    /// processes (like energy decay or neuron membrane potentials) do not destabilize. However,
-    /// monitor refresh rates fluctuate. This method decouples the render framerate from the biological
-    /// tick rate using a fixed-timestep accumulator algorithm.
+    /// Simulation physics must run at a fixed, deterministic timestep (`DT`, the configured
+    /// [`common::TickRate`]) to ensure biological processes (like energy decay or neuron
+    /// membrane potentials) do not destabilize. However, monitor refresh rates fluctuate. This
+    /// method decouples the render framerate from the biological tick rate using a
+    /// fixed-timestep accumulator algorithm.
     ///
     /// ## 3. How It Happens
     /// The method utilizes an accumulator model:
@@ -43,7 +44,7 @@ impl PhylonApp {
     /// $$ t_{accum} = t_{accum} + (speed \times \Delta t_{frame}) $$
     ///
     /// While $t_{accum} \ge 1.0$, the engine calls `update_simulation()` to step the ECS forward by
-    /// the fixed $DT = 0.016$ seconds, decrementing $t_{accum}$. Once caught up, it builds the WGPU
+    /// the fixed `DT` seconds, decrementing $t_{accum}$. Once caught up, it builds the WGPU
     /// `CommandEncoder`, executes the Gaussian Splat and Heatmap render passes, and renders the `egui`
     /// contexts.
     pub(crate) fn render(&mut self) -> Result<()> {
@@ -51,7 +52,7 @@ impl PhylonApp {
             return Ok(());
         }
 
-        const DT: f32 = 0.016; // Fixed 60 Hz timestep
+        let dt = self.world.ecs.resource::<common::TickRate>().dt();
 
         // 1. Camera Tracking
         if let Some(tracked) = self.ui.tracked_entity {
@@ -82,7 +83,7 @@ impl PhylonApp {
 
         // Only step simulation if we're in the simulation state and not paused
         if self.app_state == ui::AppState::Simulation && !self.ui.is_paused {
-            self.accumulated_time += (real_frame_dt / DT) * self.simulation_speed;
+            self.accumulated_time += (real_frame_dt / dt) * self.simulation_speed;
         }
 
         let mut physics_duration_ms = 0.0;
@@ -224,7 +225,7 @@ impl PhylonApp {
         }
 
         if let Some(mut metrics) = self.world.ecs.get_resource_mut::<analytics::MetricsState>() {
-            let sim_dt = (ticks_to_run as f64) * f64::from(DT);
+            let sim_dt = (ticks_to_run as f64) * f64::from(dt);
             let real_dt = f64::from(real_frame_dt);
             metrics.record_frame(counts, sim_dt, real_dt);
 

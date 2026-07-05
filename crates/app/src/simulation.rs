@@ -2,16 +2,14 @@ use crate::app::PhylonApp;
 use crate::systems::*;
 use bevy_ecs::system::RunSystemOnce;
 
-const DT: f32 = 0.016; // Fixed 60 Hz timestep
-
 impl PhylonApp {
     /// # Discrete Biological Update Loop
     ///
     /// ## 1. What Happens
     /// The `update_simulation` method advances the entire biological, ecological, and physical
-    /// state of the world by exactly one discrete timestep ($DT = 0.016$ seconds). It orchestrates
-    /// the strict ordering of sensing, brain evaluation, behavior, physics integration, and spatial
-    /// diffusion.
+    /// state of the world by exactly one discrete timestep (`DT`, the configured
+    /// [`common::TickRate`]). It orchestrates the strict ordering of sensing, brain evaluation,
+    /// behavior, physics integration, and spatial diffusion.
     ///
     /// ## 2. Why It Happens
     /// Strict deterministic execution ordering is ecologically critical. If physics ran before
@@ -36,11 +34,12 @@ impl PhylonApp {
     /// tick N's CPU-side ECS systems instead of stalling the CPU immediately after submission;
     /// the tradeoff is a one-tick lag between when a value is computed and when dependent systems
     /// observe it (e.g. `behavior_system` acts on brain state that's one tick behind the neural
-    /// integration dispatched this same tick). At `DT = 0.016s` this lag is ~16ms.
+    /// integration dispatched this same tick) — at the default 60 Hz `tick_rate` this is ~16ms.
     pub(crate) fn update_simulation(&mut self) -> (f64, f64) {
         let mut physics_duration_ms = 0.0;
         let mut diffusion_duration_ms = 0.0;
-        self.total_sim_time += DT;
+        let dt = self.world.ecs.resource::<common::TickRate>().dt();
+        self.total_sim_time += dt;
 
         // 0. Resolve GPU work dispatched last tick before anything reads
         // positions/brain state this tick.
@@ -103,7 +102,7 @@ impl PhylonApp {
                 &gpu.queue,
                 &gpu_brain_nodes,
                 &gpu_brain_synapses,
-                DT,
+                dt,
             );
             self.pending_brain = Some((pending, brain_offsets));
         }
@@ -183,7 +182,7 @@ impl PhylonApp {
                 &gpu.queue,
                 &gpu_nodes,
                 &gpu_springs,
-                DT,
+                dt,
                 global_time,
                 gpu.query_set.as_ref(),
             );
@@ -243,7 +242,7 @@ impl PhylonApp {
                     self.world.ecs.resource_mut::<diffusion::DiffusionConfig>();
 
                 // Diurnal modulation
-                diffusion_config.global_time += DT;
+                diffusion_config.global_time += dt;
                 // Oscillate decay rate between 0.5x and 1.5x of base
                 let diurnal_mod = 1.0 + 0.5 * (diffusion_config.global_time * 0.1).sin();
                 diffusion_config.decay_rate = diffusion_config.base_decay_rate * diurnal_mod;
@@ -367,7 +366,7 @@ impl PhylonApp {
                 &gpu.device,
                 &gpu.queue,
                 gpu::diffusion_pipeline::DiffusionUniforms {
-                    dt: DT,
+                    dt,
                     _pad1: 0,
                     _pad2: 0,
                     _pad3: 0,

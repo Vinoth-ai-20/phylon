@@ -51,7 +51,12 @@ pub fn status_bar_ui(
             .get_resource::<analytics::MetricsState>()
             .map(|m| (m.smoothed_fps, m.smoothed_tps, m.sim_time))
             .unwrap_or((0.0, 0.0, 0.0));
-        let tick_count = (sim_time / 0.016).round() as u64;
+        let dt = world
+            .ecs
+            .get_resource::<common::TickRate>()
+            .map(|r| r.dt() as f64)
+            .unwrap_or(1.0 / 60.0);
+        let tick_count = (sim_time / dt).round() as u64;
 
         crate::widgets::status_chip(ui, egui_remixicon::icons::TIMER_LINE, tick_count.to_string(), None);
         ui.separator();

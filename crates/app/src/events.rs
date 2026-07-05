@@ -196,7 +196,8 @@ impl PhylonApp {
                 }
                 ui::MenuAction::SpawnManualHazard => {
                     let pos = self.ui.camera_pos;
-                    let tick = (self.total_sim_time / 0.016).round() as u64;
+                    let dt = self.world.ecs.resource::<common::TickRate>().dt();
+                    let tick = (self.total_sim_time / dt).round() as u64;
                     let mut manager = self
                         .world
                         .ecs

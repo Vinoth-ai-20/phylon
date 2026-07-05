@@ -187,11 +187,19 @@ impl PhylonApp {
 
         let mut world = world::World::new();
 
+        // The single source of truth for the fixed per-tick delta-time —
+        // see common::TickRate's doc comment. Computed once, here, so the
+        // physics config below and every other fixed-timestep call site
+        // (simulation.rs, render.rs, status bar tick display) agree with
+        // `config.simulation.tick_rate` and with each other.
+        let tick_rate = common::TickRate::from_hz(sim_config.simulation.tick_rate);
+
         // Add resources
         world.ecs.insert_resource(physics::PhysicsConfig {
-            dt: 0.016,
+            dt: tick_rate.dt(),
             ..Default::default()
-        }); // 60hz tick
+        });
+        world.ecs.insert_resource(tick_rate);
         world
             .ecs
             .insert_resource(metabolism::GlobalAtmosphere::default());

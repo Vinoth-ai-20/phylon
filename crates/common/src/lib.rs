@@ -12,6 +12,7 @@
 //! - **Math re-exports**: [`Vec2`], [`IVec2`]
 //! - **Error base**: [`PhylonError`] trait and [`PhylonResult`] type alias
 //! - **Determinism**: [`SimRng`], the single seeded source of randomness
+//! - **Tick timing**: [`TickRate`], the single source of truth for the fixed per-tick delta-time
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -237,6 +238,52 @@ impl std::ops::DerefMut for SimRng {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Tick rate
+// ────────────────────────────────────────────────────────────────────────────
+
+/// # The Single Source of Truth for the Simulation's Tick Duration
+///
+/// ## 1. What Happens
+/// `TickRate` wraps the fixed per-tick delta-time (in seconds) derived from
+/// `PhylonConfig::simulation::tick_rate`. It is inserted into the ECS
+/// `World` exactly once, as a [`bevy_ecs::prelude::Resource`], and is the
+/// one shared value every fixed-timestep calculation reads: the physics/
+/// CTRNN integration math, the diffusion GPU dispatch, the windowed
+/// render loop's tick-accumulator, and any tick-count-from-elapsed-time
+/// bookkeeping (status bar, save/reset handlers).
+///
+/// ## 2. Why It Happens
+/// Before this type existed, the same `0.016` (60 Hz) literal was
+/// hand-copied into five separate call sites across three crates. Nothing
+/// enforced that they agreed with each other or with
+/// `PhylonConfig::simulation::tick_rate` — changing `tick_rate` in config
+/// silently affected only the headless loop's pacing, while the windowed
+/// loop and the physics integration math kept using their own hardcoded
+/// copies. Centralizing the value here closes that gap the same way
+/// [`SimRng`] closes the determinism gap.
+///
+/// ## 3. How It Happens
+/// `TickRate::from_hz` is called once, at application startup, from
+/// `PhylonConfig::simulation::tick_rate`. Every fixed-timestep call site
+/// reads `dt()` from the shared resource instead of a local constant.
+#[derive(Resource, Debug, Clone, Copy, PartialEq)]
+pub struct TickRate(f32);
+
+impl TickRate {
+    /// Constructs a `TickRate` from a tick frequency in Hz (ticks per second).
+    #[inline]
+    pub fn from_hz(hz: u32) -> Self {
+        Self(1.0 / hz as f32)
+    }
+
+    /// The fixed per-tick delta-time, in seconds.
+    #[inline]
+    pub fn dt(&self) -> f32 {
+        self.0
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Error foundation
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -325,5 +372,18 @@ mod tests {
         let draws_b: Vec<u32> = (0..16).map(|_| b.gen()).collect();
 
         assert_ne!(draws_a, draws_b);
+    }
+
+    #[test]
+    fn tick_rate_from_hz_60_matches_expected_dt() {
+        let rate = TickRate::from_hz(60);
+        assert!((rate.dt() - 1.0 / 60.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn tick_rate_from_hz_30_is_double_the_dt_of_60() {
+        let rate_30 = TickRate::from_hz(30);
+        let rate_60 = TickRate::from_hz(60);
+        assert!((rate_30.dt() - rate_60.dt() * 2.0).abs() < f32::EPSILON);
     }
 }
