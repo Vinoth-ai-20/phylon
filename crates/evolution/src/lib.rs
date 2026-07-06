@@ -206,11 +206,21 @@ impl Default for LineageTracker {
 /// themselves the standard NEAT values.
 pub const DEFAULT_COMPATIBILITY_THRESHOLD: f32 = 3.0;
 
+/// Number of [`SpeciesRegistry::classify`] calls between automatic
+/// representative refreshes (DEF-022, `IMPLEMENTATION_STATUS.md`). Chosen
+/// as a coarse, infrequent cadence — refreshing is a drift correction, not
+/// a per-birth operation — not tuned against a specific population size.
+pub const REPRESENTATIVE_REFRESH_INTERVAL: u64 = 500;
+
 /// One tracked species: its assigned ID and the representative genome new
 /// arrivals are compared against.
 struct SpeciesRecord {
     id: SpeciesId,
     representative: genetics::Genome,
+    /// The most recently classified member of this species since the last
+    /// refresh — becomes the new `representative` at the next refresh
+    /// (DEF-022). `None` if no member has joined since the last refresh.
+    most_recent_member: Option<genetics::Genome>,
 }
 
 /// # Genetic-Distance Speciation Registry
@@ -226,20 +236,26 @@ struct SpeciesRecord {
 /// `compatibility_threshold`, the organism joins that species. Otherwise it
 /// founds a new one, becoming that species's representative.
 ///
-/// Representatives are never reassigned after a species is founded — this
-/// keeps classification at O(species_count) per spawn (not
-/// O(population²): distances are only ever computed against one genome per
-/// species, never between arbitrary population pairs), which stays cheap
-/// even as population grows into the thousands. The tradeoff is the classic
-/// NEAT one: a species's representative can grow unrepresentative of its
-/// current members as they keep mutating, which is an accepted
-/// approximation here rather than a bug — periodic representative
-/// refresh is a possible future refinement, not required for correctness.
+/// Representatives are never reassigned after a species is founded *except*
+/// via the periodic refresh below — this keeps classification at
+/// O(species_count) per spawn (not O(population²): distances are only ever
+/// computed against one genome per species, never between arbitrary
+/// population pairs), which stays cheap even as population grows into the
+/// thousands. The tradeoff is the classic NEAT one: a species's
+/// representative can grow unrepresentative of its current members as they
+/// keep mutating — every [`REPRESENTATIVE_REFRESH_INTERVAL`] classify calls,
+/// [`SpeciesRegistry::classify`] promotes each species's most recently
+/// classified member to be its new representative (DEF-022,
+/// `IMPLEMENTATION_STATUS.md`). This is a coarse "most recent member"
+/// refresh, not a true population centroid (which isn't well-defined for a
+/// NEAT-style CPPN graph) — a reasonable, simple correction for drift, not
+/// a claim of statistical centrality.
 #[derive(bevy_ecs::system::Resource)]
 pub struct SpeciesRegistry {
     next_species_id: u64,
     compatibility_threshold: f32,
     species: Vec<SpeciesRecord>,
+    classify_count: u64,
 }
 
 impl SpeciesRegistry {
@@ -249,14 +265,33 @@ impl SpeciesRegistry {
             next_species_id: 1,
             compatibility_threshold,
             species: Vec::new(),
+            classify_count: 0,
         }
     }
 
     /// Classifies a genome against existing species, founding a new species
-    /// if it matches none within the compatibility threshold.
+    /// if it matches none within the compatibility threshold. Also records
+    /// `genome` as its species's most-recent-member candidate, and — every
+    /// [`REPRESENTATIVE_REFRESH_INTERVAL`] calls — refreshes representatives
+    /// (see [`SpeciesRegistry::refresh_representatives`]).
     pub fn classify(&mut self, genome: &genetics::Genome) -> SpeciesId {
-        for record in &self.species {
+        let id = self.classify_inner(genome);
+
+        self.classify_count += 1;
+        if self
+            .classify_count
+            .is_multiple_of(REPRESENTATIVE_REFRESH_INTERVAL)
+        {
+            self.refresh_representatives();
+        }
+
+        id
+    }
+
+    fn classify_inner(&mut self, genome: &genetics::Genome) -> SpeciesId {
+        for record in &mut self.species {
             if record.representative.distance(genome) < self.compatibility_threshold {
+                record.most_recent_member = Some(genome.clone());
                 return record.id;
             }
         }
@@ -265,8 +300,25 @@ impl SpeciesRegistry {
         self.species.push(SpeciesRecord {
             id,
             representative: genome.clone(),
+            most_recent_member: None,
         });
         id
+    }
+
+    /// Promotes each species's most-recently-classified member (since the
+    /// last refresh) to be its new representative (DEF-022). Species with
+    /// no new member since the last refresh keep their current
+    /// representative unchanged. Called automatically by
+    /// [`SpeciesRegistry::classify`] every [`REPRESENTATIVE_REFRESH_INTERVAL`]
+    /// calls; exposed publicly so tests (and any caller wanting a refresh
+    /// on a different cadence) don't need to drive hundreds of `classify`
+    /// calls just to trigger one.
+    pub fn refresh_representatives(&mut self) {
+        for record in &mut self.species {
+            if let Some(new_representative) = record.most_recent_member.take() {
+                record.representative = new_representative;
+            }
+        }
     }
 
     /// The number of distinct species currently tracked.
@@ -352,5 +404,70 @@ mod tests {
                 mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
             }],
         }
+    }
+
+    #[test]
+    fn regulatory_cppn_divergence_alone_founds_a_new_species() {
+        // Phase 3 M7: `Genome::distance` now sums a `regulatory_cppn` term
+        // too — two genomes identical in brain/morph but divergent enough
+        // in `regulatory_cppn` should classify as different species, which
+        // was impossible before this milestone (the term didn't exist).
+        let mut registry = SpeciesRegistry::new(0.5);
+        let mut g1 = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        g1.regulatory_cppn = sample_cppn();
+        let mut g2 = genetics::Genome::new_minimal(genetics::GenomeId(2), common::EntityId(0));
+        g2.regulatory_cppn = genetics::Cppn::new();
+
+        let s1 = registry.classify(&g1);
+        let s2 = registry.classify(&g2);
+        assert_ne!(s1, s2);
+        assert_eq!(registry.species_count(), 2);
+    }
+
+    #[test]
+    fn refresh_representatives_promotes_most_recent_member() {
+        // A wide threshold keeps every genome in one species regardless of
+        // how far the representative has drifted from new arrivals — this
+        // isolates the refresh mechanism itself from the classify/threshold
+        // logic already covered by other tests.
+        let mut registry = SpeciesRegistry::new(1000.0);
+        let founder = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        registry.classify(&founder);
+
+        let mut latest = genetics::Genome::new_minimal(genetics::GenomeId(2), common::EntityId(0));
+        latest.regulatory_cppn = sample_cppn();
+        registry.classify(&latest);
+
+        registry.refresh_representatives();
+
+        assert_eq!(registry.species[0].representative.id, latest.id);
+        assert!(registry.species[0].most_recent_member.is_none());
+    }
+
+    #[test]
+    fn classify_auto_refreshes_at_the_interval() {
+        // Drives exactly `REPRESENTATIVE_REFRESH_INTERVAL` classify calls
+        // and confirms `classify` (not a manual `refresh_representatives`
+        // call) promoted the last-classified genome to representative —
+        // `tests` is a child module of the crate root, so it can read
+        // `SpeciesRegistry`/`SpeciesRecord`'s private fields directly for a
+        // precise assertion, rather than inferring the refresh indirectly.
+        let mut registry = SpeciesRegistry::new(1000.0);
+        let founder = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        registry.classify(&founder); // classify_count == 1
+
+        // The founder's own classify call already consumed 1 of the
+        // interval's counts, so only `INTERVAL - 1` more calls are needed
+        // to land exactly on the next multiple of the interval.
+        let mut last_genome = founder.clone();
+        for i in 0..(REPRESENTATIVE_REFRESH_INTERVAL - 1) {
+            last_genome =
+                genetics::Genome::new_minimal(genetics::GenomeId(100 + i), common::EntityId(0));
+            registry.classify(&last_genome);
+        }
+
+        assert_eq!(registry.species_count(), 1);
+        assert_eq!(registry.species[0].representative.id, last_genome.id);
+        assert!(registry.species[0].most_recent_member.is_none());
     }
 }

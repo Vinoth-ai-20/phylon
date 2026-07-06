@@ -149,11 +149,10 @@ impl Genome {
         }
     }
 
-    /// The regulatory-network-generating CPPN actually used once wired to
-    /// growth (Phase 3, M4+) — see [`Genome::expressed_brain_cppn`] for the
-    /// dominance rule. Not yet called anywhere in this milestone; provided
-    /// now so diploid genomes have a well-defined answer for this locus as
-    /// soon as something needs it, rather than a gap discovered later.
+    /// The regulatory-network-generating CPPN actually used for growth (via
+    /// `organisms::growth_system`, Phase 3 M4) and, as of M7, for
+    /// speciation distance — see [`Genome::expressed_brain_cppn`] for the
+    /// dominance rule.
     pub fn expressed_regulatory_cppn(&self) -> std::borrow::Cow<'_, Cppn> {
         match &self.second_allele {
             Some(alleles) => std::borrow::Cow::Owned(express_diploid(
@@ -165,11 +164,18 @@ impl Genome {
     }
 
     /// NEAT-style genetic-distance between two genomes' expressed phenotypes
-    /// — the sum of the brain and morphology CPPNs' compatibility distances
-    /// (see [`Cppn::compatibility_distance`]). Diploid genomes are compared
+    /// — the sum of the brain, morphology, and (as of Phase 3 M7)
+    /// regulatory CPPNs' compatibility distances (see
+    /// [`Cppn::compatibility_distance`]). Diploid genomes are compared
     /// on their expressed (dominance-resolved) CPPNs, so distance reflects
     /// phenotype, not raw allele storage. Used by `evolution::SpeciesRegistry`
     /// to cluster organisms into species without a hardcoded `SpeciesId`.
+    ///
+    /// Adding the `regulatory_cppn` term shifts every existing distance
+    /// value upward relative to pre-M7 behavior (see `PHASE3_ROADMAP.md`'s
+    /// §10 calibration note) — `evolution::DEFAULT_COMPATIBILITY_THRESHOLD`
+    /// may need retuning if species counts diverge unexpectedly from
+    /// pre-M7 runs.
     pub fn distance(&self, other: &Genome) -> f32 {
         let brain_d = self.expressed_brain_cppn().compatibility_distance(
             &other.expressed_brain_cppn(),
@@ -183,7 +189,13 @@ impl Genome {
             cppn::DISJOINT_COEFFICIENT,
             cppn::WEIGHT_DIFF_COEFFICIENT,
         );
-        brain_d + morph_d
+        let regulatory_d = self.expressed_regulatory_cppn().compatibility_distance(
+            &other.expressed_regulatory_cppn(),
+            cppn::EXCESS_COEFFICIENT,
+            cppn::DISJOINT_COEFFICIENT,
+            cppn::WEIGHT_DIFF_COEFFICIENT,
+        );
+        brain_d + morph_d + regulatory_d
     }
 
     /// Creates a deterministic, hand-authored ("seed") genome from explicit
