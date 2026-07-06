@@ -7,3 +7,4 @@ description = "rhai scripting engine, plugin loader, and simulation API bindings
 [dependencies]
 common    = { workspace = true }
 thiserror = { workspace = true }
+rhai      = { workspace = true }

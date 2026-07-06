@@ -67,6 +67,9 @@ ron         = { version = "0.8" }
 thiserror   = { version = "2" }
 anyhow      = { version = "1" }
 
+# --- Scripting ---
+rhai        = { version = "1.19" }
+
 # --- Randomness ---
 rand        = { version = "0.8" }
 rand_chacha = { version = "0.3" }

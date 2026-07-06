@@ -31,6 +31,7 @@ pub mod events;
 pub mod interventions;
 pub mod render;
 pub mod replay;
+pub mod scripting;
 pub mod simulation;
 pub mod systems;
 
@@ -108,6 +109,14 @@ fn main() -> Result<()> {
 
     let mut app = PhylonApp::new(sim_config.clone());
 
+    if let Some(scenario_path) = &sim_config.research.scenario_path {
+        info!(path = %scenario_path, "Running scenario script");
+        match scripting::run_script_file(&mut app, std::path::Path::new(scenario_path)) {
+            Ok(count) => info!(commands = count, "Scenario script completed"),
+            Err(e) => tracing::error!("scenario script failed: {e}"),
+        }
+    }
+
     // Initialize tokio runtime for background tasks and networking
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -179,11 +188,26 @@ fn main() -> Result<()> {
                 }
             }
         } else {
+            let periodic_script_path = sim_config.research.periodic_script_path.clone();
+            let periodic_script_interval = sim_config.research.periodic_script_interval_ticks;
+
             while max_ticks == 0 || tick_count < max_ticks {
                 let start = std::time::Instant::now();
 
                 app.update_simulation();
                 tick_count += 1;
+
+                if let Some(path) = &periodic_script_path {
+                    if periodic_script_interval > 0
+                        && tick_count.is_multiple_of(periodic_script_interval)
+                    {
+                        if let Err(e) =
+                            scripting::run_script_file(&mut app, std::path::Path::new(path))
+                        {
+                            tracing::error!("periodic script failed: {e}");
+                        }
+                    }
+                }
 
                 if realtime_lock {
                     let elapsed = start.elapsed();

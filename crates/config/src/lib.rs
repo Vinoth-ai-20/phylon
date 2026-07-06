@@ -324,6 +324,29 @@ pub struct ResearchConfig {
     /// back to back as fast as possible, matching headless/batch mode.
     #[serde(default)]
     pub replay_realtime_pacing: bool,
+
+    /// When `Some`, a `.rhai` scenario script (see `plugins::PluginEngine`)
+    /// runs once right after startup, in every run mode — letting a
+    /// researcher author initial conditions without recompiling. Default:
+    /// `None` (off).
+    #[serde(default)]
+    pub scenario_path: Option<String>,
+
+    /// When `Some` and running headless, a `.rhai` script runs every
+    /// `periodic_script_interval_ticks` ticks — scripted mid-run
+    /// interventions (e.g. "release a hazard every 10,000 ticks") without
+    /// recompiling. Default: `None` (off).
+    #[serde(default)]
+    pub periodic_script_path: Option<String>,
+
+    /// How often (in ticks) `periodic_script_path` runs. Default: `600`
+    /// (~10s at 60 Hz).
+    #[serde(default = "default_periodic_script_interval")]
+    pub periodic_script_interval_ticks: u64,
+}
+
+fn default_periodic_script_interval() -> u64 {
+    600
 }
 
 fn default_replay_speed() -> f32 {
@@ -343,6 +366,9 @@ impl Default for ResearchConfig {
             replay_path: None,
             replay_speed: default_replay_speed(),
             replay_realtime_pacing: false,
+            scenario_path: None,
+            periodic_script_path: None,
+            periodic_script_interval_ticks: default_periodic_script_interval(),
         }
     }
 }

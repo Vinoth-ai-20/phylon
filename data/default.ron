@@ -29,5 +29,8 @@ PhylonConfig(
         replay_path: None,
         replay_speed: 1.0,
         replay_realtime_pacing: false,
+        scenario_path: None,
+        periodic_script_path: None,
+        periodic_script_interval_ticks: 600,
     ),
 )

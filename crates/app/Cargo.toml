@@ -32,6 +32,8 @@ ui         = { workspace = true }
 storage    = { path = "../storage" }
 research   = { path = "../research" }
 analytics  = { workspace = true }
+plugins    = { path = "../plugins" }
+rhai       = { workspace = true }
 
 # GUI
 egui       = { workspace = true }
