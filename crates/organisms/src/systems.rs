@@ -6,8 +6,9 @@ use common::Vec2;
 ///
 /// ## 1. What Happens
 /// The `growth_system` executes the procedural embryogenesis of an organism. Over multiple ticks,
-/// it reads the `HoxSequence` (or generates one dynamically via the Morph CPPN) and iteratively
-/// spawns the `ParticleNode`s and `Spring` constraints that make up the organism's physical body.
+/// it decodes each body position through the regulatory network (`genetics::develop_at_position`,
+/// Phase 3 M4) and iteratively spawns the `ParticleNode`s and `Spring` constraints that make up
+/// the organism's physical body.
 ///
 /// ## 2. Why It Happens
 /// Spawning an entire complex multi-body organism in a single tick with perfect physics stability
@@ -17,11 +18,14 @@ use common::Vec2;
 ///
 /// ## 3. How It Happens
 /// The system acts as a state machine tracked by `GrowthState`:
-/// 1. Every $N$ ticks, it reads the next `HoxGene`.
+/// 1. Every $N$ ticks, it decodes the next body position via `genetics::develop_at_position`.
 /// 2. It spawns a new node at exactly $RestLength$ away from the `parent_spine_node`.
-/// 3. It attaches a `Rigid` or `Passive` spring to the parent.
-/// 4. If $BranchingSignal > 0$, it sprouts orthogonal fin nodes and connects them with `Elastic` muscles.
-/// 5. Once the Hox sequence is exhausted, it wires the `Brain` CTRNN topology.
+/// 3. It attaches a `Rigid`, `Elastic`, or `Passive` spring to the parent, depending on the
+///    decoded segment type.
+/// 4. If the decoded position branches, it sprouts orthogonal fin nodes and connects them with
+///    `Elastic` muscles.
+/// 5. Once growth is complete (either `organisms::MAX_SEGMENTS` is reached, or a decoded segment
+///    is `Tail`), it wires the `Brain` CTRNN topology.
 pub fn growth_system(
     mut commands: Commands,
     mut query: Query<(Entity, &mut GrowthState)>,
@@ -33,57 +37,20 @@ pub fn growth_system(
     use physics::{ParticleNode, Spring};
 
     for (entity, mut state) in query.iter_mut() {
-        // Retrieve Hox sequence; fall back to generating one via Morph CPPN if none exists.
         // Expressed (dominance-resolved for diploid genomes — see
-        // `Genome::expressed_brain_cppn`/`expressed_morph_cppn`) once per
-        // organism, not per CPPN query, since growth/brain-wiring below
-        // calls `.evaluate(...)` many times per tick.
-        let expressed_morph_cppn = state.genome.expressed_morph_cppn();
+        // `Genome::expressed_brain_cppn`/`expressed_regulatory_cppn`) once
+        // per organism, not per query, since growth/brain-wiring below
+        // calls `.evaluate(...)`/`develop_at_position(...)` many times per
+        // tick. `morph_cppn` is deliberately not queried here any more —
+        // Phase 3 M4 moved segment-identity decoding entirely onto
+        // `regulatory_cppn` (see ADR-P3-02); `morph_cppn` remains a crossed/
+        // mutated/distance-compared locus but has no growth-time consumer
+        // left, a known, documented piece of technical debt.
+        let expressed_regulatory_cppn = state.genome.expressed_regulatory_cppn();
         let expressed_brain_cppn = state.genome.expressed_brain_cppn();
 
-        let hox_genes = match state.genome.hox.as_ref() {
-            Some(h) => h.genes.clone(),
-            None => {
-                let mut generated = vec![genetics::HoxGene::head()];
-                let max_segments = 15;
-                for i in 1..max_segments {
-                    let parent_type = match generated.last().unwrap().segment {
-                        genetics::SegmentType::Head => 0.0,
-                        genetics::SegmentType::Torso => 1.0,
-                        genetics::SegmentType::Muscle => 2.0,
-                        genetics::SegmentType::Tail => 3.0,
-                        genetics::SegmentType::Fin => 4.0,
-                    };
-                    let inputs = [i as f32 / max_segments as f32, parent_type];
-                    let outputs = expressed_morph_cppn.evaluate(&inputs);
-                    if outputs.len() >= 3 {
-                        let type_val = outputs[0];
-                        let branching = outputs[1];
-                        let phase = outputs[2] * std::f32::consts::PI;
-
-                        if type_val < -0.2 {
-                            generated.push(genetics::HoxGene::muscle(1.2, phase));
-                        } else if type_val > 0.2 {
-                            if branching > 0.0 {
-                                generated.push(genetics::HoxGene::branching_torso(2.5, phase));
-                            } else {
-                                generated.push(genetics::HoxGene::torso());
-                            }
-                        } else {
-                            // Stop signal
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-                generated.push(genetics::HoxGene::tail());
-                generated
-            }
-        };
-
-        // Check if we've processed all genes.
-        let is_finished = state.next_segment_index >= hox_genes.len();
+        let is_finished =
+            state.next_segment_index >= crate::MAX_SEGMENTS || state.is_organism_complete;
 
         if state.ticks_until_next_bud > 0 && !is_finished {
             state.ticks_until_next_bud -= 1;
@@ -201,10 +168,18 @@ pub fn growth_system(
             continue;
         }
 
-        // ── Grow the next Hox gene ────────────────────────────────────────────
-        let gene = &hox_genes[state.next_segment_index];
+        // ── Grow the next body position ───────────────────────────────────────
+        // Decoded via the regulatory network, not read from a stored gene —
+        // the same `develop_at_position` call handles every position,
+        // including the head node `spawning::spawn_organism` already built
+        // (Phase 3 M4; see ADR-P3-02).
+        let outputs = genetics::develop_at_position(
+            &expressed_regulatory_cppn,
+            state.next_segment_index,
+            crate::MAX_SEGMENTS,
+        );
 
-        let seg_u32 = match gene.segment {
+        let seg_u32 = match outputs.segment_type {
             SegmentType::Head => 0,
             SegmentType::Torso => 1,
             SegmentType::Muscle => 2,
@@ -212,7 +187,7 @@ pub fn growth_system(
             SegmentType::Fin => 4,
         };
 
-        let stiffness = match gene.segment {
+        let stiffness = match outputs.segment_type {
             SegmentType::Head => 10.0,
             SegmentType::Torso => 15.0,
             SegmentType::Muscle => 8.0,
@@ -240,13 +215,13 @@ pub fn growth_system(
         let spine_node = commands
             .spawn((
                 ParticleNode::new(spawn_pos, 1.0, seg_u32, entity.index()),
-                OrganismColor(state.color),
+                OrganismColor(outputs.pigment),
             ))
             .id();
 
         // ── Connect to previous spine node with a Rigid bone ─────────────────
         if let Some(prev) = state.parent_spine_node {
-            let constraint_type = match gene.segment {
+            let constraint_type = match outputs.segment_type {
                 SegmentType::Muscle => physics::ConstraintType::Elastic,
                 SegmentType::Tail => physics::ConstraintType::Passive,
                 _ => physics::ConstraintType::Rigid,
@@ -268,14 +243,14 @@ pub fn growth_system(
                         // correction injects ~19 units/s per iteration per tick when
                         // rest_length oscillates, causing runaway fly-off.
                         actuation_amplitude: match constraint_type {
-                            physics::ConstraintType::Elastic => gene.actuation_amplitude,
+                            physics::ConstraintType::Elastic => outputs.actuation_amplitude,
                             _ => 0.0, // Rigid / Passive spine bones never actuate
                         },
-                        actuation_phase: gene.actuation_phase,
+                        actuation_phase: outputs.actuation_phase,
                         breaking_strain: 2.0,
                         is_fin: 0,
                     },
-                    OrganismColor(state.color),
+                    OrganismColor(outputs.pigment),
                 ))
                 .id();
 
@@ -286,10 +261,13 @@ pub fn growth_system(
             }
         }
 
-        // ── Branch: sprout bilateral fin pair if branching_signal > 0 ────────
-        // Only Torso and Muscle segments can branch (not Head or Tail).
-        let can_branch = matches!(gene.segment, SegmentType::Torso | SegmentType::Muscle);
-        if can_branch && gene.branching_signal > 0.0 && state.parent_spine_node.is_some() {
+        // ── Branch: sprout bilateral fin pair if the decode's branch output
+        // fires. Only Torso and Muscle segments can branch (not Head or Tail).
+        let can_branch = matches!(
+            outputs.segment_type,
+            SegmentType::Torso | SegmentType::Muscle
+        );
+        if can_branch && outputs.branches && state.parent_spine_node.is_some() {
             let fin_spread = state.segment_length * 0.75;
             let dir = Vec2::new(state.heading.cos(), state.heading.sin());
             let perp = Vec2::new(-dir.y, dir.x);
@@ -300,13 +278,13 @@ pub fn growth_system(
             let f_up = commands
                 .spawn((
                     ParticleNode::new(f_up_pos, 0.5, 4, entity.index()),
-                    OrganismColor(state.color),
+                    OrganismColor(outputs.pigment),
                 ))
                 .id();
             let f_dn = commands
                 .spawn((
                     ParticleNode::new(f_dn_pos, 0.5, 4, entity.index()),
-                    OrganismColor(state.color),
+                    OrganismColor(outputs.pigment),
                 ))
                 .id();
 
@@ -325,7 +303,7 @@ pub fn growth_system(
                     breaking_strain: 2.0,
                     is_fin: 1,
                 },
-                OrganismColor(state.color),
+                OrganismColor(outputs.pigment),
             ));
             commands.spawn((
                 Spring {
@@ -341,7 +319,7 @@ pub fn growth_system(
                     breaking_strain: 2.0,
                     is_fin: 1,
                 },
-                OrganismColor(state.color),
+                OrganismColor(outputs.pigment),
             ));
 
             // Attach Elastic muscle to the previous spine node
@@ -359,12 +337,12 @@ pub fn growth_system(
                         base_length: muscle_rest_len,
                         stiffness: 25.0,
                         damping: 0.9,
-                        actuation_amplitude: gene.actuation_amplitude,
+                        actuation_amplitude: outputs.actuation_amplitude,
                         actuation_phase: 0.0,
                         breaking_strain: 2.0,
                         is_fin: 0,
                     },
-                    OrganismColor(state.color),
+                    OrganismColor(outputs.pigment),
                 ))
                 .id();
             state.effectors.push(sf_up);
@@ -379,12 +357,12 @@ pub fn growth_system(
                         base_length: muscle_rest_len,
                         stiffness: 25.0,
                         damping: 0.9,
-                        actuation_amplitude: gene.actuation_amplitude,
+                        actuation_amplitude: outputs.actuation_amplitude,
                         actuation_phase: std::f32::consts::PI, // Opposing phase → flap
                         breaking_strain: 2.0,
                         is_fin: 0,
                     },
-                    OrganismColor(state.color),
+                    OrganismColor(outputs.pigment),
                 ))
                 .id();
             state.effectors.push(sf_dn);
@@ -396,6 +374,9 @@ pub fn growth_system(
         state.current_pos += offset;
         state.next_segment_index += 1;
         state.ticks_until_next_bud = state.base_bud_interval;
+        if outputs.segment_type == SegmentType::Tail {
+            state.is_organism_complete = true;
+        }
     }
 }
 
@@ -518,5 +499,106 @@ pub fn producer_growth_system(
                 crate::components::OrganismColor([0.2, 0.9, 0.2]),
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy_ecs::system::RunSystemOnce;
+    use bevy_ecs::world::World;
+
+    /// Runs `growth_system` repeatedly against a single organism's
+    /// `GrowthState` until the `Brain`/`GrowthState`-removal branch fires,
+    /// or a fixed iteration ceiling is hit (a bug that stalls growth should
+    /// fail this test loudly, not hang it).
+    fn run_growth_to_completion(world: &mut World, entity: Entity) {
+        for _ in 0..(crate::MAX_SEGMENTS * 40) {
+            if world.get::<GrowthState>(entity).is_none() {
+                return;
+            }
+            world.run_system_once(growth_system);
+        }
+        panic!("growth_system did not complete within the iteration ceiling");
+    }
+
+    fn spawn_growth_entity(world: &mut World, genome: genetics::Genome) -> Entity {
+        world
+            .spawn((
+                metabolism::ChemicalEconomy {
+                    glucose: 1000.0,
+                    o2: 1000.0,
+                    co2: 0.0,
+                    atp: 1000.0,
+                    max_glucose: 1000.0,
+                    max_o2: 1000.0,
+                    max_co2: 1000.0,
+                    max_atp: 1000.0,
+                },
+                GrowthState {
+                    genome,
+                    next_segment_index: 1,
+                    ticks_until_next_bud: 0,
+                    base_bud_interval: 0,
+                    parent_spine_node: None,
+                    current_pos: Vec2::new(0.0, 0.0),
+                    segment_length: 20.0,
+                    effectors: Vec::new(),
+                    is_organism_complete: false,
+                    heading: 0.0,
+                },
+            ))
+            .id()
+    }
+
+    #[test]
+    fn growth_system_completes_for_a_default_genome_without_panicking() {
+        let mut world = World::new();
+        let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        let entity = spawn_growth_entity(&mut world, genome);
+        run_growth_to_completion(&mut world, entity);
+        assert!(world.get::<brain::Brain>(entity).is_some());
+    }
+
+    #[test]
+    fn growth_system_produces_more_than_one_particle_node() {
+        let mut world = World::new();
+        let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        // The head node itself isn't spawned by `growth_system` (that's
+        // `spawning::spawn_organism`'s job) — spawn a stand-in head so
+        // `parent_spine_node`-dependent spring/branch logic has something
+        // to attach to, matching how `spawn_organism` seeds this state.
+        let head = world
+            .spawn(physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 0))
+            .id();
+        world.entity_mut(head).insert(metabolism::ChemicalEconomy {
+            glucose: 1000.0,
+            o2: 1000.0,
+            co2: 0.0,
+            atp: 1000.0,
+            max_glucose: 1000.0,
+            max_o2: 1000.0,
+            max_co2: 1000.0,
+            max_atp: 1000.0,
+        });
+        world.entity_mut(head).insert(GrowthState {
+            genome,
+            next_segment_index: 1,
+            ticks_until_next_bud: 0,
+            base_bud_interval: 0,
+            parent_spine_node: Some(head),
+            current_pos: Vec2::new(0.0, 0.0),
+            segment_length: 20.0,
+            effectors: Vec::new(),
+            is_organism_complete: false,
+            heading: 0.0,
+        });
+        run_growth_to_completion(&mut world, head);
+
+        let node_count = world.query::<&physics::ParticleNode>().iter(&world).count();
+        assert!(
+            node_count > 1,
+            "expected growth_system to spawn at least one body segment beyond the head"
+        );
     }
 }

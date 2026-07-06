@@ -40,15 +40,17 @@ pub struct Generation(pub u32);
 #[derive(Component, Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct SpawnTick(pub u64);
 
-/// Tracks the sequential growth of an organism from its Hox genome.
+/// Tracks the sequential growth of an organism from its regulatory genome.
 ///
-/// Each tick one gene from the `HoxSequence` is materialised as a spine node.
-/// When the sequence is exhausted the brain is wired and `GrowthState` is removed.
+/// Each tick, `organisms::growth_system` decodes the next body position via
+/// `genetics::develop_at_position` (Phase 3, M4) and materialises the result
+/// as a spine node (and, if the position branches, a lateral fin pair).
+/// When growth is complete the brain is wired and `GrowthState` is removed.
 #[derive(Component, Debug, Clone)]
 pub struct GrowthState {
-    /// The genome driving growth (Hox sequence embedded within).
+    /// The genome driving growth.
     pub genome: genetics::Genome,
-    /// Index of the next gene to build (0 = head already spawned, grows from 1).
+    /// Index of the next segment to build (0 = head already spawned, grows from 1).
     pub next_segment_index: usize,
     /// Ticks remaining until the next segment buds.
     pub ticks_until_next_bud: u64,
@@ -62,8 +64,11 @@ pub struct GrowthState {
     pub segment_length: f32,
     /// The list of actuated spring effectors built so far.
     pub effectors: Vec<bevy_ecs::entity::Entity>,
-    /// Skin colour for this organism.
-    pub color: [f32; 3],
+    /// Set once a decoded segment is `SegmentType::Tail` — growth stops
+    /// after that segment even if `next_segment_index` hasn't reached
+    /// `organisms::MAX_SEGMENTS` yet (Phase 3, M4; no special-cased length,
+    /// just an emergent stopping condition from the decode itself).
+    pub is_organism_complete: bool,
     /// Heading angle at which this organism spawns.
     pub heading: f32,
 }

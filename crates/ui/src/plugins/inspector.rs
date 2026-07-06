@@ -371,20 +371,18 @@ pub fn inspector_ui(
                             );
                             crate::widgets::kv_row(
                                 ui,
-                                "HoxSequence",
-                                if genome.hox.is_some() {
-                                    "Present"
-                                } else {
-                                    "None (CPPN-driven)"
-                                },
+                                "Regulatory CPPN",
+                                &format!(
+                                    "{} nodes, {} connections",
+                                    genome.regulatory_cppn.nodes.len(),
+                                    genome.regulatory_cppn.connections.len()
+                                ),
                             );
-                            if let Some(hox) = &genome.hox {
-                                crate::widgets::kv_row(
-                                    ui,
-                                    "Hox Genes",
-                                    &hox.genes.len().to_string(),
-                                );
-                            }
+                            crate::widgets::kv_row(
+                                ui,
+                                "Regulatory Genes",
+                                &genetics::REGULATORY_GENE_ROLES.len().to_string(),
+                            );
                             crate::widgets::kv_row(ui, "MutationHistory", "Not Available");
                             crate::widgets::kv_row(ui, "MutationCount", "Not Available");
                         });

@@ -224,11 +224,16 @@ fn genetics_panel(
                 "Morph edges",
                 &genome.morph_cppn.connections.len().to_string(),
             );
-            if let Some(hox) = &genome.hox {
-                crate::widgets::kv_row(ui, "Hox genes", &hox.genes.len().to_string());
-            } else {
-                crate::widgets::kv_row(ui, "Hox genes", "None (CPPN-driven)");
-            }
+            crate::widgets::kv_row(
+                ui,
+                "Regulatory nodes",
+                &genome.regulatory_cppn.nodes.len().to_string(),
+            );
+            crate::widgets::kv_row(
+                ui,
+                "Regulatory edges",
+                &genome.regulatory_cppn.connections.len().to_string(),
+            );
         });
         ui.add_space(crate::theme::SPACE_SM);
         ui.label(

@@ -1,6 +1,5 @@
 use crate::cppn;
-use crate::cppn::{Cppn, CppnConnection, CppnNode, GlobalInnovationTracker, DEFAULT_MUTATION_RATE};
-use crate::hox::HoxSequence;
+use crate::cppn::{Cppn, CppnConnection, GlobalInnovationTracker};
 use crate::types::{GenomeId, Ploidy};
 use common::EntityId;
 use serde::{Deserialize, Serialize};
@@ -66,11 +65,6 @@ pub struct Genome {
     /// against the current `Genome` layout (no migration path exists yet;
     /// see `docs` or the implementation roadmap's Epic 7 note).
     pub second_allele: Option<DiploidAlleles>,
-    /// Optional explicit Hox body-plan sequence.
-    ///
-    /// When `Some`, the growth system reads the body plan directly from this
-    /// sequence rather than querying the morph CPPN.
-    pub hox: Option<HoxSequence>,
 }
 
 impl Genome {
@@ -85,14 +79,12 @@ impl Genome {
             morph_cppn: Cppn::new(),
             regulatory_cppn: Cppn::new(),
             second_allele: None,
-            hox: None,
         }
     }
 
     /// Creates a diploid genome by pairing two independently-constructed
     /// haploid genomes' CPPNs as its two alleles — `self`'s fields (`id`,
-    /// `origin`, `hox`) are kept; only `allele_a`'s and `allele_b`'s CPPNs
-    /// are used.
+    /// `origin`) are kept; only `allele_a`'s and `allele_b`'s CPPNs are used.
     ///
     /// Each allele tuple is `(brain_cppn, morph_cppn, regulatory_cppn)` —
     /// extended in Phase 3, M1 to carry the third CPPN so a diploid genome
@@ -107,7 +99,6 @@ impl Genome {
     pub fn new_diploid(
         id: GenomeId,
         origin: EntityId,
-        hox: Option<HoxSequence>,
         allele_a: (Cppn, Cppn, Cppn),
         allele_b: (Cppn, Cppn, Cppn),
     ) -> Self {
@@ -124,7 +115,6 @@ impl Genome {
                 morph_cppn: allele_b.1,
                 regulatory_cppn: allele_b.2,
             }),
-            hox,
         }
     }
 
@@ -196,140 +186,32 @@ impl Genome {
         brain_d + morph_d
     }
 
-    /// Creates a deterministic genome with a pre-defined Hox sequence.
-    pub fn new_hox_driven(id: GenomeId, origin: EntityId, hox: HoxSequence) -> Self {
+    /// Creates a deterministic, hand-authored ("seed") genome from explicit
+    /// CPPNs — used for starter-scenario species (Phase 3 M4, replacing the
+    /// retired `new_hox_driven`/`HoxSequence` template mechanism).
+    ///
+    /// Per ADR-P3-02's directive: a seed organism is not a special-cased
+    /// morphology — it is an ordinary `Genome` that happens to have been
+    /// authored by hand rather than produced by mutation and selection. It
+    /// develops through exactly the same `organisms::growth_system` /
+    /// `develop_at_position` pipeline as any evolved organism; the only
+    /// difference is where its CPPN weights came from.
+    pub fn seed(
+        id: GenomeId,
+        origin: EntityId,
+        brain_cppn: Cppn,
+        morph_cppn: Cppn,
+        regulatory_cppn: Cppn,
+    ) -> Self {
         Self {
             schema_version: GENOME_SCHEMA_VERSION,
             id,
             origin,
             ploidy: Ploidy::Haploid,
-            brain_cppn: Cppn {
-                nodes: vec![
-                    CppnNode {
-                        activation: brain::ActivationFn::Linear,
-                        bias: 0.0,
-                        layer: 0,
-                    }, // Input: Source Node Coord
-                    CppnNode {
-                        activation: brain::ActivationFn::Linear,
-                        bias: 0.0,
-                        layer: 0,
-                    }, // Input: Target Node Coord
-                    CppnNode {
-                        activation: brain::ActivationFn::Tanh,
-                        bias: 0.0,
-                        layer: 1,
-                    }, // Output: Connection Weight
-                    CppnNode {
-                        activation: brain::ActivationFn::Tanh,
-                        bias: 0.0,
-                        layer: 1,
-                    }, // Output: Bias
-                    CppnNode {
-                        activation: brain::ActivationFn::Linear,
-                        bias: 0.0,
-                        layer: 1,
-                    }, // Output: Time Constant
-                ],
-                connections: vec![
-                    CppnConnection {
-                        source: 0,
-                        target: 2,
-                        weight: 2.0,
-                        enabled: true,
-                        innovation: 1,
-                        mutation_rate: DEFAULT_MUTATION_RATE,
-                    },
-                    CppnConnection {
-                        source: 1,
-                        target: 2,
-                        weight: -1.0,
-                        enabled: true,
-                        innovation: 2,
-                        mutation_rate: DEFAULT_MUTATION_RATE,
-                    },
-                    CppnConnection {
-                        source: 1,
-                        target: 3,
-                        weight: 1.0,
-                        enabled: true,
-                        innovation: 3,
-                        mutation_rate: DEFAULT_MUTATION_RATE,
-                    },
-                    CppnConnection {
-                        source: 1,
-                        target: 4,
-                        weight: 0.5,
-                        enabled: true,
-                        innovation: 4,
-                        mutation_rate: DEFAULT_MUTATION_RATE,
-                    },
-                ],
-            },
-            morph_cppn: Cppn {
-                nodes: vec![
-                    CppnNode {
-                        activation: brain::ActivationFn::Linear,
-                        bias: 0.0,
-                        layer: 0,
-                    }, // Input 0: segment_idx / MAX
-                    CppnNode {
-                        activation: brain::ActivationFn::Linear,
-                        bias: 0.0,
-                        layer: 0,
-                    }, // Input 1: parent_type_as_float
-                    CppnNode {
-                        activation: brain::ActivationFn::Tanh,
-                        bias: 0.0,
-                        layer: 1,
-                    }, // Output 0: type/stop
-                    CppnNode {
-                        activation: brain::ActivationFn::Tanh,
-                        bias: 0.0,
-                        layer: 1,
-                    }, // Output 1: branching
-                    CppnNode {
-                        activation: brain::ActivationFn::Tanh,
-                        bias: 0.0,
-                        layer: 1,
-                    }, // Output 2: phase
-                ],
-                connections: vec![
-                    CppnConnection {
-                        source: 0,
-                        target: 2,
-                        weight: 1.0,
-                        enabled: true,
-                        innovation: 5,
-                        mutation_rate: DEFAULT_MUTATION_RATE,
-                    },
-                    CppnConnection {
-                        source: 0,
-                        target: 3,
-                        weight: 1.0,
-                        enabled: true,
-                        innovation: 6,
-                        mutation_rate: DEFAULT_MUTATION_RATE,
-                    },
-                    CppnConnection {
-                        source: 0,
-                        target: 4,
-                        weight: 1.0,
-                        enabled: true,
-                        innovation: 7,
-                        mutation_rate: DEFAULT_MUTATION_RATE,
-                    },
-                ],
-            },
-            // Empty for this test-fixture constructor — `new_hox_driven`'s
-            // whole point is an explicit, non-regulatory Hox sequence
-            // (`hox: Some(hox)` below), so there's nothing meaningful to
-            // template here yet. Phase 3 M4 (which replaces direct Hox
-            // lookup with regulatory-network-decoded identity) will need to
-            // revisit whether this constructor still makes sense at all.
-            regulatory_cppn: Cppn::new(),
+            brain_cppn,
+            morph_cppn,
+            regulatory_cppn,
             second_allele: None,
-            hox: Some(hox),
         }
     }
 
@@ -342,32 +224,6 @@ impl Genome {
     /// doc comment for why mating doesn't otherwise produce diploid
     /// children on its own).
     pub fn crossover<R: rand::Rng>(&self, other: &Genome, new_id: GenomeId, rng: &mut R) -> Self {
-        let hox = match (&self.hox, &other.hox) {
-            (Some(a), Some(b)) if a.genes.len() == b.genes.len() => Some(HoxSequence {
-                genes: a
-                    .genes
-                    .iter()
-                    .zip(b.genes.iter())
-                    .map(|(ga, gb)| {
-                        if rng.gen_bool(0.5) {
-                            ga.clone()
-                        } else {
-                            gb.clone()
-                        }
-                    })
-                    .collect(),
-                color: if rng.gen_bool(0.5) { a.color } else { b.color },
-            }),
-            (Some(_), Some(_)) => {
-                if rng.gen_bool(0.5) {
-                    self.hox.clone()
-                } else {
-                    other.hox.clone()
-                }
-            }
-            _ => self.hox.clone(),
-        };
-
         let second_allele =
             self.second_allele
                 .as_ref()
@@ -395,7 +251,6 @@ impl Genome {
             morph_cppn: self.morph_cppn.crossover(&other.morph_cppn, rng),
             regulatory_cppn: self.regulatory_cppn.crossover(&other.regulatory_cppn, rng),
             second_allele,
-            hox,
         }
     }
 
@@ -543,6 +398,7 @@ fn express_diploid(primary: &Cppn, secondary: &Cppn) -> Cppn {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cppn::{CppnNode, DEFAULT_MUTATION_RATE};
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
@@ -651,7 +507,6 @@ mod tests {
         let g = Genome::new_diploid(
             GenomeId(1),
             EntityId(0),
-            None,
             (sample_cppn(0.5), Cppn::new(), Cppn::new()),
             (sample_cppn(-0.9), Cppn::new(), Cppn::new()),
         );
@@ -667,7 +522,6 @@ mod tests {
         let mut g = Genome::new_diploid(
             GenomeId(1),
             EntityId(0),
-            None,
             (sample_cppn(0.1), Cppn::new(), Cppn::new()),
             (sample_cppn(0.1), Cppn::new(), Cppn::new()),
         );
@@ -692,7 +546,6 @@ mod tests {
         let mut g = Genome::new_diploid(
             GenomeId(1),
             EntityId(0),
-            None,
             (Cppn::new(), Cppn::new(), sample_cppn(0.2)),
             (Cppn::new(), Cppn::new(), sample_cppn(0.2)),
         );
@@ -718,7 +571,6 @@ mod tests {
             Genome::new_diploid(
                 GenomeId(1),
                 EntityId(0),
-                None,
                 (sample_cppn(0.1), Cppn::new(), Cppn::new()),
                 (sample_cppn(0.1), Cppn::new(), Cppn::new()),
             )
@@ -784,7 +636,6 @@ mod tests {
         let mut g3 = Genome::new_diploid(
             GenomeId(2),
             EntityId(0),
-            None,
             (sample_cppn(0.1), Cppn::new(), Cppn::new()),
             (Cppn::new(), Cppn::new(), Cppn::new()),
         );

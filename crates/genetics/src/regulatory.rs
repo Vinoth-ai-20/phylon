@@ -12,20 +12,18 @@
 //! requirements, since development happens once per organism, not every
 //! tick for up to 100,000 organisms simultaneously.
 //!
-//! **Scope of this milestone:** the network can be generated from a `Cppn`
-//! and iteratively evaluated, deterministically. It is *not yet* wired to
-//! `organisms::growth_system`, positional/morphogen inputs are not yet
-//! meaningful (M3), and Hox-designated genes are not yet read for segment
-//! identity (M4). Those are separate, later milestones.
+//! As of Phase 3 M4, this network **is** wired to `organisms::growth_system`
+//! — see `crate::develop::develop_at_position` for the per-position decode
+//! that turns a developed network's gene states into a `SegmentType`,
+//! branching decision, actuation parameters, and pigment.
 
 use crate::cppn::Cppn;
 use serde::{Deserialize, Serialize};
 
-/// Fixed semantic role of one gene (output node) in a [`RegulatoryNetwork`],
-/// mirroring the fixed-index I/O convention `Genome::new_hox_driven`'s
-/// `brain_cppn`/`morph_cppn` templates already use (documented there via
-/// plain comments) — here made explicit via an enum + [`REGULATORY_GENE_ROLES`]
-/// table, since later milestones (M4/M5) need to know which gene is which.
+/// Fixed semantic role of one gene (output node) in a [`RegulatoryNetwork`] —
+/// a fixed-index convention (analogous to `brain_cppn`'s fixed input/output
+/// columns) made explicit via an enum + [`REGULATORY_GENE_ROLES`] table, so
+/// `crate::develop`'s decode knows which gene is which.
 ///
 /// The gene *count* is fixed for this milestone (matching
 /// [`REGULATORY_GENE_ROLES`]'s length) — evolvable growth of the output
@@ -34,22 +32,34 @@ use serde::{Deserialize, Serialize};
 pub enum RegulatoryGeneRole {
     /// Read positionally along the body axis to decide segment identity
     /// (Phase 3 M4) — several Hox-designated genes together form a
-    /// combinatorial code, replacing today's direct `HoxGene.segment`
-    /// lookup (see `genome::Genome::hox`'s doc comment for what this
-    /// replaces).
+    /// combinatorial code, replacing the retired `HoxGene.segment` direct
+    /// lookup (see `PHASE3_ROADMAP.md`'s ADR-P3-02).
     Hox,
     /// Read to decide broader cell-fate/organ output, beyond the fixed
-    /// segment-type vocabulary (Phase 3 M5).
+    /// segment-type vocabulary (Phase 3 M5). As of M4, index 0 of this
+    /// role drives the branching decision (see `crate::develop`).
     Differentiation,
-    /// Designated to eventually drive a physical effector once wired to
-    /// growth (Phase 3 M4+) — a placeholder role for this milestone.
+    /// Drives a physical growth effector (Phase 3 M4): index 0 is muscle
+    /// actuation amplitude, index 1 is actuation phase (see
+    /// `crate::develop::develop_at_position`).
     Effector,
+    /// Drives per-segment skin pigmentation (Phase 3 M4, added alongside
+    /// Hox decoding once retiring `HoxSequence` — which had piggybacked
+    /// organism color onto the body-plan struct — raised the question of
+    /// where color should live now). Three Pigment-designated genes map
+    /// directly to R/G/B; since decoding runs once per body position, color
+    /// is a genuine per-segment emergent trait, not organism-wide stored
+    /// data — this is what makes gradients/stripes/spots possible later
+    /// without any architecture change, only richer `regulatory_cppn`
+    /// topologies.
+    Pigment,
 }
 
 /// The initial regulatory-gene role table: 3 Hox-designated genes (enough
 /// for up to 2^3 = 8 combinatorial identities under a simple on/off
 /// reading — comfortably more than today's 5 fixed `SegmentType` variants),
-/// 2 Differentiation-designated genes, and 1 Effector-designated gene.
+/// 2 Differentiation-designated genes, 2 Effector-designated genes
+/// (amplitude, phase), and 3 Pigment-designated genes (R, G, B).
 /// `RegulatoryNetwork::generate`'s `gene_count` argument is expected to
 /// match this table's length while this milestone's fixed-vocabulary scope
 /// holds.
@@ -60,6 +70,10 @@ pub const REGULATORY_GENE_ROLES: &[RegulatoryGeneRole] = &[
     RegulatoryGeneRole::Differentiation,
     RegulatoryGeneRole::Differentiation,
     RegulatoryGeneRole::Effector,
+    RegulatoryGeneRole::Effector,
+    RegulatoryGeneRole::Pigment,
+    RegulatoryGeneRole::Pigment,
+    RegulatoryGeneRole::Pigment,
 ];
 
 /// One regulatory gene's runtime state — analogous to `brain::CtrnnNode`,

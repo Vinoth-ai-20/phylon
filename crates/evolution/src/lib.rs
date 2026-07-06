@@ -311,7 +311,6 @@ mod tests {
         let mut g2 = genetics::Genome::new_diploid(
             genetics::GenomeId(2),
             common::EntityId(0),
-            None,
             (sample_cppn(), genetics::Cppn::new(), genetics::Cppn::new()),
             (
                 genetics::Cppn::new(),

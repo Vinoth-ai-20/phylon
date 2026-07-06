@@ -716,6 +716,114 @@ impl PhylonApp {
     }
 }
 
+/// A single-connection regulatory CPPN: one output node (`Linear` activation)
+/// with a bias and a weight on its first input. Since `RegulatoryNetwork`
+/// queries this same function for both gene bias (`evaluate(&[idx, idx])`)
+/// and edge weight (`evaluate(&[i/total, j/total])`), `bias`/`weight`
+/// jointly shape the whole network's topology and per-gene thresholds —
+/// there's no independent per-role control with a CPPN this simple (a real
+/// limitation, not a design goal; richer hand-authored topologies could
+/// decouple Hox/branch/pigment control, but weren't needed to give each
+/// starter species a distinct, verified body-plan tendency).
+pub(crate) fn seed_regulatory_cppn(bias: f32, weight: f32) -> genetics::Cppn {
+    genetics::Cppn {
+        nodes: vec![
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Linear,
+                bias: 0.0,
+                layer: 0,
+            },
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Linear,
+                bias: 0.0,
+                layer: 0,
+            },
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Linear,
+                bias,
+                layer: 1,
+            },
+        ],
+        connections: vec![genetics::CppnConnection {
+            source: 0,
+            target: 2,
+            weight,
+            enabled: true,
+            innovation: 0,
+            mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+        }],
+    }
+}
+
+/// The hand-built brain-wiring CPPN previously baked into `new_hox_driven`
+/// (retired, Phase 3 M4) — unrelated to Hox/body-plan decoding, so carried
+/// over unchanged as every seed genome's starting neural substrate.
+pub(crate) fn seed_brain_cppn() -> genetics::Cppn {
+    genetics::Cppn {
+        nodes: vec![
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Linear,
+                bias: 0.0,
+                layer: 0,
+            }, // Input: Source Node Coord
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Linear,
+                bias: 0.0,
+                layer: 0,
+            }, // Input: Target Node Coord
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Tanh,
+                bias: 0.0,
+                layer: 1,
+            }, // Output: Connection Weight
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Tanh,
+                bias: 0.0,
+                layer: 1,
+            }, // Output: Bias
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Linear,
+                bias: 0.0,
+                layer: 1,
+            }, // Output: Time Constant
+        ],
+        connections: vec![
+            genetics::CppnConnection {
+                source: 0,
+                target: 2,
+                weight: 2.0,
+                enabled: true,
+                innovation: 1,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 1,
+                target: 2,
+                weight: -1.0,
+                enabled: true,
+                innovation: 2,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 1,
+                target: 3,
+                weight: 1.0,
+                enabled: true,
+                innovation: 3,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 1,
+                target: 4,
+                weight: 0.5,
+                enabled: true,
+                innovation: 4,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+        ],
+    }
+}
+
 pub(crate) fn seed_ecosystem(
     world: &mut bevy_ecs::world::World,
     lineage_tracker: &mut evolution::LineageTracker,
@@ -723,56 +831,70 @@ pub(crate) fn seed_ecosystem(
     tracker: &mut genetics::GlobalInnovationTracker,
     rng: &mut impl rand::Rng,
 ) {
-    // 1. Define Prototypes
-    // Colors come from `Diet::standard_color()` — the single canonical
-    // per-diet palette shared with the sandbox spawn tool, so an organism
-    // looks the same regardless of how it was spawned.
-    let worm_genome = genetics::Genome::new_hox_driven(
+    // 1. Define Prototypes ("Seed Genomes" — Phase 3 M4, replacing the
+    // retired `new_hox_driven`/`HoxSequence` template mechanism).
+    //
+    // Each seed is an ordinary hand-authored `Genome` — no special-cased
+    // morphology generation (ADR-P3-02). Its body plan, branching, and
+    // pigmentation all emerge from the same `develop_at_position` decode
+    // pipeline every evolved organism goes through; `seed_regulatory_cppn`
+    // just gives each species archetype a different starting point on that
+    // decode (found by sweeping bias/weight and reading off the resulting
+    // segment-type sequence, not hand-picked to match any specific shape).
+    //
+    // Colors are **not** set here — pigmentation is emergent (see
+    // `RegulatoryGeneRole::Pigment`'s doc comment), so starter organisms no
+    // longer necessarily render in their diet's canonical
+    // `Diet::standard_color()`. This is an intentional consequence of
+    // retiring genome-stored color, not an oversight.
+    let brain_template = seed_brain_cppn();
+
+    let worm_genome = genetics::Genome::seed(
         genetics::GenomeId(1),
         common::EntityId(0),
-        genetics::HoxSequence::worm(6, ecology::Diet::Herbivore.standard_color()),
+        brain_template.clone(),
+        genetics::Cppn::new(),
+        seed_regulatory_cppn(0.0, 0.0), // mostly Muscle body
     );
 
-    let fish_genome = genetics::Genome::new_hox_driven(
+    let fish_genome = genetics::Genome::seed(
         genetics::GenomeId(2),
         common::EntityId(0),
-        genetics::HoxSequence::fish(5, 2, ecology::Diet::Carnivore.standard_color()),
+        brain_template.clone(),
+        genetics::Cppn::new(),
+        seed_regulatory_cppn(0.6, -2.4), // Torso/Fin body
     );
 
-    let branchy_genome = genetics::Genome::new_hox_driven(
+    let branchy_genome = genetics::Genome::seed(
         genetics::GenomeId(3),
         common::EntityId(0),
-        genetics::HoxSequence::new(
-            vec![
-                genetics::HoxGene::head(),
-                genetics::HoxGene::branching_torso(2.5, 0.0),
-                genetics::HoxGene::muscle(1.2, 0.0),
-                genetics::HoxGene::torso(),
-                genetics::HoxGene::branching_torso(2.5, std::f32::consts::PI * 0.5),
-                genetics::HoxGene::muscle(1.2, std::f32::consts::PI),
-                genetics::HoxGene::muscle(1.2, std::f32::consts::PI * 1.5),
-                genetics::HoxGene::tail(),
-            ],
-            ecology::Diet::Herbivore.standard_color(),
-        ),
+        brain_template.clone(),
+        genetics::Cppn::new(),
+        seed_regulatory_cppn(0.7, -2.9), // Torso/Fin body, different balance
     );
 
-    let omnivore_genome = genetics::Genome::new_hox_driven(
+    let omnivore_genome = genetics::Genome::seed(
         genetics::GenomeId(4),
         common::EntityId(0),
-        genetics::HoxSequence::fish(4, 1, ecology::Diet::Omnivore.standard_color()),
+        brain_template.clone(),
+        genetics::Cppn::new(),
+        seed_regulatory_cppn(0.6, -2.3), // Torso/Fin body
     );
 
-    let decomposer_genome = genetics::Genome::new_hox_driven(
+    let decomposer_genome = genetics::Genome::seed(
         genetics::GenomeId(5),
         common::EntityId(0),
-        genetics::HoxSequence::worm(3, ecology::Diet::Decomposer.standard_color()),
+        brain_template.clone(),
+        genetics::Cppn::new(),
+        seed_regulatory_cppn(0.0, 0.0), // mostly Muscle body
     );
 
-    let producer_genome = genetics::Genome::new_hox_driven(
+    let producer_genome = genetics::Genome::seed(
         genetics::GenomeId(6),
         common::EntityId(0),
-        genetics::HoxSequence::plant(ecology::Diet::Producer.standard_color()),
+        brain_template,
+        genetics::Cppn::new(),
+        seed_regulatory_cppn(-2.0, 4.0), // decodes Tail at the head node — a short, static seed
     );
 
     // 2. Helper to spawn a population

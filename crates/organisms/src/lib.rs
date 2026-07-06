@@ -10,6 +10,12 @@
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 
+/// Fixed ceiling on how many body segments `growth_system` will grow for
+/// any organism, and the `total_segments` denominator `genetics::develop`'s
+/// positional decode uses (Phase 3, M4). Growth can still end earlier than
+/// this if a decoded segment is `Tail` — see `growth_system`'s doc comment.
+pub const MAX_SEGMENTS: usize = 15;
+
 /// Tools for sandbox mode, presets, and procedural generation.
 pub mod sandbox;
 pub use sandbox::{PresetDefinition, SandboxTraits};

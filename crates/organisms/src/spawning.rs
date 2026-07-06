@@ -22,18 +22,20 @@ pub fn spawn_organism(
     let segment_length = 20.0;
     let heading = rng.gen_range(0.0..std::f32::consts::TAU);
 
-    // Determine color and initial head segment from HoxSequence when available.
-    let (color, head_seg_u32) = if let Some(hox) = genome.hox.as_ref() {
-        let seg_u32 = match hox.genes.first().map(|g| g.segment) {
-            Some(genetics::SegmentType::Head) => 0,
-            Some(genetics::SegmentType::Torso) => 1,
-            Some(genetics::SegmentType::Muscle) => 2,
-            Some(genetics::SegmentType::Tail) => 3,
-            _ => 0,
-        };
-        (hox.color, seg_u32)
-    } else {
-        ([0.8, 0.4, 0.4], 0u32)
+    // Decode the head node (body position 0) through the same regulatory
+    // pipeline every later segment uses — no special-cased "head" template
+    // (Phase 3 M4; see ADR-P3-02). Color is likewise emergent per-position
+    // pigmentation, never genome-stored data.
+    let expressed_regulatory_cppn = genome.expressed_regulatory_cppn();
+    let head_outputs =
+        genetics::develop_at_position(&expressed_regulatory_cppn, 0, crate::MAX_SEGMENTS);
+    let color = head_outputs.pigment;
+    let head_seg_u32 = match head_outputs.segment_type {
+        genetics::SegmentType::Head => 0,
+        genetics::SegmentType::Torso => 1,
+        genetics::SegmentType::Muscle => 2,
+        genetics::SegmentType::Tail => 3,
+        genetics::SegmentType::Fin => 4,
     };
 
     // Spawn the head node at start_pos (gene index 0).
@@ -86,19 +88,18 @@ pub fn spawn_organism(
             current_pos: start_pos + Vec2::new(heading.cos(), heading.sin()) * -segment_length,
             segment_length,
             effectors: Vec::new(),
-            color,
+            is_organism_complete: head_outputs.segment_type == genetics::SegmentType::Tail,
             heading,
         },
         sensing::HeadVision {
             range: 250.0,
             fov: std::f32::consts::PI * 0.8, // ~144 degrees
             last_forward: common::Vec2::X,
-            self_occlusion_radius: genome
-                .hox
-                .as_ref()
-                .map(|hox| hox.genes.len() as f32 * segment_length)
-                .unwrap_or(5.0 * segment_length)
-                * 1.5, // Add a 50% margin
+            // Body length isn't known ahead of growth (Phase 3 M4 decodes
+            // segment-by-segment rather than reading a fixed-length
+            // sequence) — use the fixed growth ceiling as a safe upper-bound
+            // estimate, same as before this milestone's approximation.
+            self_occlusion_radius: crate::MAX_SEGMENTS as f32 * segment_length * 1.5,
             locked_target: None,
         },
     ));

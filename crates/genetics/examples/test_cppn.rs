@@ -1,15 +1,14 @@
 use common::EntityId;
 use genetics::genome::Genome;
-use genetics::HoxSequence;
+use genetics::Cppn;
 
 fn main() {
-    let genome = Genome::new_hox_driven(
+    let genome = Genome::seed(
         genetics::GenomeId(0),
         EntityId(0),
-        HoxSequence {
-            genes: vec![],
-            color: [1.0, 1.0, 1.0],
-        },
+        Cppn::new(),
+        Cppn::new(),
+        Cppn::new(),
     );
 
     let total_nodes = 15;

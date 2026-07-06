@@ -5,11 +5,12 @@
 //! The genome is the heritable blueprint of an organism. Contrary to this
 //! module's original design intent, it is **not** a bitstring — it's three
 //! independent [`Cppn`] graphs (neural wiring, body morphology, and — as of
-//! Phase 3, M1 — a gene-regulatory-network generator) plus an optional
-//! explicit [`HoxSequence`] body plan (being phased out in favor of
-//! regulatory-network-decoded identity, see `PHASE3_ROADMAP.md`'s
-//! ADR-P3-02). See [`Genome`]'s doc comment for the full structure,
-//! including diploid second-allele support.
+//! Phase 3, M1 — a gene-regulatory-network generator). As of Phase 3 M4, the
+//! explicit `HoxSequence` direct-lookup body plan is retired entirely (see
+//! `PHASE3_ROADMAP.md`'s ADR-P3-02): segment identity, branching, actuation,
+//! and pigmentation are all decoded from the regulatory network at a body
+//! position — see [`develop::develop_at_position`]. See [`Genome`]'s doc
+//! comment for the full structure, including diploid second-allele support.
 //!
 //! All stochastic operations (mutation, crossover) take a caller-supplied
 //! `rand::Rng` — see `common::SimRng` for why a fresh, unseeded RNG is never
@@ -32,10 +33,6 @@
 /// Base genetic types and IDs.
 pub mod types;
 pub use types::{GenomeId, Ploidy, SegmentType};
-
-/// Hox gene definitions for structural sequencing.
-pub mod hox;
-pub use hox::{HoxGene, HoxSequence};
 
 /// Compositional Pattern Producing Network representation.
 pub mod cppn;
@@ -61,6 +58,12 @@ pub use regulatory::{
 /// inputs to a `RegulatoryNetwork`, see `PHASE3_ROADMAP.md`'s ADR-P3-03.
 pub mod morphogen;
 pub use morphogen::{ap_position, distance_from_head_gradient, external_inputs_for_position};
+
+/// Positional decode of a `RegulatoryNetwork` into segment identity,
+/// branching, actuation, and pigmentation (Phase 3, M4) — see
+/// `PHASE3_ROADMAP.md`'s ADR-P3-02.
+pub mod develop;
+pub use develop::{decode_segment_type, develop_at_position, DevelopmentalOutputs};
 
 #[cfg(test)]
 mod tests {

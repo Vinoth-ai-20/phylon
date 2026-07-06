@@ -80,20 +80,23 @@ impl PhylonApp {
 
         if preset.evolvable {
             let diet = preset.diet.unwrap_or(ecology::Diet::Herbivore);
-            // Evolvable presets get a HoxSequence colored by the standard
-            // per-diet palette, so a sandbox-spawned organism looks
-            // identical to one seeded at simulation start.
-            let color = diet.standard_color();
-            let hox = match name {
-                "Herbivore (Evolvable)" => genetics::HoxSequence::worm(6, color),
-                "Hunter (Evolvable)" => genetics::HoxSequence::fish(5, 2, color),
-                "Edible Plant (Evolvable)" => genetics::HoxSequence::worm(2, color),
-                _ => genetics::HoxSequence::worm(4, color),
+            // Evolvable presets get a seed regulatory genome matching the
+            // corresponding starter species' body-plan tendency (Phase 3
+            // M4 — see `app::seed_ecosystem`'s doc comment; pigmentation is
+            // emergent, so this no longer forces the diet's canonical
+            // color the way the retired `HoxSequence`-driven path did).
+            let (bias, weight) = match name {
+                "Herbivore (Evolvable)" => (0.0, 0.0),
+                "Hunter (Evolvable)" => (0.6, -2.4),
+                "Edible Plant (Evolvable)" => (-2.0, 4.0),
+                _ => (0.0, 0.0),
             };
-            let genome = genetics::Genome::new_hox_driven(
+            let genome = genetics::Genome::seed(
                 genetics::GenomeId(0), // Would normally be a unique ID
                 common::EntityId(0),
-                hox,
+                crate::app::seed_brain_cppn(),
+                genetics::Cppn::new(),
+                crate::app::seed_regulatory_cppn(bias, weight),
             );
 
             let category = preset.category.unwrap_or(ecology::EcologicalCategory::None);
@@ -154,11 +157,12 @@ impl PhylonApp {
     /// Spawns a deterministic "Proto-Fish" at `position` — the full body of
     /// `MenuAction::SpawnProtoFish`'s original handler.
     pub(crate) fn apply_spawn_proto_fish(&mut self, position: common::Vec2) {
-        let fish_hox = genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]);
-        let fish_genome = genetics::Genome::new_hox_driven(
+        let fish_genome = genetics::Genome::seed(
             genetics::GenomeId(100),
             common::EntityId(0),
-            fish_hox,
+            crate::app::seed_brain_cppn(),
+            genetics::Cppn::new(),
+            crate::app::seed_regulatory_cppn(0.6, -2.4),
         );
         self.world
             .ecs
