@@ -45,11 +45,6 @@ pub const ALL_PANEL_NAMES: &[&str] = &[
     "Placeholder Panel",
 ];
 
-/// Standard opaque panel background colour, used for every non-Viewport pane
-/// (docked or floating) so the wgpu simulation world's colours never bleed
-/// through transparent egui surfaces.
-pub const PANEL_BG: egui::Color32 = egui::Color32::from_rgb(24, 24, 28);
-
 /// egui_tiles `Behavior` implementation that dispatches pane rendering.
 pub struct WorkbenchBehavior<'a> {
     /// Mutable reference to the global workbench UI state.
@@ -72,7 +67,7 @@ impl<'a> Behavior<String> for WorkbenchBehavior<'a> {
         // Opaque panel background — prevents the wgpu simulation world colours
         // from bleeding through transparent egui surfaces.
         egui::Frame::none()
-            .fill(PANEL_BG)
+            .fill(crate::theme::CHROME_BG)
             .inner_margin(egui::Margin::ZERO)
             .show(ui, |ui| {
                 // Panel chrome: thin bar with title + Detach/Close buttons.
@@ -353,9 +348,7 @@ fn chrome_bar(
                         "Minimize to title bar",
                     )
                 };
-                if chrome_button(ui, min_icon, egui::Color32::from_rgb(180, 180, 60), min_tip)
-                    .clicked()
-                {
+                if chrome_button(ui, min_icon, crate::theme::MINIMIZE_YELLOW, min_tip).clicked() {
                     *minimized = !*minimized;
                 }
             }
@@ -404,7 +397,7 @@ pub fn render_floating_panels(
             .title_bar(false) // custom chrome
             .frame(
                 egui::Frame::window(&ctx.style())
-                    .fill(PANEL_BG)
+                    .fill(crate::theme::CHROME_BG)
                     .inner_margin(egui::Margin::same(crate::theme::PANEL_PADDING)),
             );
 

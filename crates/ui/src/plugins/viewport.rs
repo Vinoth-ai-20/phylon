@@ -109,7 +109,7 @@ pub fn viewport_ui(
                                 "{} Kill Entity",
                                 egui_remixicon::icons::DELETE_BIN_LINE
                             ))
-                            .color(egui::Color32::from_rgb(220, 80, 80)),
+                            .color(crate::theme::DANGER),
                         ))
                         .clicked()
                     {

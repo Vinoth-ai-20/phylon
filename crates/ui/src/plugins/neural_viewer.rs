@@ -9,6 +9,20 @@
 
 use crate::types::*;
 
+// Node/synapse colors are shared between the CTRNN (phenotype) and CPPN
+// (genotype) canvases below — named here once rather than repeating the same
+// literals at 4 call sites per color. Canvas backgrounds are deliberately
+// NOT unified: `CTRNN_CANVAS_BG`/`CPPN_CANVAS_BG` differ on purpose (see
+// `render_cppn_graph`'s doc comment) as the visual cue distinguishing the two
+// graphs beyond their text headers.
+const NODE_INPUT: egui::Color32 = egui::Color32::from_rgb(120, 220, 120);
+const NODE_HIDDEN: egui::Color32 = egui::Color32::from_rgb(150, 170, 255);
+const NODE_OUTPUT: egui::Color32 = egui::Color32::from_rgb(255, 180, 90);
+const SYNAPSE_EXCITATORY_BASE: egui::Color32 = egui::Color32::from_rgb(90, 200, 255);
+const SYNAPSE_INHIBITORY_BASE: egui::Color32 = egui::Color32::from_rgb(255, 100, 100);
+const CTRNN_CANVAS_BG: egui::Color32 = egui::Color32::from_rgb(16, 16, 20);
+const CPPN_CANVAS_BG: egui::Color32 = egui::Color32::from_rgb(14, 18, 26);
+
 /// Renders the Neural Viewer panel content.
 #[allow(clippy::too_many_arguments)]
 pub fn neural_viewer_ui(
@@ -346,11 +360,7 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain, view: &mut crate::state
     );
     handle_pan_zoom(ui, &response, view);
     let rect = response.rect;
-    painter.rect_filled(
-        rect,
-        egui::Rounding::same(4.0),
-        egui::Color32::from_rgb(16, 16, 20),
-    );
+    painter.rect_filled(rect, egui::Rounding::same(4.0), CTRNN_CANVAS_BG);
 
     // Classify each node index into a column: 0 = input, 1 = hidden, 2 = output.
     let input_count = b.input_count.min(b.nodes.len());
@@ -424,11 +434,13 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain, view: &mut crate::state
             continue;
         }
         let strength = syn.weight.abs().min(3.0) / 3.0;
-        let color = if syn.weight >= 0.0 {
-            egui::Color32::from_rgba_unmultiplied(90, 200, 255, (80.0 + 140.0 * strength) as u8)
+        let alpha = (80.0 + 140.0 * strength) as u8;
+        let base = if syn.weight >= 0.0 {
+            SYNAPSE_EXCITATORY_BASE
         } else {
-            egui::Color32::from_rgba_unmultiplied(255, 100, 100, (80.0 + 140.0 * strength) as u8)
+            SYNAPSE_INHIBITORY_BASE
         };
+        let color = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha);
         painter.line_segment(
             [positions[source], positions[target]],
             egui::Stroke::new(0.5 + 2.0 * strength, color),
@@ -439,9 +451,9 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain, view: &mut crate::state
     let node_radius = node_radius_scaled;
     for (idx, node) in b.nodes.iter().enumerate() {
         let color = match column_of(idx) {
-            0 => egui::Color32::from_rgb(120, 220, 120), // input
-            2 => egui::Color32::from_rgb(255, 180, 90),  // output
-            _ => egui::Color32::from_rgb(150, 170, 255), // hidden
+            0 => NODE_INPUT,
+            2 => NODE_OUTPUT,
+            _ => NODE_HIDDEN,
         };
         painter.circle_filled(positions[idx], node_radius, color);
         painter.circle_stroke(
@@ -524,9 +536,9 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain, view: &mut crate::state
     }
 
     ui.horizontal(|ui| {
-        legend_dot(ui, egui::Color32::from_rgb(120, 220, 120), "input");
-        legend_dot(ui, egui::Color32::from_rgb(150, 170, 255), "hidden");
-        legend_dot(ui, egui::Color32::from_rgb(255, 180, 90), "output");
+        legend_dot(ui, NODE_INPUT, "input");
+        legend_dot(ui, NODE_HIDDEN, "hidden");
+        legend_dot(ui, NODE_OUTPUT, "output");
         ui.label(
             egui::RichText::new("— blue = excitatory, red = inhibitory")
                 .small()
@@ -564,11 +576,7 @@ fn draw_cppn_graph(
     // near-black) plus square nodes below is the CTRNN/CPPN visual
     // differentiation this milestone adds beyond the plain text header —
     // this is the *genotype* (evolved blueprint), not the running network.
-    painter.rect_filled(
-        rect,
-        egui::Rounding::same(4.0),
-        egui::Color32::from_rgb(14, 18, 26),
-    );
+    painter.rect_filled(rect, egui::Rounding::same(4.0), CPPN_CANVAS_BG);
 
     // Group node indices by layer, preserving genome order within a layer.
     let max_layer = cppn.nodes.iter().map(|n| n.layer).max().unwrap_or(0);
@@ -634,11 +642,13 @@ fn draw_cppn_graph(
             continue;
         }
         let strength = conn.weight.abs().min(3.0) / 3.0;
-        let color = if conn.weight >= 0.0 {
-            egui::Color32::from_rgba_unmultiplied(90, 200, 255, (80.0 + 140.0 * strength) as u8)
+        let alpha = (80.0 + 140.0 * strength) as u8;
+        let base = if conn.weight >= 0.0 {
+            SYNAPSE_EXCITATORY_BASE
         } else {
-            egui::Color32::from_rgba_unmultiplied(255, 100, 100, (80.0 + 140.0 * strength) as u8)
+            SYNAPSE_INHIBITORY_BASE
         };
+        let color = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha);
         painter.line_segment(
             [positions[conn.source], positions[conn.target]],
             egui::Stroke::new(0.5 + 2.0 * strength, color),
@@ -651,9 +661,9 @@ fn draw_cppn_graph(
     let node_radius = node_radius_scaled;
     for (idx, node) in cppn.nodes.iter().enumerate() {
         let color = match node.layer {
-            0 => egui::Color32::from_rgb(120, 220, 120), // input
-            l if l == max_layer => egui::Color32::from_rgb(255, 180, 90), // output
-            _ => egui::Color32::from_rgb(150, 170, 255), // hidden
+            0 => NODE_INPUT,
+            l if l == max_layer => NODE_OUTPUT,
+            _ => NODE_HIDDEN,
         };
         let square = egui::Rect::from_center_size(
             positions[idx],
@@ -724,8 +734,8 @@ fn draw_cppn_graph(
     }
 
     ui.horizontal(|ui| {
-        legend_dot(ui, egui::Color32::from_rgb(120, 220, 120), "input");
-        legend_dot(ui, egui::Color32::from_rgb(150, 170, 255), "hidden");
-        legend_dot(ui, egui::Color32::from_rgb(255, 180, 90), "output");
+        legend_dot(ui, NODE_INPUT, "input");
+        legend_dot(ui, NODE_HIDDEN, "hidden");
+        legend_dot(ui, NODE_OUTPUT, "output");
     });
 }

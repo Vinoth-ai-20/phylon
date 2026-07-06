@@ -16,6 +16,27 @@
 
 **Accessibility note:** the Producer/Carnivore pair is green/red — the single most common form of color blindness. See [`accessibility.md`](accessibility.md) for the verification pass this palette must pass before Milestone 12 closes; this file records the palette's *semantic* assignment, not its colorblind sign-off.
 
+**Naming note:** unlike the non-diet chart tokens below, `chart_color(diet: &ecology::Diet)` is a function, not five separate constants — `Diet::standard_color()` is authored in the viewport's linear color space, so each call re-derives the on-screen sRGB value rather than caching it as a literal. Earlier drafts of this document referred to `CHART_PRODUCER`/`CHART_HERBIVORE`/etc. as if they were named constants; they aren't, and no such constants should be added — `chart_color()` is what call sites use.
+
+## Chart series — non-diet data
+
+Metrics' Performance/Resources/Environment plots chart data with no `ecology::Diet` counterpart, so these are plain constants in `theme.rs`, not derived from simulation state. Values match what `metrics.rs` drew before tokenization (see `IMPLEMENTATION_STATUS.md`'s Metrics finding) — naming them, not re-picking them.
+
+| Token | Panel | Hex |
+|---|---|---|
+| `CHART_FPS` | Performance | white |
+| `CHART_TPS` | Performance | light green |
+| `CHART_MEM` | Performance | light red |
+| `CHART_FOOD` | Resources | `#96FFFF` |
+| `CHART_MINERALS` | Resources | `#969696` |
+| `CHART_CORPSES` | Resources | `#C86464` |
+| `CHART_SUNLIGHT` | Environment | yellow |
+| `CHART_O2` | Environment | light blue |
+| `CHART_CO2` | Environment | gray |
+| `CHART_TEMP` | Environment | `#FFA500` |
+
+Each panel's own set is internally distinct (verified by eye per plot); no cross-panel distinctness guarantee is made or needed, since Performance/Resources/Environment/Demographics are never rendered overlaid on one shared axis.
+
 ## Chrome / surface
 
 | Token | Value | Use |
@@ -39,12 +60,41 @@
 
 Promoted from the pre-existing `ToastSeverity` color logic in `render.rs` (which was correct but only ever applied to toasts) — these become the one semantic palette used anywhere the UI needs to say "this is fine / be careful / this failed," including future validation states in dialogs and forms.
 
+`GOOD` is also reused (Phase 1, M3) for a handful of "this is currently active/affirmative" cues that previously hardcoded their own `LIGHT_GREEN`: the Inspector's entity-name heading, the status bar's "selected entity" chip and "System: Engine Online" label, and the Event Log's auto-scroll-on toggle. None of these are toasts, but all share the same "affirmative state" meaning `GOOD` already names.
+
+## Destructive / urgent
+
+| Token | Value | Use |
+|---|---|---|
+| `DANGER` | `rgb(220,80,80)` | Any destructive-action button or urgent-state indicator: Kill Entity (viewport context menu), Quit (splash screen), the toolbar's active-recording dot, and the Event Log's "death" category. Previously four independent near-matching reds (`rgb(220,80,80)`/`rgb(220,100,100)`/`rgb(220,60,60)`) with no reason for the difference except which file wrote them — unified in Phase 1, M3. |
+
+## Playback state
+
+| Token | Value | Use |
+|---|---|---|
+| `PLAYBACK_LIVE` | `LIGHT_GREEN` | Toolbar and status bar's play/live indicator — previously defined identically in both files independently. |
+| `PLAYBACK_PAUSED` | `rgb(255,150,50)` | Toolbar and status bar's paused indicator, same duplication fixed. |
+
+## Event Log category palette
+
+A categorical palette for `event_log.rs`'s per-entry color, analogous in spirit to the Diet chart palette above but scoped to log-entry types, not simulation entities:
+
+| Token | Value | Category |
+|---|---|---|
+| `LOG_BIRTH` | `rgb(100,220,100)` | birth/spawn events |
+| `LOG_HAZARD` | `rgb(255,140,40)` | hazard/catastrophe/fire events |
+| `LOG_MUTATION` | `rgb(160,100,255)` | mutation/speciation events |
+| `LOG_USER` | `rgb(100,180,255)` | user-initiated/manual events |
+
+Death/extinction events reuse `DANGER` rather than a fifth `LOG_*` token, since both already carried the identical RGB value.
+
 ## Chrome-bar specific
 
 | Token | Value | Use |
 |---|---|---|
 | `CLOSE_RED` | one value | The Close button, everywhere a panel/window can be closed. Previously three implementations (`panel_chrome`, `top_bar_right_ui`, `floating_chrome`) each hardcoded their own red, and two of the three didn't even match each other (`rgb(180,80,80)` vs `rgb(220,80,80)`). |
 | `DETACH_BLUE` | one value | The Detach/float button, same everywhere. |
+| `MINIMIZE_YELLOW` | `rgb(180,180,60)` | The Minimize-to-title-bar button, the third chrome-bar action. |
 
 ## Disabled and focus
 

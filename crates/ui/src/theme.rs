@@ -100,6 +100,39 @@ pub const BAD_SOFT: Color32 = Color32::from_rgb(58, 33, 30);
 pub const CLOSE_RED: Color32 = Color32::from_rgb(220, 80, 80);
 /// The Detach/float button color, everywhere a panel can be detached.
 pub const DETACH_BLUE: Color32 = Color32::from_rgb(150, 150, 220);
+/// The Minimize-to-title-bar chrome-button color — the third chrome-bar
+/// action alongside `CLOSE_RED`/`DETACH_BLUE`.
+pub const MINIMIZE_YELLOW: Color32 = Color32::from_rgb(180, 180, 60);
+
+/// Destructive/urgent-action red — Kill Entity, Quit, an active recording
+/// indicator, and the Event Log's "death" category all independently
+/// hardcoded their own near-identical red (`rgb(220,80,80)`,
+/// `rgb(220,100,100)`, `rgb(220,60,60)`); this is the one value all of them
+/// now share, since nothing distinguished the shades except which file wrote
+/// them.
+pub const DANGER: Color32 = Color32::from_rgb(220, 80, 80);
+
+/// Playback-state colors — previously defined identically (down to the
+/// literal RGB triples) in both `toolbar.rs` and `status_bar.rs`.
+pub const PLAYBACK_LIVE: Color32 = Color32::LIGHT_GREEN;
+/// See [`PLAYBACK_LIVE`].
+pub const PLAYBACK_PAUSED: Color32 = Color32::from_rgb(255, 150, 50);
+
+// ─── Event Log category palette ────────────────────────────────────────────
+//
+// `event_log.rs::severity_color_for_type` maps an event-type substring to one
+// of these — a categorical palette in the same spirit as the Diet chart
+// colors above, scoped to log entries. `LOG_DEATH` isn't listed separately:
+// it reuses `DANGER`, since both already carried the identical RGB value.
+
+/// Event Log: birth/spawn events.
+pub const LOG_BIRTH: Color32 = Color32::from_rgb(100, 220, 100);
+/// Event Log: hazard/catastrophe/fire events.
+pub const LOG_HAZARD: Color32 = Color32::from_rgb(255, 140, 40);
+/// Event Log: mutation/speciation events.
+pub const LOG_MUTATION: Color32 = Color32::from_rgb(160, 100, 255);
+/// Event Log: user-initiated/manual-intervention events.
+pub const LOG_USER: Color32 = Color32::from_rgb(100, 180, 255);
 
 /// Foreground text/icon color for a disabled control.
 pub const DISABLED_FG: Color32 = Color32::from_rgb(110, 110, 116);
@@ -129,6 +162,37 @@ fn linear_to_srgb(linear: [f32; 3]) -> Color32 {
 pub fn chart_color(diet: &ecology::Diet) -> Color32 {
     linear_to_srgb(diet.standard_color())
 }
+
+// ─── Chart series — non-diet data (docs/design/colors.md) ─────────────────
+//
+// Metrics' Performance/Resources/Environment plots chart data with no
+// `ecology::Diet` counterpart, so unlike `chart_color` above these are fixed
+// constants, not re-derived from simulation state. Values match what
+// `metrics.rs` drew before tokenization — this section names them, it
+// doesn't re-pick them.
+
+/// Metrics → Performance: frames-per-second line.
+pub const CHART_FPS: Color32 = Color32::WHITE;
+/// Metrics → Performance: ticks-per-second line.
+pub const CHART_TPS: Color32 = Color32::LIGHT_GREEN;
+/// Metrics → Performance: memory-usage (MB) line.
+pub const CHART_MEM: Color32 = Color32::LIGHT_RED;
+
+/// Metrics → Resources: food count line.
+pub const CHART_FOOD: Color32 = Color32::from_rgb(150, 255, 255);
+/// Metrics → Resources: mineral count line.
+pub const CHART_MINERALS: Color32 = Color32::from_rgb(150, 150, 150);
+/// Metrics → Resources: corpse count line.
+pub const CHART_CORPSES: Color32 = Color32::from_rgb(200, 100, 100);
+
+/// Metrics → Environment: sunlight fraction line.
+pub const CHART_SUNLIGHT: Color32 = Color32::YELLOW;
+/// Metrics → Environment: atmospheric O2 fraction line.
+pub const CHART_O2: Color32 = Color32::LIGHT_BLUE;
+/// Metrics → Environment: atmospheric CO2 fraction line.
+pub const CHART_CO2: Color32 = Color32::GRAY;
+/// Metrics → Environment: temperature (°C) line.
+pub const CHART_TEMP: Color32 = Color32::from_rgb(255, 165, 0);
 
 // ─── Typography (docs/design/typography.md) ────────────────────────────────
 

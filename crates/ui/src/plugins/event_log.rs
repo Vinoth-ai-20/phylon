@@ -44,7 +44,7 @@ pub fn event_log_ui(
             }
             let auto_label = if state.event_log_auto_scroll {
                 egui::RichText::new(egui_remixicon::icons::ARROW_DOWN_LINE)
-                    .color(egui::Color32::LIGHT_GREEN)
+                    .color(crate::theme::GOOD)
             } else {
                 egui::RichText::new(egui_remixicon::icons::ARROW_DOWN_LINE)
                     .color(crate::theme::DISABLED_FG)
@@ -159,7 +159,7 @@ pub fn event_log_ui(
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(format!("[{}]", ev.tick))
-                            .color(egui::Color32::DARK_GRAY)
+                            .color(crate::theme::DISABLED_FG)
                             .monospace()
                             .size(crate::theme::SIZE_SMALL),
                     );
@@ -186,19 +186,21 @@ pub fn event_log_ui(
     );
 }
 
-/// Map an event type string to a display color.
+/// Map an event type string to a display color — see `theme.rs`'s "Event Log
+/// category palette" section (`LOG_BIRTH`/`LOG_HAZARD`/`LOG_MUTATION`/
+/// `LOG_USER`; death reuses `DANGER`, which already carried the same value).
 fn severity_color_for_type(event_type: &str) -> egui::Color32 {
     let et = event_type.to_lowercase();
     if et.contains("birth") || et.contains("spawn") || et.contains("born") {
-        egui::Color32::from_rgb(100, 220, 100)
+        crate::theme::LOG_BIRTH
     } else if et.contains("death") || et.contains("died") || et.contains("extinct") {
-        egui::Color32::from_rgb(220, 80, 80)
+        crate::theme::DANGER
     } else if et.contains("hazard") || et.contains("catastrophe") || et.contains("fire") {
-        egui::Color32::from_rgb(255, 140, 40)
+        crate::theme::LOG_HAZARD
     } else if et.contains("mutation") || et.contains("speciation") {
-        egui::Color32::from_rgb(160, 100, 255)
+        crate::theme::LOG_MUTATION
     } else if et.contains("user") || et.contains("manual") {
-        egui::Color32::from_rgb(100, 180, 255)
+        crate::theme::LOG_USER
     } else {
         crate::theme::DISABLED_FG
     }

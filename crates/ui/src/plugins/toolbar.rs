@@ -29,9 +29,9 @@ pub fn toolbar_ui(
             egui_remixicon::icons::PAUSE_FILL
         };
         let play_color = if state.is_paused {
-            egui::Color32::from_rgb(255, 150, 50)
+            crate::theme::PLAYBACK_PAUSED
         } else {
-            egui::Color32::LIGHT_GREEN
+            crate::theme::PLAYBACK_LIVE
         };
         let play_label = if state.is_paused { "PAUSED" } else { "LIVE" };
         if ui
@@ -134,7 +134,7 @@ pub fn toolbar_ui(
         let (rec_icon, rec_color) = if state.recording_active {
             (
                 egui_remixicon::icons::RECORD_CIRCLE_FILL,
-                egui::Color32::from_rgb(220, 60, 60),
+                crate::theme::DANGER,
             )
         } else {
             (

@@ -183,7 +183,7 @@ fn render_main_menu(
                 egui::RichText::new("PHYLON")
                     .size(64.0)
                     .strong()
-                    .color(egui::Color32::from_rgb(100, 200, 255)),
+                    .color(crate::theme::ACCENT),
             );
             ui.label(
                 egui::RichText::new("Artificial Life Simulation Engine")
@@ -245,7 +245,7 @@ fn render_main_menu(
                     egui::Button::new(
                         egui::RichText::new("Quit")
                             .size(20.0)
-                            .color(egui::Color32::from_rgb(220, 100, 100)),
+                            .color(crate::theme::DANGER),
                     ),
                 )
                 .clicked()

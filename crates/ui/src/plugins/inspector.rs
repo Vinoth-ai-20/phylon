@@ -82,7 +82,7 @@ pub fn inspector_ui(
         ui.label(
             egui::RichText::new(label_text)
                 .heading()
-                .color(egui::Color32::LIGHT_GREEN),
+                .color(crate::theme::GOOD),
         );
         let mut is_tracked = state.tracked_entity == Some(entity);
         if ui.checkbox(&mut is_tracked, "Track").changed() {

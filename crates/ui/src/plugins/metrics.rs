@@ -55,6 +55,17 @@ pub fn metrics_ui(
     let omnivore_c = crate::theme::chart_color(&ecology::Diet::Omnivore);
     let decomposer_c = crate::theme::chart_color(&ecology::Diet::Decomposer);
 
+    let fps_c = crate::theme::CHART_FPS;
+    let tps_c = crate::theme::CHART_TPS;
+    let mem_c = crate::theme::CHART_MEM;
+    let food_c = crate::theme::CHART_FOOD;
+    let minerals_c = crate::theme::CHART_MINERALS;
+    let corpses_c = crate::theme::CHART_CORPSES;
+    let sunlight_c = crate::theme::CHART_SUNLIGHT;
+    let o2_c = crate::theme::CHART_O2;
+    let co2_c = crate::theme::CHART_CO2;
+    let temp_c = crate::theme::CHART_TEMP;
+
     // Split the available height between the 2 stacked plots per column so
     // they fill however much space the tile/window gives us (previously a
     // hardcoded 120.0 left dead space below when the panel was resized or
@@ -118,30 +129,18 @@ pub fn metrics_ui(
 
                 ui.label(egui::RichText::new("Performance").strong());
                 ui.horizontal_wrapped(|ui| {
-                    crate::widgets::chart_legend_dot(ui, egui::Color32::WHITE, "FPS");
-                    crate::widgets::chart_legend_dot(ui, egui::Color32::LIGHT_GREEN, "TPS");
-                    crate::widgets::chart_legend_dot(ui, egui::Color32::LIGHT_RED, "Mem (MB)");
+                    crate::widgets::chart_legend_dot(ui, fps_c, "FPS");
+                    crate::widgets::chart_legend_dot(ui, tps_c, "TPS");
+                    crate::widgets::chart_legend_dot(ui, mem_c, "Mem (MB)");
                 });
                 egui_plot::Plot::new("perf_plot")
                     .height(plot_height)
                     .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
                     .y_axis_label("Frames/Ticks per sec · MB")
                     .show(ui, |plot_ui| {
-                        plot_ui.line(
-                            egui_plot::Line::new(fps_pts)
-                                .name("FPS")
-                                .color(egui::Color32::WHITE),
-                        );
-                        plot_ui.line(
-                            egui_plot::Line::new(tps_pts)
-                                .name("TPS")
-                                .color(egui::Color32::LIGHT_GREEN),
-                        );
-                        plot_ui.line(
-                            egui_plot::Line::new(mem_pts)
-                                .name("Mem (MB)")
-                                .color(egui::Color32::LIGHT_RED),
-                        );
+                        plot_ui.line(egui_plot::Line::new(fps_pts).name("FPS").color(fps_c));
+                        plot_ui.line(egui_plot::Line::new(tps_pts).name("TPS").color(tps_c));
+                        plot_ui.line(egui_plot::Line::new(mem_pts).name("Mem (MB)").color(mem_c));
                     });
             });
 
@@ -149,21 +148,9 @@ pub fn metrics_ui(
             cols[1].vertical(|ui| {
                 ui.label(egui::RichText::new("Resources").strong());
                 ui.horizontal_wrapped(|ui| {
-                    crate::widgets::chart_legend_dot(
-                        ui,
-                        egui::Color32::from_rgb(150, 255, 255),
-                        "Food",
-                    );
-                    crate::widgets::chart_legend_dot(
-                        ui,
-                        egui::Color32::from_rgb(150, 150, 150),
-                        "Minerals",
-                    );
-                    crate::widgets::chart_legend_dot(
-                        ui,
-                        egui::Color32::from_rgb(200, 100, 100),
-                        "Corpses",
-                    );
+                    crate::widgets::chart_legend_dot(ui, food_c, "Food");
+                    crate::widgets::chart_legend_dot(ui, minerals_c, "Minerals");
+                    crate::widgets::chart_legend_dot(ui, corpses_c, "Corpses");
                 });
                 egui_plot::Plot::new("res_plot")
                     .height(plot_height)
@@ -171,20 +158,16 @@ pub fn metrics_ui(
                     .y_axis_formatter(|y, _range| format!("{:.0}", y.value))
                     .y_axis_label("Resource count")
                     .show(ui, |plot_ui| {
-                        plot_ui.line(
-                            egui_plot::Line::new(food_pts)
-                                .name("Food")
-                                .color(egui::Color32::from_rgb(150, 255, 255)),
-                        );
+                        plot_ui.line(egui_plot::Line::new(food_pts).name("Food").color(food_c));
                         plot_ui.line(
                             egui_plot::Line::new(min_pts)
                                 .name("Minerals")
-                                .color(egui::Color32::from_rgb(150, 150, 150)),
+                                .color(minerals_c),
                         );
                         plot_ui.line(
                             egui_plot::Line::new(corp_pts)
                                 .name("Corpses")
-                                .color(egui::Color32::from_rgb(200, 100, 100)),
+                                .color(corpses_c),
                         );
                     });
 
@@ -192,14 +175,10 @@ pub fn metrics_ui(
 
                 ui.label(egui::RichText::new("Environment").strong());
                 ui.horizontal_wrapped(|ui| {
-                    crate::widgets::chart_legend_dot(ui, egui::Color32::YELLOW, "Sunlight");
-                    crate::widgets::chart_legend_dot(ui, egui::Color32::LIGHT_BLUE, "O2");
-                    crate::widgets::chart_legend_dot(ui, egui::Color32::GRAY, "CO2");
-                    crate::widgets::chart_legend_dot(
-                        ui,
-                        egui::Color32::from_rgb(255, 165, 0),
-                        "Temp (°C)",
-                    );
+                    crate::widgets::chart_legend_dot(ui, sunlight_c, "Sunlight");
+                    crate::widgets::chart_legend_dot(ui, o2_c, "O2");
+                    crate::widgets::chart_legend_dot(ui, co2_c, "CO2");
+                    crate::widgets::chart_legend_dot(ui, temp_c, "Temp (°C)");
                 });
                 egui_plot::Plot::new("env_plot")
                     .height(plot_height)
@@ -209,22 +188,14 @@ pub fn metrics_ui(
                         plot_ui.line(
                             egui_plot::Line::new(sun_pts)
                                 .name("Sunlight")
-                                .color(egui::Color32::YELLOW),
+                                .color(sunlight_c),
                         );
-                        plot_ui.line(
-                            egui_plot::Line::new(o2_pts)
-                                .name("O2")
-                                .color(egui::Color32::LIGHT_BLUE),
-                        );
-                        plot_ui.line(
-                            egui_plot::Line::new(co2_pts)
-                                .name("CO2")
-                                .color(egui::Color32::GRAY),
-                        );
+                        plot_ui.line(egui_plot::Line::new(o2_pts).name("O2").color(o2_c));
+                        plot_ui.line(egui_plot::Line::new(co2_pts).name("CO2").color(co2_c));
                         plot_ui.line(
                             egui_plot::Line::new(temp_pts)
                                 .name("Temp (°C)")
-                                .color(egui::Color32::from_rgb(255, 165, 0)),
+                                .color(temp_c),
                         );
                     });
             });

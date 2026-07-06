@@ -66,9 +66,15 @@ pub fn status_bar_ui(
         ui.separator();
 
         let (pb_icon, pb_color) = if state.is_paused {
-            (egui_remixicon::icons::PAUSE_CIRCLE_LINE, egui::Color32::from_rgb(255, 150, 50))
+            (
+                egui_remixicon::icons::PAUSE_CIRCLE_LINE,
+                crate::theme::PLAYBACK_PAUSED,
+            )
         } else {
-            (egui_remixicon::icons::PLAY_CIRCLE_LINE, egui::Color32::LIGHT_GREEN)
+            (
+                egui_remixicon::icons::PLAY_CIRCLE_LINE,
+                crate::theme::PLAYBACK_LIVE,
+            )
         };
         crate::widgets::status_chip(
             ui,
@@ -100,7 +106,7 @@ pub fn status_bar_ui(
                 ui,
                 egui_remixicon::icons::CURSOR_LINE,
                 format!("{:?}", entity),
-                Some(egui::Color32::LIGHT_GREEN),
+                Some(crate::theme::GOOD),
             );
         }
 
@@ -180,7 +186,7 @@ pub fn status_bar_ui(
             );
             ui.label(
                 egui::RichText::new(format!("{} System", egui_remixicon::icons::SERVER_LINE))
-                    .color(egui::Color32::GREEN)
+                    .color(crate::theme::GOOD)
                     .size(crate::theme::SIZE_SMALL),
             )
             .on_hover_text(hover_text);
