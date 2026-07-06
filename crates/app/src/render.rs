@@ -377,6 +377,9 @@ impl PhylonApp {
                         2 => [1.000, 0.033, 0.133, 1.0], // Muscle - Actuation Pink #FF3366
                         3 => [1.000, 0.319, 0.000, 1.0], // Tail - Terminal Orange #FF9900
                         4 => [0.000, 0.784, 1.000, 1.0], // Fin - Passive Cyan #00E5FF
+                        5 => [1.000, 0.000, 0.400, 1.0], // Vascular - Circulatory Magenta #FF0066
+                        6 => [0.600, 0.200, 1.000, 1.0], // Ganglion - Neural Violet #9933FF
+                        7 => [1.000, 0.843, 0.000, 1.0], // Germinal - Germ-line Gold #FFD700
                         _ => [0.000, 0.784, 1.000, 1.0], // Torso - Passive Cyan #00E5FF
                     },
                     radius: if node.segment_type == 4 {

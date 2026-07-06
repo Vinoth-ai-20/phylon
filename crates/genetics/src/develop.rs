@@ -19,16 +19,19 @@ use crate::types::SegmentType;
 pub const DEVELOPMENT_STEPS: usize = 8;
 
 /// Fixed decode order from a 3-bit Hox combinatorial code to a
-/// [`SegmentType`]. Wrapped via modulo (see [`decode_segment_type`]) since
-/// the code space (8) exceeds today's variant count (5) — comfortable room
-/// for Phase 3 M5's broadened vocabulary to occupy the remaining codes
-/// without changing this decode's shape.
-const SEGMENT_TYPES_BY_CODE: [SegmentType; 5] = [
+/// [`SegmentType`]. As of Phase 3 M5, the code space (8, from 3 thresholded
+/// Hox genes) exactly matches `SegmentType`'s 8 variants — no modulo wrap is
+/// needed any more (`decode_segment_type` no longer collides codes 5-7 back
+/// onto 0-2, the way it did with only 5 variants).
+const SEGMENT_TYPES_BY_CODE: [SegmentType; 8] = [
     SegmentType::Head,
     SegmentType::Torso,
     SegmentType::Muscle,
     SegmentType::Tail,
     SegmentType::Fin,
+    SegmentType::Vascular,
+    SegmentType::Ganglion,
+    SegmentType::Germinal,
 ];
 
 /// All developmental outputs decoded at one body-axis position.
@@ -48,10 +51,12 @@ pub struct DevelopmentalOutputs {
 }
 
 /// Decodes a [`SegmentType`] from the Hox-designated gene states as a
-/// combinatorial binary code (each gene thresholded at `0.5`), wrapped into
-/// `SegmentType`'s fixed variant count via modulo — see ADR-P3-02. Order of
-/// `hox_states` must match [`REGULATORY_GENE_ROLES`]'s Hox-designated
-/// ordering.
+/// combinatorial binary code (each gene thresholded at `0.5`) — see
+/// ADR-P3-02. Order of `hox_states` must match [`REGULATORY_GENE_ROLES`]'s
+/// Hox-designated ordering. `hox_states.len()` beyond 3 genes would produce
+/// a code exceeding `SEGMENT_TYPES_BY_CODE`'s range; the modulo is kept as a
+/// defensive bound (not a design feature) rather than assuming callers never
+/// pass more than 3 states.
 pub fn decode_segment_type(hox_states: &[f32]) -> SegmentType {
     let code = hox_states
         .iter()
@@ -127,6 +132,22 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn decode_segment_type_maps_all_8_codes_to_distinct_types() {
+        // Phase 3 M5: with 8 `SegmentType` variants matching the 3-bit Hox
+        // code's 8 possible values, every code should decode to a unique
+        // type — no more collisions from the pre-M5 modulo-5 wrap.
+        let mut seen = std::collections::HashSet::new();
+        for hi in [0.0_f32, 1.0] {
+            for mid in [0.0_f32, 1.0] {
+                for lo in [0.0_f32, 1.0] {
+                    seen.insert(decode_segment_type(&[hi, mid, lo]));
+                }
+            }
+        }
+        assert_eq!(seen.len(), 8);
     }
 
     #[test]

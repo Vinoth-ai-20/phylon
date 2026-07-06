@@ -185,11 +185,21 @@ pub fn growth_system(
             SegmentType::Muscle => 2,
             SegmentType::Tail => 3,
             SegmentType::Fin => 4,
+            SegmentType::Vascular => 5,
+            SegmentType::Ganglion => 6,
+            SegmentType::Germinal => 7,
         };
 
+        // Vascular/Ganglion/Germinal (Phase 3 M5) don't yet have
+        // differentiated physics — DEF-003/DEF-002 behavior is M8/M9's job,
+        // not this milestone's — so they use Torso's stiffness as a neutral,
+        // structurally-reasonable default rather than an arbitrary number.
         let stiffness = match outputs.segment_type {
             SegmentType::Head => 10.0,
-            SegmentType::Torso => 15.0,
+            SegmentType::Torso
+            | SegmentType::Vascular
+            | SegmentType::Ganglion
+            | SegmentType::Germinal => 15.0,
             SegmentType::Muscle => 8.0,
             SegmentType::Tail => 2.0,
             SegmentType::Fin => 5.0,

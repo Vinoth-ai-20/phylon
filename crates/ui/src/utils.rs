@@ -25,6 +25,9 @@ pub(crate) fn draw_segment_tree(
         2 => "Muscle",
         3 => "Tail",
         4 => "Fin",
+        5 => "Vascular",
+        6 => "Ganglion",
+        7 => "Germinal",
         _ => "Unknown",
     };
 

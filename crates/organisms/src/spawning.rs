@@ -36,6 +36,9 @@ pub fn spawn_organism(
         genetics::SegmentType::Muscle => 2,
         genetics::SegmentType::Tail => 3,
         genetics::SegmentType::Fin => 4,
+        genetics::SegmentType::Vascular => 5,
+        genetics::SegmentType::Ganglion => 6,
+        genetics::SegmentType::Germinal => 7,
     };
 
     // Spawn the head node at start_pos (gene index 0).
