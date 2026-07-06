@@ -57,6 +57,11 @@ pub use regulatory::{
     REGULATORY_GENE_ROLES,
 };
 
+/// Analytic morphogen gradients (Phase 3, M3) — closed-form positional
+/// inputs to a `RegulatoryNetwork`, see `PHASE3_ROADMAP.md`'s ADR-P3-03.
+pub mod morphogen;
+pub use morphogen::{ap_position, distance_from_head_gradient, external_inputs_for_position};
+
 #[cfg(test)]
 mod tests {
     use super::*;
