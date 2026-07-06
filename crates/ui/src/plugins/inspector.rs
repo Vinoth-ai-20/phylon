@@ -518,7 +518,69 @@ pub fn inspector_ui(
                             crate::widgets::kv_row(ui, "SpeciesMembership", "Not Available");
                         });
                 });
+
+            // --- BODY PLAN ---
+            egui::CollapsingHeader::new(format!("{} Body Plan", egui_remixicon::icons::NODE_TREE))
+                .default_open(false)
+                .show(ui, |ui| {
+                    render_body_plan(ui, state, world, entity);
+                });
         });
+}
+
+/// Renders the selected organism's segment/spring tree (`utils::draw_segment_tree`)
+/// rooted at its head node — completes a feature that was fully implemented
+/// but never wired into the Inspector (see `IMPLEMENTATION_STATUS.md`'s
+/// dead-code finding). Clicking a row in the tree re-selects that segment,
+/// same as clicking it in the viewport.
+fn render_body_plan(
+    ui: &mut egui::Ui,
+    state: &mut WorkbenchState,
+    world: &mut world::World,
+    entity: bevy_ecs::entity::Entity,
+) {
+    let mut node_q = world.ecs.query::<&physics::ParticleNode>();
+    let Ok(node) = node_q.get(&world.ecs, entity) else {
+        crate::widgets::empty_state(ui, "Not a physical body segment.");
+        return;
+    };
+    let organism_id = node.organism_id;
+
+    // The tree always renders rooted at the organism's head, regardless of
+    // which segment is currently selected, so the shape reads the same way
+    // no matter what a user clicked on in the viewport.
+    let mut all_nodes = world
+        .ecs
+        .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
+    let head = all_nodes
+        .iter(&world.ecs)
+        .find(|(_, n)| n.organism_id == organism_id && n.segment_type == 0)
+        .map(|(e, _)| e)
+        .unwrap_or(entity);
+
+    let mut adj: std::collections::HashMap<
+        bevy_ecs::entity::Entity,
+        Vec<(bevy_ecs::entity::Entity, physics::Spring)>,
+    > = std::collections::HashMap::new();
+    let mut spring_q = world.ecs.query::<&physics::Spring>();
+    for spring in spring_q.iter(&world.ecs) {
+        adj.entry(spring.node_a)
+            .or_default()
+            .push((spring.node_b, spring.clone()));
+        adj.entry(spring.node_b)
+            .or_default()
+            .push((spring.node_a, spring.clone()));
+    }
+
+    let mut visited = std::collections::HashSet::new();
+    crate::utils::draw_segment_tree(
+        ui,
+        head,
+        &adj,
+        &world.ecs,
+        &mut visited,
+        &mut state.selected_entity,
+    );
 }
 
 /// Renders the Inspector summary for a non-organism resource entity (a food,

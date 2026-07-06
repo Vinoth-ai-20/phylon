@@ -8,8 +8,6 @@ pub mod inspector;
 pub mod menu;
 /// Metrics dashboard and event log bottom-panel tabs.
 pub mod metrics;
-/// Navigation rail helpers.
-pub mod navigation;
 /// Neural Viewer panel — CTRNN brain node-link graph for the selected organism.
 pub mod neural_viewer;
 /// Sidebar activity bar and per-workspace content panels.

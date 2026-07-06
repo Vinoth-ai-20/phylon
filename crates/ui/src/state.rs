@@ -89,8 +89,6 @@ pub struct WorkbenchState {
     pub status_bar_visible: bool,
     /// Whether the top toolbar is visible.
     pub toolbar_visible: bool,
-    /// Whether the navigation rail is visible.
-    pub navigation_visible: bool,
 
     // Viewport
     /// World-space camera position.
@@ -307,7 +305,6 @@ impl Default for WorkbenchState {
             event_log_visible: true,
             status_bar_visible: true,
             toolbar_visible: true,
-            navigation_visible: true,
 
             camera_pos: common::Vec2::ZERO,
             camera_zoom: 1.0,
