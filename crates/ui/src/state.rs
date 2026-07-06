@@ -171,6 +171,9 @@ pub struct WorkbenchState {
     pub active_tab: crate::SidebarTab,
     /// Which view the Lineage tab shows (Ancestry tree vs. Species groups).
     pub lineage_view: crate::LineageView,
+    /// The Replay Browser panel's currently-loaded bundle summary, if any
+    /// (`None` until the user opens one via `MenuAction::OpenReplayBundle`).
+    pub replay_browser: Option<crate::ReplayBrowserSummary>,
     /// The active tab in the bottom panel.
     pub active_bottom_tab: crate::BottomTab,
     /// Time at which a quit confirmation was requested, for double-confirm UX.
@@ -272,6 +275,7 @@ pub fn default_panel_modes() -> std::collections::HashMap<String, PanelMode> {
     for &name in crate::layout::ALL_PANEL_NAMES {
         let mode = if name == "Neural Viewer"
             || name == "Research Dashboard"
+            || name == "Replay Browser"
             || name == "Placeholder Panel"
         {
             PanelMode::Closed
@@ -349,6 +353,7 @@ impl Default for WorkbenchState {
             layout_shares: std::collections::HashMap::new(),
             active_tab: crate::SidebarTab::Inspector,
             lineage_view: crate::LineageView::Ancestry,
+            replay_browser: None,
             active_bottom_tab: crate::BottomTab::Metrics,
             quit_confirm_time: None,
             main_menu_confirm_time: None,

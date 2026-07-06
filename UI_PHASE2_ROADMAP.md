@@ -252,7 +252,7 @@ Each is sized to Phase 1's proven milestone shape (1-3 files' worth of new/chang
 | M3 | ~~Species Explorer (extends M2's panel with a second tab/view)~~ | 1 | `plugins/sidebar.rs` | Low-Medium — **Done** |
 | M4 | ~~Research Dashboard panel~~ | 1 | new `plugins/research_dashboard.rs`, `research/src/lib.rs` (new `ExperimentReport::save_to_ron`/`load_from_ron`), `app/src/batch.rs`, `layout.rs`, `state.rs`, `ui/Cargo.toml` | Medium — **Done** |
 | M5 | ~~Experiment Comparison (extends M4)~~ | 1 | `plugins/research_dashboard.rs` (bundled into M4's panel, not a separate one — see Execution Log) | Medium — **Done** |
-| M6 | Replay Timeline panel | 1 | new `plugins/replay_timeline.rs`, `app::replay` read-access bridge, `layout.rs` | Medium-High — **Blocked, see Execution Log** |
+| M6 | ~~Replay Timeline panel~~ → **Replay Browser** (user-approved scope change, see Execution Log) | 1 | new `plugins/replay_browser.rs`, `app/src/replay.rs` (new `describe_action` helper), `app/src/events.rs` (new `MenuAction` handlers), `types.rs`, `state.rs`, `lib.rs`, `layout.rs` | Medium-High → Low-Medium once scoped down — **Done** |
 | M7 | Shared selection model (primary + secondary) | 2 | `state.rs`, every panel reading `selected_entity` | Medium (touches many call sites, but mechanically) |
 | M8 | Fix marquee-select using M7's model | 2 | `viewport.rs` | Low, once M7 lands |
 | M9 | Hover cross-highlight (Inspector/Neural Viewer read `hovered_entity`) | 2 | `inspector.rs`, `neural_viewer.rs` | Low |
@@ -322,6 +322,12 @@ Re-verified `app::main.rs` and `app::replay::run_replay` directly before startin
 3. Defer M6 entirely pending a deliberate decision on whether replay should become an interactive-mode feature at all, versus staying a headless/offline analysis tool the way batch mode is.
 
 Per your instruction ("wait for my acknowledgement only if you discover architectural conflicts"), stopping here rather than picking a direction unilaterally — this changes what M6 (and any future replay-adjacent UI work) actually is, not just how it's implemented.
+
+**Decision (user-approved):** option 2, Replay Browser.
+
+| M6 — Replay Browser | Implemented as scoped down: a new "Replay Browser" dock panel (same treatment as Research Dashboard — closed by default in all 3 presets, registered in `ALL_PANEL_NAMES` + both `layout.rs` dispatch matches + tree wiring + `state.rs`'s separate `default_panel_modes()`). Followed the established, pre-existing convention that **every file dialog in this codebase is handled in `app::events.rs`, not called directly from a `ui` crate panel** (confirmed via `ImportGenome`/`ExportGenome`/`SaveState`/`LoadState`'s existing handlers) — added `MenuAction::OpenReplayBundle`/`CloseReplayBundle`, handled synchronously in `events.rs` (no `spawn_blocking`/channel needed, unlike `LoadState`'s heavier pattern, since this only reads+summarizes a file rather than mutating the live ECS `World`). The loaded `storage::replay::ReplayBundle` (which also carries a potentially large `initial_snapshot`) is immediately reduced to a small owned `ui::ReplayBrowserSummary` (source path, seed, last event tick, a `Vec<(tick, description)>`) before being handed to `WorkbenchState` — the `ui` crate itself never takes a `storage` dependency, keeping the same decoupling every other panel already follows. Human-readable event descriptions live in a new `app::replay::describe_action` helper. Shows: source path, seed, event count, last event tick, and a scrollable tick-ordered event table. | build/clippy/fmt clean, all tests pass |
+
+**Wave 1 complete.** All 6 milestones closed — 2 of them (M2/M3, M4/M5) bundled by design as the roadmap itself anticipated, and M6 scoped down from its original ambition after a real architectural conflict was found, reported, and resolved by your explicit choice rather than assumed. Wave 2 (M7 onward — shared selection model, marquee-select fix, hover cross-highlight, cursor coordinate readout, measurement tool, bookmarks, quick organism search) is next, pending your go-ahead.
 
 Implementation audit complete.
 UI roadmap ready for review.

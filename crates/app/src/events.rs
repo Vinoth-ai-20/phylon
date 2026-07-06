@@ -336,6 +336,44 @@ impl PhylonApp {
                         tracing::warn!("No entity selected to export.");
                     }
                 }
+                ui::MenuAction::OpenReplayBundle => {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Phylon Replay", &["phylon-replay"])
+                        .pick_file()
+                    {
+                        match storage::replay::ReplayBundle::load_from_file(&path) {
+                            Ok(bundle) => {
+                                let events = bundle
+                                    .log
+                                    .events
+                                    .iter()
+                                    .map(|e| (e.tick, crate::replay::describe_action(&e.action)))
+                                    .collect();
+                                self.ui.replay_browser = Some(ui::ReplayBrowserSummary {
+                                    source_path: path.display().to_string(),
+                                    seed: bundle.log.seed,
+                                    last_event_tick: bundle.log.last_event_tick(),
+                                    events,
+                                });
+                                self.ui.push_toast(
+                                    "Replay bundle loaded",
+                                    ui::ToastSeverity::Success,
+                                    3.0,
+                                );
+                            }
+                            Err(e) => {
+                                self.ui.push_toast(
+                                    format!("Failed to load replay bundle: {e}"),
+                                    ui::ToastSeverity::Error,
+                                    5.0,
+                                );
+                            }
+                        }
+                    }
+                }
+                ui::MenuAction::CloseReplayBundle => {
+                    self.ui.replay_browser = None;
+                }
                 ui::MenuAction::FocusSelection => {
                     tracing::warn!("FocusSelection not yet implemented.");
                 }

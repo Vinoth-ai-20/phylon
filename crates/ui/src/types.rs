@@ -45,6 +45,27 @@ pub enum LineageView {
     Species,
 }
 
+/// A lightweight, already-extracted summary of a loaded `.phylon-replay`
+/// bundle for the Replay Browser panel (Phase 2, M6) — holds only what's
+/// needed to browse its recorded interventions, not the full
+/// `storage::replay::ReplayBundle` (which also carries a potentially large
+/// `initial_snapshot`), so this is safe to keep in `WorkbenchState` unlike
+/// live simulation data. Built in `app::events.rs` (the only place with a
+/// `storage` dependency) and handed to the UI as plain data — `ui` itself
+/// never depends on `storage`.
+#[derive(Debug, Clone)]
+pub struct ReplayBrowserSummary {
+    /// The file path the bundle was loaded from, for display only.
+    pub source_path: String,
+    /// The RNG seed the recorded run started from.
+    pub seed: u64,
+    /// The tick of the last recorded event (0 if none were recorded).
+    pub last_event_tick: u64,
+    /// Every recorded event as `(tick, human-readable description)`, in
+    /// chronological order.
+    pub events: Vec<(u64, String)>,
+}
+
 /// The active tab in the bottom panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BottomTab {
@@ -216,6 +237,12 @@ pub enum MenuAction {
     ImportGenome,
     /// Open an export dialog for the selected organism's genome.
     ExportGenome,
+    /// Open a file dialog to load a `.phylon-replay` bundle for the Replay
+    /// Browser panel (static inspection only — no live playback; replay
+    /// execution is a separate headless mode, see `app::replay::run_replay`).
+    OpenReplayBundle,
+    /// Clear the Replay Browser's currently-loaded bundle summary.
+    CloseReplayBundle,
 
     // Overlay — canonical command routed through HeatmapState
     /// Set the active simulation overlay (updates HeatmapState ECS resource).

@@ -42,6 +42,8 @@ A **Restore Defaults** action resets to the Research preset via `apply_layout_pr
 
 **New panel (Phase 2, M4/M5): "Research Dashboard"** — lists/compares experiment reports from `data/experiments/`. Closed by default in all three presets (same treatment as "Placeholder Panel"); open it from the Windows menu. Shares the root row alongside Sidebar/Neural Viewer/Placeholder Panel — added with zero changes to the docking model itself, the same forward-compatibility slot `docs/design/layout.md`'s Placeholder Panel was built to prove out.
 
+**New panel (Phase 2, M6): "Replay Browser"** — static inspection of a loaded `.phylon-replay` bundle's recorded interventions (seed, tick range, every event). Not a live-playback "Replay Timeline": replay execution (`app::replay::run_replay`) is a separate headless mode that never coexists with the interactive UI, so a scrub/seek panel isn't currently possible without a larger architectural change (see `UI_PHASE2_ROADMAP.md`'s Execution Log for the full discrepancy writeup). Same closed-by-default treatment and root-row slot as Research Dashboard.
+
 ## Multi-monitor (future — not implemented this roadmap)
 
 Floating windows already position independently of the main window via `egui::Window`, so dragging a floating panel to a second monitor works today at the OS level. True multi-monitor *workspace* support (remembering which monitor a floating panel lives on across restarts, or a fully independent second viewport) is out of scope for the current 13-milestone roadmap and is noted here as a deliberate future consideration, not a silent gap.

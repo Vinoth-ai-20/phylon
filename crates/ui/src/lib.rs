@@ -15,7 +15,7 @@ pub mod shortcuts;
 pub mod types;
 pub use types::{
     ActiveHeatmap, AppState, BottomTab, CanvasInteraction, HeatmapState, LineageView, MenuAction,
-    SidebarTab, UiError,
+    ReplayBrowserSummary, SidebarTab, UiError,
 };
 
 pub mod layout;

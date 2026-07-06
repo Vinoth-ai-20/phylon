@@ -43,6 +43,7 @@ pub const ALL_PANEL_NAMES: &[&str] = &[
     "Event Log",
     "Neural Viewer",
     "Research Dashboard",
+    "Replay Browser",
     "Placeholder Panel",
 ];
 
@@ -87,6 +88,8 @@ impl<'a> Behavior<String> for WorkbenchBehavior<'a> {
                     format!("{} Neural Viewer", egui_remixicon::icons::BRAIN_LINE)
                 } else if name == "Research Dashboard" {
                     format!("{} Research Dashboard", egui_remixicon::icons::FLASK_LINE)
+                } else if name == "Replay Browser" {
+                    format!("{} Replay Browser", egui_remixicon::icons::FOLDER_OPEN_LINE)
                 } else {
                     name.clone()
                 };
@@ -155,6 +158,15 @@ impl<'a> Behavior<String> for WorkbenchBehavior<'a> {
                         }
                         "Research Dashboard" => {
                             crate::plugins::research_dashboard::research_dashboard_ui(
+                                &ctx,
+                                ui,
+                                self.state,
+                                self.world,
+                                self.commands,
+                            );
+                        }
+                        "Replay Browser" => {
+                            crate::plugins::replay_browser::replay_browser_ui(
                                 &ctx,
                                 ui,
                                 self.state,
@@ -438,6 +450,8 @@ pub fn render_floating_panels(
                 format!("{} Neural Viewer", egui_remixicon::icons::BRAIN_LINE)
             } else if name == "Research Dashboard" {
                 format!("{} Research Dashboard", egui_remixicon::icons::FLASK_LINE)
+            } else if name == "Replay Browser" {
+                format!("{} Replay Browser", egui_remixicon::icons::FOLDER_OPEN_LINE)
             } else {
                 name.clone()
             };
@@ -467,6 +481,11 @@ pub fn render_floating_panels(
                     }
                     "Research Dashboard" => {
                         crate::plugins::research_dashboard::research_dashboard_ui(
+                            ctx, ui, state, world, commands,
+                        );
+                    }
+                    "Replay Browser" => {
+                        crate::plugins::replay_browser::replay_browser_ui(
                             ctx, ui, state, world, commands,
                         );
                     }
@@ -610,6 +629,9 @@ pub fn rebuild_tree_from_modes(
     // opened from the Windows menu.
     let research_dashboard = is_docked("Research Dashboard")
         .then(|| tiles.insert_pane("Research Dashboard".to_string()));
+    // Replay Browser — same treatment as Research Dashboard above.
+    let replay_browser =
+        is_docked("Replay Browser").then(|| tiles.insert_pane("Replay Browser".to_string()));
     // Placeholder Panel — see `ALL_PANEL_NAMES` doc comment; shares the root
     // row with Sidebar/Neural Viewer, defaulting to Closed so it never takes
     // space unless explicitly docked.
@@ -662,6 +684,10 @@ pub fn rebuild_tree_from_modes(
     if let Some(research_dashboard) = research_dashboard {
         root_children.push(research_dashboard);
         root_shares.push(share_of("Research Dashboard", 1.0));
+    }
+    if let Some(replay_browser) = replay_browser {
+        root_children.push(replay_browser);
+        root_shares.push(share_of("Replay Browser", 1.0));
     }
     if let Some(placeholder) = placeholder {
         root_children.push(placeholder);
@@ -759,20 +785,22 @@ pub fn apply_layout_preset(state: &mut WorkbenchState, preset: LayoutPreset) {
         LayoutPreset::Research => {
             modes.insert("Neural Viewer".to_string(), PanelMode::Closed);
             modes.insert("Research Dashboard".to_string(), PanelMode::Closed);
+            modes.insert("Replay Browser".to_string(), PanelMode::Closed);
             modes.insert("Placeholder Panel".to_string(), PanelMode::Closed);
         }
         LayoutPreset::Presentation => {
             modes.insert("Sidebar".to_string(), PanelMode::Closed);
             modes.insert("Neural Viewer".to_string(), PanelMode::Closed);
             modes.insert("Research Dashboard".to_string(), PanelMode::Closed);
+            modes.insert("Replay Browser".to_string(), PanelMode::Closed);
             modes.insert("Placeholder Panel".to_string(), PanelMode::Closed);
             modes.insert("Metrics".to_string(), PanelMode::Floating);
         }
         LayoutPreset::Debug => {
-            // Everything docked, including Neural Viewer and Research
-            // Dashboard — Placeholder Panel stays closed even here since it
-            // carries no real content a researcher would want visible by
-            // default.
+            // Everything docked, including Neural Viewer, Research
+            // Dashboard, and Replay Browser — Placeholder Panel stays closed
+            // even here since it carries no real content a researcher would
+            // want visible by default.
             modes.insert("Placeholder Panel".to_string(), PanelMode::Closed);
         }
     }

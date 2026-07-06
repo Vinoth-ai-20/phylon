@@ -1,5 +1,30 @@
 use crate::app::PhylonApp;
 
+/// Human-readable one-line description of a recorded `ReplayAction`, for the
+/// Replay Browser panel (`ui::MenuAction::OpenReplayBundle`) — static
+/// inspection of a bundle's contents, not live playback (see that action's
+/// doc comment for why the two are separate).
+pub(crate) fn describe_action(action: &storage::replay::ReplayAction) -> String {
+    match action {
+        storage::replay::ReplayAction::ReseedEcosystem => "Reseed Ecosystem".to_string(),
+        storage::replay::ReplayAction::SpawnPreset { name, position } => {
+            format!(
+                "Spawn Preset \"{name}\" at ({:.0}, {:.0})",
+                position.x, position.y
+            )
+        }
+        storage::replay::ReplayAction::SpawnProtoFish { position } => {
+            format!("Spawn Proto-Fish at ({:.0}, {:.0})", position.x, position.y)
+        }
+        storage::replay::ReplayAction::SpawnManualHazard { position } => {
+            format!(
+                "Spawn Manual Hazard at ({:.0}, {:.0})",
+                position.x, position.y
+            )
+        }
+    }
+}
+
 /// Applies one recorded `storage::replay::ReplayAction` to a running
 /// `PhylonApp`, dispatching to the shared intervention methods in
 /// `crate::interventions` — the same code `events.rs`'s live menu-action
