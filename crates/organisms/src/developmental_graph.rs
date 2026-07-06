@@ -8,7 +8,7 @@
 //! `rendering`, `behavior`, and `analytics` need zero changes; growth still
 //! spawns one `physics::ParticleNode`/`Spring` pair per tick exactly as
 //! before, just via the [`compile_segment`] function extracted below instead
-//! of inline match arms, so the mapping from a decoded [`SegmentType`] to
+//! of inline match arms, so the mapping from a decoded `SegmentType` to
 //! physics parameters is independently testable and reusable by future
 //! research panels (HOX Visualizer, Development Timeline) without
 //! re-deriving it from scratch.
@@ -148,7 +148,12 @@ mod tests {
     #[test]
     fn push_returns_sequential_indices_and_records_parent() {
         let mut graph = DevelopmentalGraph::new();
-        let head = graph.push(SegmentType::Head, sample_outputs(SegmentType::Head), None, false);
+        let head = graph.push(
+            SegmentType::Head,
+            sample_outputs(SegmentType::Head),
+            None,
+            false,
+        );
         let torso = graph.push(
             SegmentType::Torso,
             sample_outputs(SegmentType::Torso),
