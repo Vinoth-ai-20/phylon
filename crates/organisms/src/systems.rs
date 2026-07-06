@@ -179,6 +179,23 @@ pub fn growth_system(
             crate::MAX_SEGMENTS,
         );
 
+        // Phase 3 M8 (DEF-002): a position marked for apoptosis is pruned
+        // before organogenesis — it is never spawned, as if it had never
+        // formed (germ-line-protected positions can never reach this
+        // branch; see `genetics::decode_apoptosis`). Bookkeeping mirrors
+        // the normal "advance state" step at the end of a tick, minus
+        // spawning and minus updating `parent_spine_node`/`graph`, so the
+        // next real segment attaches directly to the last real one — no
+        // visible gap, the position simply never existed.
+        if outputs.apoptosis {
+            state.next_segment_index += 1;
+            state.ticks_until_next_bud = state.base_bud_interval;
+            let offset =
+                Vec2::new(state.heading.cos(), state.heading.sin()) * -state.segment_length;
+            state.current_pos += offset;
+            continue;
+        }
+
         // Phase 3 M6: the decode-to-physics mapping lives in
         // `developmental_graph::compile_segment` now — independently
         // testable, and reusable by future research panels — rather than
@@ -630,6 +647,78 @@ mod tests {
         assert_eq!(
             world.get::<GrowthState>(entity).unwrap().graph.nodes[1].parent,
             Some(0)
+        );
+    }
+
+    #[test]
+    fn growth_system_prunes_an_apoptotic_position_without_spawning_it() {
+        // Phase 3 M8 (DEF-002): a hand-built regulatory_cppn found (via a
+        // throwaway scan, not guessed) to decode position 1 as `Ganglion`
+        // (non-Germinal) with the apoptosis signal firing. `next_segment_index`
+        // must still advance past the pruned position, but no `ParticleNode`/
+        // graph entry should exist for it.
+        use genetics::cppn::DEFAULT_MUTATION_RATE;
+        use genetics::{Cppn, CppnConnection, CppnNode};
+
+        let regulatory_cppn = Cppn {
+            nodes: vec![
+                CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 0,
+                },
+                CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 0,
+                },
+                CppnNode {
+                    activation: brain::ActivationFn::Sine,
+                    bias: -3.0,
+                    layer: 1,
+                },
+            ],
+            connections: vec![CppnConnection {
+                source: 0,
+                target: 2,
+                weight: 5.0,
+                enabled: true,
+                innovation: 0,
+                mutation_rate: DEFAULT_MUTATION_RATE,
+            }],
+        };
+        let mut genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        genome.regulatory_cppn = regulatory_cppn;
+
+        // Sanity-check the fixture's premise directly before relying on it
+        // inside the system-level assertion below.
+        let outputs =
+            genetics::develop_at_position(&genome.regulatory_cppn, 1, crate::MAX_SEGMENTS);
+        assert!(
+            outputs.apoptosis,
+            "fixture must decode position 1 as apoptotic"
+        );
+        assert_ne!(outputs.segment_type, genetics::SegmentType::Germinal);
+
+        let mut world = World::new();
+        let entity = spawn_growth_entity(&mut world, genome);
+
+        world.run_system_once(growth_system);
+
+        let state = world.get::<GrowthState>(entity).unwrap();
+        assert_eq!(
+            state.next_segment_index, 2,
+            "index must still advance past a pruned position"
+        );
+        assert_eq!(
+            state.graph.nodes.len(),
+            0,
+            "a pruned position must not be recorded in the graph"
+        );
+        assert_eq!(
+            world.query::<&physics::ParticleNode>().iter(&world).count(),
+            0,
+            "a pruned position must never spawn a ParticleNode"
         );
     }
 }

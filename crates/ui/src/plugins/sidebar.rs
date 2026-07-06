@@ -101,7 +101,7 @@ pub fn activity_bar_ui(
     });
 }
 
-const NAV_TABS: [(&str, crate::SidebarTab, &str); 9] = [
+const NAV_TABS: [(&str, crate::SidebarTab, &str); 10] = [
     (
         egui_remixicon::icons::SEARCH_LINE,
         crate::SidebarTab::Inspector,
@@ -121,6 +121,11 @@ const NAV_TABS: [(&str, crate::SidebarTab, &str); 9] = [
         egui_remixicon::icons::TREE_LINE,
         crate::SidebarTab::Lineage,
         "Lineage",
+    ),
+    (
+        egui_remixicon::icons::MICROSCOPE_LINE,
+        crate::SidebarTab::HoxVisualizer,
+        "HOX Visualizer",
     ),
     (
         egui_remixicon::icons::CLOUD_LINE,
@@ -170,6 +175,9 @@ pub fn sidebar_content_ui(
             crate::SidebarTab::Genetics => genetics_panel(ui, state, world, actions),
             crate::SidebarTab::Ecology => ecology_panel(ui, world),
             crate::SidebarTab::Lineage => lineage_panel(ui, state, world, actions),
+            crate::SidebarTab::HoxVisualizer => {
+                crate::plugins::hox_visualizer::hox_visualizer_ui(ui, state, world)
+            }
             crate::SidebarTab::Environment => environment_panel(ui, world),
             crate::SidebarTab::Analytics => analytics_panel(ui, world),
             crate::SidebarTab::Sandbox => sandbox_panel(ui, state, actions),
@@ -876,6 +884,7 @@ pub fn tab_icon(tab: crate::SidebarTab) -> &'static str {
         crate::SidebarTab::Genetics => egui_remixicon::icons::TEST_TUBE_LINE,
         crate::SidebarTab::Ecology => egui_remixicon::icons::EARTH_LINE,
         crate::SidebarTab::Lineage => egui_remixicon::icons::TREE_LINE,
+        crate::SidebarTab::HoxVisualizer => egui_remixicon::icons::MICROSCOPE_LINE,
         crate::SidebarTab::Environment => egui_remixicon::icons::CLOUD_LINE,
         crate::SidebarTab::Analytics => egui_remixicon::icons::LINE_CHART_LINE,
         crate::SidebarTab::Sandbox => egui_remixicon::icons::TOOLS_LINE,
@@ -892,6 +901,7 @@ pub fn tab_label(tab: crate::SidebarTab) -> &'static str {
         crate::SidebarTab::Genetics => "Genetics",
         crate::SidebarTab::Ecology => "Ecology",
         crate::SidebarTab::Lineage => "Lineage",
+        crate::SidebarTab::HoxVisualizer => "HOX Visualizer",
         crate::SidebarTab::Environment => "Environment",
         crate::SidebarTab::Analytics => "Snapshot",
         crate::SidebarTab::Sandbox => "Sandbox",

@@ -63,7 +63,10 @@ pub use morphogen::{ap_position, distance_from_head_gradient, external_inputs_fo
 /// branching, actuation, and pigmentation (Phase 3, M4) — see
 /// `PHASE3_ROADMAP.md`'s ADR-P3-02.
 pub mod develop;
-pub use develop::{decode_segment_type, develop_at_position, DevelopmentalOutputs};
+pub use develop::{
+    decode_apoptosis, decode_segment_type, develop_at_position, hox_states_at_position,
+    DevelopmentalOutputs,
+};
 
 #[cfg(test)]
 mod tests {

@@ -253,6 +253,9 @@ pub struct WorkbenchState {
     /// Quick Organism Search text (Phase 2, M13) — filters the Lineage tab's
     /// organism list by entity/species/diet substring match.
     pub lineage_search: String,
+    /// The body position (index into `0..organisms::MAX_SEGMENTS`) currently
+    /// expanded in the HOX Visualizer tab's detail view (Phase 3, M10).
+    pub hox_visualizer_selected_index: Option<usize>,
     /// The Replay Browser panel's currently-loaded bundle summary, if any
     /// (`None` until the user opens one via `MenuAction::OpenReplayBundle`).
     pub replay_browser: Option<crate::ReplayBrowserSummary>,
@@ -451,6 +454,7 @@ impl Default for WorkbenchState {
             active_tab: crate::SidebarTab::Inspector,
             lineage_view: crate::LineageView::Ancestry,
             lineage_search: String::new(),
+            hox_visualizer_selected_index: None,
             replay_browser: None,
             active_bottom_tab: crate::BottomTab::Metrics,
             quit_confirm_time: None,

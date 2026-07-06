@@ -84,10 +84,15 @@ pub struct CompiledSegment {
 }
 
 /// Compiles a decoded [`SegmentType`] into the physics parameters
-/// `growth_system` needs to spawn its `ParticleNode`/`Spring`. Vascular,
-/// Ganglion, and Germinal (Phase 3 M5) share Torso's stiffness — a neutral
-/// default, not a designed value; their differentiated physics is DEF-003/
-/// DEF-002, deferred to M8/M9, not this milestone's.
+/// `growth_system` needs to spawn its `ParticleNode`/`Spring`. As of Phase 3
+/// M9, `Vascular` has its own differentiated profile (DEF-003's
+/// differentiation-output half — a lower, transport-tissue-like stiffness
+/// and a `Passive` constraint, distinct from rigid structural `Torso`).
+/// `Ganglion`/`Germinal` still share Torso's stiffness — a neutral default,
+/// not a designed value; their differentiated physics is the rest of
+/// DEF-003 and germ-line-specific behavior beyond apoptosis protection
+/// (already wired in M8), deferred to later milestones (M14 stretch,
+/// respectively).
 pub fn compile_segment(role: SegmentType) -> CompiledSegment {
     let particle_segment_type = match role {
         SegmentType::Head => 0,
@@ -102,18 +107,16 @@ pub fn compile_segment(role: SegmentType) -> CompiledSegment {
 
     let stiffness = match role {
         SegmentType::Head => 10.0,
-        SegmentType::Torso
-        | SegmentType::Vascular
-        | SegmentType::Ganglion
-        | SegmentType::Germinal => 15.0,
+        SegmentType::Torso | SegmentType::Ganglion | SegmentType::Germinal => 15.0,
         SegmentType::Muscle => 8.0,
+        SegmentType::Vascular => 6.0,
         SegmentType::Tail => 2.0,
         SegmentType::Fin => 5.0,
     };
 
     let constraint_type = match role {
         SegmentType::Muscle => physics::ConstraintType::Elastic,
-        SegmentType::Tail => physics::ConstraintType::Passive,
+        SegmentType::Tail | SegmentType::Vascular => physics::ConstraintType::Passive,
         _ => physics::ConstraintType::Rigid,
     };
 
@@ -142,6 +145,7 @@ mod tests {
             actuation_amplitude: 0.0,
             actuation_phase: 0.0,
             pigment: [0.5, 0.5, 0.5],
+            apoptosis: false,
         }
     }
 
@@ -197,6 +201,19 @@ mod tests {
             compile_segment(SegmentType::Head).constraint_type,
             physics::ConstraintType::Rigid
         );
+    }
+
+    #[test]
+    fn vascular_has_its_own_differentiated_profile() {
+        // Phase 3 M9 (DEF-003): Vascular is no longer a Torso-stiffness
+        // placeholder — it's `Passive` (like Tail) but at its own,
+        // distinct stiffness, not equal to Torso's or Tail's.
+        let vascular = compile_segment(SegmentType::Vascular);
+        let torso = compile_segment(SegmentType::Torso);
+        let tail = compile_segment(SegmentType::Tail);
+        assert_eq!(vascular.constraint_type, physics::ConstraintType::Passive);
+        assert_ne!(vascular.stiffness, torso.stiffness);
+        assert_ne!(vascular.stiffness, tail.stiffness);
     }
 
     #[test]

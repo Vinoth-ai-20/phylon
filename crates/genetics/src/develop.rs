@@ -48,6 +48,14 @@ pub struct DevelopmentalOutputs {
     pub actuation_phase: f32,
     /// This position's emergent skin pigmentation, `[R, G, B]` in `[0, 1]`.
     pub pigment: [f32; 3],
+    /// Developmental apoptosis (Phase 3, M8; DEF-002): when `true`,
+    /// `organisms::growth_system` prunes this position — it is never
+    /// spawned, as if it had never formed. Germ-soma separation is folded
+    /// directly into this decode rather than a separate flag: a
+    /// `SegmentType::Germinal` position is never marked for apoptosis
+    /// regardless of the raw differentiation signal, mirroring real
+    /// biology's germ-line protection from programmed cell death.
+    pub apoptosis: bool,
 }
 
 /// Decodes a [`SegmentType`] from the Hox-designated gene states as a
@@ -62,6 +70,44 @@ pub fn decode_segment_type(hox_states: &[f32]) -> SegmentType {
         .iter()
         .fold(0usize, |acc, &state| (acc << 1) | usize::from(state > 0.5));
     SEGMENT_TYPES_BY_CODE[code % SEGMENT_TYPES_BY_CODE.len()]
+}
+
+/// Applies unconditional germ-line protection (Phase 3 M8, DEF-002) to a raw
+/// apoptosis signal: a `SegmentType::Germinal` position is never marked for
+/// apoptosis, regardless of `apoptosis_signal` — mirroring real biology's
+/// germ-line protection from programmed cell death, applied here at the
+/// source so nothing downstream can forget it.
+pub fn decode_apoptosis(apoptosis_signal: bool, segment_type: SegmentType) -> bool {
+    apoptosis_signal && segment_type != SegmentType::Germinal
+}
+
+/// Returns the raw (pre-threshold) Hox-designated gene states at a body
+/// position — the same values [`develop_at_position`] thresholds into a
+/// combinatorial code internally, exposed here for research instrumentation
+/// (Phase 3, M10's HOX Visualizer) that wants to show *how close* a bit is
+/// to flipping, not just the final decoded [`SegmentType`]. A small, cheap,
+/// pure recomputation (development is already fast enough to run once per
+/// displayed position); not folded into `DevelopmentalOutputs` itself since
+/// that type is `Copy` and used pervasively by `organisms::growth_system` —
+/// adding a `Vec` field there would cost every existing call site a
+/// `.clone()` for no growth-time benefit.
+pub fn hox_states_at_position(
+    regulatory_cppn: &Cppn,
+    segment_index: usize,
+    total_segments: usize,
+) -> Vec<f32> {
+    let gene_count = REGULATORY_GENE_ROLES.len();
+    let mut network = RegulatoryNetwork::generate(regulatory_cppn, gene_count);
+    let inputs = external_inputs_for_position(segment_index, total_segments, gene_count);
+    network.develop(DEVELOPMENT_STEPS, &inputs);
+
+    network
+        .nodes
+        .iter()
+        .zip(REGULATORY_GENE_ROLES.iter())
+        .filter(|(_, &r)| r == RegulatoryGeneRole::Hox)
+        .map(|(n, _)| n.state)
+        .collect()
 }
 
 /// Runs development at one body-axis position and decodes every output this
@@ -102,6 +148,10 @@ pub fn develop_at_position(
         pigment_states.get(1).copied().unwrap_or(0.5),
         pigment_states.get(2).copied().unwrap_or(0.5),
     ];
+    // Phase 3 M8 (DEF-002): the Differentiation role's second gene — unused
+    // by any milestone until now — is the apoptosis signal.
+    let apoptosis_signal = differentiation_states.get(1).copied().unwrap_or(0.0) > 0.5;
+    let apoptosis = decode_apoptosis(apoptosis_signal, segment_type);
 
     DevelopmentalOutputs {
         segment_type,
@@ -109,6 +159,7 @@ pub fn develop_at_position(
         actuation_amplitude,
         actuation_phase,
         pigment,
+        apoptosis,
     }
 }
 
@@ -151,6 +202,17 @@ mod tests {
     }
 
     #[test]
+    fn hox_states_at_position_has_3_entries_and_matches_the_decode() {
+        let cppn = Cppn::new();
+        let states = hox_states_at_position(&cppn, 2, 10);
+        assert_eq!(states.len(), 3);
+        assert_eq!(
+            decode_segment_type(&states),
+            develop_at_position(&cppn, 2, 10).segment_type
+        );
+    }
+
+    #[test]
     fn develop_at_position_is_deterministic_for_the_same_position() {
         let cppn = Cppn::new();
         let a = develop_at_position(&cppn, 3, 10);
@@ -165,6 +227,22 @@ mod tests {
         for channel in outputs.pigment {
             assert!((0.0..=1.0).contains(&channel));
         }
+    }
+
+    #[test]
+    fn apoptosis_never_fires_for_a_germinal_position() {
+        // Phase 3 M8 (DEF-002): germ-line protection is unconditional — a
+        // Germinal position stays protected even when the raw apoptosis
+        // signal fires.
+        assert!(!decode_apoptosis(true, SegmentType::Germinal));
+        assert!(!decode_apoptosis(false, SegmentType::Germinal));
+    }
+
+    #[test]
+    fn apoptosis_fires_for_non_germinal_positions_when_signaled() {
+        assert!(decode_apoptosis(true, SegmentType::Muscle));
+        assert!(decode_apoptosis(true, SegmentType::Torso));
+        assert!(!decode_apoptosis(false, SegmentType::Muscle));
     }
 
     #[test]

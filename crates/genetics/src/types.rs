@@ -22,11 +22,10 @@ pub enum Ploidy {
 /// Phase 3 M5 broadened this from 5 to 8 variants so all 8 codes a 3-gene
 /// Hox combinatorial decode can produce (`genetics::decode_segment_type`)
 /// map to a distinct identity, instead of wrapping back onto `Head`/`Torso`/
-/// `Muscle` via modulo. The three new variants are enum-only placeholders
-/// for now — `organisms::growth_system` gives them a physically reasonable
-/// default (stiffness, constraint type), but their differentiated *behavior*
-/// (vascular transport, neural centralization, germ-line protection) is
-/// each its own later milestone (DEF-003 → M9, DEF-002 → M8), not this one's.
+/// `Muscle` via modulo. `Vascular` (M9) and `Germinal` (M8, via apoptosis
+/// protection — see `genetics::decode_apoptosis`) now have differentiated
+/// behavior; `Ganglion`'s neural-centralization behavior remains an enum-only
+/// placeholder, deferred to the M5 stretch goal (M14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SegmentType {
     /// Front sensory segment.
@@ -39,14 +38,15 @@ pub enum SegmentType {
     Tail,
     /// Lateral proto-limb or fin for branched swimmers.
     Fin,
-    /// Transport/circulatory tissue (Phase 3 M5; differentiated behavior is
-    /// DEF-003, deferred to M9).
+    /// Transport/circulatory tissue (Phase 3 M5; DEF-003's differentiated
+    /// physics — lower stiffness, `Passive` constraint — wired in M9).
     Vascular,
     /// Neural-cluster tissue, a precursor to centralized nervous structure
     /// (Phase 3 M5; differentiated behavior is DEF-003's neural
     /// centralization half, deferred to the M5 stretch goal, M14).
     Ganglion,
-    /// Germ-line/reproductive tissue (Phase 3 M5; differentiated behavior —
-    /// germ-soma separation — is DEF-002, deferred to M8).
+    /// Germ-line/reproductive tissue (Phase 3 M5; DEF-002's germ-soma
+    /// separation — unconditional protection from developmental apoptosis —
+    /// wired in M8, see `genetics::decode_apoptosis`).
     Germinal,
 }

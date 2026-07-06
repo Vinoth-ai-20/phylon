@@ -31,6 +31,9 @@ pub enum SidebarTab {
     Ecology,
     /// Ancestry tree and species grouping over `evolution::LineageTracker`
     Lineage,
+    /// Per-position Hox combinatorial code, decoded segment identity, and
+    /// morphogen gradients for the selected organism (Phase 3, M10).
+    HoxVisualizer,
     /// Application Settings
     Settings,
 }

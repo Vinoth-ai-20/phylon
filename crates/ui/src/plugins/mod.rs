@@ -4,6 +4,9 @@ pub mod command_palette;
 pub mod dialogs;
 /// Event log panel — recent births, deaths, hazard events.
 pub mod event_log;
+/// HOX Visualizer panel — per-position Hox code, segment identity, and
+/// morphogen gradients for the selected organism (Phase 3, M10).
+pub mod hox_visualizer;
 /// Entity inspector panel — single organism and environment details.
 pub mod inspector;
 /// Top menu bar.
