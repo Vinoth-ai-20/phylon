@@ -44,6 +44,7 @@ pub const ALL_PANEL_NAMES: &[&str] = &[
     "Neural Viewer",
     "Research Dashboard",
     "Replay Browser",
+    "Evolution Debugger",
     "Placeholder Panel",
 ];
 
@@ -90,6 +91,8 @@ impl<'a> Behavior<String> for WorkbenchBehavior<'a> {
                     format!("{} Research Dashboard", egui_remixicon::icons::FLASK_LINE)
                 } else if name == "Replay Browser" {
                     format!("{} Replay Browser", egui_remixicon::icons::FOLDER_OPEN_LINE)
+                } else if name == "Evolution Debugger" {
+                    format!("{} Evolution Debugger", egui_remixicon::icons::BUG_LINE)
                 } else {
                     name.clone()
                 };
@@ -167,6 +170,15 @@ impl<'a> Behavior<String> for WorkbenchBehavior<'a> {
                         }
                         "Replay Browser" => {
                             crate::plugins::replay_browser::replay_browser_ui(
+                                &ctx,
+                                ui,
+                                self.state,
+                                self.world,
+                                self.commands,
+                            );
+                        }
+                        "Evolution Debugger" => {
+                            crate::plugins::evolution_debugger::evolution_debugger_ui(
                                 &ctx,
                                 ui,
                                 self.state,
@@ -452,6 +464,8 @@ pub fn render_floating_panels(
                 format!("{} Research Dashboard", egui_remixicon::icons::FLASK_LINE)
             } else if name == "Replay Browser" {
                 format!("{} Replay Browser", egui_remixicon::icons::FOLDER_OPEN_LINE)
+            } else if name == "Evolution Debugger" {
+                format!("{} Evolution Debugger", egui_remixicon::icons::BUG_LINE)
             } else {
                 name.clone()
             };
@@ -486,6 +500,11 @@ pub fn render_floating_panels(
                     }
                     "Replay Browser" => {
                         crate::plugins::replay_browser::replay_browser_ui(
+                            ctx, ui, state, world, commands,
+                        );
+                    }
+                    "Evolution Debugger" => {
+                        crate::plugins::evolution_debugger::evolution_debugger_ui(
                             ctx, ui, state, world, commands,
                         );
                     }
@@ -632,6 +651,10 @@ pub fn rebuild_tree_from_modes(
     // Replay Browser — same treatment as Research Dashboard above.
     let replay_browser =
         is_docked("Replay Browser").then(|| tiles.insert_pane("Replay Browser".to_string()));
+    // Evolution Debugger — same treatment as Research Dashboard/Replay
+    // Browser above: defaults to Closed, shares the root row when docked.
+    let evolution_debugger = is_docked("Evolution Debugger")
+        .then(|| tiles.insert_pane("Evolution Debugger".to_string()));
     // Placeholder Panel — see `ALL_PANEL_NAMES` doc comment; shares the root
     // row with Sidebar/Neural Viewer, defaulting to Closed so it never takes
     // space unless explicitly docked.
@@ -688,6 +711,10 @@ pub fn rebuild_tree_from_modes(
     if let Some(replay_browser) = replay_browser {
         root_children.push(replay_browser);
         root_shares.push(share_of("Replay Browser", 1.0));
+    }
+    if let Some(evolution_debugger) = evolution_debugger {
+        root_children.push(evolution_debugger);
+        root_shares.push(share_of("Evolution Debugger", 1.0));
     }
     if let Some(placeholder) = placeholder {
         root_children.push(placeholder);

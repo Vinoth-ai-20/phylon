@@ -43,6 +43,10 @@ pub mod widgets;
 /// Neural Viewer and, as of Phase 3 M11, the GRN Viewer.
 pub(crate) mod graph_canvas;
 
+/// Shared `RegulatoryNetwork` display helpers, used by the GRN Viewer
+/// (Phase 3 M11) and Evolution Debugger (Phase 3 M12).
+pub(crate) mod regulatory_view;
+
 /// Immediate-mode rendering logic.
 pub mod render;
 pub use render::render_ui;

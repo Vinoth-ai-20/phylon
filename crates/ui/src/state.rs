@@ -302,6 +302,13 @@ pub struct WorkbenchState {
     /// GRN Viewer's selected developmental step (time playback scrubber,
     /// `0..=genetics::develop::DEVELOPMENT_STEPS`) — Phase 3, M11.
     pub grn_step: usize,
+    /// Evolution Debugger's explicitly-picked comparison organism
+    /// ("Organism B") — `None` means "use Organism A's lineage parent",
+    /// the default (Phase 3, M12).
+    pub evo_debugger_entity_b: Option<Entity>,
+    /// Evolution Debugger's organism-picker search text (filters the live
+    /// organism list by entity id substring) — Phase 3, M12.
+    pub evo_debugger_search: String,
 
     /// Last-known split ratio for each named docking split, keyed by the
     /// child tile's label (`"Sidebar"`, `"MainColumn"`, `"Neural Viewer"`,
@@ -369,6 +376,7 @@ pub fn default_panel_modes() -> std::collections::HashMap<String, PanelMode> {
         let mode = if name == "Neural Viewer"
             || name == "Research Dashboard"
             || name == "Replay Browser"
+            || name == "Evolution Debugger"
             || name == "Placeholder Panel"
         {
             PanelMode::Closed
@@ -461,6 +469,8 @@ impl Default for WorkbenchState {
             grn_view: GraphViewState::default(),
             grn_position: 0,
             grn_step: genetics::develop::DEVELOPMENT_STEPS,
+            evo_debugger_entity_b: None,
+            evo_debugger_search: String::new(),
             layout_shares: std::collections::HashMap::new(),
             active_tab: crate::SidebarTab::Inspector,
             lineage_view: crate::LineageView::Ancestry,

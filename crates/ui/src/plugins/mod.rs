@@ -4,6 +4,9 @@ pub mod command_palette;
 pub mod dialogs;
 /// Event log panel — recent births, deaths, hazard events.
 pub mod event_log;
+/// Evolution Debugger panel — cross-organism mutation diff and a
+/// development-failure inspector (Phase 3, M12).
+pub mod evolution_debugger;
 /// GRN Viewer panel — regulatory network graph, developmental-step time
 /// playback, and mutation-vs-parent comparison (Phase 3, M11).
 pub mod grn_viewer;

@@ -63,22 +63,7 @@ pub fn grn_viewer_ui(
     );
 }
 
-/// Builds and develops a `RegulatoryNetwork` for one (position, step) pair —
-/// a thin wrapper around `genetics`' already-public pieces so this panel can
-/// access the intermediate network structure `genetics::develop_at_position`
-/// doesn't expose (it only returns the final decoded outputs).
-fn developed_network(
-    regulatory_cppn: &genetics::Cppn,
-    position: usize,
-    step: usize,
-) -> genetics::RegulatoryNetwork {
-    let gene_count = genetics::REGULATORY_GENE_ROLES.len();
-    let mut network = genetics::RegulatoryNetwork::generate(regulatory_cppn, gene_count);
-    let inputs =
-        genetics::external_inputs_for_position(position, organisms::MAX_SEGMENTS, gene_count);
-    network.develop(step, &inputs);
-    network
-}
+use crate::regulatory_view::{developed_network, node_label};
 
 fn playback_controls(ui: &mut egui::Ui, state: &mut crate::WorkbenchState) {
     ui.horizontal(|ui| {
@@ -104,21 +89,6 @@ fn node_color(role: genetics::RegulatoryGeneRole) -> egui::Color32 {
         genetics::RegulatoryGeneRole::Effector => NODE_EFFECTOR,
         genetics::RegulatoryGeneRole::Pigment => NODE_PIGMENT,
     }
-}
-
-fn node_label(index: usize) -> String {
-    let role = genetics::REGULATORY_GENE_ROLES[index];
-    let same_role_ordinal = genetics::REGULATORY_GENE_ROLES[..index]
-        .iter()
-        .filter(|&&r| r == role)
-        .count();
-    let prefix = match role {
-        genetics::RegulatoryGeneRole::Hox => "Hox",
-        genetics::RegulatoryGeneRole::Differentiation => "Diff",
-        genetics::RegulatoryGeneRole::Effector => "Eff",
-        genetics::RegulatoryGeneRole::Pigment => "Pig",
-    };
-    format!("{prefix}{same_role_ordinal}")
 }
 
 /// Draws `network` as a node-link graph: nodes arranged in a circle
@@ -299,29 +269,6 @@ fn mutation_comparison(
         ),
     );
 
-    egui::Grid::new("grn_mutation_comparison")
-        .striped(true)
-        .show(ui, |ui| {
-            ui.label(egui::RichText::new("Gene").strong());
-            ui.label(egui::RichText::new("Self bias").strong());
-            ui.label(egui::RichText::new("Parent bias").strong());
-            ui.label(egui::RichText::new("Δ").strong());
-            ui.end_row();
-
-            for i in 0..self_network.nodes.len().min(parent_network.nodes.len()) {
-                let self_bias = self_network.nodes[i].bias;
-                let parent_bias = parent_network.nodes[i].bias;
-                let delta = self_bias - parent_bias;
-                ui.label(node_label(i));
-                ui.label(format!("{self_bias:.3}"));
-                ui.label(format!("{parent_bias:.3}"));
-                let delta_color = if delta.abs() > 0.1 {
-                    crate::theme::WARN
-                } else {
-                    crate::theme::DISABLED_FG
-                };
-                ui.label(egui::RichText::new(format!("{delta:+.3}")).color(delta_color));
-                ui.end_row();
-            }
-        });
+    let rows = crate::regulatory_view::bias_diff_rows(&self_network, &parent_network);
+    crate::regulatory_view::render_bias_diff_grid(ui, "grn_mutation_comparison", &rows);
 }
