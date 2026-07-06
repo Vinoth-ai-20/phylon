@@ -169,6 +169,8 @@ pub struct WorkbenchState {
     pub activity_bar_expanded: bool,
     /// The active tab in the primary sidebar.
     pub active_tab: crate::SidebarTab,
+    /// Which view the Lineage tab shows (Ancestry tree vs. Species groups).
+    pub lineage_view: crate::LineageView,
     /// The active tab in the bottom panel.
     pub active_bottom_tab: crate::BottomTab,
     /// Time at which a quit confirmation was requested, for double-confirm UX.
@@ -268,7 +270,10 @@ pub enum PanelMode {
 pub fn default_panel_modes() -> std::collections::HashMap<String, PanelMode> {
     let mut m = std::collections::HashMap::new();
     for &name in crate::layout::ALL_PANEL_NAMES {
-        let mode = if name == "Neural Viewer" || name == "Placeholder Panel" {
+        let mode = if name == "Neural Viewer"
+            || name == "Research Dashboard"
+            || name == "Placeholder Panel"
+        {
             PanelMode::Closed
         } else {
             PanelMode::Docked
@@ -343,6 +348,7 @@ impl Default for WorkbenchState {
             neural_cppn_view: GraphViewState::default(),
             layout_shares: std::collections::HashMap::new(),
             active_tab: crate::SidebarTab::Inspector,
+            lineage_view: crate::LineageView::Ancestry,
             active_bottom_tab: crate::BottomTab::Metrics,
             quit_confirm_time: None,
             main_menu_confirm_time: None,

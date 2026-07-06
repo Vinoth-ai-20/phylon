@@ -7,7 +7,10 @@ use crate::app::PhylonApp;
 /// `PhylonApp` built from `sim_config` with `simulation.rng_seed` and
 /// `research.experiment_id` overridden per seed. After each run completes
 /// (`batch.max_ticks` ticks), writes that run's `ExperimentReport` as
-/// Markdown to `data/experiments/<id>/report.md`, then writes one aggregate
+/// Markdown to `data/experiments/<id>/report.md` (for a human to read) and as
+/// RON to `data/experiments/<id>/report.ron` (for the UI's Research
+/// Dashboard — see `ui::plugins::research_dashboard` — to read back
+/// structured data instead of parsing prose), then writes one aggregate
 /// `data/experiments/batch-summary.md` covering the whole batch.
 ///
 /// ## 2. Why It Happens
@@ -67,14 +70,16 @@ pub fn run_batch(
             final_species_count,
         };
 
-        let report_path = std::path::Path::new("data/experiments")
-            .join(&report.manifest.id)
-            .join("report.md");
-        if let Some(parent) = report_path.parent() {
+        let report_dir = std::path::Path::new("data/experiments").join(&report.manifest.id);
+        let report_md_path = report_dir.join("report.md");
+        if let Some(parent) = report_md_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Err(e) = std::fs::write(&report_path, report.to_markdown()) {
-            tracing::warn!("failed to write experiment report for seed {seed}: {e}");
+        if let Err(e) = std::fs::write(&report_md_path, report.to_markdown()) {
+            tracing::warn!("failed to write experiment report markdown for seed {seed}: {e}");
+        }
+        if let Err(e) = report.save_to_ron(&report_dir.join("report.ron")) {
+            tracing::warn!("failed to write experiment report RON for seed {seed}: {e}");
         }
 
         tracing::info!(

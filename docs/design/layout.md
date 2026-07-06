@@ -40,6 +40,8 @@ Three named presets, each a fixed `PanelMode` + share configuration, selectable 
 
 A **Restore Defaults** action resets to the Research preset via `apply_layout_preset`, which (Milestone 9) now supports all three named presets rather than only the one original default.
 
+**New panel (Phase 2, M4/M5): "Research Dashboard"** — lists/compares experiment reports from `data/experiments/`. Closed by default in all three presets (same treatment as "Placeholder Panel"); open it from the Windows menu. Shares the root row alongside Sidebar/Neural Viewer/Placeholder Panel — added with zero changes to the docking model itself, the same forward-compatibility slot `docs/design/layout.md`'s Placeholder Panel was built to prove out.
+
 ## Multi-monitor (future — not implemented this roadmap)
 
 Floating windows already position independently of the main window via `egui::Window`, so dragging a floating panel to a second monitor works today at the OS level. True multi-monitor *workspace* support (remembering which monitor a floating panel lives on across restarts, or a fully independent second viewport) is out of scope for the current 13-milestone roadmap and is noted here as a deliberate future consideration, not a silent gap.

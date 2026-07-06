@@ -101,7 +101,7 @@ pub fn activity_bar_ui(
     });
 }
 
-const NAV_TABS: [(&str, crate::SidebarTab, &str); 8] = [
+const NAV_TABS: [(&str, crate::SidebarTab, &str); 9] = [
     (
         egui_remixicon::icons::SEARCH_LINE,
         crate::SidebarTab::Inspector,
@@ -116,6 +116,11 @@ const NAV_TABS: [(&str, crate::SidebarTab, &str); 8] = [
         egui_remixicon::icons::EARTH_LINE,
         crate::SidebarTab::Ecology,
         "Ecology",
+    ),
+    (
+        egui_remixicon::icons::TREE_LINE,
+        crate::SidebarTab::Lineage,
+        "Lineage",
     ),
     (
         egui_remixicon::icons::CLOUD_LINE,
@@ -164,6 +169,7 @@ pub fn sidebar_content_ui(
             }
             crate::SidebarTab::Genetics => genetics_panel(ui, state, world, actions),
             crate::SidebarTab::Ecology => ecology_panel(ui, world),
+            crate::SidebarTab::Lineage => lineage_panel(ui, state, world, actions),
             crate::SidebarTab::Environment => environment_panel(ui, world),
             crate::SidebarTab::Analytics => analytics_panel(ui, world),
             crate::SidebarTab::Sandbox => sandbox_panel(ui, state, actions),
@@ -342,6 +348,218 @@ fn ecology_panel(ui: &mut egui::Ui, world: &mut world::World) {
                 ui.label(format!("Population density: {:.1}/km²", density));
             });
     }
+}
+
+// ─── Lineage panel ───────────────────────────────────────────────────────────
+
+/// Ancestry tree + species grouping over `evolution::LineageTracker` — both
+/// were fully tracked already (see `IMPLEMENTATION_STATUS.md`'s Epic 7/12
+/// findings) but had no UI surface until this milestone (Phase 2, M2/M3).
+fn lineage_panel(
+    ui: &mut egui::Ui,
+    state: &mut crate::WorkbenchState,
+    world: &mut world::World,
+    actions: &mut Vec<MenuAction>,
+) {
+    // Clone the records out of the tracker (a cheap, bounded-size copy — one
+    // entry per currently-alive organism) so the resource borrow ends here,
+    // before the Diet/Entity query below needs `&mut world.ecs`.
+    let mut records: Vec<evolution::LineageRecord> = {
+        let Some(tracker) = world.ecs.get_resource::<evolution::LineageTracker>() else {
+            crate::widgets::empty_state(ui, "Lineage tracking not yet available.");
+            return;
+        };
+        tracker.active_records().cloned().collect()
+    };
+
+    if records.is_empty() {
+        crate::widgets::empty_state(ui, "No living organisms to show ancestry for.");
+        return;
+    }
+    records.sort_by_key(|r| (r.species.0, r.generation, r.entity.0));
+
+    // One pass over live organisms builds both lookups this panel needs:
+    // `EntityId -> Diet` (for color) and `EntityId -> Entity` (for
+    // click-to-select) — safer than reconstructing an `Entity` handle from a
+    // raw `EntityId` bit pattern, and matches the "snapshot once, don't
+    // requery per row" pattern already used for adjacency maps elsewhere
+    // (see `inspector.rs::render_body_plan`).
+    let mut diet_by_id: std::collections::HashMap<common::EntityId, ecology::Diet> =
+        std::collections::HashMap::new();
+    let mut entity_by_id: std::collections::HashMap<common::EntityId, bevy_ecs::entity::Entity> =
+        std::collections::HashMap::new();
+    {
+        let mut q = world
+            .ecs
+            .query::<(bevy_ecs::entity::Entity, Option<&ecology::Diet>)>();
+        for (entity, diet) in q.iter(&world.ecs) {
+            let id = common::EntityId(entity.to_bits());
+            entity_by_id.insert(id, entity);
+            if let Some(diet) = diet {
+                diet_by_id.insert(id, diet.clone());
+            }
+        }
+    }
+
+    ui.horizontal(|ui| {
+        ui.selectable_value(
+            &mut state.lineage_view,
+            crate::LineageView::Ancestry,
+            "Ancestry",
+        );
+        ui.selectable_value(
+            &mut state.lineage_view,
+            crate::LineageView::Species,
+            "Species",
+        );
+    });
+    ui.separator();
+
+    match state.lineage_view {
+        crate::LineageView::Ancestry => {
+            render_ancestry_tree(ui, actions, &records, &diet_by_id, &entity_by_id)
+        }
+        crate::LineageView::Species => {
+            render_species_groups(ui, actions, &records, &diet_by_id, &entity_by_id)
+        }
+    }
+}
+
+/// One organism's display row: `Gen <n> — Entity(<idx>v<gen>) [Diet]`, or
+/// without the `[Diet]` suffix if this entity has no `ecology::Diet` (should
+/// not happen for a real organism, but a lineage record could theoretically
+/// outlive its Diet component being queryable in the same frame).
+fn lineage_row_label(
+    record: &evolution::LineageRecord,
+    diet_by_id: &std::collections::HashMap<common::EntityId, ecology::Diet>,
+) -> String {
+    match diet_by_id.get(&record.entity) {
+        Some(diet) => format!("Gen {} — {:?}", record.generation, diet),
+        None => format!("Gen {} — Entity", record.generation),
+    }
+}
+
+fn lineage_row_color(
+    record: &evolution::LineageRecord,
+    diet_by_id: &std::collections::HashMap<common::EntityId, ecology::Diet>,
+) -> egui::Color32 {
+    diet_by_id
+        .get(&record.entity)
+        .map(crate::theme::chart_color)
+        .unwrap_or(crate::theme::DISABLED_FG)
+}
+
+fn select_lineage_entity(
+    actions: &mut Vec<MenuAction>,
+    entity_by_id: &std::collections::HashMap<common::EntityId, bevy_ecs::entity::Entity>,
+    id: common::EntityId,
+) {
+    if let Some(&entity) = entity_by_id.get(&id) {
+        actions.push(MenuAction::SelectEntity(entity));
+    }
+}
+
+fn render_ancestry_tree(
+    ui: &mut egui::Ui,
+    actions: &mut Vec<MenuAction>,
+    records: &[evolution::LineageRecord],
+    diet_by_id: &std::collections::HashMap<common::EntityId, ecology::Diet>,
+    entity_by_id: &std::collections::HashMap<common::EntityId, bevy_ecs::entity::Entity>,
+) {
+    let by_entity: std::collections::HashMap<common::EntityId, &evolution::LineageRecord> =
+        records.iter().map(|r| (r.entity, r)).collect();
+    let mut children: std::collections::HashMap<common::EntityId, Vec<&evolution::LineageRecord>> =
+        std::collections::HashMap::new();
+    let mut roots: Vec<&evolution::LineageRecord> = Vec::new();
+    for r in records {
+        match r.parent_id {
+            // A parent that's no longer alive (already died, or predates
+            // this session's tracking) makes this organism a root too —
+            // otherwise it would silently vanish from the tree entirely.
+            Some(pid) if by_entity.contains_key(&pid) => {
+                children.entry(pid).or_default().push(r);
+            }
+            _ => roots.push(r),
+        }
+    }
+
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for root in &roots {
+                draw_lineage_node(ui, actions, root, &children, diet_by_id, entity_by_id);
+            }
+        });
+}
+
+/// Recursively draws one ancestry node, same shape as
+/// `utils::draw_segment_tree`: a leaf is a plain selectable row, a branch is
+/// a default-open `CollapsingHeader` whose own header click *also* selects
+/// the organism (not just its children's rows).
+fn draw_lineage_node(
+    ui: &mut egui::Ui,
+    actions: &mut Vec<MenuAction>,
+    record: &evolution::LineageRecord,
+    children: &std::collections::HashMap<common::EntityId, Vec<&evolution::LineageRecord>>,
+    diet_by_id: &std::collections::HashMap<common::EntityId, ecology::Diet>,
+    entity_by_id: &std::collections::HashMap<common::EntityId, bevy_ecs::entity::Entity>,
+) {
+    let label = egui::RichText::new(lineage_row_label(record, diet_by_id))
+        .color(lineage_row_color(record, diet_by_id));
+    let kids = children.get(&record.entity);
+
+    if let Some(kids) = kids.filter(|k| !k.is_empty()) {
+        let response = egui::CollapsingHeader::new(label)
+            .id_salt(record.entity.0)
+            .default_open(true)
+            .show(ui, |ui| {
+                for child in kids {
+                    draw_lineage_node(ui, actions, child, children, diet_by_id, entity_by_id);
+                }
+            });
+        if response.header_response.clicked() {
+            select_lineage_entity(actions, entity_by_id, record.entity);
+        }
+    } else if ui.selectable_label(false, label).clicked() {
+        select_lineage_entity(actions, entity_by_id, record.entity);
+    }
+}
+
+fn render_species_groups(
+    ui: &mut egui::Ui,
+    actions: &mut Vec<MenuAction>,
+    records: &[evolution::LineageRecord],
+    diet_by_id: &std::collections::HashMap<common::EntityId, ecology::Diet>,
+    entity_by_id: &std::collections::HashMap<common::EntityId, bevy_ecs::entity::Entity>,
+) {
+    let mut by_species: std::collections::BTreeMap<u64, Vec<&evolution::LineageRecord>> =
+        std::collections::BTreeMap::new();
+    for r in records {
+        by_species.entry(r.species.0).or_default().push(r);
+    }
+
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for (species_id, members) in &by_species {
+                egui::CollapsingHeader::new(format!(
+                    "Species #{} ({} members)",
+                    species_id,
+                    members.len()
+                ))
+                .id_salt(species_id)
+                .default_open(false)
+                .show(ui, |ui| {
+                    for member in members {
+                        let label = egui::RichText::new(lineage_row_label(member, diet_by_id))
+                            .color(lineage_row_color(member, diet_by_id));
+                        if ui.selectable_label(false, label).clicked() {
+                            select_lineage_entity(actions, entity_by_id, member.entity);
+                        }
+                    }
+                });
+            }
+        });
 }
 
 // ─── Environment panel ──────────────────────────────────────────────────────
@@ -556,6 +774,7 @@ pub fn tab_icon(tab: crate::SidebarTab) -> &'static str {
         crate::SidebarTab::Inspector => egui_remixicon::icons::SEARCH_LINE,
         crate::SidebarTab::Genetics => egui_remixicon::icons::TEST_TUBE_LINE,
         crate::SidebarTab::Ecology => egui_remixicon::icons::EARTH_LINE,
+        crate::SidebarTab::Lineage => egui_remixicon::icons::TREE_LINE,
         crate::SidebarTab::Environment => egui_remixicon::icons::CLOUD_LINE,
         crate::SidebarTab::Analytics => egui_remixicon::icons::LINE_CHART_LINE,
         crate::SidebarTab::Sandbox => egui_remixicon::icons::TOOLS_LINE,
@@ -571,6 +790,7 @@ pub fn tab_label(tab: crate::SidebarTab) -> &'static str {
         crate::SidebarTab::Inspector => "Inspector",
         crate::SidebarTab::Genetics => "Genetics",
         crate::SidebarTab::Ecology => "Ecology",
+        crate::SidebarTab::Lineage => "Lineage",
         crate::SidebarTab::Environment => "Environment",
         crate::SidebarTab::Analytics => "Snapshot",
         crate::SidebarTab::Sandbox => "Sandbox",

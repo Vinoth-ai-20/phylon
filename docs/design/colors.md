@@ -34,8 +34,13 @@ Metrics' Performance/Resources/Environment plots chart data with no `ecology::Di
 | `CHART_O2` | Environment | light blue |
 | `CHART_CO2` | Environment | gray |
 | `CHART_TEMP` | Environment | `#FFA500` |
+| `CHART_SHANNON` | Diversity | `#64C8FF` |
+| `CHART_SIMPSON` | Diversity | `#FF69B4` |
+| `CHART_RICHNESS` | Diversity | `#FFD700` |
+| `CHART_TURNOVER` | Diversity | `#9400D3` |
+| `CHART_COLONY_DIAMETER` | Colony Connectivity | `#00CED1` |
 
-Each panel's own set is internally distinct (verified by eye per plot); no cross-panel distinctness guarantee is made or needed, since Performance/Resources/Environment/Demographics are never rendered overlaid on one shared axis.
+Each panel's own set is internally distinct (verified by eye per plot); no cross-panel distinctness guarantee is made or needed, since Performance/Resources/Environment/Demographics/Diversity/Colony Connectivity are never rendered overlaid on one shared axis. (Phase 2, M1: Diversity and Colony Connectivity added — `analytics::MetricsState`'s Shannon/Simpson/richness/turnover/colony-diameter history was already being recorded every tick; these two charts are the first UI surface for it.)
 
 ## Chrome / surface
 

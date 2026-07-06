@@ -27,3 +27,4 @@ evolution = { version = "0.1.0", path = "../evolution" }
 sysinfo = "0.39.3"
 egui-remixicon = "0.29.1"
 behavior = { version = "0.1.0", path = "../behavior" }
+research = { version = "0.1.0", path = "../research" }

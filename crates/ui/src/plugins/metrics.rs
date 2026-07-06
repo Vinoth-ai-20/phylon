@@ -1,6 +1,6 @@
 use crate::types::*;
 
-/// Renders the Metrics Dashboard (4-plot grid).
+/// Renders the Metrics Dashboard (6-plot grid).
 ///
 /// This is its own docked tile/tab (see `layout::rebuild_tree_from_modes`) —
 /// it used to also carry an internal "Metrics Dashboard / Event Log" tab bar
@@ -49,6 +49,12 @@ pub fn metrics_ui(
     let co2_pts = to_pts(&metrics.co2_history);
     let temp_pts = to_pts(&metrics.temp_history);
 
+    let shannon_pts = to_pts(&metrics.shannon_history);
+    let simpson_pts = to_pts(&metrics.simpson_history);
+    let richness_pts = to_pts(&metrics.species_richness_history);
+    let turnover_pts = to_pts(&metrics.species_turnover_history);
+    let colony_diameter_pts = to_pts(&metrics.largest_colony_diameter_history);
+
     let producer_c = crate::theme::chart_color(&ecology::Diet::Producer);
     let herbivore_c = crate::theme::chart_color(&ecology::Diet::Herbivore);
     let carnivore_c = crate::theme::chart_color(&ecology::Diet::Carnivore);
@@ -66,11 +72,17 @@ pub fn metrics_ui(
     let co2_c = crate::theme::CHART_CO2;
     let temp_c = crate::theme::CHART_TEMP;
 
-    // Split the available height between the 2 stacked plots per column so
+    let shannon_c = crate::theme::CHART_SHANNON;
+    let simpson_c = crate::theme::CHART_SIMPSON;
+    let richness_c = crate::theme::CHART_RICHNESS;
+    let turnover_c = crate::theme::CHART_TURNOVER;
+    let colony_diameter_c = crate::theme::CHART_COLONY_DIAMETER;
+
+    // Split the available height between the 3 stacked plots per column so
     // they fill however much space the tile/window gives us (previously a
     // hardcoded 120.0 left dead space below when the panel was resized or
     // detached taller).
-    let plot_height = ((ui.available_height() - 100.0) / 2.0).max(80.0);
+    let plot_height = ((ui.available_height() - 150.0) / 3.0).max(70.0);
 
     // Plots use a tighter item spacing than the rest of the app:
     // `theme::apply_style`'s app-wide `item_spacing.y` is sized for
@@ -142,6 +154,42 @@ pub fn metrics_ui(
                         plot_ui.line(egui_plot::Line::new(tps_pts).name("TPS").color(tps_c));
                         plot_ui.line(egui_plot::Line::new(mem_pts).name("Mem (MB)").color(mem_c));
                     });
+
+                ui.add_space(crate::theme::SPACE_SM);
+
+                ui.label(egui::RichText::new("Diversity").strong());
+                ui.horizontal_wrapped(|ui| {
+                    crate::widgets::chart_legend_dot(ui, shannon_c, "Shannon");
+                    crate::widgets::chart_legend_dot(ui, simpson_c, "Simpson");
+                    crate::widgets::chart_legend_dot(ui, richness_c, "Richness");
+                    crate::widgets::chart_legend_dot(ui, turnover_c, "Turnover");
+                });
+                egui_plot::Plot::new("diversity_plot")
+                    .height(plot_height)
+                    .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
+                    .y_axis_label("Diversity index / count / fraction")
+                    .show(ui, |plot_ui| {
+                        plot_ui.line(
+                            egui_plot::Line::new(shannon_pts)
+                                .name("Shannon")
+                                .color(shannon_c),
+                        );
+                        plot_ui.line(
+                            egui_plot::Line::new(simpson_pts)
+                                .name("Simpson")
+                                .color(simpson_c),
+                        );
+                        plot_ui.line(
+                            egui_plot::Line::new(richness_pts)
+                                .name("Richness")
+                                .color(richness_c),
+                        );
+                        plot_ui.line(
+                            egui_plot::Line::new(turnover_pts)
+                                .name("Turnover")
+                                .color(turnover_c),
+                        );
+                    });
             });
 
             // Column 2
@@ -196,6 +244,48 @@ pub fn metrics_ui(
                             egui_plot::Line::new(temp_pts)
                                 .name("Temp (°C)")
                                 .color(temp_c),
+                        );
+                    });
+
+                ui.add_space(crate::theme::SPACE_SM);
+
+                ui.label(egui::RichText::new("Colony Connectivity").strong());
+                ui.horizontal_wrapped(|ui| {
+                    crate::widgets::chart_legend_dot(
+                        ui,
+                        colony_diameter_c,
+                        "Largest colony diameter",
+                    );
+                    // `colony_size_distribution` is a point-in-time snapshot
+                    // (one entry per connected component), not a time series
+                    // like the line above, so it reads as a label rather than
+                    // a plotted line — same treatment `age_distribution`/
+                    // `generation_distribution` would need if charted.
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} colonies, largest {} organism(s)",
+                            metrics.colony_size_distribution.len(),
+                            metrics
+                                .colony_size_distribution
+                                .iter()
+                                .copied()
+                                .max()
+                                .unwrap_or(0)
+                        ))
+                        .color(crate::theme::DISABLED_FG)
+                        .small(),
+                    );
+                });
+                egui_plot::Plot::new("colony_plot")
+                    .height(plot_height)
+                    .x_axis_formatter(|x, _range| format!("{:.1}s", x.value))
+                    .y_axis_formatter(|y, _range| format!("{:.0}", y.value))
+                    .y_axis_label("Diameter (nodes)")
+                    .show(ui, |plot_ui| {
+                        plot_ui.line(
+                            egui_plot::Line::new(colony_diameter_pts)
+                                .name("Largest colony diameter")
+                                .color(colony_diameter_c),
                         );
                     });
             });

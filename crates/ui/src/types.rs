@@ -29,8 +29,20 @@ pub enum SidebarTab {
     Tuning,
     /// Environmental data and cell info
     Ecology,
+    /// Ancestry tree and species grouping over `evolution::LineageTracker`
+    Lineage,
     /// Application Settings
     Settings,
+}
+
+/// Which view the Lineage tab's panel is currently showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LineageView {
+    /// Ancestry tree, rooted at organisms with no currently-alive parent.
+    #[default]
+    Ancestry,
+    /// Organisms grouped by `evolution::SpeciesId`.
+    Species,
 }
 
 /// The active tab in the bottom panel.

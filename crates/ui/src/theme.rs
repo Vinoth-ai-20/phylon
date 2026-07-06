@@ -194,6 +194,19 @@ pub const CHART_CO2: Color32 = Color32::GRAY;
 /// Metrics → Environment: temperature (°C) line.
 pub const CHART_TEMP: Color32 = Color32::from_rgb(255, 165, 0);
 
+/// Metrics → Diversity: Shannon index line (see `analytics::shannon_index`).
+pub const CHART_SHANNON: Color32 = Color32::from_rgb(100, 200, 255);
+/// Metrics → Diversity: Simpson index line (see `analytics::simpson_index`).
+pub const CHART_SIMPSON: Color32 = Color32::from_rgb(255, 105, 180);
+/// Metrics → Diversity: species richness (distinct alive species) line.
+pub const CHART_RICHNESS: Color32 = Color32::from_rgb(255, 215, 0);
+/// Metrics → Diversity: species turnover fraction line.
+pub const CHART_TURNOVER: Color32 = Color32::from_rgb(148, 0, 211);
+
+/// Metrics → Colony Connectivity: largest-colony diameter line (see
+/// `analytics::graph::diameter`).
+pub const CHART_COLONY_DIAMETER: Color32 = Color32::from_rgb(0, 206, 209);
+
 // ─── Typography (docs/design/typography.md) ────────────────────────────────
 
 /// Font family key for headings — IBM Plex Sans SemiBold.

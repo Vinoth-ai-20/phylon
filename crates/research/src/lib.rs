@@ -164,6 +164,27 @@ pub struct ExperimentReport {
 }
 
 impl ExperimentReport {
+    /// Serializes this report to a human-readable RON file, creating parent
+    /// directories as needed — the structured counterpart to
+    /// [`ExperimentReport::to_markdown`], which is prose-only and not meant
+    /// to be parsed back. Mirrors [`ExperimentManifest::save_to_ron`]'s exact
+    /// shape.
+    pub fn save_to_ron(&self, path: &std::path::Path) -> Result<(), ResearchError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let text = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())?;
+        std::fs::write(path, text)?;
+        Ok(())
+    }
+
+    /// Deserializes a report previously written by
+    /// [`ExperimentReport::save_to_ron`].
+    pub fn load_from_ron(path: &std::path::Path) -> Result<Self, ResearchError> {
+        let text = std::fs::read_to_string(path)?;
+        Ok(ron::de::from_str(&text)?)
+    }
+
     /// Renders this report as a Markdown summary.
     pub fn to_markdown(&self) -> String {
         format!(
@@ -240,6 +261,25 @@ mod tests {
         let original = ExperimentManifest::new("exp-1", "A round-trip test", 12345);
         original.save_to_ron(&path).unwrap();
         let loaded = ExperimentManifest::load_from_ron(&path).unwrap();
+
+        assert_eq!(original, loaded);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn report_round_trips_through_ron() {
+        let dir = std::env::temp_dir().join(format!("phylon-test-report-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("report.ron");
+
+        let original = ExperimentReport {
+            manifest: ExperimentManifest::new("exp-1", "A round-trip test", 12345),
+            ticks_run: 5000,
+            final_population: 42,
+            final_species_count: 3,
+        };
+        original.save_to_ron(&path).unwrap();
+        let loaded = ExperimentReport::load_from_ron(&path).unwrap();
 
         assert_eq!(original, loaded);
         std::fs::remove_file(&path).unwrap();

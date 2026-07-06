@@ -10,6 +10,8 @@ pub mod menu;
 pub mod metrics;
 /// Neural Viewer panel — CTRNN brain node-link graph for the selected organism.
 pub mod neural_viewer;
+/// Research Dashboard panel — lists/compares experiment reports from `data/experiments/`.
+pub mod research_dashboard;
 /// Sidebar activity bar and per-workspace content panels.
 pub mod sidebar;
 /// Bottom status bar.

@@ -14,8 +14,8 @@ pub mod shortcuts;
 /// UI state types and enums.
 pub mod types;
 pub use types::{
-    ActiveHeatmap, AppState, BottomTab, CanvasInteraction, HeatmapState, MenuAction, SidebarTab,
-    UiError,
+    ActiveHeatmap, AppState, BottomTab, CanvasInteraction, HeatmapState, LineageView, MenuAction,
+    SidebarTab, UiError,
 };
 
 pub mod layout;
