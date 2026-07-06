@@ -26,6 +26,13 @@ pub use components::{
     BiologicalComponents, Generation, GrowthState, OrganismColor, SpatialComponents, SpawnTick,
 };
 
+/// The Body Graph — a transient, organisms-crate-internal developmental
+/// record (Phase 3, M6). See `PHASE3_ROADMAP.md`'s ADR-P3-04.
+pub mod developmental_graph;
+pub use developmental_graph::{
+    can_branch, compile_segment, CompiledSegment, DevelopmentalGraph, DevelopmentalNode,
+};
+
 /// Organism ECS systems.
 pub mod systems;
 pub use systems::growth_system;

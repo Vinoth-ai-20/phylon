@@ -179,31 +179,13 @@ pub fn growth_system(
             crate::MAX_SEGMENTS,
         );
 
-        let seg_u32 = match outputs.segment_type {
-            SegmentType::Head => 0,
-            SegmentType::Torso => 1,
-            SegmentType::Muscle => 2,
-            SegmentType::Tail => 3,
-            SegmentType::Fin => 4,
-            SegmentType::Vascular => 5,
-            SegmentType::Ganglion => 6,
-            SegmentType::Germinal => 7,
-        };
-
-        // Vascular/Ganglion/Germinal (Phase 3 M5) don't yet have
-        // differentiated physics — DEF-003/DEF-002 behavior is M8/M9's job,
-        // not this milestone's — so they use Torso's stiffness as a neutral,
-        // structurally-reasonable default rather than an arbitrary number.
-        let stiffness = match outputs.segment_type {
-            SegmentType::Head => 10.0,
-            SegmentType::Torso
-            | SegmentType::Vascular
-            | SegmentType::Ganglion
-            | SegmentType::Germinal => 15.0,
-            SegmentType::Muscle => 8.0,
-            SegmentType::Tail => 2.0,
-            SegmentType::Fin => 5.0,
-        };
+        // Phase 3 M6: the decode-to-physics mapping lives in
+        // `developmental_graph::compile_segment` now — independently
+        // testable, and reusable by future research panels — rather than
+        // inline match arms here.
+        let compiled = crate::compile_segment(outputs.segment_type);
+        let seg_u32 = compiled.particle_segment_type;
+        let stiffness = compiled.stiffness;
 
         // ── Spawn one spine node adjacent to the actual parent position ────────
         // Using the parent's *live* position (not a pre-calculated grid offset)
@@ -229,13 +211,19 @@ pub fn growth_system(
             ))
             .id();
 
+        // Body Graph (Phase 3, M6): this spine node's parent is always the
+        // most recently pushed non-branch node — i.e. the last spine node,
+        // which is exactly `state.graph.nodes.len() - 1` immediately before
+        // this push, since branch nodes (below) never become anyone's
+        // structural parent.
+        let parent_graph_index = state.graph.nodes.len().checked_sub(1);
+        state
+            .graph
+            .push(outputs.segment_type, outputs, parent_graph_index, false);
+
         // ── Connect to previous spine node with a Rigid bone ─────────────────
         if let Some(prev) = state.parent_spine_node {
-            let constraint_type = match outputs.segment_type {
-                SegmentType::Muscle => physics::ConstraintType::Elastic,
-                SegmentType::Tail => physics::ConstraintType::Passive,
-                _ => physics::ConstraintType::Rigid,
-            };
+            let constraint_type = compiled.constraint_type;
 
             let s = commands
                 .spawn((
@@ -273,11 +261,18 @@ pub fn growth_system(
 
         // ── Branch: sprout bilateral fin pair if the decode's branch output
         // fires. Only Torso and Muscle segments can branch (not Head or Tail).
-        let can_branch = matches!(
-            outputs.segment_type,
-            SegmentType::Torso | SegmentType::Muscle
-        );
-        if can_branch && outputs.branches && state.parent_spine_node.is_some() {
+        let branch_eligible = crate::can_branch(outputs.segment_type);
+        if branch_eligible && outputs.branches && state.parent_spine_node.is_some() {
+            // This branch's parent is the spine node just pushed above —
+            // its index is the graph's current last entry.
+            let spine_graph_index = state.graph.nodes.len() - 1;
+            state
+                .graph
+                .push(SegmentType::Fin, outputs, Some(spine_graph_index), true);
+            state
+                .graph
+                .push(SegmentType::Fin, outputs, Some(spine_graph_index), true);
+
             let fin_spread = state.segment_length * 0.75;
             let dir = Vec2::new(state.heading.cos(), state.heading.sin());
             let perp = Vec2::new(-dir.y, dir.x);
@@ -555,6 +550,7 @@ mod tests {
                     segment_length: 20.0,
                     effectors: Vec::new(),
                     is_organism_complete: false,
+                    graph: crate::DevelopmentalGraph::new(),
                     heading: 0.0,
                 },
             ))
@@ -601,6 +597,7 @@ mod tests {
             segment_length: 20.0,
             effectors: Vec::new(),
             is_organism_complete: false,
+            graph: crate::DevelopmentalGraph::new(),
             heading: 0.0,
         });
         run_growth_to_completion(&mut world, head);
@@ -609,6 +606,30 @@ mod tests {
         assert!(
             node_count > 1,
             "expected growth_system to spawn at least one body segment beyond the head"
+        );
+    }
+
+    #[test]
+    fn growth_system_pushes_one_body_graph_node_per_segment() {
+        // Phase 3 M6: `state.graph` should accumulate exactly one
+        // `DevelopmentalNode` per non-branching tick, tracking
+        // `next_segment_index`'s growth 1:1 (this fixture's genome
+        // deterministically never branches — `Cppn::new()`'s empty
+        // regulatory network always decodes `branches: false`).
+        let mut world = World::new();
+        let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        let entity = spawn_growth_entity(&mut world, genome);
+
+        world.run_system_once(growth_system);
+        let after_one = world.get::<GrowthState>(entity).unwrap().graph.nodes.len();
+        assert_eq!(after_one, 1);
+
+        world.run_system_once(growth_system);
+        let after_two = world.get::<GrowthState>(entity).unwrap().graph.nodes.len();
+        assert_eq!(after_two, 2);
+        assert_eq!(
+            world.get::<GrowthState>(entity).unwrap().graph.nodes[1].parent,
+            Some(0)
         );
     }
 }

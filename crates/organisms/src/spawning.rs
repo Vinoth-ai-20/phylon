@@ -30,21 +30,25 @@ pub fn spawn_organism(
     let head_outputs =
         genetics::develop_at_position(&expressed_regulatory_cppn, 0, crate::MAX_SEGMENTS);
     let color = head_outputs.pigment;
-    let head_seg_u32 = match head_outputs.segment_type {
-        genetics::SegmentType::Head => 0,
-        genetics::SegmentType::Torso => 1,
-        genetics::SegmentType::Muscle => 2,
-        genetics::SegmentType::Tail => 3,
-        genetics::SegmentType::Fin => 4,
-        genetics::SegmentType::Vascular => 5,
-        genetics::SegmentType::Ganglion => 6,
-        genetics::SegmentType::Germinal => 7,
-    };
+    // Phase 3 M6: the same decode-to-physics mapping `growth_system` uses
+    // for every later segment (see `developmental_graph::compile_segment`)
+    // — no separate head-specific lookup.
+    let head_compiled = crate::compile_segment(head_outputs.segment_type);
+
+    // The Body Graph's root node (Phase 3, M6 — see ADR-P3-04): index 0,
+    // no parent, not a branch.
+    let mut graph = crate::developmental_graph::DevelopmentalGraph::new();
+    graph.push(head_outputs.segment_type, head_outputs, None, false);
 
     // Spawn the head node at start_pos (gene index 0).
     let head_node = world.spawn_empty().id();
     world.entity_mut(head_node).insert((
-        ParticleNode::new(start_pos, 1.0, head_seg_u32, head_node.index()),
+        ParticleNode::new(
+            start_pos,
+            1.0,
+            head_compiled.particle_segment_type,
+            head_node.index(),
+        ),
         OrganismColor(color),
     ));
 
@@ -92,6 +96,7 @@ pub fn spawn_organism(
             segment_length,
             effectors: Vec::new(),
             is_organism_complete: head_outputs.segment_type == genetics::SegmentType::Tail,
+            graph,
             heading,
         },
         sensing::HeadVision {

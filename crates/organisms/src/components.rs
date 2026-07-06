@@ -69,6 +69,12 @@ pub struct GrowthState {
     /// `organisms::MAX_SEGMENTS` yet (Phase 3, M4; no special-cased length,
     /// just an emergent stopping condition from the decode itself).
     pub is_organism_complete: bool,
+    /// The Body Graph accumulated so far (Phase 3, M6) — one
+    /// `DevelopmentalNode` per decoded position/branch, in growth order.
+    /// Transient per ADR-P3-04: dropped along with the rest of
+    /// `GrowthState` once growth completes, never persisted or exposed as
+    /// its own ECS type.
+    pub graph: crate::developmental_graph::DevelopmentalGraph,
     /// Heading angle at which this organism spawns.
     pub heading: f32,
 }
