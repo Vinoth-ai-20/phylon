@@ -3,11 +3,13 @@
 //! Genome representation, mutation operators, and crossover.
 //!
 //! The genome is the heritable blueprint of an organism. Contrary to this
-//! module's original design intent, it is **not** a bitstring — it's two
-//! independent [`Cppn`] graphs (one for neural wiring, one for body
-//! morphology) plus an optional explicit [`HoxSequence`] body plan. See
-//! [`Genome`]'s doc comment for the full structure, including diploid
-//! second-allele support.
+//! module's original design intent, it is **not** a bitstring — it's three
+//! independent [`Cppn`] graphs (neural wiring, body morphology, and — as of
+//! Phase 3, M1 — a gene-regulatory-network generator) plus an optional
+//! explicit [`HoxSequence`] body plan (being phased out in favor of
+//! regulatory-network-decoded identity, see `PHASE3_ROADMAP.md`'s
+//! ADR-P3-02). See [`Genome`]'s doc comment for the full structure,
+//! including diploid second-allele support.
 //!
 //! All stochastic operations (mutation, crossover) take a caller-supplied
 //! `rand::Rng` — see `common::SimRng` for why a fresh, unseeded RNG is never
@@ -45,6 +47,15 @@ pub use cppn::{
 /// The primary Genome container and operations.
 pub mod genome;
 pub use genome::Genome;
+
+/// Gene Regulatory Network runtime (Phase 3, M1) — see `PHASE3_ROADMAP.md`'s
+/// ADR-P3-01 for why this is a third evolvable `Cppn` plus a small recurrent
+/// runtime network, not a new execution engine.
+pub mod regulatory;
+pub use regulatory::{
+    RegulatoryEdge, RegulatoryGeneNode, RegulatoryGeneRole, RegulatoryNetwork,
+    REGULATORY_GENE_ROLES,
+};
 
 #[cfg(test)]
 mod tests {

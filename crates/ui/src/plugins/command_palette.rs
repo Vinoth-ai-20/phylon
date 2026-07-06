@@ -36,7 +36,7 @@ const COMMANDS: &[(&str, MenuAction)] = &[
 
 /// Renders the Command Palette overlay when `state.show_command_palette` is
 /// set (toggled by Ctrl+Shift+P — see `shortcuts.rs`). A floating,
-/// non-collapsible window with a search box filtering [`COMMANDS`] by a
+/// non-collapsible window with a search box filtering `COMMANDS` by a
 /// case-insensitive substring match against the label; clicking (or
 /// pressing Enter on) a result pushes its action and closes the palette.
 pub fn command_palette_ui(

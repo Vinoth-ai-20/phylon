@@ -312,8 +312,12 @@ mod tests {
             genetics::GenomeId(2),
             common::EntityId(0),
             None,
-            (sample_cppn(), genetics::Cppn::new()),
-            (genetics::Cppn::new(), genetics::Cppn::new()),
+            (sample_cppn(), genetics::Cppn::new(), genetics::Cppn::new()),
+            (
+                genetics::Cppn::new(),
+                genetics::Cppn::new(),
+                genetics::Cppn::new(),
+            ),
         );
         g2.second_allele = None;
         for _ in 0..30 {

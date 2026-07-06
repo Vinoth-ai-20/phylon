@@ -5,21 +5,26 @@ use crate::types::{GenomeId, Ploidy};
 use common::EntityId;
 use serde::{Deserialize, Serialize};
 
-/// Current `Genome::schema_version`. Bumped from 2 to 3 by the addition of
-/// `second_allele` — see that field's doc comment.
-pub const GENOME_SCHEMA_VERSION: u32 = 3;
+/// Current `Genome::schema_version`. Bumped from 3 to 4 by the addition of
+/// `regulatory_cppn` (Phase 3, M1 — see `PHASE3_ROADMAP.md`'s ADR-P3-01).
+/// No migration path exists from schema 3 or earlier, matching the
+/// project's established policy (bump and document the break; see
+/// `IMPLEMENTATION_STATUS.md`'s ADR-010).
+pub const GENOME_SCHEMA_VERSION: u32 = 4;
 
 /// A diploid genome's second allele set — present only when
 /// `Genome::ploidy` is [`Ploidy::Diploid`]. Mirrors `Genome::brain_cppn`/
-/// `morph_cppn` exactly, so the two alleles can be compared/blended
-/// gene-for-gene (matched by CPPN connection innovation number, the same
-/// scheme [`Cppn::crossover`] already uses).
+/// `morph_cppn`/`regulatory_cppn` exactly, so the alleles can be
+/// compared/blended gene-for-gene (matched by CPPN connection innovation
+/// number, the same scheme [`Cppn::crossover`] already uses).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DiploidAlleles {
     /// The second allele's brain-wiring CPPN.
     pub brain_cppn: Cppn,
     /// The second allele's body-morphology CPPN.
     pub morph_cppn: Cppn,
+    /// The second allele's regulatory-network-generating CPPN (Phase 3, M1).
+    pub regulatory_cppn: Cppn,
 }
 
 /// The genome of an organism, containing independent CPPNs for body morphology and neural wiring.
@@ -46,6 +51,14 @@ pub struct Genome {
     /// Same first-allele-only caveat as `brain_cppn` — see
     /// [`Genome::expressed_morph_cppn`].
     pub morph_cppn: Cppn,
+    /// The CPPN generating a `regulatory::RegulatoryNetwork`'s weights
+    /// (Phase 3, M1 — see `PHASE3_ROADMAP.md`'s ADR-P3-01). Not yet wired
+    /// to growth/crossover/mutation/speciation-distance — those are
+    /// separate, later milestones (M2, M4, M7 respectively).
+    ///
+    /// Same first-allele-only caveat as `brain_cppn` — see
+    /// [`Genome::expressed_regulatory_cppn`].
+    pub regulatory_cppn: Cppn,
     /// The second allele set, present only when `ploidy` is
     /// [`Ploidy::Diploid`]. `None` for haploid genomes (the common case
     /// today) — this field was added in schema version 3, so bincode
@@ -70,6 +83,7 @@ impl Genome {
             ploidy: Ploidy::Haploid,
             brain_cppn: Cppn::new(),
             morph_cppn: Cppn::new(),
+            regulatory_cppn: Cppn::new(),
             second_allele: None,
             hox: None,
         }
@@ -79,6 +93,10 @@ impl Genome {
     /// haploid genomes' CPPNs as its two alleles — `self`'s fields (`id`,
     /// `origin`, `hox`) are kept; only `allele_a`'s and `allele_b`'s CPPNs
     /// are used.
+    ///
+    /// Each allele tuple is `(brain_cppn, morph_cppn, regulatory_cppn)` —
+    /// extended in Phase 3, M1 to carry the third CPPN so a diploid genome
+    /// is diploid at every gene locus, not just the original two.
     ///
     /// This is the only way to construct a [`Ploidy::Diploid`] genome today;
     /// `reproduction::reproduction_system`'s sexual-mating path still
@@ -90,8 +108,8 @@ impl Genome {
         id: GenomeId,
         origin: EntityId,
         hox: Option<HoxSequence>,
-        allele_a: (Cppn, Cppn),
-        allele_b: (Cppn, Cppn),
+        allele_a: (Cppn, Cppn, Cppn),
+        allele_b: (Cppn, Cppn, Cppn),
     ) -> Self {
         Self {
             schema_version: GENOME_SCHEMA_VERSION,
@@ -100,9 +118,11 @@ impl Genome {
             ploidy: Ploidy::Diploid,
             brain_cppn: allele_a.0,
             morph_cppn: allele_a.1,
+            regulatory_cppn: allele_a.2,
             second_allele: Some(DiploidAlleles {
                 brain_cppn: allele_b.0,
                 morph_cppn: allele_b.1,
+                regulatory_cppn: allele_b.2,
             }),
             hox,
         }
@@ -136,6 +156,21 @@ impl Genome {
                 std::borrow::Cow::Owned(express_diploid(&self.morph_cppn, &alleles.morph_cppn))
             }
             None => std::borrow::Cow::Borrowed(&self.morph_cppn),
+        }
+    }
+
+    /// The regulatory-network-generating CPPN actually used once wired to
+    /// growth (Phase 3, M4+) — see [`Genome::expressed_brain_cppn`] for the
+    /// dominance rule. Not yet called anywhere in this milestone; provided
+    /// now so diploid genomes have a well-defined answer for this locus as
+    /// soon as something needs it, rather than a gap discovered later.
+    pub fn expressed_regulatory_cppn(&self) -> std::borrow::Cow<'_, Cppn> {
+        match &self.second_allele {
+            Some(alleles) => std::borrow::Cow::Owned(express_diploid(
+                &self.regulatory_cppn,
+                &alleles.regulatory_cppn,
+            )),
+            None => std::borrow::Cow::Borrowed(&self.regulatory_cppn),
         }
     }
 
@@ -286,6 +321,13 @@ impl Genome {
                     },
                 ],
             },
+            // Empty for this test-fixture constructor — `new_hox_driven`'s
+            // whole point is an explicit, non-regulatory Hox sequence
+            // (`hox: Some(hox)` below), so there's nothing meaningful to
+            // template here yet. Phase 3 M4 (which replaces direct Hox
+            // lookup with regulatory-network-decoded identity) will need to
+            // revisit whether this constructor still makes sense at all.
+            regulatory_cppn: Cppn::new(),
             second_allele: None,
             hox: Some(hox),
         }
@@ -337,6 +379,10 @@ impl Genome {
                         morph_cppn: self_allele
                             .morph_cppn
                             .crossover(&other_allele.morph_cppn, rng),
+                        // Not yet crossed — Phase 3 M2's scope, not M1's.
+                        // Carried over from `self`'s allele unchanged in the
+                        // meantime, same as `regulatory_cppn` below.
+                        regulatory_cppn: self_allele.regulatory_cppn.clone(),
                     },
                     None => self_allele.clone(),
                 });
@@ -348,6 +394,11 @@ impl Genome {
             ploidy: self.ploidy,
             brain_cppn: self.brain_cppn.crossover(&other.brain_cppn, rng),
             morph_cppn: self.morph_cppn.crossover(&other.morph_cppn, rng),
+            // Not yet crossed with `other` — real NEAT-style crossover for
+            // this field is Phase 3 M2's explicit scope. Carrying `self`'s
+            // value over unchanged is a known, temporary, documented state,
+            // not an oversight.
+            regulatory_cppn: self.regulatory_cppn.clone(),
             second_allele,
             hox,
         }
@@ -358,6 +409,10 @@ impl Genome {
     /// For a diploid genome, the second allele is mutated independently —
     /// each allele copy accumulates its own mutations, exactly as separate
     /// chromosome copies would, rather than always mutating in lockstep.
+    ///
+    /// **`regulatory_cppn` is deliberately not mutated here** — real
+    /// mutation for that field is Phase 3 M2's explicit scope, not M1's. It
+    /// stays exactly as constructed until M2 lands.
     pub fn mutate<R: rand::Rng>(
         &mut self,
         mutation_rate: f32,
@@ -503,6 +558,43 @@ mod tests {
     }
 
     #[test]
+    fn new_minimal_has_empty_regulatory_cppn() {
+        let g = Genome::new_minimal(GenomeId(1), EntityId(0));
+        assert_eq!(g.regulatory_cppn.nodes.len(), 0);
+        assert_eq!(g.regulatory_cppn.connections.len(), 0);
+    }
+
+    #[test]
+    fn crossover_carries_regulatory_cppn_over_unchanged_for_now() {
+        // Phase 3 M1's documented, temporary behavior: real crossover for
+        // this field is M2's scope. Confirm it's `self`'s value, not
+        // `other`'s and not silently dropped/reset.
+        let mut a = Genome::new_minimal(GenomeId(1), EntityId(0));
+        a.regulatory_cppn = sample_cppn(0.7);
+        let mut b = Genome::new_minimal(GenomeId(2), EntityId(0));
+        b.regulatory_cppn = sample_cppn(-0.3);
+
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let child = a.crossover(&b, GenomeId(3), &mut rng);
+        assert_eq!(child.regulatory_cppn, a.regulatory_cppn);
+    }
+
+    #[test]
+    fn mutate_does_not_change_regulatory_cppn_yet() {
+        // Phase 3 M1's documented, temporary behavior: real mutation for
+        // this field is M2's scope.
+        let mut g = Genome::new_minimal(GenomeId(1), EntityId(0));
+        g.regulatory_cppn = sample_cppn(0.42);
+        let before = g.regulatory_cppn.clone();
+        let mut rng = ChaCha8Rng::seed_from_u64(2);
+        let mut tracker = GlobalInnovationTracker::default();
+        for _ in 0..50 {
+            g.mutate(1.0, &mut rng, &mut tracker);
+        }
+        assert_eq!(g.regulatory_cppn, before);
+    }
+
+    #[test]
     fn haploid_expressed_cppn_borrows_primary_directly() {
         let g = Genome::new_minimal(GenomeId(1), EntityId(0));
         assert!(matches!(
@@ -527,8 +619,8 @@ mod tests {
             GenomeId(1),
             EntityId(0),
             None,
-            (sample_cppn(0.5), Cppn::new()),
-            (sample_cppn(-0.9), Cppn::new()),
+            (sample_cppn(0.5), Cppn::new(), Cppn::new()),
+            (sample_cppn(-0.9), Cppn::new(), Cppn::new()),
         );
         assert_eq!(g.ploidy, Ploidy::Diploid);
         assert!(g.second_allele.is_some());
@@ -543,8 +635,8 @@ mod tests {
             GenomeId(1),
             EntityId(0),
             None,
-            (sample_cppn(0.1), Cppn::new()),
-            (sample_cppn(0.1), Cppn::new()),
+            (sample_cppn(0.1), Cppn::new(), Cppn::new()),
+            (sample_cppn(0.1), Cppn::new(), Cppn::new()),
         );
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         let mut tracker = GlobalInnovationTracker::default();
@@ -566,8 +658,8 @@ mod tests {
                 GenomeId(1),
                 EntityId(0),
                 None,
-                (sample_cppn(0.1), Cppn::new()),
-                (sample_cppn(0.1), Cppn::new()),
+                (sample_cppn(0.1), Cppn::new(), Cppn::new()),
+                (sample_cppn(0.1), Cppn::new(), Cppn::new()),
             )
         };
         let mut g1 = build();
@@ -632,8 +724,8 @@ mod tests {
             GenomeId(2),
             EntityId(0),
             None,
-            (sample_cppn(0.1), Cppn::new()),
-            (Cppn::new(), Cppn::new()),
+            (sample_cppn(0.1), Cppn::new(), Cppn::new()),
+            (Cppn::new(), Cppn::new(), Cppn::new()),
         );
         g3.second_allele = None;
         let mut rng = ChaCha8Rng::seed_from_u64(5);

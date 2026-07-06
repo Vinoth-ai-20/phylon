@@ -357,7 +357,98 @@ Per your instruction ("wait for my acknowledgement only if you discover architec
 
 **Verification (all of M14–M18):** `cargo build --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check` all clean (one auto-fmt pass applied and re-verified); `cargo test --workspace` — all passed, 0 failed.
 
-**Wave 3 complete — all 18 Phase 2 milestones are now done.** Three milestones across the full plan required a real scope adjustment discovered during implementation rather than assumed at planning time (M9's hover-conflict, M12's tick-jumping honesty, M18's colorblind-preview deferral); each is documented in place rather than silently reinterpreted, matching the discipline this document held to from Phase 1 onward.
+**Wave 3 complete — all 18 Phase 2 milestones are now done.** Three milestones across the full plan required a real scope adjustment discovered during implementation rather than assumed at planning time (M6's replay-architecture conflict, M9's hover-conflict, M12's tick-jumping honesty); each is documented in place rather than silently reinterpreted, matching the discipline this document held to from Phase 1 onward.
 
-Implementation audit complete.
-UI roadmap ready for review.
+---
+
+## Phase 2 Architectural Decisions
+
+The following architectural decisions were discovered during implementation and intentionally supersede the original planning assumptions in §2 (UX Architecture) and §7 (Roadmap).
+
+---
+
+### ADR-001 — Replay Architecture
+
+**Decision:** Replay remains a headless execution path. Interactive (live scrub/seek) replay was intentionally deferred.
+
+**Reason:** `main.rs` runs replay via `app::replay::run_replay` — a fully headless code path (`init_gpu_headless`, no winit event loop, no egui context) that returns immediately on completion. Integrating replay into `PhylonApp`'s normal interactive event loop, so a live Timeline panel could read a real-time tick position, would require restructuring `main.rs`'s branching and the update loop itself — a genuine architectural change, not a UI milestone. Found by re-reading the actual control flow immediately before implementing M6, not assumed at planning time.
+
+**Current solution:** Replay Browser (`plugins/replay_browser.rs`) — static inspection of a loaded `.phylon-replay` bundle's seed, tick range, and every recorded intervention, with no live playback control.
+
+**Future trigger:** A dedicated "Interactive Replay" initiative, scoped and approved on its own, the way this ADR itself required your explicit sign-off before M6 proceeded.
+
+---
+
+### ADR-002 — Selection Architecture
+
+**Decision:** `WorkbenchState::selected_entity` (primary selection) remains completely unchanged. Multi-selection (`secondary_selected: HashSet<Entity>`) is purely additive.
+
+**Reason:** A fresh grep found ~20 existing read/write sites for `selected_entity` across the `ui` and `app` crates. Changing the underlying type (e.g., to `Vec<Entity>` everywhere) would have touched all of them for a single milestone. Adding a second, empty-by-default field alongside it means every existing call site keeps compiling and behaving identically, while new multi-select consumers (marquee-select, future bulk operations) opt into the richer `all_selected()`/`is_selected()`/`select_multiple()` API.
+
+**Consequence:** Two fields describe "what's selected" (`selected_entity` + `secondary_selected`) rather than one. Callers that need the *complete* selection must remember to use `all_selected()` rather than reading `selected_entity` alone — a discipline, not a compiler-enforced rule, same category as `common::SimRng`'s determinism discipline noted in the backend audit.
+
+---
+
+### ADR-003 — Hover Architecture
+
+**Decision:** A new `panel_hover_entity` field was introduced rather than having non-viewport panels write directly to `hovered_entity`.
+
+**Reason:** `app::events.rs` overwrites `hovered_entity` unconditionally every frame from viewport cursor-picking (`pick_entity`). Any other panel (e.g., the Lineage Explorer) writing to that same field during its own render pass would be silently clobbered before the frame's highlight rendering ever ran. This was not visible from the data model alone — it was found by tracing `hovered_entity`'s actual write sites before implementing M9.
+
+**Consequence:** The viewport's highlight computation (`app/src/render.rs`) now reads `hovered_entity.or(panel_hover_entity)` — two fields feeding one visual effect. Any future "make X hoverable from panel Y" work should extend `panel_hover_entity`'s writers, not add a third parallel field.
+
+---
+
+### ADR-004 — Bookmarks Architecture
+
+**Decision:** Bookmarks store camera state (position + zoom) only, not a tick or simulation moment.
+
+**Reason:** Direct consequence of ADR-001 — there is no live tick-seeking in a running simulation to tie a bookmark to (replay's tick-seeking is the separate headless mode ADR-001 describes). A "bookmark" here can only honestly mean "a saved place to look," not "a saved moment in time."
+
+**Consequence:** Bookmarks are session-only and entirely UI-side — `WorkbenchState.bookmarks: Vec<CameraBookmark>`, applied with a direct field write, no `MenuAction`/ECS round-trip.
+
+**Future trigger:** If ADR-001's Interactive Replay initiative is ever undertaken, bookmarks should be revisited to see whether tick-tied bookmarks become meaningful at that point — not before.
+
+---
+
+### ADR-005 — Color/Accessibility Architecture
+
+**Decision:** Live colorblind preview was evaluated and deferred, both at the original Phase 2 audit (§6, before any implementation) and reaffirmed during M18's implementation.
+
+**Reason:** A live preview needs a genuine color-space transform pipeline applied at render time, not a static token swap like High Contrast Mode. §6 already concluded that migrating the whole `theme.rs` token system to the `palette` crate pre-emptively would be speculative, since nothing in the UI currently interpolates colors — the existing token system has no duplicate-conversion problem to solve. M18 re-confirmed this holds: High Contrast Mode and UI-scale were both deliverable as simple, scoped features; live colorblind preview was not, for the same reason §6 identified.
+
+**Current solution:** `docs/design/accessibility.md`'s existing static Deuteranopia simulation table (Phase 1) remains the authoritative colorblind-safety reference. High Contrast Mode and a UI-scale slider (via `egui::Context::set_zoom_factor`) were delivered in M18 as the achievable subset.
+
+**Future trigger:** The same one §6 already named — the first real continuous-interpolation need (e.g., a density-map gradient, or procedural N-species coloring once the fixed 5-diet palette is outgrown). Adopt `palette` scoped to that one feature first, not as a workspace-wide migration.
+
+---
+
+## Phase 2 Summary
+
+| Metric | Count |
+| --- | --- |
+| Milestones planned | 18 |
+| Milestones completed | 18 |
+| Completed without modification | 15 |
+| Modified after implementation review (M6, M9, M12) | 3 |
+| Deferred sub-items (live colorblind preview, within M18) | 1 |
+| Architectural decisions introduced (ADR-001–005) | 5 |
+| New panels/overlays (Lineage Explorer tab, Research Dashboard, Replay Browser, Command Palette, Minimap) | 5 |
+| Phase 2 roadmap themes touched (all 7 of the original epics — Research Workflow UX, Scientific Visualization, Interactive Analytics, Timeline & Replay, Research Productivity, Workspace Intelligence, Accessibility) | 7 |
+| New `MenuAction` variants | 9 |
+| Files changed (crates/ + docs/, since Phase 1's close) | 27 |
+| New files created | 3 |
+| Tests passing | 181 |
+| Test failures | 0 |
+| Clippy warnings | 0 |
+| Build warnings | 0 |
+
+---
+
+## Phase 2 Status
+
+**COMPLETE.**
+
+This roadmap is now frozen as a historical record of what was planned, what was actually built, where the two diverged, and why. It should not be further edited to describe new work.
+
+Future UI initiatives — including the four items this document explicitly named as future-triggered rather than done now (Interactive Replay, tick-tied Bookmarks, Density Maps, `palette`-crate migration) — should be planned in a new **`UI_PHASE3_ROADMAP.md`**, following the same discipline this document and `UI_IMPLEMENTATION_STATUS.md` established: verify the repository before trusting any prior plan, document discrepancies in place, and never assume a roadmap is still correct without checking.
