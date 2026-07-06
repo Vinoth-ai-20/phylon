@@ -14,7 +14,7 @@
 | `CHART_OMNIVORE` | Omnivore | `#FFB703` (amber) |
 | `CHART_DECOMPOSER` | Decomposer | `#9B5DE5` (purple) |
 
-**Accessibility note:** the Producer/Carnivore pair is green/red — the single most common form of color blindness. See [`accessibility.md`](accessibility.md) for the verification pass this palette must pass before Milestone 12 closes; this file records the palette's *semantic* assignment, not its colorblind sign-off.
+**Accessibility note:** the Producer/Carnivore pair is green/red — the single most common form of color blindness, and was verified to stay separable under a Deuteranopia simulation. The pair that actually collides post-transform is Carnivore/Omnivore — see [`accessibility.md`](accessibility.md) for the full simulation table and the (currently unlanded) recommended fix; this file records the palette's *semantic* assignment, not its colorblind sign-off.
 
 **Naming note:** unlike the non-diet chart tokens below, `chart_color(diet: &ecology::Diet)` is a function, not five separate constants — `Diet::standard_color()` is authored in the viewport's linear color space, so each call re-derives the on-screen sRGB value rather than caching it as a literal. Earlier drafts of this document referred to `CHART_PRODUCER`/`CHART_HERBIVORE`/etc. as if they were named constants; they aren't, and no such constants should be added — `chart_color()` is what call sites use.
 
@@ -100,8 +100,9 @@ Death/extinction events reuse `DANGER` rather than a fifth `LOG_*` token, since 
 
 | Token | Use |
 |---|---|
-| `DISABLED_FG` / `DISABLED_BG` | Any control in a disabled state — currently undefined anywhere in the codebase; every disabled control today falls back to whatever egui's built-in dark theme happens to do, unrelated to Phylon's own palette. |
-| `FOCUS_RING` | The visible focus outline for keyboard navigation — currently undefined; egui's default focus ring is low-contrast against Phylon's near-black chrome. |
+| `DISABLED_FG` | Muted/secondary/hint text app-wide (timestamps, empty-state hints, "Not Available" values) — replaces the ad hoc `egui::Color32::GRAY`/`DARK_GRAY` literals previously scattered across nearly every plugin file. See [`accessibility.md`](accessibility.md). |
+| `DISABLED_BG` | Defined, but has no call site yet — no control in the workbench today renders a custom disabled background (egui's built-in disabled-state dimming applies automatically, and the codebase doesn't yet use `Ui::add_enabled`/`Ui::disable` anywhere). Stays defined and documented for the first panel that needs one. |
+| `FOCUS_RING` | The visible focus outline for keyboard navigation, applied once in `theme::apply_style` to `style.visuals.widgets.active.{bg_stroke,fg_stroke}` — covers every focusable control app-wide, since egui renders keyboard focus using the same `active` `WidgetVisuals` state as a click-in-progress. Fixes the previously low-contrast default focus ring against Phylon's near-black chrome. |
 
 ## Depth and separation
 

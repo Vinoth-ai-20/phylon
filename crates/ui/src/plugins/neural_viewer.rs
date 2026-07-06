@@ -280,19 +280,6 @@ fn handle_pan_zoom(
     }
 }
 
-/// Draws a small filled circle "swatch" followed by a label — used for
-/// legends instead of a Unicode "●" glyph, which silently falls back to a
-/// tofu/box glyph in fonts that don't carry that codepoint (as IBM Plex Sans
-/// doesn't), regardless of which fallback font is configured after it.
-fn legend_dot(ui: &mut egui::Ui, color: egui::Color32, label: &str) {
-    ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-        ui.painter().circle_filled(rect.center(), 4.0, color);
-        ui.add_space(2.0);
-        ui.label(egui::RichText::new(label).small());
-    });
-}
-
 /// Nearest node to `pointer` within `radius` + a small hit-test tolerance.
 fn hit_test_node(pointer: egui::Pos2, positions: &[egui::Pos2], radius: f32) -> Option<usize> {
     let tolerance = radius + 3.0;
@@ -536,9 +523,9 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain, view: &mut crate::state
     }
 
     ui.horizontal(|ui| {
-        legend_dot(ui, NODE_INPUT, "input");
-        legend_dot(ui, NODE_HIDDEN, "hidden");
-        legend_dot(ui, NODE_OUTPUT, "output");
+        crate::widgets::chart_legend_dot(ui, NODE_INPUT, "input");
+        crate::widgets::chart_legend_dot(ui, NODE_HIDDEN, "hidden");
+        crate::widgets::chart_legend_dot(ui, NODE_OUTPUT, "output");
         ui.label(
             egui::RichText::new("— blue = excitatory, red = inhibitory")
                 .small()
@@ -734,8 +721,8 @@ fn draw_cppn_graph(
     }
 
     ui.horizontal(|ui| {
-        legend_dot(ui, NODE_INPUT, "input");
-        legend_dot(ui, NODE_HIDDEN, "hidden");
-        legend_dot(ui, NODE_OUTPUT, "output");
+        crate::widgets::chart_legend_dot(ui, NODE_INPUT, "input");
+        crate::widgets::chart_legend_dot(ui, NODE_HIDDEN, "hidden");
+        crate::widgets::chart_legend_dot(ui, NODE_OUTPUT, "output");
     });
 }

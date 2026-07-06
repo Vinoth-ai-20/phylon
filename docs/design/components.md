@@ -29,12 +29,12 @@ Every reusable UI primitive in Phylon, documented before it's built or consolida
 
 - **Purpose:** colored swatch + label for chart/graph legends.
 - **Variants:** filled circle (standard).
-- **States:** default, active-series (bold, for the currently-tracked entity's series in Metrics once Milestone 7 lands).
+- **States:** default. (An active-series bold state for Metrics was considered but not built — Metrics has no per-series visibility/focus interaction to key it off of; see its own "Future Scope" note.)
 - **Tokens:** `CHART_*`, `SIZE_SMALL`.
 - **Accessibility:** never the sole indicator of series identity — always paired with a text label, never color-only.
 - **Owner:** `crates/ui/src/widgets.rs` (generalized out of `neural_viewer.rs`, where it originated to work around a font-glyph issue with the Unicode "●" character).
 - **Dependencies:** `theme.rs`.
-- **Consolidates:** `neural_viewer.rs`'s `legend_dot` (currently the only implementation; Milestone 7 gives Metrics a matching one instead of relying on `egui_plot::Legend::default()`'s on-chart overlay).
+- **Consolidates, Milestone 7 (done):** `neural_viewer.rs`'s original `legend_dot` and `metrics.rs`'s reliance on `egui_plot::Legend::default()`'s on-chart overlay — both now call this one shared function. (A leftover local copy of `legend_dot` survived in `neural_viewer.rs` past the original Milestone 7 close and was found and removed during the Phase 1 documentation-sync pass.)
 
 ## `status_chip`
 
@@ -68,3 +68,14 @@ Every reusable UI primitive in Phylon, documented before it's built or consolida
 - **Owner:** `crates/ui/src/widgets.rs`.
 - **Dependencies:** `theme.rs`.
 - **Consolidates:** ad hoc centered-label patterns scattered in `inspector.rs` and `neural_viewer.rs` today.
+
+## `draw_segment_tree` (Inspector "Body Plan")
+
+- **Purpose:** recursive collapsible tree view of the selected organism's segment/spring hierarchy (Head → Torso/Muscle/Tail/Fin), rooted at its head node regardless of which segment is currently selected.
+- **Variants:** leaf row (no children — a selectable label) vs. branch row (a `CollapsingHeader`, default-open, showing each child's connecting constraint type and, for actuated muscles, amplitude/phase).
+- **States:** default, selected (the row for `state.selected_entity` renders as the active `selectable_label`).
+- **Tokens:** `DISABLED_FG` (constraint-type sub-labels).
+- **Accessibility:** clicking any row re-selects that segment, mirroring viewport click-to-select — one selection model, not a second parallel one scoped to this tree.
+- **Owner:** `crates/ui/src/utils.rs` (recursive drawing function); `crates/ui/src/plugins/inspector.rs::render_body_plan` (adjacency-map construction and head-node lookup, called from a "Body Plan" `CollapsingHeader`).
+- **Dependencies:** `physics::{ParticleNode, Spring}`, `theme.rs`.
+- **History:** implemented in full before this design system existed, but never wired into the Inspector — a dead-code finding closed during Phase 1, M4 rather than a new feature built for this pass.

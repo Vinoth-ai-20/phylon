@@ -4,7 +4,7 @@
 
 The root split (`crates/ui/src/layout.rs::rebuild_tree_from_modes`) is Sidebar (share 1.0) | Viewport + bottom tabs (share 3.0) | Neural Viewer (share 1.0) — roughly **20% / 60% / 20%**, close to the Blender/Unity convention this design system targets. The nested bottom split is Viewport (share 3.0) vs. Metrics/Event Log tabs (share 1.0).
 
-**Known gap (fixed by Milestone 9):** these shares are hardcoded and rebuilt from scratch on every dock/undock/reset action, silently discarding any ratio the user dragged at runtime. The fix persists last-known shares in `WorkbenchState` and applies them instead of the defaults on rebuild — never changing *which* panels exist, only *how much space* they get, keeping `PanelMode` (Docked/Floating/Closed) as the sole structural source of truth.
+**Fixed, Milestone 9:** these shares used to be hardcoded and rebuilt from scratch on every dock/undock/reset action, silently discarding any ratio the user dragged at runtime. `extract_shares`/`collect_shares` now persist last-known shares in `WorkbenchState::layout_shares` every frame, and `rebuild_tree_from_modes` reads them back via `share_of()` instead of the old hardcoded constants — never changing *which* panels exist, only *how much space* they get, keeping `PanelMode` (Docked/Floating/Closed) as the sole structural source of truth.
 
 ## Docking model
 
@@ -38,7 +38,7 @@ Three named presets, each a fixed `PanelMode` + share configuration, selectable 
 - **Presentation** — Sidebar and Neural Viewer closed, Viewport maximized, Metrics floating (for screen-sharing a clean simulation view).
 - **Debug** — everything docked and visible, including panels a researcher might normally close.
 
-A **Restore Defaults** action resets to the Research preset — this already exists conceptually as `apply_default_layout()`; Milestone 9 extends it to support the other two named presets rather than only "the one default."
+A **Restore Defaults** action resets to the Research preset via `apply_layout_preset`, which (Milestone 9) now supports all three named presets rather than only the one original default.
 
 ## Multi-monitor (future — not implemented this roadmap)
 
