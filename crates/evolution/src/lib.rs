@@ -145,6 +145,16 @@ impl LineageTracker {
         self.records.get(&entity)
     }
 
+    /// Iterates every record for a currently-alive organism
+    /// (`death_tick.is_none()` — a record with `death_tick` set is still in
+    /// `records` until the next [`LineageTracker::extract_completed_records`]
+    /// call, so this filters those out). Used by
+    /// `app::analytics_bridge` to compute species/age/generation
+    /// distributions without exposing the underlying `HashMap`.
+    pub fn active_records(&self) -> impl Iterator<Item = &LineageRecord> {
+        self.records.values().filter(|r| r.death_tick.is_none())
+    }
+
     /// # Ephemeral DAG Cold-Storage Extraction
     ///
     /// ## 1. What Happens

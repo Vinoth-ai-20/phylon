@@ -13,6 +13,11 @@ struct SpawnOrganismCommand {
     position: common::Vec2,
     diet: ecology::Diet,
     category: ecology::EcologicalCategory,
+    /// When true and `parent_id` is present, connects the new organism's
+    /// head node to the parent's head node with a physical spring after
+    /// spawning — colonial fragmentation/budding (see
+    /// `reproduction::BirthRequest::is_budding`).
+    is_budding: bool,
 }
 
 impl bevy_ecs::world::Command for SpawnOrganismCommand {
@@ -76,6 +81,33 @@ impl bevy_ecs::world::Command for SpawnOrganismCommand {
             );
         }
 
+        // Colonial fragmentation/budding: physically tether the new
+        // organism's head node to its parent's, forming a growing colony
+        // instead of an independent dispersed offspring. See
+        // `reproduction::BirthRequest::is_budding`'s doc comment.
+        if self.is_budding {
+            if let Some(parent_id) = self.parent_id {
+                if world.get_entity(parent_id).is_some() {
+                    world.spawn(physics::Spring {
+                        node_a: parent_id,
+                        node_b: entity,
+                        constraint_type: physics::ConstraintType::Elastic,
+                        rest_length: 20.0,
+                        base_length: 20.0,
+                        stiffness: 10.0,
+                        damping: 0.5,
+                        actuation_amplitude: 0.0,
+                        actuation_phase: 0.0,
+                        // Colony links break more easily than intra-body
+                        // bones (`2.0` elsewhere) — a colony can still
+                        // fragment further under strain.
+                        breaking_strain: 1.5,
+                        is_fin: 0,
+                    });
+                }
+            }
+        }
+
         if generation > 0 && generation % 5 == 0 {
             if let Some(mut log) = world.get_resource_mut::<analytics::NarrationLog>() {
                 log.push_event(
@@ -102,6 +134,7 @@ pub fn process_births_system(
             position: event.position,
             diet: event.diet.clone(),
             category: event.category.clone(),
+            is_budding: event.is_budding,
         });
     }
 }

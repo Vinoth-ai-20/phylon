@@ -256,7 +256,7 @@ fn compute_metabolism(
 /// components plus two read-only environment values (`sunlight`, the
 /// sampled local field) — no organism's computation depends on any other
 /// organism's result, so this half is computed in parallel via `rayon`
-/// ([`compute_metabolism`]).
+/// (`compute_metabolism`).
 ///
 /// The one piece of genuinely shared state is `GlobalAtmosphere.o2`/`.co2`,
 /// which every organism accumulates into. Floating-point addition is not

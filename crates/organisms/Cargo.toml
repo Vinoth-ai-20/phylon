@@ -20,4 +20,5 @@ brain     = { path = "../brain" }
 behavior  = { path = "../behavior" }
 sensing   = { path = "../sensing" }
 diffusion = { path = "../diffusion" }
+spatial   = { workspace = true }
 fastrand = "2.4.1"

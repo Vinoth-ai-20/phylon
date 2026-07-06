@@ -12,7 +12,7 @@ const CONTACT_EAT_RADIUS: f32 = 20.0;
 #[derive(Resource, Debug, Clone)]
 pub struct FungalNetworkConfig {
     /// Maximum range a decomposer's mycelial network can reach beyond
-    /// [`CONTACT_EAT_RADIUS`].
+    /// `CONTACT_EAT_RADIUS`.
     pub siphon_radius: f32,
     /// Fraction of a corpse's *remaining* energy drawn per tick at zero
     /// distance; falls off linearly to `0` at `siphon_radius`.

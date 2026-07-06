@@ -318,8 +318,8 @@ impl Brain {
     }
 
     /// Removes synapses whose `|weight|` has decayed below `threshold`, then
-    /// rebuilds GPU-gather offsets via [`Brain::reindex_synapses`] so the
-    /// brain stays internally consistent after pruning.
+    /// rebuilds GPU-gather offsets via `reindex_synapses` so the brain stays
+    /// internally consistent after pruning.
     pub fn prune_weak_synapses(&mut self, threshold: f32) {
         self.synapses.retain(|s| s.weight.abs() >= threshold);
         Self::reindex_synapses(&mut self.nodes, &mut self.synapses);

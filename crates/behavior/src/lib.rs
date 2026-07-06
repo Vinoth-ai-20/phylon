@@ -4,11 +4,9 @@
 //!
 //! Organisms receive sensory inputs, process them through their neural brain,
 //! and emit motor commands. This crate converts neural output into physical
-//! forces applied to the organism's particle nodes.
-//!
-//! ## Phase 0 scope
-//!
-//! Action type declaration. Implementation: Phase 3.
+//! forces applied to the organism's particle nodes. Also derives/regenerates
+//! `Health` and `BehaviorState` from metabolic state each tick (see
+//! [`physiological_state_update_system`]).
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -248,7 +246,7 @@ fn compute_behavior(
 /// (Epic 6), the actual per-organism computation (Phases A-C above) is pure
 /// — it depends only on that organism's own brain outputs, its effectors'
 /// current spring state, and read-only environment/config values — so it's
-/// computed in parallel via [`compute_behavior`]. The one piece of
+/// computed in parallel via `compute_behavior`. The one piece of
 /// cross-entity structure is that spring entities are looked up by ID
 /// (`MotorSystem::effectors`) rather than held directly; different
 /// organisms' effectors are disjoint spring entities in practice, but nothing
@@ -374,6 +372,13 @@ pub fn behavior_system(
 /// 2. Low glucose (< 20 %) → **Foraging**
 /// 3. Low hydration (< 0.2) → **Foraging** (seeking water)
 /// 4. Otherwise → **Idle**
+///
+/// Also regenerates/drains `Health` from the same ATP reading: surplus ATP
+/// (> 50 %) slowly heals injury, critical ATP (< 10 %, the same threshold
+/// that triggers Fleeing) causes starvation damage — the first time
+/// `Health` moves in the "recovery" direction rather than only ever
+/// draining (see `ecology::disease_progression_system`, which drains it
+/// for infected organisms).
 #[allow(clippy::type_complexity)]
 pub fn physiological_state_update_system(
     mut query: bevy_ecs::prelude::Query<(
@@ -384,10 +389,12 @@ pub fn physiological_state_update_system(
         Option<&metabolism::ChemicalEconomy>,
         Option<&mut BehaviorState>,
         Option<&mut CurrentGoal>,
+        Option<&mut metabolism::Health>,
     )>,
     env: Option<bevy_ecs::prelude::Res<environment::EnvironmentManager>>,
 ) {
-    for (_entity, node, hydration_opt, temp_opt, chem_opt, state_opt, goal_opt) in query.iter_mut()
+    for (_entity, node, hydration_opt, temp_opt, chem_opt, state_opt, goal_opt, health_opt) in
+        query.iter_mut()
     {
         // 1. Tick Hydration
         if let Some(mut hydration) = hydration_opt {
@@ -404,7 +411,25 @@ pub fn physiological_state_update_system(
             body_temp.current += (env_temp - body_temp.current) * 0.02;
         }
 
-        // 3. Derive BehaviorState from metabolic urgency
+        // 3a. Health regeneration/drain from ATP surplus/deficit — computed
+        // before the `chem_opt` move below, so it applies independently of
+        // whether `BehaviorState`/`CurrentGoal` are present on this entity.
+        if let (Some(chem), Some(mut health)) = (chem_opt.as_ref(), health_opt) {
+            let atp_fraction = if chem.max_atp > 0.0 {
+                chem.atp / chem.max_atp
+            } else {
+                0.0
+            };
+            const HEALTH_REGEN_PER_TICK: f32 = 0.05;
+            const STARVATION_DAMAGE_PER_TICK: f32 = 0.1;
+            if atp_fraction > 0.5 {
+                health.current = (health.current + HEALTH_REGEN_PER_TICK).min(health.max);
+            } else if atp_fraction < 0.10 {
+                health.current = (health.current - STARVATION_DAMAGE_PER_TICK).max(0.0);
+            }
+        }
+
+        // 3b. Derive BehaviorState from metabolic urgency
         if let (Some(mut bstate), Some(mut goal), Some(chem)) = (state_opt, goal_opt, chem_opt) {
             let atp_fraction = if chem.max_atp > 0.0 {
                 chem.atp / chem.max_atp
@@ -557,5 +582,91 @@ mod tests {
             results_1, results_8,
             "spring/atp/emitter state diverged between 1 and 8 threads"
         );
+    }
+
+    fn sample_chem(atp: f32) -> metabolism::ChemicalEconomy {
+        metabolism::ChemicalEconomy {
+            glucose: 0.0,
+            o2: 0.0,
+            co2: 0.0,
+            atp,
+            max_glucose: 0.0,
+            max_o2: 0.0,
+            max_co2: 0.0,
+            max_atp: 100.0,
+        }
+    }
+
+    #[test]
+    fn health_regenerates_when_atp_surplus() {
+        let mut world = World::new();
+        let e = world
+            .spawn((
+                physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 1),
+                sample_chem(80.0), // 80% ATP, above the 50% regen threshold
+                metabolism::Health {
+                    current: 50.0,
+                    max: 100.0,
+                },
+            ))
+            .id();
+
+        world.run_system_once(physiological_state_update_system);
+
+        assert!(world.get::<metabolism::Health>(e).unwrap().current > 50.0);
+    }
+
+    #[test]
+    fn health_drains_on_critical_atp() {
+        let mut world = World::new();
+        let e = world
+            .spawn((
+                physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 1),
+                sample_chem(5.0), // 5% ATP, below the 10% starvation threshold
+                metabolism::Health {
+                    current: 50.0,
+                    max: 100.0,
+                },
+            ))
+            .id();
+
+        world.run_system_once(physiological_state_update_system);
+
+        assert!(world.get::<metabolism::Health>(e).unwrap().current < 50.0);
+    }
+
+    #[test]
+    fn health_never_exceeds_max_or_drops_below_zero() {
+        let mut world = World::new();
+        let full = world
+            .spawn((
+                physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 1),
+                sample_chem(100.0),
+                metabolism::Health {
+                    current: 100.0,
+                    max: 100.0,
+                },
+            ))
+            .id();
+        let empty = world
+            .spawn((
+                physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 2),
+                sample_chem(0.0),
+                metabolism::Health {
+                    current: 0.0,
+                    max: 100.0,
+                },
+            ))
+            .id();
+
+        for _ in 0..10 {
+            world.run_system_once(physiological_state_update_system);
+        }
+
+        assert_eq!(
+            world.get::<metabolism::Health>(full).unwrap().current,
+            100.0
+        );
+        assert_eq!(world.get::<metabolism::Health>(empty).unwrap().current, 0.0);
     }
 }

@@ -29,6 +29,14 @@ pub use systems::growth_system;
 pub mod plasticity;
 pub use plasticity::{hebbian_plasticity_system, neuromodulator_system};
 
+/// Colonial/social coordination: flocking and pack (cooperative) hunting.
+pub mod social;
+pub use social::{flocking_system, pack_hunting_system, FlockingConfig, PackHuntingConfig};
+
+/// Quorum sensing / biofilm density-scaling aggregation.
+pub mod quorum;
+pub use quorum::{biofilm_system, BiofilmConfig};
+
 /// Organism spawning logic.
 pub mod spawning;
 pub use spawning::{spawn_organism, spawn_proto_fish};

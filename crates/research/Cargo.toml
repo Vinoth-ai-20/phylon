@@ -9,3 +9,5 @@ common    = { workspace = true }
 config    = { workspace = true }
 scheduler = { workspace = true }
 thiserror = { workspace = true }
+serde     = { workspace = true }
+ron       = { workspace = true }

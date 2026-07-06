@@ -12,10 +12,16 @@ use rand::Rng;
 /// Reproduction mode.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReproductionMode {
-    /// Clones itself.
+    /// Clones itself; the child disperses to a nearby but independent
+    /// position.
     Asexual,
     /// Requires a mate.
     Sexual,
+    /// Like [`ReproductionMode::Asexual`] (clonal, no crossover), but the
+    /// child spawns physically tethered to the parent via a spring instead
+    /// of dispersing — colonial fragmentation/budding, per the spec's
+    /// Multicellular Systems section. See [`BirthRequest::is_budding`].
+    Budding,
 }
 
 /// # Ecological Reproduction Strategy
@@ -74,6 +80,11 @@ pub struct BirthRequest {
     pub diet: ecology::Diet,
     /// The ecological category inherited from the parent.
     pub category: ecology::EcologicalCategory,
+    /// Set when `mode` was [`ReproductionMode::Budding`] — tells the spawn
+    /// handler (`app::systems::SpawnOrganismCommand`) to connect the new
+    /// child's head node to `parent_id` with a physical spring, forming a
+    /// colony instead of an independent organism.
+    pub is_budding: bool,
 }
 
 /// # Population Replication System
@@ -136,8 +147,10 @@ pub fn reproduction_system(
             && chem.atp >= actual_threshold
             && strategy.current_cooldown == 0
         {
-            // Asexual clone
-            if strategy.mode == ReproductionMode::Asexual {
+            // Asexual clone (and its colonial cousin, Budding)
+            if strategy.mode == ReproductionMode::Asexual
+                || strategy.mode == ReproductionMode::Budding
+            {
                 if current_population + pending_births >= config.max_organisms {
                     continue;
                 }
@@ -145,15 +158,27 @@ pub fn reproduction_system(
                 chem.atp -= actual_cost;
                 strategy.current_cooldown = strategy.cooldown_ticks;
 
-                let mut child_genome = strategy.genome.clone();
-                // Introduce structural mutation
-                child_genome.mutate(0.2, &mut rng.0, &mut tracker);
+                let is_budding = strategy.mode == ReproductionMode::Budding;
 
-                // Spawn child slightly offset
-                let offset = Vec2::new(
-                    (rng.gen::<f32>() - 0.5) * 50.0,
-                    (rng.gen::<f32>() - 0.5) * 50.0,
-                );
+                let mut child_genome = strategy.genome.clone();
+                // Budding colony members are clones in the literal sense —
+                // no structural mutation — unlike dispersing Asexual
+                // offspring, which do mutate.
+                if !is_budding {
+                    child_genome.mutate(0.2, &mut rng.0, &mut tracker);
+                }
+
+                // Asexual offspring disperse; budding offspring stay close
+                // enough for `SpawnOrganismCommand` to connect them with a
+                // short spring (see `BirthRequest::is_budding`).
+                let offset = if is_budding {
+                    Vec2::new(20.0, 0.0)
+                } else {
+                    Vec2::new(
+                        (rng.gen::<f32>() - 0.5) * 50.0,
+                        (rng.gen::<f32>() - 0.5) * 50.0,
+                    )
+                };
 
                 birth_events.send(BirthRequest {
                     parent_id: Some(entity),
@@ -161,6 +186,7 @@ pub fn reproduction_system(
                     position: node.position + offset,
                     diet: diet.clone(),
                     category: category.clone(),
+                    is_budding,
                 });
 
                 pending_births += 1;
@@ -229,6 +255,7 @@ pub fn reproduction_system(
                         position: offset_pos,
                         diet: d1.clone(),
                         category: c1.clone(),
+                        is_budding: false,
                     });
                     pending_births += 1;
                     break; // e1 has mated, move to next i
@@ -244,5 +271,85 @@ pub fn reproduction_system(
             chem.atp -= strategy.energy_cost;
             strategy.current_cooldown = strategy.cooldown_ticks;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy_ecs::system::RunSystemOnce;
+    use bevy_ecs::world::World;
+
+    fn sample_chem_ready_to_reproduce() -> ChemicalEconomy {
+        ChemicalEconomy {
+            glucose: 1000.0,
+            o2: 1000.0,
+            co2: 0.0,
+            atp: 1000.0,
+            max_glucose: 1000.0,
+            max_o2: 1000.0,
+            max_co2: 1000.0,
+            max_atp: 1000.0,
+        }
+    }
+
+    fn build_world(mode: ReproductionMode) -> World {
+        let mut world = World::new();
+        world.insert_resource(ecology::EcologyConfig::default());
+        world.insert_resource(genetics::GlobalInnovationTracker::default());
+        world.insert_resource(SimRng::from_seed(1));
+        world.insert_resource(bevy_ecs::event::Events::<BirthRequest>::default());
+
+        world.spawn((
+            sample_chem_ready_to_reproduce(),
+            ReproductionStrategy {
+                energy_threshold: 100.0,
+                energy_cost: 50.0,
+                cooldown_ticks: 100,
+                current_cooldown: 0,
+                mode,
+                genome: genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0)),
+            },
+            physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 1),
+            ecology::Diet::Herbivore,
+            ecology::EcologicalCategory::None,
+        ));
+
+        world
+    }
+
+    #[test]
+    fn budding_sends_birth_request_with_is_budding_true() {
+        let mut world = build_world(ReproductionMode::Budding);
+        world.run_system_once(reproduction_system);
+
+        let events = world.resource::<bevy_ecs::event::Events<BirthRequest>>();
+        let mut reader = events.get_reader();
+        let request = reader.read(events).next().unwrap();
+        assert!(request.is_budding);
+    }
+
+    #[test]
+    fn budding_offspring_genome_is_unmutated_clone() {
+        let mut world = build_world(ReproductionMode::Budding);
+        world.run_system_once(reproduction_system);
+
+        let events = world.resource::<bevy_ecs::event::Events<BirthRequest>>();
+        let mut reader = events.get_reader();
+        let request = reader.read(events).next().unwrap();
+
+        let original = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        assert_eq!(request.genome, original);
+    }
+
+    #[test]
+    fn asexual_sends_birth_request_with_is_budding_false() {
+        let mut world = build_world(ReproductionMode::Asexual);
+        world.run_system_once(reproduction_system);
+
+        let events = world.resource::<bevy_ecs::event::Events<BirthRequest>>();
+        let mut reader = events.get_reader();
+        let request = reader.read(events).next().unwrap();
+        assert!(!request.is_budding);
     }
 }

@@ -73,6 +73,7 @@ dependencies = [
  "egui_plot",
  "events",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "wgpu",
  "world",
@@ -162,6 +163,7 @@ dependencies = [
  "rand 0.8.6",
  "rendering",
  "reproduction",
+ "research",
  "rfd",
  "scheduler",
  "sensing",
@@ -2981,6 +2983,7 @@ dependencies = [
  "reproduction",
  "sensing",
  "serde",
+ "spatial",
  "thiserror 2.0.18",
  "world",
 ]
@@ -3468,7 +3471,9 @@ version = "0.1.0"
 dependencies = [
  "common",
  "config",
+ "ron",
  "scheduler",
+ "serde",
  "thiserror 2.0.18",
 ]
 

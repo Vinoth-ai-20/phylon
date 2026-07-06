@@ -297,6 +297,16 @@ pub struct ResearchConfig {
     /// Optional port for the headless MARL WebSocket server. If `Some`, the
     /// server is started and the simulation acts as an RL environment.
     pub network_port: Option<u16>,
+
+    /// When non-empty, `main` runs one headless experiment per seed listed
+    /// here (via `app::batch::run_batch`) instead of the normal
+    /// single-run/windowed flow, writing a per-run report plus one
+    /// aggregate batch summary to `data/experiments/`. Default: empty (off).
+    ///
+    /// `#[serde(default)]` so `.ron` config files written before this field
+    /// existed keep loading instead of failing with a missing-field error.
+    #[serde(default)]
+    pub batch_seeds: Vec<u64>,
 }
 
 impl Default for ResearchConfig {
@@ -308,6 +318,7 @@ impl Default for ResearchConfig {
             realtime_lock: false,
             max_ticks: 0,
             network_port: None,
+            batch_seeds: Vec::new(),
         }
     }
 }

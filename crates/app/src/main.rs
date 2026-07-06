@@ -7,11 +7,15 @@
 //! 1. Parse CLI arguments and locate the config file.
 //! 2. Initialise structured logging via `tracing_subscriber`.
 //! 3. Load `PhylonConfig` from `data/default.ron` (falls back to defaults).
-//! 4. Create a `winit` `EventLoop` and application window.
-//! 5. Initialise a `wgpu` surface on the window.
-//! 6. Create a `SimulationScheduler`.
-//! 7. Run the event loop — advancing the scheduler on each `AboutToWait` and
-//!    presenting a cleared frame on each `RedrawRequested`.
+//! 4. If `research.batch_seeds` is non-empty, run [`batch::run_batch`] and exit
+//!    (see that function's doc comment) — otherwise:
+//! 5. Create a `winit` `EventLoop` and application window (or, if
+//!    `research.headless` is set, a headless GPU context and a manual tick
+//!    loop instead — see the `is_headless` branch below).
+//! 6. Initialise a `wgpu` surface on the window.
+//! 7. Run the event loop, calling `PhylonApp::update_simulation` each tick
+//!    (`SimulationScheduler` is constructed but never advanced — the actual
+//!    per-tick system order lives in `simulation::update_simulation`).
 //!
 //! ## Architecture note
 //!
@@ -19,7 +23,9 @@
 //! depend on everything. All other crates are decoupled from each other via
 //! the dependency rules in `docs/02_crate_dependency_graph.md`.
 
+pub mod analytics_bridge;
 pub mod app;
+pub mod batch;
 pub mod capture;
 pub mod events;
 pub mod render;
@@ -56,6 +62,21 @@ fn main() -> Result<()> {
         rng_seed = sim_config.simulation.rng_seed,
         "Configuration loaded"
     );
+
+    if !sim_config.research.batch_seeds.is_empty() {
+        info!(
+            seeds = ?sim_config.research.batch_seeds,
+            "Running headless batch"
+        );
+        let batch_config = research::BatchRunConfig {
+            base_description: format!("Batch run: {}", sim_config.research.experiment_id),
+            seeds: sim_config.research.batch_seeds.clone(),
+            max_ticks: sim_config.research.max_ticks,
+        };
+        let reports = batch::run_batch(&sim_config, &batch_config);
+        info!(runs = reports.len(), "Batch run completed");
+        return Ok(());
+    }
 
     let is_headless = sim_config.research.headless;
     let realtime_lock = sim_config.research.realtime_lock;

@@ -30,6 +30,7 @@ ecology    = { workspace = true }
 reproduction = { workspace = true }
 ui         = { workspace = true }
 storage    = { path = "../storage" }
+research   = { path = "../research" }
 analytics  = { workspace = true }
 
 # GUI

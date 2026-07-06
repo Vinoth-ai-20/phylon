@@ -169,6 +169,13 @@ pub(crate) struct PhylonApp {
     /// `Some` while a recording is in progress — accumulates captured frames
     /// until `MenuAction::ToggleRecording` stops it and encodes them to GIF.
     pub(crate) recording: Option<crate::capture::RecordingState>,
+
+    /// This run's experiment identity (id, description, RNG seed) — built
+    /// from `config::ResearchConfig::experiment_id`/`SimulationConfig::rng_seed`
+    /// and persisted to `data/experiments/<id>/manifest.ron` at startup, so
+    /// `research::ExperimentManifest` is no longer dead code (see that
+    /// crate's doc comment for the history).
+    pub(crate) experiment_manifest: research::ExperimentManifest,
 }
 
 /// Per-entity `(start_node_index, node_count)` offsets into a batched
@@ -243,6 +250,15 @@ impl PhylonApp {
         world
             .ecs
             .insert_resource(ecology::FungalNetworkConfig::default());
+        world
+            .ecs
+            .insert_resource(organisms::FlockingConfig::default());
+        world
+            .ecs
+            .insert_resource(organisms::PackHuntingConfig::default());
+        world
+            .ecs
+            .insert_resource(organisms::BiofilmConfig::default());
 
         // The single seeded source of randomness for every stochastic system
         // (genetics mutation/crossover, spawn placement, mate selection, ...)
@@ -285,6 +301,18 @@ impl PhylonApp {
         let (task_tx, task_rx) = std::sync::mpsc::channel();
         let storage = storage::StorageManager::new();
 
+        let experiment_manifest = research::ExperimentManifest::new(
+            sim_config.research.experiment_id.clone(),
+            format!("Phylon run: {}", sim_config.research.experiment_id),
+            sim_config.simulation.rng_seed,
+        );
+        let manifest_path = std::path::Path::new("data/experiments")
+            .join(&experiment_manifest.id)
+            .join("manifest.ron");
+        if let Err(e) = experiment_manifest.save_to_ron(&manifest_path) {
+            tracing::warn!("failed to save experiment manifest: {e}");
+        }
+
         Self {
             sim_config,
             scheduler,
@@ -314,6 +342,7 @@ impl PhylonApp {
             pending_brain: None,
             pending_screenshot: false,
             recording: None,
+            experiment_manifest,
         }
     }
 

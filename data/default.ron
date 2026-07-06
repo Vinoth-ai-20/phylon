@@ -25,5 +25,6 @@ PhylonConfig(
         headless: false,
         realtime_lock: false,
         max_ticks: 0,
+        batch_seeds: [],
     ),
 )
