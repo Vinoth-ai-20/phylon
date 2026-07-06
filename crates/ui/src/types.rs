@@ -45,6 +45,22 @@ pub enum LineageView {
     Species,
 }
 
+/// A saved camera view (Phase 2, M12 — "Bookmarks"), session-only per the
+/// Phase 2 roadmap's own risk note: there is no live tick-jumping in a
+/// running simulation to meaningfully tie a bookmark to a specific tick
+/// (replay's tick-seeking is a separate, non-interactive-UI mode — see
+/// `ReplayBrowserSummary`'s doc comment), so a bookmark here is a saved
+/// *camera position*, not a saved *moment in time*.
+#[derive(Debug, Clone)]
+pub struct CameraBookmark {
+    /// User-facing label, e.g. "Predator cluster, south edge".
+    pub label: String,
+    /// World-space camera position at the time of saving.
+    pub position: common::Vec2,
+    /// Camera zoom at the time of saving.
+    pub zoom: f32,
+}
+
 /// A lightweight, already-extracted summary of a loaded `.phylon-replay`
 /// bundle for the Replay Browser panel (Phase 2, M6) — holds only what's
 /// needed to browse its recorded interventions, not the full
@@ -257,6 +273,17 @@ pub enum MenuAction {
     TrackEntity(bevy_ecs::entity::Entity),
     /// Select a specific entity.
     SelectEntity(bevy_ecs::entity::Entity),
+    /// Select every organism whose head node falls within a world-space
+    /// rectangle (Phase 2, M8 — marquee-select). `min`/`max` are opposite
+    /// corners in world space, not necessarily min-x/min-y vs. max-x/max-y
+    /// at the call site, but normalized to true min/max before this is
+    /// pushed.
+    SelectInRect {
+        /// World-space minimum corner (smaller x, smaller y).
+        min: common::Vec2,
+        /// World-space maximum corner (larger x, larger y).
+        max: common::Vec2,
+    },
     /// Copy an entity's ID to clipboard.
     CopyEntityId(bevy_ecs::entity::Entity),
 

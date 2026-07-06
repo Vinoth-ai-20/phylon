@@ -401,6 +401,42 @@ fn lineage_panel(
         }
     }
 
+    // Quick Organism Search (Phase 2, M13) — filters by a case-insensitive
+    // substring match against the entity's debug form, diet, or species ID.
+    // Applied to `records` directly, which means a matching child in the
+    // Ancestry view can lose its (now-filtered-out) parent and render as a
+    // root instead — an acceptable tradeoff for "find this organism fast,"
+    // not a bug: full-tree context is secondary while actively searching.
+    ui.horizontal(|ui| {
+        ui.label(egui_remixicon::icons::SEARCH_LINE);
+        ui.text_edit_singleline(&mut state.lineage_search);
+        if !state.lineage_search.is_empty()
+            && ui.small_button(egui_remixicon::icons::CLOSE_LINE).clicked()
+        {
+            state.lineage_search.clear();
+        }
+    });
+    if !state.lineage_search.is_empty() {
+        let needle = state.lineage_search.to_lowercase();
+        records.retain(|r| {
+            let entity_str = entity_by_id
+                .get(&r.entity)
+                .map(|e| format!("{e:?}"))
+                .unwrap_or_default();
+            let diet_str = diet_by_id
+                .get(&r.entity)
+                .map(|d| format!("{d:?}"))
+                .unwrap_or_default();
+            entity_str.to_lowercase().contains(&needle)
+                || diet_str.to_lowercase().contains(&needle)
+                || r.species.0.to_string().contains(&needle)
+        });
+        if records.is_empty() {
+            crate::widgets::empty_state(ui, "No organisms match your search.");
+            return;
+        }
+    }
+
     ui.horizontal(|ui| {
         ui.selectable_value(
             &mut state.lineage_view,
@@ -417,10 +453,10 @@ fn lineage_panel(
 
     match state.lineage_view {
         crate::LineageView::Ancestry => {
-            render_ancestry_tree(ui, actions, &records, &diet_by_id, &entity_by_id)
+            render_ancestry_tree(ui, state, actions, &records, &diet_by_id, &entity_by_id)
         }
         crate::LineageView::Species => {
-            render_species_groups(ui, actions, &records, &diet_by_id, &entity_by_id)
+            render_species_groups(ui, state, actions, &records, &diet_by_id, &entity_by_id)
         }
     }
 }
@@ -461,6 +497,7 @@ fn select_lineage_entity(
 
 fn render_ancestry_tree(
     ui: &mut egui::Ui,
+    state: &mut crate::WorkbenchState,
     actions: &mut Vec<MenuAction>,
     records: &[evolution::LineageRecord],
     diet_by_id: &std::collections::HashMap<common::EntityId, ecology::Diet>,
@@ -487,7 +524,15 @@ fn render_ancestry_tree(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             for root in &roots {
-                draw_lineage_node(ui, actions, root, &children, diet_by_id, entity_by_id);
+                draw_lineage_node(
+                    ui,
+                    state,
+                    actions,
+                    root,
+                    &children,
+                    diet_by_id,
+                    entity_by_id,
+                );
             }
         });
 }
@@ -495,9 +540,12 @@ fn render_ancestry_tree(
 /// Recursively draws one ancestry node, same shape as
 /// `utils::draw_segment_tree`: a leaf is a plain selectable row, a branch is
 /// a default-open `CollapsingHeader` whose own header click *also* selects
-/// the organism (not just its children's rows).
+/// the organism (not just its children's rows). Hovering either row shape
+/// sets `state.panel_hover_entity` (Phase 2, M9), which the viewport's
+/// highlight rendering already reads alongside its own cursor-picked hover.
 fn draw_lineage_node(
     ui: &mut egui::Ui,
+    state: &mut crate::WorkbenchState,
     actions: &mut Vec<MenuAction>,
     record: &evolution::LineageRecord,
     children: &std::collections::HashMap<common::EntityId, Vec<&evolution::LineageRecord>>,
@@ -514,19 +562,49 @@ fn draw_lineage_node(
             .default_open(true)
             .show(ui, |ui| {
                 for child in kids {
-                    draw_lineage_node(ui, actions, child, children, diet_by_id, entity_by_id);
+                    draw_lineage_node(
+                        ui,
+                        state,
+                        actions,
+                        child,
+                        children,
+                        diet_by_id,
+                        entity_by_id,
+                    );
                 }
             });
+        if response.header_response.hovered() {
+            set_panel_hover(state, entity_by_id, record.entity);
+        }
         if response.header_response.clicked() {
             select_lineage_entity(actions, entity_by_id, record.entity);
         }
-    } else if ui.selectable_label(false, label).clicked() {
-        select_lineage_entity(actions, entity_by_id, record.entity);
+    } else {
+        let response = ui.selectable_label(false, label);
+        if response.hovered() {
+            set_panel_hover(state, entity_by_id, record.entity);
+        }
+        if response.clicked() {
+            select_lineage_entity(actions, entity_by_id, record.entity);
+        }
+    }
+}
+
+/// Sets `state.panel_hover_entity` for a hovered lineage row, if its
+/// `EntityId` still resolves to a live `Entity` this frame.
+fn set_panel_hover(
+    state: &mut crate::WorkbenchState,
+    entity_by_id: &std::collections::HashMap<common::EntityId, bevy_ecs::entity::Entity>,
+    id: common::EntityId,
+) {
+    if let Some(&entity) = entity_by_id.get(&id) {
+        state.panel_hover_entity = Some(entity);
     }
 }
 
 fn render_species_groups(
     ui: &mut egui::Ui,
+    state: &mut crate::WorkbenchState,
     actions: &mut Vec<MenuAction>,
     records: &[evolution::LineageRecord],
     diet_by_id: &std::collections::HashMap<common::EntityId, ecology::Diet>,
@@ -553,7 +631,11 @@ fn render_species_groups(
                     for member in members {
                         let label = egui::RichText::new(lineage_row_label(member, diet_by_id))
                             .color(lineage_row_color(member, diet_by_id));
-                        if ui.selectable_label(false, label).clicked() {
+                        let response = ui.selectable_label(false, label);
+                        if response.hovered() {
+                            set_panel_hover(state, entity_by_id, member.entity);
+                        }
+                        if response.clicked() {
                             select_lineage_entity(actions, entity_by_id, member.entity);
                         }
                     }

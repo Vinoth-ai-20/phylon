@@ -15,8 +15,6 @@ pub fn viewport_ui(
     canvas_interaction: &mut Option<CanvasInteraction>,
     actions: &mut Vec<MenuAction>,
 ) {
-    let _ = ctx;
-
     // Keep the area transparent so wgpu shows through
     egui::Frame::none()
         .fill(egui::Color32::TRANSPARENT)
@@ -37,6 +35,18 @@ pub fn viewport_ui(
 
             let hover_pos = ui.input(|i| i.pointer.hover_pos());
             let zoom_delta = ui.input(|i| i.zoom_delta());
+
+            // Cursor world-space position (Phase 2, M10) — `None` unless the
+            // cursor is actually within this canvas's rect, so hovering a
+            // different panel doesn't leave a stale/wrong readout.
+            state.cursor_world_pos = hover_pos.filter(|p| rect.contains(*p)).map(|p| {
+                let screen_center = rect.center();
+                let ppp = ctx.pixels_per_point();
+                common::Vec2::new(
+                    state.camera_pos.x + (p.x - screen_center.x) * ppp / state.camera_zoom,
+                    state.camera_pos.y - (p.y - screen_center.y) * ppp / state.camera_zoom,
+                )
+            });
 
             *canvas_interaction = Some(CanvasInteraction {
                 rect: interact_response.rect,
@@ -175,11 +185,48 @@ pub fn viewport_ui(
                 }
             }
 
-            // Draw selection rectangle while dragging
+            let screen_center = rect.center();
+            let ppp = ctx.pixels_per_point();
+            let to_world = |p: egui::Pos2| {
+                common::Vec2::new(
+                    state.camera_pos.x + (p.x - screen_center.x) * ppp / state.camera_zoom,
+                    state.camera_pos.y - (p.y - screen_center.y) * ppp / state.camera_zoom,
+                )
+            };
+            let to_screen = |p: common::Vec2| {
+                egui::pos2(
+                    screen_center.x + (p.x - state.camera_pos.x) * state.camera_zoom / ppp,
+                    screen_center.y - (p.y - state.camera_pos.y) * state.camera_zoom / ppp,
+                )
+            };
+
+            // Marquee-select (Phase 2, M8) / Measure (Phase 2, M11) share one
+            // click-drag gesture, branching on `state.measure_mode` (toggled
+            // from the toolbar) — the drag start is tracked explicitly in
+            // `state` (set on `drag_started_by`, cleared on
+            // `drag_stopped_by`) rather than relying on
+            // `interact_pointer_pos()` staying valid past the exact frame
+            // the drag ends.
+            if interact_response.drag_started_by(egui::PointerButton::Primary) {
+                state.marquee_drag_start = interact_response.interact_pointer_pos();
+            }
             if interact_response.dragged_by(egui::PointerButton::Primary) {
-                if let Some(start) = interact_response.interact_pointer_pos() {
-                    if let Some(current) = hover_pos {
-                        if start != current {
+                if let (Some(start), Some(current)) = (state.marquee_drag_start, hover_pos) {
+                    if start != current {
+                        if state.measure_mode {
+                            let distance = (to_world(start) - to_world(current)).length();
+                            ui.painter().line_segment(
+                                [start, current],
+                                egui::Stroke::new(2.0, crate::theme::ACCENT),
+                            );
+                            ui.painter().text(
+                                current,
+                                egui::Align2::LEFT_TOP,
+                                format!("{distance:.1} units"),
+                                egui::FontId::monospace(crate::theme::SIZE_SMALL),
+                                egui::Color32::WHITE,
+                            );
+                        } else {
                             let sel_rect = egui::Rect::from_two_pos(start, current);
                             ui.painter().rect(
                                 sel_rect,
@@ -190,6 +237,47 @@ pub fn viewport_ui(
                         }
                     }
                 }
+            }
+            if interact_response.drag_stopped_by(egui::PointerButton::Primary) {
+                if let (Some(start), Some(current)) = (state.marquee_drag_start, hover_pos) {
+                    if (start - current).length() > 4.0 {
+                        let world_a = to_world(start);
+                        let world_b = to_world(current);
+                        if state.measure_mode {
+                            let distance = (world_a - world_b).length();
+                            state.measure_result = Some((world_a, world_b, distance));
+                        } else {
+                            actions.push(MenuAction::SelectInRect {
+                                min: common::Vec2::new(
+                                    world_a.x.min(world_b.x),
+                                    world_a.y.min(world_b.y),
+                                ),
+                                max: common::Vec2::new(
+                                    world_a.x.max(world_b.x),
+                                    world_a.y.max(world_b.y),
+                                ),
+                            });
+                        }
+                    }
+                }
+                state.marquee_drag_start = None;
+            }
+
+            // Persist the last completed measurement across frames (not
+            // just while dragging) until the next one replaces it.
+            if let Some((start, end, distance)) = state.measure_result {
+                let (screen_start, screen_end) = (to_screen(start), to_screen(end));
+                ui.painter().line_segment(
+                    [screen_start, screen_end],
+                    egui::Stroke::new(2.0, crate::theme::ACCENT),
+                );
+                ui.painter().text(
+                    screen_end,
+                    egui::Align2::LEFT_TOP,
+                    format!("{distance:.1} units"),
+                    egui::FontId::monospace(crate::theme::SIZE_SMALL),
+                    egui::Color32::WHITE,
+                );
             }
         });
 }

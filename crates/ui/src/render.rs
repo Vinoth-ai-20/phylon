@@ -33,6 +33,11 @@ pub fn render_ui(
     // ── Update internal clock ────────────────────────────────────────────────
     state.time = ctx.input(|i| i.time);
     state.cleanup_toasts();
+    track_recent_selections(state);
+    // Reset each frame; whichever panel's row the cursor is over this frame
+    // (if any) sets it again while rendering — see `panel_hover_entity`'s
+    // doc comment.
+    state.panel_hover_entity = None;
 
     // ── Global keyboard shortcuts ────────────────────────────────────────────
     // `ShortcutManager::consume_all` (crate::shortcuts) is the single active
@@ -170,6 +175,28 @@ pub fn render_ui(
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Pushes `selected_entity` onto `recent_selections` whenever it changes
+/// from the previous frame (Phase 2, M13) — deliberately done here, once per
+/// frame, rather than at each of `selected_entity`'s ~20 existing write
+/// sites, so none of them needed to change. Deselecting (a change to `None`)
+/// is not recorded — only a change *to* some entity counts as "selecting"
+/// it. A re-selection of an already-most-recent entity is a no-op rather
+/// than a duplicate push.
+fn track_recent_selections(state: &mut crate::WorkbenchState) {
+    if state.selected_entity != state.previous_selected_entity {
+        if let Some(entity) = state.selected_entity {
+            if state.recent_selections.front() != Some(&entity) {
+                state.recent_selections.retain(|&e| e != entity);
+                state.recent_selections.push_front(entity);
+                state
+                    .recent_selections
+                    .truncate(crate::state::RECENT_SELECTIONS_CAPACITY);
+            }
+        }
+        state.previous_selected_entity = state.selected_entity;
+    }
+}
 
 fn render_main_menu(
     ctx: &egui::Context,

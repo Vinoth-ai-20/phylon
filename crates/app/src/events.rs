@@ -405,6 +405,36 @@ impl PhylonApp {
                 ui::MenuAction::SelectEntity(entity) => {
                     self.ui.selected_entity = Some(entity);
                 }
+                ui::MenuAction::SelectInRect { min, max } => {
+                    // Head nodes only (`segment_type == 0`) — one selection
+                    // entry per organism, matching how the rest of the app
+                    // treats "the organism" as its head entity (e.g.
+                    // `SelectHeadOf`, the Lineage panel).
+                    let mut node_q = self
+                        .world
+                        .ecs
+                        .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
+                    let matches: Vec<bevy_ecs::entity::Entity> = node_q
+                        .iter(&self.world.ecs)
+                        .filter(|(_, node)| {
+                            node.segment_type == 0
+                                && node.position.x >= min.x
+                                && node.position.x <= max.x
+                                && node.position.y >= min.y
+                                && node.position.y <= max.y
+                        })
+                        .map(|(e, _)| e)
+                        .collect();
+                    let count = matches.len();
+                    self.ui.select_multiple(matches);
+                    if count > 0 {
+                        self.ui.push_toast(
+                            format!("Selected {count} organism(s)"),
+                            ui::ToastSeverity::Info,
+                            2.0,
+                        );
+                    }
+                }
                 ui::MenuAction::CopyEntityId(entity) => {
                     // Write entity bits to clipboard via egui (best-effort)
                     let id_str = format!("{:?}", entity);

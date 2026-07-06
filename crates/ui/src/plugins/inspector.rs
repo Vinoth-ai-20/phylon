@@ -1,6 +1,63 @@
 use crate::types::*;
 use crate::WorkbenchState;
 
+/// Renders a compact "Recent:" row of the last few distinct entities
+/// `selected_entity` has pointed at (Phase 2, M13 — "Recent Selections"),
+/// each a clickable, Diet-colored chip. Shown above the Inspector's normal
+/// content — including when nothing is currently selected — so a user can
+/// click back into a recent organism. Entities that have since despawned
+/// (killed, died) are skipped rather than shown as dead links, but are left
+/// in `recent_selections` itself (no mutation here) since a future
+/// re-selection of the same `Entity` value would be a bevy_ecs generation
+/// mismatch anyway, not a meaningful "undo despawn."
+fn render_recent_selections(
+    ui: &mut egui::Ui,
+    state: &mut WorkbenchState,
+    world: &mut world::World,
+    actions: &mut Vec<MenuAction>,
+) {
+    if state.recent_selections.is_empty() {
+        return;
+    }
+    let mut diet_q = world.ecs.query::<&ecology::Diet>();
+    let live: Vec<(bevy_ecs::entity::Entity, Option<ecology::Diet>)> = state
+        .recent_selections
+        .iter()
+        .filter(|&&e| world.ecs.get_entity(e).is_some())
+        .map(|&e| (e, diet_q.get(&world.ecs, e).ok().cloned()))
+        .collect();
+    if live.is_empty() {
+        return;
+    }
+
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            egui::RichText::new("Recent:")
+                .small()
+                .color(crate::theme::DISABLED_FG),
+        );
+        for (entity, diet) in live {
+            let label = match &diet {
+                Some(diet) => format!("{diet:?}"),
+                None => "Entity".to_string(),
+            };
+            let color = diet
+                .as_ref()
+                .map(crate::theme::chart_color)
+                .unwrap_or(crate::theme::DISABLED_FG);
+            if ui
+                .small_button(egui::RichText::new(label).color(color))
+                .clicked()
+            {
+                actions.push(MenuAction::SelectEntity(entity));
+            }
+        }
+    });
+    ui.add_space(crate::theme::SPACE_SM);
+    ui.separator();
+    ui.add_space(crate::theme::SPACE_SM);
+}
+
 /// Inspector panel — shows the selected/tracked organism's live component data.
 pub fn inspector_ui(
     _ctx: &egui::Context,
@@ -9,6 +66,8 @@ pub fn inspector_ui(
     world: &mut world::World,
     actions: &mut Vec<MenuAction>,
 ) {
+    render_recent_selections(ui, state, world, actions);
+
     let entity = match state.selected_entity.or(state.tracked_entity) {
         Some(e) => e,
         None => {

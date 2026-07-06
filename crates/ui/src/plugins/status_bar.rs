@@ -110,6 +110,18 @@ pub fn status_bar_ui(
             );
         }
 
+        // Cursor world-space position (Phase 2, M10) — only takes strip
+        // space while the cursor is actually over the viewport.
+        if let Some(pos) = state.cursor_world_pos {
+            ui.separator();
+            crate::widgets::status_chip(
+                ui,
+                egui_remixicon::icons::CROSSHAIR_LINE,
+                format!("{:.0}, {:.0}", pos.x, pos.y),
+                None,
+            );
+        }
+
         zone_separator(ui);
 
         // ── Zone 2: Population ───────────────────────────────────────────────

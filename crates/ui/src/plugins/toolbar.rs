@@ -169,6 +169,65 @@ pub fn toolbar_ui(
 
         ui.separator();
 
+        // Measure tool (Phase 2, M11) — toggling clears any in-progress
+        // marquee-select drag interaction by construction, since the two
+        // share one click-drag gesture in `viewport.rs`, branching on this
+        // flag.
+        if ui
+            .selectable_label(
+                state.measure_mode,
+                egui_remixicon::icons::RULER_LINE.to_string(),
+            )
+            .on_hover_text("Measure distance (drag in the viewport)")
+            .clicked()
+        {
+            state.measure_mode = !state.measure_mode;
+        }
+
+        ui.separator();
+
+        // Bookmarks (Phase 2, M12) — save/jump-to camera views. Entirely
+        // UI-side: camera position/zoom already live in `WorkbenchState`,
+        // so no `MenuAction`/ECS round-trip is needed to apply one.
+        ui.menu_button(
+            format!("{} Bookmarks", egui_remixicon::icons::BOOKMARK_LINE),
+            |ui| {
+                if ui.button("+ Save Current View").clicked() {
+                    state.bookmarks.push(crate::CameraBookmark {
+                        label: format!("View {}", state.bookmarks.len() + 1),
+                        position: state.camera_pos,
+                        zoom: state.camera_zoom,
+                    });
+                    ui.close_menu();
+                }
+                if !state.bookmarks.is_empty() {
+                    ui.separator();
+                    let mut to_remove = None;
+                    for (i, bookmark) in state.bookmarks.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            if ui.button(&bookmark.label).clicked() {
+                                state.camera_pos = bookmark.position;
+                                state.camera_zoom = bookmark.zoom;
+                                ui.close_menu();
+                            }
+                            if ui
+                                .small_button(egui_remixicon::icons::CLOSE_LINE)
+                                .on_hover_text("Remove bookmark")
+                                .clicked()
+                            {
+                                to_remove = Some(i);
+                            }
+                        });
+                    }
+                    if let Some(i) = to_remove {
+                        state.bookmarks.remove(i);
+                    }
+                }
+            },
+        );
+
+        ui.separator();
+
         // ── Camera Controls (right-aligned) ───────────────────────────────
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // Zoom in/out

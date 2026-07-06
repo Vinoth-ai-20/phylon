@@ -309,7 +309,15 @@ impl PhylonApp {
         };
 
         let selected_component = self.ui.selected_entity.map(&mut get_connected_component);
-        let hovered_component = self.ui.hovered_entity.map(&mut get_connected_component);
+        // `panel_hover_entity` (Phase 2, M9) lets a non-viewport panel (e.g.
+        // the Lineage Explorer) drive the same highlight a viewport-hover
+        // would — `hovered_entity` itself stays viewport-picking-only since
+        // it's unconditionally overwritten every frame in `events.rs`.
+        let hovered_component = self
+            .ui
+            .hovered_entity
+            .or(self.ui.panel_hover_entity)
+            .map(&mut get_connected_component);
 
         // Camera-frustum culling for the (potentially whole-population-sized)
         // SDF bone list: skip gathering/uploading/instancing bones that fall

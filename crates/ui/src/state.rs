@@ -65,10 +65,67 @@ pub enum PlaybackState {
 pub struct WorkbenchState {
     /// The active top-level workspace (Ecology, Biology, Neural, etc.).
     pub active_workspace: Workspace,
-    /// The entity currently selected by the user, if any.
+    /// The entity currently selected by the user, if any — the "primary"
+    /// selection. Every pre-Phase-2 call site keeps reading/writing this
+    /// field exactly as before; it is unchanged by the addition of
+    /// `secondary_selected` below (see `docs/design/layout.md`'s Phase 2
+    /// UI Architecture note on the shared selection model).
     pub selected_entity: Option<Entity>,
-    /// The entity currently under the mouse cursor, if any.
+    /// Additional entities selected alongside `selected_entity` (Phase 2,
+    /// M7) — populated by multi-select interactions (marquee-select,
+    /// ctrl+click) that didn't exist before this milestone. Empty for every
+    /// ordinary single-click selection, so single-select behavior is
+    /// unaffected. Use [`WorkbenchState::all_selected`] to iterate the full
+    /// selection (primary + secondary) rather than reading this field
+    /// directly.
+    pub secondary_selected: std::collections::HashSet<Entity>,
+    /// The entity currently under the mouse cursor, if any (viewport-picked
+    /// — see `app::events.rs`'s per-frame `pick_entity` call, which
+    /// overwrites this unconditionally, so it cannot double as a hover
+    /// signal set by other panels).
     pub hovered_entity: Option<Entity>,
+    /// An entity a non-viewport panel wants highlighted this frame (Phase
+    /// 2, M9 — hover cross-highlight), e.g. hovering a row in the Lineage
+    /// Explorer. Reset to `None` at the start of every `render_ui` call and
+    /// set by whichever panel's row the cursor is over; combined with
+    /// `hovered_entity` (via `.or()`) wherever the viewport decides what to
+    /// highlight, so the two never need to be the same field.
+    pub panel_hover_entity: Option<Entity>,
+    /// The last few distinct entities `selected_entity` has pointed at, most
+    /// recent first, capped at [`RECENT_SELECTIONS_CAPACITY`] (Phase 2, M13
+    /// — "Recent Selections"). Updated once per frame by
+    /// `render::track_recent_selections` diffing `selected_entity` against
+    /// the previous frame — deliberately not updated at each of
+    /// `selected_entity`'s ~20 existing write sites directly, so none of
+    /// them needed to change for this feature to work.
+    pub recent_selections: std::collections::VecDeque<Entity>,
+    /// `selected_entity`'s value as of the end of the previous frame, used
+    /// only by `render::track_recent_selections` to detect a change.
+    pub(crate) previous_selected_entity: Option<Entity>,
+    /// Screen-space anchor of an in-progress marquee-select drag in the
+    /// viewport (Phase 2, M8), set once on `drag_started_by` and cleared on
+    /// `drag_stopped_by` — tracked explicitly rather than relying on
+    /// `Response::interact_pointer_pos()` remaining valid across the exact
+    /// frame the drag ends.
+    pub marquee_drag_start: Option<egui::Pos2>,
+    /// The cursor's current world-space position while over the viewport,
+    /// or `None` when the cursor is elsewhere (Phase 2, M10) — a baseline
+    /// "scientific tool" affordance (Blender/RenderDoc/ParaView all show
+    /// this) that was previously entirely absent; the status bar showed
+    /// only the *camera's* position, never the cursor's.
+    pub cursor_world_pos: Option<common::Vec2>,
+    /// Whether the viewport's click-drag currently measures distance
+    /// (Phase 2, M11) instead of marquee-selecting — mutually exclusive
+    /// with M8's marquee-select on the same drag gesture, toggled from the
+    /// toolbar.
+    pub measure_mode: bool,
+    /// The last completed measurement: `(start, end, distance)` in world
+    /// units, persisted (not just shown during the drag) until the next
+    /// measurement or a mode toggle clears it.
+    pub measure_result: Option<(common::Vec2, common::Vec2, f32)>,
+    /// Saved camera views (Phase 2, M12), most-recently-added last.
+    /// Session-only by design — see `CameraBookmark`'s doc comment.
+    pub bookmarks: Vec<crate::CameraBookmark>,
     /// Simulation speed multiplier (1.0 = real time).
     pub simulation_speed: f32,
     /// Whether the simulation is playing or paused.
@@ -171,6 +228,9 @@ pub struct WorkbenchState {
     pub active_tab: crate::SidebarTab,
     /// Which view the Lineage tab shows (Ancestry tree vs. Species groups).
     pub lineage_view: crate::LineageView,
+    /// Quick Organism Search text (Phase 2, M13) — filters the Lineage tab's
+    /// organism list by entity/species/diet substring match.
+    pub lineage_search: String,
     /// The Replay Browser panel's currently-loaded bundle summary, if any
     /// (`None` until the user opens one via `MenuAction::OpenReplayBundle`).
     pub replay_browser: Option<crate::ReplayBrowserSummary>,
@@ -303,7 +363,16 @@ impl Default for WorkbenchState {
         Self {
             active_workspace: Workspace::Ecology,
             selected_entity: None,
+            secondary_selected: std::collections::HashSet::new(),
             hovered_entity: None,
+            panel_hover_entity: None,
+            recent_selections: std::collections::VecDeque::new(),
+            previous_selected_entity: None,
+            marquee_drag_start: None,
+            cursor_world_pos: None,
+            measure_mode: false,
+            measure_result: None,
+            bookmarks: Vec::new(),
             simulation_speed: 1.0,
             playback_state: PlaybackState::Paused,
 
@@ -353,6 +422,7 @@ impl Default for WorkbenchState {
             layout_shares: std::collections::HashMap::new(),
             active_tab: crate::SidebarTab::Inspector,
             lineage_view: crate::LineageView::Ancestry,
+            lineage_search: String::new(),
             replay_browser: None,
             active_bottom_tab: crate::BottomTab::Metrics,
             quit_confirm_time: None,
@@ -370,7 +440,43 @@ impl Default for WorkbenchState {
     }
 }
 
+/// Maximum number of entities kept in `WorkbenchState::recent_selections`.
+pub const RECENT_SELECTIONS_CAPACITY: usize = 8;
+
 impl WorkbenchState {
+    /// Every currently-selected entity: the primary `selected_entity` plus
+    /// every entity in `secondary_selected` (Phase 2, M7). New multi-select
+    /// consumers (marquee-select, quick search's "select all matches")
+    /// should iterate this rather than reading `selected_entity` alone.
+    pub fn all_selected(&self) -> impl Iterator<Item = Entity> + '_ {
+        self.selected_entity
+            .into_iter()
+            .chain(self.secondary_selected.iter().copied())
+    }
+
+    /// Whether `entity` is part of the current selection (primary or
+    /// secondary).
+    pub fn is_selected(&self, entity: Entity) -> bool {
+        self.selected_entity == Some(entity) || self.secondary_selected.contains(&entity)
+    }
+
+    /// Clears both the primary and secondary selection.
+    pub fn clear_selection(&mut self) {
+        self.selected_entity = None;
+        self.secondary_selected.clear();
+    }
+
+    /// Replaces the entire selection with `entities` — the first becomes
+    /// the new primary `selected_entity` (so single-entity readers like the
+    /// Inspector keep working unchanged), the rest become
+    /// `secondary_selected`. Used by marquee-select (M8); an empty iterator
+    /// clears the selection.
+    pub fn select_multiple(&mut self, entities: impl IntoIterator<Item = Entity>) {
+        let mut iter = entities.into_iter();
+        self.selected_entity = iter.next();
+        self.secondary_selected = iter.collect();
+    }
+
     /// Push a transient notification. Displayed in the bottom-right toast area.
     pub fn push_toast(
         &mut self,
