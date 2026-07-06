@@ -154,6 +154,20 @@ pub struct Brain {
     /// its lifetime, letting a control group run alongside plastic siblings
     /// with everything else held equal.
     pub plasticity_enabled: bool,
+    /// When `Some`, [`Brain::get_outputs`] returns this directly instead of
+    /// reading node states — the hook external RL control
+    /// (`learning::ExternalAgent`, see `app::learning_bridge`) uses to
+    /// inject an action vector for this tick without disabling the CTRNN's
+    /// own internal dynamics (they keep integrating; only the read-out is
+    /// intercepted, so control can be handed back to the evolved brain at
+    /// any tick with no discontinuity in its internal state).
+    ///
+    /// `#[serde(skip)]`: this is transient per-tick control state, not
+    /// evolved/genetic data — skipping it means adding this field needed no
+    /// `storage::SchemaVersion` bump, unlike `winner_take_all`/
+    /// `plasticity_enabled` in Epic 8.
+    #[serde(skip)]
+    pub external_override: Option<Vec<f32>>,
 }
 
 impl Brain {
@@ -164,7 +178,16 @@ impl Brain {
     /// When [`Brain::winner_take_all`] is set, only the single
     /// largest-magnitude output survives (every other output is zeroed) —
     /// action gating instead of blended outputs.
+    ///
+    /// When [`Brain::external_override`] is `Some`, it's returned directly
+    /// and neither `winner_take_all` gating nor the usual node-state
+    /// readout applies — external control replaces the brain's output
+    /// wholesale for this tick.
     pub fn get_outputs(&self) -> Vec<f32> {
+        if let Some(override_actions) = &self.external_override {
+            return override_actions.clone();
+        }
+
         if self.nodes.is_empty() {
             return Vec::new();
         }
@@ -258,7 +281,15 @@ impl Brain {
             output_count,
             winner_take_all: false,
             plasticity_enabled: true,
+            external_override: None,
         }
+    }
+
+    /// Sets or clears this tick's external action override (see that
+    /// field's doc comment) — `Some(actions)` to inject external control,
+    /// `None` to return to the brain's own CTRNN-computed output.
+    pub fn set_external_action_override(&mut self, actions: Option<Vec<f32>>) {
+        self.external_override = actions;
     }
 
     /// Enables winner-take-all output gating (see that field's doc comment).
@@ -496,6 +527,28 @@ mod tests {
         let brain = two_node_brain(0.5);
         assert!(brain.plasticity_enabled);
         assert!(!brain.winner_take_all);
+        assert!(brain.external_override.is_none());
+    }
+
+    #[test]
+    fn external_override_replaces_computed_outputs() {
+        let mut brain = two_node_brain(0.5);
+        let normal_outputs = brain.get_outputs();
+        assert_ne!(normal_outputs, vec![42.0]);
+
+        brain.set_external_action_override(Some(vec![42.0]));
+        assert_eq!(brain.get_outputs(), vec![42.0]);
+
+        brain.set_external_action_override(None);
+        assert_eq!(brain.get_outputs(), normal_outputs);
+    }
+
+    #[test]
+    fn external_override_bypasses_winner_take_all() {
+        let mut brain = two_node_brain(0.5).with_winner_take_all(true);
+        brain.set_external_action_override(Some(vec![1.0, 2.0]));
+        // Winner-take-all would zero one of these; override bypasses it.
+        assert_eq!(brain.get_outputs(), vec![1.0, 2.0]);
     }
 
     #[test]

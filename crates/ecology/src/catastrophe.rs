@@ -32,6 +32,22 @@ impl Default for CatastropheConfig {
     }
 }
 
+impl CatastropheConfig {
+    /// Scales hazard frequency/severity by `level` (`1.0` = default
+    /// difficulty) — the curriculum-learning hook
+    /// `network::MarlCommand::SetDifficulty` drives. Always recomputed from
+    /// [`CatastropheConfig::default`]'s baseline, never multiplied against
+    /// the current live value, so repeated calls with the same `level` are
+    /// idempotent instead of compounding (the same bug class
+    /// `organisms::biofilm_system` was designed to avoid).
+    pub fn set_difficulty(&mut self, level: f32) {
+        let baseline = Self::default();
+        let level = level.max(0.0);
+        self.spawn_probability = baseline.spawn_probability * level;
+        self.energy_drain_rate = baseline.energy_drain_rate * level;
+    }
+}
+
 /// State of a specific hazard.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HazardState {
@@ -72,5 +88,49 @@ impl CatastropheManager {
                 start_tick: current_tick,
             },
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_difficulty_one_matches_default() {
+        let mut config = CatastropheConfig {
+            spawn_probability: 999.0,
+            energy_drain_rate: 999.0,
+            ..CatastropheConfig::default()
+        };
+        config.set_difficulty(1.0);
+        let baseline = CatastropheConfig::default();
+        assert_eq!(config.spawn_probability, baseline.spawn_probability);
+        assert_eq!(config.energy_drain_rate, baseline.energy_drain_rate);
+    }
+
+    #[test]
+    fn set_difficulty_scales_proportionally() {
+        let mut config = CatastropheConfig::default();
+        config.set_difficulty(2.0);
+        let baseline = CatastropheConfig::default();
+        assert_eq!(config.spawn_probability, baseline.spawn_probability * 2.0);
+        assert_eq!(config.energy_drain_rate, baseline.energy_drain_rate * 2.0);
+    }
+
+    #[test]
+    fn set_difficulty_is_idempotent_not_compounding() {
+        let mut config = CatastropheConfig::default();
+        config.set_difficulty(1.5);
+        let after_first = config.spawn_probability;
+        config.set_difficulty(1.5);
+        assert_eq!(config.spawn_probability, after_first);
+    }
+
+    #[test]
+    fn set_difficulty_clamps_negative_to_zero() {
+        let mut config = CatastropheConfig::default();
+        config.set_difficulty(-5.0);
+        assert_eq!(config.spawn_probability, 0.0);
+        assert_eq!(config.energy_drain_rate, 0.0);
     }
 }

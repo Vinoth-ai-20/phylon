@@ -6,9 +6,11 @@
 //! Provides a `tokio-tungstenite` WebSocket API for remote simulation control,
 //! live observation, and multi-user research sessions.
 //!
-//! ## Phase 0 scope
-//!
-//! Placeholder. Implementation: Phase 12.
+//! [`NetworkServer`] is a real, working WebSocket listener — see
+//! `app::main`'s headless RL loop for how `MarlCommand`s are actually
+//! dequeued and turned into simulation effects (`app::learning_bridge`).
+//! Multi-user collaboration sessions (beyond the single-agent MARL
+//! protocol this crate already implements) are not yet built.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -63,6 +65,14 @@ pub enum MarlCommand {
     },
     /// Reset the environment to its initial state.
     Reset,
+    /// Scales hazard frequency/severity for curriculum learning —
+    /// `1.0` is default difficulty, recomputed from the built-in baseline
+    /// each call (never multiplied against the current live value, so
+    /// repeated calls with the same `level` are idempotent).
+    SetDifficulty {
+        /// Difficulty multiplier (clamped to `>= 0.0` by the handler).
+        level: f32,
+    },
 }
 
 /// # Multi-Agent Reinforcement Learning Response

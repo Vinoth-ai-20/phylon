@@ -8,15 +8,32 @@
 //! so that multiple backends (`burn`, external Python via `pyo3`, etc.) can
 //! implement the policy trait without coupling the rest of the simulation.
 //!
-//! ## Current scope
+//! [`ExternalAgent`] is the one piece of ECS wiring this crate owns — a
+//! marker identifying which organism `network::MarlCommand::GetState`/
+//! `SetActions` currently reads from/writes to (see `app::learning_bridge`
+//! for where observations are actually extracted and actions actually
+//! injected — this crate stays decoupled from `sensing`/`brain`/live
+//! `bevy_ecs::World` access beyond this one marker type).
 //!
-//! Interface trait declarations only ([`ObservationVector`], [`ActionVector`],
-//! [`PolicyProvider`]) — no RL algorithm, training loop, or `burn`/`pyo3`
-//! backend is implemented here yet. See the implementation roadmap's
-//! "Learning Framework" epic.
+//! ## Not yet implemented
+//!
+//! No `burn`/`candle`/`pyo3` backend exists here — [`PolicyProvider`] is an
+//! interface external code can implement, not a bundled implementation.
+//! True multi-agent RL (more than one [`ExternalAgent`] at a time) is also
+//! not yet supported; the current wiring assumes a single external agent.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
+
+/// Marks the single organism currently under external RL control — its
+/// observations are what `network::MarlCommand::GetState` returns, and
+/// `network::MarlCommand::SetActions` overrides its `brain::Brain` output
+/// via `Brain::set_external_action_override` (see `app::learning_bridge`).
+///
+/// Only one organism carries this marker at a time — see this crate's "Not
+/// yet implemented" note on multi-agent RL.
+#[derive(bevy_ecs::prelude::Component, Debug, Clone, Copy)]
+pub struct ExternalAgent;
 
 /// # Sensory Observation Vector
 ///

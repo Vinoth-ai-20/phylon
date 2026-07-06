@@ -7,3 +7,4 @@ description = "RL interfaces, observation/action space definitions, policy API. 
 [dependencies]
 common    = { workspace = true }
 thiserror = { workspace = true }
+bevy_ecs  = { workspace = true }

@@ -34,6 +34,7 @@ research   = { path = "../research" }
 analytics  = { workspace = true }
 plugins    = { path = "../plugins" }
 rhai       = { workspace = true }
+learning   = { path = "../learning" }
 
 # GUI
 egui       = { workspace = true }

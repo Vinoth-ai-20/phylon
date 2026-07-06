@@ -29,6 +29,7 @@ pub mod batch;
 pub mod capture;
 pub mod events;
 pub mod interventions;
+pub mod learning_bridge;
 pub mod render;
 pub mod replay;
 pub mod scripting;
@@ -153,26 +154,29 @@ fn main() -> Result<()> {
             loop {
                 if steps_remaining == 0 {
                     match rt.block_on(marl_rx.recv()) {
-                        Some(req) => {
-                            match req.command {
-                                network::MarlCommand::Step { ticks } => {
-                                    steps_remaining = ticks;
-                                    let _ = req.reply.send(network::MarlResponse::Ok);
-                                }
-                                network::MarlCommand::GetState => {
-                                    let observables = vec![]; // Placeholder
-                                    let _ = req
-                                        .reply
-                                        .send(network::MarlResponse::State { observables });
-                                }
-                                network::MarlCommand::SetActions { actions: _ } => {
-                                    let _ = req.reply.send(network::MarlResponse::Ok);
-                                }
-                                network::MarlCommand::Reset => {
-                                    let _ = req.reply.send(network::MarlResponse::Ok);
-                                }
+                        Some(req) => match req.command {
+                            network::MarlCommand::Step { ticks } => {
+                                steps_remaining = ticks;
+                                let _ = req.reply.send(network::MarlResponse::Ok);
                             }
-                        }
+                            network::MarlCommand::GetState => {
+                                let observables = learning_bridge::get_state(&mut app);
+                                let _ =
+                                    req.reply.send(network::MarlResponse::State { observables });
+                            }
+                            network::MarlCommand::SetActions { actions } => {
+                                learning_bridge::set_actions(&mut app, &actions);
+                                let _ = req.reply.send(network::MarlResponse::Ok);
+                            }
+                            network::MarlCommand::Reset => {
+                                learning_bridge::reset(&mut app);
+                                let _ = req.reply.send(network::MarlResponse::Ok);
+                            }
+                            network::MarlCommand::SetDifficulty { level } => {
+                                learning_bridge::set_difficulty(&mut app, level);
+                                let _ = req.reply.send(network::MarlResponse::Ok);
+                            }
+                        },
                         None => break,
                     }
                 }
