@@ -11,6 +11,16 @@ use serde::{Deserialize, Serialize};
 /// Subsystem for random and manual environmental catastrophes.
 pub mod catastrophe;
 
+/// Pathogen infection state, spread, and progression.
+pub mod disease;
+pub use disease::{
+    disease_progression_system, disease_spread_system, DiseaseConfig, Infection, InfectionState,
+};
+
+/// Fungal (Decomposer) nutrient-redistribution network.
+pub mod fungi;
+pub use fungi::{fungal_network_system, FungalNetworkConfig};
+
 /// Indicates the diet of an organism.
 #[derive(Component, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Diet {
@@ -114,14 +124,24 @@ impl Default for EcologyConfig {
 }
 
 /// System that spawns food up to the hard cap.
+///
+/// Fertility is scaled by `atmosphere.season` (see
+/// `metabolism::day_night_cycle_system`'s doc comment) — winter halves
+/// effective fertility versus summer, so food spawn density itself has a
+/// seasonal rhythm on top of each biome's fixed baseline.
 pub fn food_spawner_system(
     mut commands: Commands,
     config: Res<EcologyConfig>,
     env: Res<environment::EnvironmentManager>,
+    atmosphere: Res<metabolism::GlobalAtmosphere>,
     query: Query<(), With<FoodPellet>>,
 ) {
     let current_count = query.iter().count();
     if current_count < config.max_food_pellets {
+        // Winter (season -> 0.0) halves fertility; summer (season -> 1.0)
+        // leaves it unchanged.
+        let season_fertility_factor = 0.5 + 0.5 * atmosphere.season;
+
         // Simple rejection sampling to favor fertile biomes
         for _ in 0..10 {
             // Max 10 attempts per tick
@@ -129,7 +149,7 @@ pub fn food_spawner_system(
             let y = (fastrand::f32() - 0.5) * env.height();
 
             let biome = env.get_biome_at(x, y);
-            let fertility = biome.fertility();
+            let fertility = biome.fertility() * season_fertility_factor;
 
             // Rejection sampling: accept if random value is less than fertility
             if fastrand::f32() * 1.5 < fertility {

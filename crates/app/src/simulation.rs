@@ -223,6 +223,18 @@ impl PhylonApp {
         self.world.ecs.run_system_once(ecology::corpse_decay_system);
         self.world
             .ecs
+            .run_system_once(ecology::fungal_network_system);
+        // Progression before spread: this tick's incubation/recovery rolls
+        // and ATP drain happen first, then a freshly-Infectious organism
+        // can transmit starting next tick — not the same tick it converted.
+        self.world
+            .ecs
+            .run_system_once(ecology::disease_progression_system);
+        self.world
+            .ecs
+            .run_system_once(ecology::disease_spread_system);
+        self.world
+            .ecs
             .run_system_once(metabolism::metabolism_system);
         self.world
             .ecs

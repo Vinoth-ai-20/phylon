@@ -54,6 +54,13 @@ pub struct GlobalAtmosphere {
     pub temp: f32,
     /// Absolute ticks elapsed. Used for the Day/Night cycle.
     pub ticks: u64,
+    /// Seasonal phase in `[0, 1]`, following `sunlight`'s own convention:
+    /// `1.0` is midsummer (peak), `0.0` is midwinter (trough). Modulates
+    /// `sunlight`'s peak amplitude on a much slower cycle than `sunlight`
+    /// itself oscillates on (see [`day_night_cycle_system`]'s doc comment
+    /// for both periods). Also read by `ecology::food_spawner_system` to
+    /// scale biome fertility seasonally.
+    pub season: f32,
 }
 
 impl Default for GlobalAtmosphere {
@@ -64,6 +71,7 @@ impl Default for GlobalAtmosphere {
             sunlight: 1.0,
             temp: 22.0,
             ticks: 0,
+            season: 1.0, // matches sunlight's tick-0 default of full brightness
         }
     }
 }
@@ -382,6 +390,12 @@ pub fn atmosphere_homeostasis_system(mut atmosphere: ResMut<GlobalAtmosphere>) {
 /// A full cycle takes exactly 60 seconds (3600 ticks at 60 Hz).
 /// We start at High Noon (1.0) using a cosine function, as requested by the user.
 ///
+/// Layered on top is a **seasonal** cycle (`atmosphere.season`) 10x longer
+/// (36,000 ticks — 10 minutes at 60 Hz), standing in for a "year" made of
+/// many day/night cycles: it dampens (never zeroes) the day/night cycle's
+/// peak sunlight during its winter half, so summer days are brighter than
+/// winter days on top of the existing day/night swing.
+///
 /// Also derives ambient `temp` from `sunlight` — more sun means a warmer
 /// atmosphere. `temp` eases toward that sunlight-driven target each tick
 /// (`THERMAL_LAG`) rather than snapping straight to it, modeling thermal
@@ -390,11 +404,21 @@ pub fn atmosphere_homeostasis_system(mut atmosphere: ResMut<GlobalAtmosphere>) {
 /// unused constant.
 pub fn day_night_cycle_system(mut atmosphere: ResMut<GlobalAtmosphere>) {
     atmosphere.ticks += 1;
+    let t = atmosphere.ticks as f32;
+
+    // Season: same shifted-cosine shape as the day/night cycle below, just
+    // an order of magnitude slower.
+    const SEASON_PERIOD_TICKS: f32 = 36_000.0;
+    let season_frequency = std::f32::consts::TAU / SEASON_PERIOD_TICKS;
+    atmosphere.season = ((t * season_frequency).cos() + 1.0) / 2.0;
+    // Winter dampens peak sunlight to 50%, never all the way to darkness —
+    // nights stay dark year-round; only the *daytime* peak shifts.
+    let season_amplitude = 0.5 + 0.5 * atmosphere.season;
+
     // frequency = 2 * PI / 3600
     let frequency = std::f32::consts::TAU / 3600.0;
     // ((t * frequency).cos() + 1.0) / 2.0 starts at exactly 1.0 at tick 0
-    let t = atmosphere.ticks as f32;
-    atmosphere.sunlight = ((t * frequency).cos() + 1.0) / 2.0;
+    atmosphere.sunlight = season_amplitude * ((t * frequency).cos() + 1.0) / 2.0;
 
     const TEMP_MIN: f32 = 12.0; // night-time low, °C
     const TEMP_MAX: f32 = 30.0; // midday high, °C
@@ -559,5 +583,53 @@ mod tests {
         );
         assert!(result.should_die);
         assert_eq!(result.new_age_ticks, 1000);
+    }
+
+    #[test]
+    fn season_dampens_sunlight_peak_in_winter_but_never_reaches_night_darkness() {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(GlobalAtmosphere::default());
+
+        // Run to the seasonal trough (roughly half the season period) and
+        // check we land near the day/night cycle's own peak-sunlight tick
+        // (a multiple of 3600) so we're comparing "winter noon" against
+        // "summer noon", not two arbitrary phases of the day.
+        let mut world_summer = bevy_ecs::world::World::new();
+        world_summer.insert_resource(GlobalAtmosphere::default());
+        for _ in 0..3600 {
+            world_summer.run_system_once(day_night_cycle_system);
+        }
+        let summer_noon_sunlight = world_summer.resource::<GlobalAtmosphere>().sunlight;
+
+        for _ in 0..18000 {
+            // half of the 36,000-tick season period
+            world.run_system_once(day_night_cycle_system);
+        }
+        for _ in 0..3600 {
+            // advance to the next day/night noon from this point
+            world.run_system_once(day_night_cycle_system);
+        }
+        let winter_noon_sunlight = world.resource::<GlobalAtmosphere>().sunlight;
+
+        assert!(
+            winter_noon_sunlight < summer_noon_sunlight,
+            "winter noon ({winter_noon_sunlight}) should be dimmer than summer noon ({summer_noon_sunlight})"
+        );
+        assert!(
+            winter_noon_sunlight > 0.0,
+            "winter noon should never be fully dark"
+        );
+    }
+
+    #[test]
+    fn season_and_sunlight_stay_in_valid_range_over_a_full_cycle() {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(GlobalAtmosphere::default());
+        for _ in 0..36_000 {
+            world.run_system_once(day_night_cycle_system);
+            let atmosphere = world.resource::<GlobalAtmosphere>();
+            assert!((0.0..=1.0).contains(&atmosphere.season));
+            assert!((0.0..=1.0).contains(&atmosphere.sunlight));
+        }
     }
 }

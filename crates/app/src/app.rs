@@ -239,6 +239,10 @@ impl PhylonApp {
         world
             .ecs
             .insert_resource(brain::PlasticityConfig::default());
+        world.ecs.insert_resource(ecology::DiseaseConfig::default());
+        world
+            .ecs
+            .insert_resource(ecology::FungalNetworkConfig::default());
 
         // The single seeded source of randomness for every stochastic system
         // (genetics mutation/crossover, spawn placement, mate selection, ...)

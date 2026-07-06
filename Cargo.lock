@@ -1217,6 +1217,8 @@ dependencies = [
  "fastrand",
  "metabolism",
  "physics",
+ "rand 0.8.6",
+ "rand_chacha 0.3.1",
  "serde",
  "spatial",
  "thiserror 2.0.18",
