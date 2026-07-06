@@ -260,8 +260,12 @@ fn chrome_button(
     tooltip: &str,
 ) -> egui::Response {
     ui.add(
-        egui::Button::new(egui::RichText::new(icon).color(color).size(13.0))
-            .min_size(egui::vec2(20.0, 20.0)),
+        egui::Button::new(
+            egui::RichText::new(icon)
+                .color(color)
+                .size(crate::theme::ICON_SM),
+        )
+        .min_size(egui::vec2(20.0, 20.0)),
     )
     .on_hover_text(tooltip)
 }
@@ -292,7 +296,7 @@ fn chrome_bar(
             ui.label(
                 egui::RichText::new(icon)
                     .color(egui::Color32::from_gray(120))
-                    .size(14.0),
+                    .size(crate::theme::ICON_SM),
             );
         }
         if let Some(title) = title {

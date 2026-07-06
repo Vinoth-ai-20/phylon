@@ -224,7 +224,7 @@ fn genetics_panel(
                 crate::widgets::kv_row(ui, "Hox genes", "None (CPPN-driven)");
             }
         });
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_SM);
         ui.label(
             egui::RichText::new(format!(
                 "{} Brain Network graph moved to the Neural Viewer panel",
@@ -234,7 +234,7 @@ fn genetics_panel(
             .italics(),
         );
 
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_SM);
         if ui.button("Export Genome…").clicked() {
             actions.push(MenuAction::ExportGenome);
         }
@@ -429,7 +429,7 @@ fn sandbox_panel(
     actions: &mut Vec<MenuAction>,
 ) {
     ui.label(egui::RichText::new("Spawn at camera position:").color(crate::theme::DISABLED_FG));
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
 
     for preset in organisms::sandbox::PresetDefinition::standard_presets() {
         if ui.button(&preset.name).clicked() {
@@ -476,7 +476,7 @@ fn tuning_panel(ui: &mut egui::Ui, state: &mut crate::WorkbenchState, world: &mu
         .show(ui, |ui| {
             ui.checkbox(&mut state.debug_structural, "Wireframe View");
             ui.checkbox(&mut state.show_vision_cones, "Show Vision Cones");
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             ui.add(
                 egui::Slider::new(&mut state.bone_line_thickness, 0.5..=5.0).text("Bone Thickness"),
             );

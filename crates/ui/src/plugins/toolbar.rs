@@ -51,7 +51,8 @@ pub fn toolbar_ui(
         // Step forward
         if ui
             .add(egui::Button::new(
-                egui::RichText::new(egui_remixicon::icons::SKIP_FORWARD_FILL).size(16.0),
+                egui::RichText::new(egui_remixicon::icons::SKIP_FORWARD_FILL)
+                    .size(crate::theme::ICON_MD),
             ))
             .on_hover_text("Step Forward (→)")
             .clicked()
@@ -62,7 +63,8 @@ pub fn toolbar_ui(
         // Restart
         if ui
             .add(egui::Button::new(
-                egui::RichText::new(egui_remixicon::icons::RESTART_FILL).size(16.0),
+                egui::RichText::new(egui_remixicon::icons::RESTART_FILL)
+                    .size(crate::theme::ICON_MD),
             ))
             .on_hover_text("Reset Simulation")
             .clicked()
@@ -124,7 +126,10 @@ pub fn toolbar_ui(
 
         // ── Screenshot / Recording ──────────────────────────────────────────
         if ui
-            .button(egui::RichText::new(egui_remixicon::icons::SCREENSHOT_LINE).size(14.0))
+            .button(
+                egui::RichText::new(egui_remixicon::icons::SCREENSHOT_LINE)
+                    .size(crate::theme::ICON_SM),
+            )
             .on_hover_text("Take Screenshot (Ctrl+Shift+S)")
             .clicked()
         {
@@ -228,7 +233,7 @@ pub fn toolbar_ui(
                     state.camera_pos.x, state.camera_pos.y, track_str
                 ))
                 .color(crate::theme::DISABLED_FG)
-                .size(11.0),
+                .size(crate::theme::SIZE_MICRO),
             );
 
             // Sunlight indicator (from atmosphere)

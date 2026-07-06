@@ -181,7 +181,7 @@ fn render_main_menu(
             ui.add_space(ui.available_height() / 4.0);
             ui.heading(
                 egui::RichText::new("PHYLON")
-                    .size(64.0)
+                    .size(crate::theme::SIZE_SPLASH_TITLE)
                     .strong()
                     .color(crate::theme::ACCENT),
             );
@@ -197,54 +197,63 @@ fn render_main_menu(
             if ui
                 .add_sized(
                     btn_size,
-                    egui::Button::new(egui::RichText::new("New Simulation").size(20.0)),
+                    egui::Button::new(
+                        egui::RichText::new("New Simulation")
+                            .size(crate::theme::SIZE_SPLASH_BUTTON),
+                    ),
                 )
                 .clicked()
             {
                 actions.push(MenuAction::StartSimulation);
             }
-            ui.add_space(10.0);
+            ui.add_space(crate::theme::SPACE_SM);
 
             if ui
                 .add_sized(
                     btn_size,
-                    egui::Button::new(egui::RichText::new("Load State…").size(20.0)),
+                    egui::Button::new(
+                        egui::RichText::new("Load State…").size(crate::theme::SIZE_SPLASH_BUTTON),
+                    ),
                 )
                 .clicked()
             {
                 actions.push(MenuAction::LoadState);
             }
-            ui.add_space(10.0);
+            ui.add_space(crate::theme::SPACE_SM);
 
             if ui
                 .add_sized(
                     btn_size,
-                    egui::Button::new(egui::RichText::new("Settings").size(20.0)),
+                    egui::Button::new(
+                        egui::RichText::new("Settings").size(crate::theme::SIZE_SPLASH_BUTTON),
+                    ),
                 )
                 .clicked()
             {
                 state.active_tab = SidebarTab::Settings;
                 actions.push(MenuAction::StartSimulation);
             }
-            ui.add_space(10.0);
+            ui.add_space(crate::theme::SPACE_SM);
 
             if ui
                 .add_sized(
                     btn_size,
-                    egui::Button::new(egui::RichText::new("About").size(20.0)),
+                    egui::Button::new(
+                        egui::RichText::new("About").size(crate::theme::SIZE_SPLASH_BUTTON),
+                    ),
                 )
                 .clicked()
             {
                 state.show_about = true;
             }
-            ui.add_space(10.0);
+            ui.add_space(crate::theme::SPACE_SM);
 
             if ui
                 .add_sized(
                     btn_size,
                     egui::Button::new(
                         egui::RichText::new("Quit")
-                            .size(20.0)
+                            .size(crate::theme::SIZE_SPLASH_BUTTON)
                             .color(crate::theme::DANGER),
                     ),
                 )

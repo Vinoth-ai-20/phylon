@@ -202,6 +202,13 @@ const HEADING_FAMILY: &str = "IBMPlexSans-SemiBold";
 /// Font size for dialog/modal titles only (About, Keybinds) — never used in
 /// the docked workbench itself.
 pub const SIZE_DISPLAY: f32 = 22.0;
+/// Splash/main-menu screen title only ("PHYLON") — a deliberately different
+/// context from workbench chrome, not part of the standard type scale, same
+/// exemption as `ICON_XL`.
+pub const SIZE_SPLASH_TITLE: f32 = 64.0;
+/// Splash/main-menu screen button labels only (New Simulation, Load State,
+/// Settings, About, Quit) — same splash-only exemption as `SIZE_SPLASH_TITLE`.
+pub const SIZE_SPLASH_BUTTON: f32 = 20.0;
 /// Font size for section headings (`ui.heading()` / `TextStyle::Heading`).
 pub const SIZE_HEADING: f32 = 18.0;
 /// Font size for panel/window titles and CollapsingHeader-level
