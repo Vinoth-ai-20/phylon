@@ -39,6 +39,10 @@ pub mod utils;
 /// states) — see `docs/design/components.md` for the full catalog.
 pub mod widgets;
 
+/// Shared node-link graph canvas helpers (pan/zoom/hit-testing), used by
+/// Neural Viewer and, as of Phase 3 M11, the GRN Viewer.
+pub(crate) mod graph_canvas;
+
 /// Immediate-mode rendering logic.
 pub mod render;
 pub use render::render_ui;

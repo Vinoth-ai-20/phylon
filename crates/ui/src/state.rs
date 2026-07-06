@@ -294,6 +294,14 @@ pub struct WorkbenchState {
     /// `neural_ctrnn_view` since the two graphs are independently sized and
     /// scrolled.
     pub neural_cppn_view: GraphViewState,
+    /// GRN Viewer's graph pan/zoom (Phase 3, M11).
+    pub grn_view: GraphViewState,
+    /// GRN Viewer's selected body position — which position's morphogen
+    /// inputs feed the displayed `RegulatoryNetwork` (Phase 3, M11).
+    pub grn_position: usize,
+    /// GRN Viewer's selected developmental step (time playback scrubber,
+    /// `0..=genetics::develop::DEVELOPMENT_STEPS`) — Phase 3, M11.
+    pub grn_step: usize,
 
     /// Last-known split ratio for each named docking split, keyed by the
     /// child tile's label (`"Sidebar"`, `"MainColumn"`, `"Neural Viewer"`,
@@ -450,6 +458,9 @@ impl Default for WorkbenchState {
             activity_bar_expanded: true,
             neural_ctrnn_view: GraphViewState::default(),
             neural_cppn_view: GraphViewState::default(),
+            grn_view: GraphViewState::default(),
+            grn_position: 0,
+            grn_step: genetics::develop::DEVELOPMENT_STEPS,
             layout_shares: std::collections::HashMap::new(),
             active_tab: crate::SidebarTab::Inspector,
             lineage_view: crate::LineageView::Ancestry,

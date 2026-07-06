@@ -9,6 +9,11 @@
 
 use crate::types::*;
 
+// `apply_view`/`handle_pan_zoom`/`hit_test_node` moved to `crate::graph_canvas`
+// (Phase 3, M11) so the GRN Viewer panel can reuse the same pan/zoom/hit-test
+// math instead of duplicating it.
+use crate::graph_canvas::{apply_view, handle_pan_zoom, hit_test_node};
+
 // Node/synapse colors are shared between the CTRNN (phenotype) and CPPN
 // (genotype) canvases below — named here once rather than repeating the same
 // literals at 4 call sites per color. Canvas backgrounds are deliberately
@@ -247,49 +252,6 @@ fn graph_header(ui: &mut egui::Ui, title: &str, view: &mut crate::state::GraphVi
             .small()
             .color(crate::theme::DISABLED_FG),
     );
-}
-
-/// Applies a graph's pan/zoom transform to one base (untransformed) node
-/// position, scaling around the canvas rect's center so zooming feels
-/// anchored to the middle of the graph rather than its top-left corner.
-fn apply_view(
-    pos: egui::Pos2,
-    rect: egui::Rect,
-    view: &crate::state::GraphViewState,
-) -> egui::Pos2 {
-    rect.center() + (pos - rect.center()) * view.zoom + view.pan
-}
-
-/// Reads scroll (zoom, only while hovering the canvas) and drag (pan) input
-/// from a graph canvas's response into its `GraphViewState`. Shared by both
-/// `draw_brain_graph` and `draw_cppn_graph` so a 40-hidden-node genome is as
-/// navigable as a 4-hidden-node one in either view.
-fn handle_pan_zoom(
-    ui: &egui::Ui,
-    response: &egui::Response,
-    view: &mut crate::state::GraphViewState,
-) {
-    if response.dragged() {
-        view.pan += response.drag_delta();
-    }
-    if response.hovered() {
-        let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
-        if scroll_y != 0.0 {
-            view.zoom = (view.zoom * (1.0 + scroll_y * 0.001)).clamp(0.2, 4.0);
-        }
-    }
-}
-
-/// Nearest node to `pointer` within `radius` + a small hit-test tolerance.
-fn hit_test_node(pointer: egui::Pos2, positions: &[egui::Pos2], radius: f32) -> Option<usize> {
-    let tolerance = radius + 3.0;
-    positions
-        .iter()
-        .enumerate()
-        .map(|(i, p)| (i, p.distance(pointer)))
-        .filter(|(_, d)| *d <= tolerance)
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(i, _)| i)
 }
 
 /// Shortest distance from `p` to the line segment `a`–`b`.

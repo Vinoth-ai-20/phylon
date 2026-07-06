@@ -34,6 +34,9 @@ pub enum SidebarTab {
     /// Per-position Hox combinatorial code, decoded segment identity, and
     /// morphogen gradients for the selected organism (Phase 3, M10).
     HoxVisualizer,
+    /// Regulatory network graph, developmental-step time playback, and
+    /// mutation-vs-parent comparison for the selected organism (Phase 3, M11).
+    GrnViewer,
     /// Application Settings
     Settings,
 }
