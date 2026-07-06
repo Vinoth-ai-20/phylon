@@ -282,6 +282,7 @@ impl PhylonApp {
 
                     // Respawn defaults
                     let mut tracker = evolution::LineageTracker::new();
+                    let mut species_registry = evolution::SpeciesRegistry::default();
                     let mut global_tracker = genetics::GlobalInnovationTracker::default();
                     self.world
                         .ecs
@@ -289,11 +290,13 @@ impl PhylonApp {
                             crate::app::seed_ecosystem(
                                 ecs,
                                 &mut tracker,
+                                &mut species_registry,
                                 &mut global_tracker,
                                 &mut sim_rng.0,
                             );
                         });
                     self.world.ecs.insert_resource(tracker);
+                    self.world.ecs.insert_resource(species_registry);
                     self.world.ecs.insert_resource(global_tracker);
                 }
                 ui::MenuAction::TakeScreenshot => {

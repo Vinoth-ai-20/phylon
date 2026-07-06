@@ -17,32 +17,40 @@ struct SpawnOrganismCommand {
 
 impl bevy_ecs::world::Command for SpawnOrganismCommand {
     fn apply(self, world: &mut bevy_ecs::world::World) {
-        let (lineage_id, species_id, generation) = {
+        let (lineage_id, generation) = {
             if let Some(parent_id) = self.parent_id {
                 if let Some(tracker) = world.get_resource::<evolution::LineageTracker>() {
                     if let Some(parent_record) =
                         tracker.get_record(common::EntityId(parent_id.to_bits()))
                     {
-                        (
-                            parent_record.lineage,
-                            parent_record.species,
-                            parent_record.generation + 1,
-                        )
+                        (parent_record.lineage, parent_record.generation + 1)
                     } else {
-                        (evolution::LineageId(0), evolution::SpeciesId(0), 1)
+                        (evolution::LineageId(0), 1)
                     }
                 } else {
-                    (evolution::LineageId(0), evolution::SpeciesId(0), 1)
+                    (evolution::LineageId(0), 1)
                 }
             } else {
                 let mut tracker = world.get_resource_mut::<evolution::LineageTracker>();
                 if let Some(ref mut t) = tracker {
-                    (t.new_lineage_id(), evolution::SpeciesId(0), 0)
+                    (t.new_lineage_id(), 0)
                 } else {
-                    (evolution::LineageId(0), evolution::SpeciesId(0), 0)
+                    (evolution::LineageId(0), 0)
                 }
             }
         };
+
+        // Classified fresh for every organism (not inherited from the
+        // parent) — a child's genome can drift far enough from its
+        // parent's to found a new species, which is exactly the
+        // genetic-distance clustering `SpeciesRegistry` exists to detect.
+        // See `evolution::SpeciesRegistry`'s doc comment for the algorithm.
+        let species_id =
+            if let Some(mut registry) = world.get_resource_mut::<evolution::SpeciesRegistry>() {
+                registry.classify(&self.genome)
+            } else {
+                evolution::SpeciesId(0)
+            };
 
         let entity = world.resource_scope::<common::SimRng, _>(|world, mut sim_rng| {
             organisms::spawn_organism(

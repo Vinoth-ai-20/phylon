@@ -7,9 +7,16 @@
 //! Survival and reproduction pressure exerted by the ecology system acts as
 //! the selection gradient.
 //!
-//! ## Phase 0 scope
+//! Speciation, by contrast, is explicit: [`SpeciesRegistry`] clusters
+//! organisms by [`genetics::Genome::distance`] (NEAT-style genetic
+//! compatibility), replacing the placeholder `SpeciesId(0)` every organism
+//! used to receive regardless of its genome.
 //!
-//! Type declarations only. Implementation: Phase 5.
+//! ## Not yet implemented
+//!
+//! Explicit selection/fitness metrics and hybridization barriers (declared
+//! in this module's original scope) have no code here yet — only lineage
+//! tracking and speciation are implemented so far.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -181,13 +188,156 @@ impl Default for LineageTracker {
     }
 }
 
+/// Compatibility-distance threshold below which two genomes are considered
+/// the same species — a [`genetics::Genome::distance`] value under this
+/// classifies as a match. Tuned to the same order of magnitude as the
+/// standard NEAT default (3.0), since [`genetics::cppn`]'s
+/// `EXCESS_COEFFICIENT`/`DISJOINT_COEFFICIENT`/`WEIGHT_DIFF_COEFFICIENT` are
+/// themselves the standard NEAT values.
+pub const DEFAULT_COMPATIBILITY_THRESHOLD: f32 = 3.0;
+
+/// One tracked species: its assigned ID and the representative genome new
+/// arrivals are compared against.
+struct SpeciesRecord {
+    id: SpeciesId,
+    representative: genetics::Genome,
+}
+
+/// # Genetic-Distance Speciation Registry
+///
+/// Classifies organisms into species by NEAT-style genetic distance
+/// ([`genetics::Genome::distance`]), replacing the `SpeciesId(0)` placeholder
+/// every organism was previously assigned regardless of its genome.
+///
+/// ## How it works
+/// Each species is represented by the genome of whichever organism founded
+/// it. A newly spawned organism is compared against every existing
+/// species's representative; if any comparison falls under
+/// `compatibility_threshold`, the organism joins that species. Otherwise it
+/// founds a new one, becoming that species's representative.
+///
+/// Representatives are never reassigned after a species is founded — this
+/// keeps classification at O(species_count) per spawn (not
+/// O(population²): distances are only ever computed against one genome per
+/// species, never between arbitrary population pairs), which stays cheap
+/// even as population grows into the thousands. The tradeoff is the classic
+/// NEAT one: a species's representative can grow unrepresentative of its
+/// current members as they keep mutating, which is an accepted
+/// approximation here rather than a bug — periodic representative
+/// refresh is a possible future refinement, not required for correctness.
+#[derive(bevy_ecs::system::Resource)]
+pub struct SpeciesRegistry {
+    next_species_id: u64,
+    compatibility_threshold: f32,
+    species: Vec<SpeciesRecord>,
+}
+
+impl SpeciesRegistry {
+    /// Creates a new, empty registry with the given compatibility threshold.
+    pub fn new(compatibility_threshold: f32) -> Self {
+        Self {
+            next_species_id: 1,
+            compatibility_threshold,
+            species: Vec::new(),
+        }
+    }
+
+    /// Classifies a genome against existing species, founding a new species
+    /// if it matches none within the compatibility threshold.
+    pub fn classify(&mut self, genome: &genetics::Genome) -> SpeciesId {
+        for record in &self.species {
+            if record.representative.distance(genome) < self.compatibility_threshold {
+                return record.id;
+            }
+        }
+        let id = SpeciesId(self.next_species_id);
+        self.next_species_id += 1;
+        self.species.push(SpeciesRecord {
+            id,
+            representative: genome.clone(),
+        });
+        id
+    }
+
+    /// The number of distinct species currently tracked.
+    pub fn species_count(&self) -> usize {
+        self.species.len()
+    }
+}
+
+impl Default for SpeciesRegistry {
+    fn default() -> Self {
+        Self::new(DEFAULT_COMPATIBILITY_THRESHOLD)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::SeedableRng;
 
     #[test]
     fn lineage_id_equality() {
         assert_eq!(LineageId(1), LineageId(1));
         assert_ne!(LineageId(1), LineageId(2));
+    }
+
+    #[test]
+    fn identical_genomes_classify_into_the_same_species() {
+        let mut registry = SpeciesRegistry::default();
+        let g1 = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        let g2 = g1.clone();
+        assert_eq!(registry.classify(&g1), registry.classify(&g2));
+        assert_eq!(registry.species_count(), 1);
+    }
+
+    #[test]
+    fn divergent_genomes_found_a_new_species() {
+        let mut registry = SpeciesRegistry::new(0.5);
+        let g1 = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(9);
+        let mut tracker = genetics::GlobalInnovationTracker::default();
+        let mut g2 = genetics::Genome::new_diploid(
+            genetics::GenomeId(2),
+            common::EntityId(0),
+            None,
+            (sample_cppn(), genetics::Cppn::new()),
+            (genetics::Cppn::new(), genetics::Cppn::new()),
+        );
+        g2.second_allele = None;
+        for _ in 0..30 {
+            g2.mutate(1.0, &mut rng, &mut tracker);
+        }
+
+        let s1 = registry.classify(&g1);
+        let s2 = registry.classify(&g2);
+        assert_ne!(s1, s2);
+        assert_eq!(registry.species_count(), 2);
+    }
+
+    fn sample_cppn() -> genetics::Cppn {
+        genetics::Cppn {
+            nodes: vec![
+                genetics::CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 0,
+                },
+                genetics::CppnNode {
+                    activation: brain::ActivationFn::Tanh,
+                    bias: 0.0,
+                    layer: 1,
+                },
+            ],
+            connections: vec![genetics::CppnConnection {
+                source: 0,
+                target: 1,
+                weight: 0.5,
+                enabled: true,
+                innovation: 0,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            }],
+        }
     }
 }

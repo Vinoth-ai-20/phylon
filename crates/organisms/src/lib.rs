@@ -3,12 +3,9 @@
 //! Organism archetype definitions, ECS component bundles, and lifecycle types.
 //!
 //! Every simulated organism is a set of ECS components. This crate defines
-//! the canonical component bundles and the `Diet` enum that governs
-//! ecological interactions.
-//!
-//! ## Phase 0 scope
-//!
-//! Component type declarations and DietType enum. ECS integration: Phase 3.
+//! the canonical component bundles, spawning/growth systems, and the
+//! neuromodulator/Hebbian-plasticity systems that bridge `brain` with
+//! `metabolism` each tick (see [`plasticity`]'s doc comments).
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -26,6 +23,11 @@ pub use components::{
 /// Organism ECS systems.
 pub mod systems;
 pub use systems::growth_system;
+
+/// Neural plasticity systems: neuromodulator updates, Hebbian weight
+/// adaptation, and periodic synapse pruning.
+pub mod plasticity;
+pub use plasticity::{hebbian_plasticity_system, neuromodulator_system};
 
 /// Organism spawning logic.
 pub mod spawning;

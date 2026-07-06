@@ -10,10 +10,9 @@
 //! - `.ron` — human-readable scenario file (initial conditions)
 //!
 //! All formats include a `schema_version` field for migration compatibility.
-//!
-//! ## Phase 0 scope
-//!
-//! SchemaVersion type and placeholder storage manager. Implementation: Phase 5.
+//! There is currently no migration path between versions — a bump means
+//! files saved under the old version fail to deserialize (see
+//! [`SchemaVersion::CURRENT`]'s doc comment for the most recent bump).
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -28,8 +27,15 @@ use serde::{Deserialize, Serialize};
 pub struct SchemaVersion(pub u32);
 
 impl SchemaVersion {
-    /// The current schema version for Phase 0 snapshots.
-    pub const CURRENT: Self = Self(1);
+    /// The current `.phylon` snapshot schema version.
+    ///
+    /// Bumped from 1 to 2 by Epic 8's `brain::Brain` field additions
+    /// (`winner_take_all`, `plasticity_enabled`) — `SnapshotNode.brain`
+    /// embeds `brain::Brain` directly via bincode, so any `.phylon` file
+    /// saved under version 1 will fail to deserialize against the current
+    /// layout (no migration path exists yet; the same situation as
+    /// `genetics::GENOME_SCHEMA_VERSION`'s bump in Epic 7).
+    pub const CURRENT: Self = Self(2);
 }
 
 impl std::fmt::Display for SchemaVersion {

@@ -236,6 +236,9 @@ impl PhylonApp {
         world.ecs.insert_resource(behavior::BehaviorConfig {
             signal_energy_cost_per_unit: sim_config.simulation.signal_energy_cost_per_unit,
         });
+        world
+            .ecs
+            .insert_resource(brain::PlasticityConfig::default());
 
         // The single seeded source of randomness for every stochastic system
         // (genetics mutation/crossover, spawn placement, mate selection, ...)
@@ -245,6 +248,7 @@ impl PhylonApp {
             .insert_resource(common::SimRng::from_seed(sim_config.simulation.rng_seed));
 
         let mut lineage_tracker = evolution::LineageTracker::new();
+        let mut species_registry = evolution::SpeciesRegistry::default();
 
         let env_manager = environment::EnvironmentManager::new(
             sim_config.simulation.rng_seed,
@@ -262,9 +266,16 @@ impl PhylonApp {
         world
             .ecs
             .resource_scope::<common::SimRng, _>(|ecs, mut sim_rng| {
-                seed_ecosystem(ecs, &mut lineage_tracker, &mut tracker, &mut sim_rng.0);
+                seed_ecosystem(
+                    ecs,
+                    &mut lineage_tracker,
+                    &mut species_registry,
+                    &mut tracker,
+                    &mut sim_rng.0,
+                );
             });
         world.ecs.insert_resource(lineage_tracker);
+        world.ecs.insert_resource(species_registry);
         world.ecs.insert_resource(tracker);
 
         let (task_tx, task_rx) = std::sync::mpsc::channel();
@@ -656,6 +667,7 @@ impl PhylonApp {
 pub(crate) fn seed_ecosystem(
     world: &mut bevy_ecs::world::World,
     lineage_tracker: &mut evolution::LineageTracker,
+    species_registry: &mut evolution::SpeciesRegistry,
     tracker: &mut genetics::GlobalInnovationTracker,
     rng: &mut impl rand::Rng,
 ) {
@@ -726,6 +738,8 @@ pub(crate) fn seed_ecosystem(
                 }
             }
 
+            let species_id = species_registry.classify(&ind_genome);
+
             let e = organisms::spawn_organism(
                 world,
                 &ind_genome,
@@ -740,7 +754,7 @@ pub(crate) fn seed_ecosystem(
                 common::EntityId(e.to_bits()),
                 None,
                 lineage_id,
-                evolution::SpeciesId(0),
+                species_id,
                 0,
                 0,
             );

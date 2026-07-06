@@ -27,12 +27,20 @@ pub fn growth_system(
     mut query: Query<(Entity, &mut GrowthState)>,
     node_query: Query<&physics::ParticleNode>,
     spring_query: Query<&physics::Spring>,
+    chem_query: Query<&metabolism::ChemicalEconomy>,
 ) {
     use genetics::SegmentType;
     use physics::{ParticleNode, Spring};
 
     for (entity, mut state) in query.iter_mut() {
         // Retrieve Hox sequence; fall back to generating one via Morph CPPN if none exists.
+        // Expressed (dominance-resolved for diploid genomes — see
+        // `Genome::expressed_brain_cppn`/`expressed_morph_cppn`) once per
+        // organism, not per CPPN query, since growth/brain-wiring below
+        // calls `.evaluate(...)` many times per tick.
+        let expressed_morph_cppn = state.genome.expressed_morph_cppn();
+        let expressed_brain_cppn = state.genome.expressed_brain_cppn();
+
         let hox_genes = match state.genome.hox.as_ref() {
             Some(h) => h.genes.clone(),
             None => {
@@ -47,7 +55,7 @@ pub fn growth_system(
                         genetics::SegmentType::Fin => 4.0,
                     };
                     let inputs = [i as f32 / max_segments as f32, parent_type];
-                    let outputs = state.genome.morph_cppn.evaluate(&inputs);
+                    let outputs = expressed_morph_cppn.evaluate(&inputs);
                     if outputs.len() >= 3 {
                         let type_val = outputs[0];
                         let branching = outputs[1];
@@ -105,12 +113,12 @@ pub fn growth_system(
                     activation = 7; // Linear
                 } else {
                     // Evolve node properties via Brain CPPN
-                    if !state.genome.brain_cppn.nodes.is_empty() {
+                    if !expressed_brain_cppn.nodes.is_empty() {
                         let w_inputs = [
                             (i as f32) / (total_nodes as f32),
                             (i as f32) / (total_nodes as f32),
                         ];
-                        let w_outputs = state.genome.brain_cppn.evaluate(&w_inputs);
+                        let w_outputs = expressed_brain_cppn.evaluate(&w_inputs);
                         if w_outputs.len() >= 3 {
                             bias = w_outputs[1] * 1.5;
                             // Time constant must be strictly positive and low enough to allow fast 2 Hz oscillations.
@@ -150,12 +158,12 @@ pub fn growth_system(
                     let mut weight = 0.0;
 
                     // Neocortex: Evolved CPPN Weights
-                    if !state.genome.brain_cppn.nodes.is_empty() {
+                    if !expressed_brain_cppn.nodes.is_empty() {
                         let w_inputs = [
                             (i as f32) / (total_nodes as f32),
                             (j as f32) / (total_nodes as f32),
                         ];
-                        let w_outputs = state.genome.brain_cppn.evaluate(&w_inputs);
+                        let w_outputs = expressed_brain_cppn.evaluate(&w_inputs);
                         if !w_outputs.is_empty() {
                             weight += w_outputs[0] * 1.5;
                         }
@@ -172,6 +180,8 @@ pub fn growth_system(
                 }
             }
 
+            let initial_atp = chem_query.get(entity).map(|c| c.atp).unwrap_or(0.0);
+
             commands.entity(entity).insert((
                 brain::Brain::new(
                     brain::BrainId(0),
@@ -180,6 +190,7 @@ pub fn growth_system(
                     input_count,
                     output_count,
                 ),
+                brain::Neuromodulators::new(initial_atp),
                 sensing::SensoryState::new(input_count),
                 behavior::MotorSystem {
                     effectors: state.effectors.clone(),

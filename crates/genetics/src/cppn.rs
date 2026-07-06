@@ -24,7 +24,33 @@ pub struct CppnConnection {
     pub enabled: bool,
     /// Innovation number (for NEAT crossover).
     pub innovation: usize,
+    /// Per-locus probability this connection's weight jitters during a
+    /// mutation pass (see `Genome::mutate`) — evolvable, not a fixed
+    /// global constant: it drifts slightly on every mutation pass and is
+    /// inherited (like the weight itself) through crossover, so different
+    /// connections in the same genome — and the same connection across
+    /// generations — can settle on different volatility. New connections
+    /// (from `mutate_add_connection`/`mutate_add_node`) start at
+    /// [`DEFAULT_MUTATION_RATE`], matching the rate every connection used
+    /// before this field existed.
+    pub mutation_rate: f32,
 }
+
+/// Initial per-connection mutation rate for newly-created connections —
+/// equal to the single global rate every connection used before per-locus
+/// rates existed, so a brand-new genome's mutation behavior is unchanged
+/// until rates start drifting via evolution.
+pub const DEFAULT_MUTATION_RATE: f32 = 0.2;
+
+/// Standard NEAT coefficient weighting excess genes in
+/// [`Cppn::compatibility_distance`].
+pub const EXCESS_COEFFICIENT: f32 = 1.0;
+/// Standard NEAT coefficient weighting disjoint genes in
+/// [`Cppn::compatibility_distance`].
+pub const DISJOINT_COEFFICIENT: f32 = 1.0;
+/// Standard NEAT coefficient weighting average matching-gene weight
+/// difference in [`Cppn::compatibility_distance`].
+pub const WEIGHT_DIFF_COEFFICIENT: f32 = 0.4;
 
 /// # Compositional Pattern Producing Network (NEAT Topology)
 ///
@@ -100,6 +126,77 @@ impl Cppn {
             .collect();
 
         Cppn { nodes, connections }
+    }
+
+    /// NEAT-style compatibility distance to another CPPN, for genetic-distance
+    /// speciation — matches connection genes by `innovation` number exactly
+    /// like [`Cppn::crossover`] does, but measures divergence instead of
+    /// blending.
+    ///
+    /// Follows Stanley & Miikkulainen's original formula: genes beyond the
+    /// smaller genome's highest innovation number are "excess", genes within
+    /// range but present in only one parent are "disjoint", and genes present
+    /// in both contribute their average `|weight|` difference. `c1`/`c2`/`c3`
+    /// weight each term; [`EXCESS_COEFFICIENT`]/[`DISJOINT_COEFFICIENT`]/
+    /// [`WEIGHT_DIFF_COEFFICIENT`] are the standard NEAT defaults.
+    pub fn compatibility_distance(&self, other: &Cppn, c1: f32, c2: f32, c3: f32) -> f32 {
+        if self.connections.is_empty() && other.connections.is_empty() {
+            return 0.0;
+        }
+
+        let self_by_innovation: std::collections::HashMap<usize, &CppnConnection> =
+            self.connections.iter().map(|c| (c.innovation, c)).collect();
+        let other_by_innovation: std::collections::HashMap<usize, &CppnConnection> = other
+            .connections
+            .iter()
+            .map(|c| (c.innovation, c))
+            .collect();
+
+        let self_max = self.connections.iter().map(|c| c.innovation).max();
+        let other_max = other.connections.iter().map(|c| c.innovation).max();
+        let lower_max = match (self_max, other_max) {
+            (Some(a), Some(b)) => a.min(b),
+            _ => 0,
+        };
+
+        let mut excess = 0u32;
+        let mut disjoint = 0u32;
+        let mut matching = 0u32;
+        let mut weight_diff_sum = 0.0f32;
+
+        let all_innovations: std::collections::HashSet<usize> = self_by_innovation
+            .keys()
+            .chain(other_by_innovation.keys())
+            .copied()
+            .collect();
+        for innov in all_innovations {
+            match (
+                self_by_innovation.get(&innov),
+                other_by_innovation.get(&innov),
+            ) {
+                (Some(a), Some(b)) => {
+                    matching += 1;
+                    weight_diff_sum += (a.weight - b.weight).abs();
+                }
+                (Some(_), None) | (None, Some(_)) => {
+                    if innov > lower_max {
+                        excess += 1;
+                    } else {
+                        disjoint += 1;
+                    }
+                }
+                (None, None) => unreachable!("innovation drawn from the union of both keysets"),
+            }
+        }
+
+        let n = (self.connections.len().max(other.connections.len())).max(1) as f32;
+        let avg_weight_diff = if matching > 0 {
+            weight_diff_sum / matching as f32
+        } else {
+            0.0
+        };
+
+        c1 * excess as f32 / n + c2 * disjoint as f32 / n + c3 * avg_weight_diff
     }
 
     /// Creates a new empty CPPN.
@@ -209,6 +306,7 @@ impl Cppn {
                     weight: (rng.gen::<f32>() - 0.5) * 2.0,
                     enabled: true,
                     innovation: *next_innovation,
+                    mutation_rate: DEFAULT_MUTATION_RATE,
                 });
                 *next_innovation += 1;
                 break;
@@ -262,12 +360,16 @@ impl Cppn {
             layer: new_layer,
         });
 
+        // Both halves of a split connection inherit the original locus's
+        // mutation rate — a gene duplication carries its parent locus's
+        // volatility with it, rather than resetting to the default.
         self.connections.push(CppnConnection {
             source: conn.source,
             target: new_node_idx,
             weight: 1.0,
             enabled: true,
             innovation: *next_innovation,
+            mutation_rate: conn.mutation_rate,
         });
         *next_innovation += 1;
 
@@ -277,6 +379,7 @@ impl Cppn {
             weight: conn.weight,
             enabled: true,
             innovation: *next_innovation,
+            mutation_rate: conn.mutation_rate,
         });
         *next_innovation += 1;
     }
@@ -327,6 +430,7 @@ mod tests {
                 weight: 0.5,
                 enabled: true,
                 innovation: 0,
+                mutation_rate: DEFAULT_MUTATION_RATE,
             }],
         }
     }
@@ -371,5 +475,86 @@ mod tests {
         a.mutate_weight(&mut ChaCha8Rng::seed_from_u64(1));
         b.mutate_weight(&mut ChaCha8Rng::seed_from_u64(2));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn compatibility_distance_is_zero_for_identical_cppns() {
+        let a = sample_cppn();
+        let b = sample_cppn();
+        assert_eq!(
+            a.compatibility_distance(
+                &b,
+                EXCESS_COEFFICIENT,
+                DISJOINT_COEFFICIENT,
+                WEIGHT_DIFF_COEFFICIENT
+            ),
+            0.0
+        );
+    }
+
+    #[test]
+    fn compatibility_distance_grows_with_weight_difference() {
+        let mut a = sample_cppn();
+        let mut b = sample_cppn();
+        a.connections[0].weight = 0.0;
+        b.connections[0].weight = 5.0;
+        let d = a.compatibility_distance(
+            &b,
+            EXCESS_COEFFICIENT,
+            DISJOINT_COEFFICIENT,
+            WEIGHT_DIFF_COEFFICIENT,
+        );
+        assert!((d - WEIGHT_DIFF_COEFFICIENT * 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn compatibility_distance_counts_excess_genes() {
+        let a = sample_cppn();
+        let mut b = sample_cppn();
+        // b has an extra connection beyond a's highest innovation number —
+        // this is an excess gene, not disjoint (nothing in a exceeds it).
+        b.connections.push(CppnConnection {
+            source: 0,
+            target: 1,
+            weight: 1.0,
+            enabled: true,
+            innovation: 99,
+            mutation_rate: DEFAULT_MUTATION_RATE,
+        });
+        let d = a.compatibility_distance(
+            &b,
+            EXCESS_COEFFICIENT,
+            DISJOINT_COEFFICIENT,
+            WEIGHT_DIFF_COEFFICIENT,
+        );
+        assert!(d > 0.0);
+    }
+
+    #[test]
+    fn compatibility_distance_is_symmetric() {
+        let mut a = sample_cppn();
+        let mut b = sample_cppn();
+        a.connections[0].weight = -1.0;
+        b.connections.push(CppnConnection {
+            source: 0,
+            target: 1,
+            weight: 2.0,
+            enabled: true,
+            innovation: 7,
+            mutation_rate: DEFAULT_MUTATION_RATE,
+        });
+        let ab = a.compatibility_distance(
+            &b,
+            EXCESS_COEFFICIENT,
+            DISJOINT_COEFFICIENT,
+            WEIGHT_DIFF_COEFFICIENT,
+        );
+        let ba = b.compatibility_distance(
+            &a,
+            EXCESS_COEFFICIENT,
+            DISJOINT_COEFFICIENT,
+            WEIGHT_DIFF_COEFFICIENT,
+        );
+        assert!((ab - ba).abs() < 1e-6);
     }
 }

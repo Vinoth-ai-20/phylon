@@ -11,3 +11,8 @@ world     = { workspace = true }
 thiserror = { workspace = true }
 serde     = { workspace = true }
 bevy_ecs  = { workspace = true }
+
+[dev-dependencies]
+brain       = { path = "../brain" }
+rand        = { workspace = true }
+rand_chacha = { workspace = true }

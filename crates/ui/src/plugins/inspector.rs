@@ -124,7 +124,17 @@ pub fn inspector_ui(
                 egui::Grid::new("insp_identity")
                     .striped(true)
                     .show(ui, |ui| {
-                        crate::widgets::kv_row(ui, "SpeciesId", "Not Available");
+                        let species_label = world
+                            .ecs
+                            .get_resource::<evolution::LineageTracker>()
+                            .and_then(|tracker| {
+                                tracker.get_record(common::EntityId(entity.to_bits()))
+                            })
+                            .map(|record| record.species.0.to_string());
+                        match &species_label {
+                            Some(label) => crate::widgets::kv_row_mono(ui, "SpeciesId", label),
+                            None => crate::widgets::kv_row(ui, "SpeciesId", "Not Available"),
+                        }
                         crate::widgets::kv_row(ui, "GenomeId", "Not Available");
                         crate::widgets::kv_row(ui, "EntityName", "Not Available");
 

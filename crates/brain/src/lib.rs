@@ -1,16 +1,27 @@
 //! # Phylon Brain
 //!
-//! Neural substrate for organisms: NEAT topology evolution, CTRNN dynamics,
-//! Hebbian plasticity, and neuromodulator channels.
+//! Neural substrate for organisms: NEAT topology evolution (via `genetics`),
+//! CTRNN dynamics, Hebbian plasticity, and neuromodulator channels.
 //!
 //! The brain crate defines the data structures and evaluation interfaces for
-//! neural networks. It is deliberately independent of `burn` in Phase 0 to
-//! keep compilation fast. GPU-accelerated inference via `burn` is added in
-//! Phase 6.
+//! neural networks; it is deliberately independent of `burn`, `metabolism`,
+//! and every other simulation crate to keep compilation fast and dependency
+//! direction one-way. The systems that actually *drive* plasticity each
+//! tick — reading metabolic state, applying [`Brain::apply_hebbian_update`]
+//! — live in `organisms` (see `organisms::neuromodulator_system` and
+//! `organisms::hebbian_plasticity_system`), since they need to bridge
+//! `brain` with `metabolism`.
 //!
-//! ## Phase 0 scope
+//! CTRNN numerical integration itself runs on the GPU (`crates/gpu/src/brain.wgsl`);
+//! this crate only defines the data layout that gets uploaded/read back, plus
+//! the CPU-only Hebbian/pruning/winner-take-all logic — see
+//! [`Brain::apply_hebbian_update`], [`Brain::prune_weak_synapses`], and
+//! [`Brain::get_outputs`]'s doc comments for why each lives where it does.
 //!
-//! BrainId and NeuralActivation placeholder types. Implementation: Phase 6.
+//! ## Not yet implemented
+//!
+//! Synaptic delay mapping and glial support effects are named in the
+//! original spec but have no code here yet.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -134,12 +145,25 @@ pub struct Brain {
     pub input_count: usize,
     /// Number of output nodes.
     pub output_count: usize,
+    /// Winner-take-all action gating: when true, [`Brain::get_outputs`]
+    /// zeroes every output except the single largest-magnitude one — only
+    /// one action "wins" per tick, instead of blending all outputs.
+    pub winner_take_all: bool,
+    /// Fixed-brain ablation mode: when false, [`Brain::apply_hebbian_update`]
+    /// is a no-op for this brain — its synapse weights never adapt within
+    /// its lifetime, letting a control group run alongside plastic siblings
+    /// with everything else held equal.
+    pub plasticity_enabled: bool,
 }
 
 impl Brain {
     /// Extracts the output values from the current node states.
     /// In the new architecture, the integration happens on the GPU,
     /// so this simply reads the post-activation output states.
+    ///
+    /// When [`Brain::winner_take_all`] is set, only the single
+    /// largest-magnitude output survives (every other output is zeroed) —
+    /// action gating instead of blended outputs.
     pub fn get_outputs(&self) -> Vec<f32> {
         if self.nodes.is_empty() {
             return Vec::new();
@@ -154,7 +178,28 @@ impl Brain {
             ));
         }
 
+        if self.winner_take_all {
+            Self::gate_winner_take_all(&mut outputs);
+        }
+
         outputs
+    }
+
+    /// Zeroes every output except the single largest-magnitude one.
+    fn gate_winner_take_all(outputs: &mut [f32]) {
+        let Some(winner) = outputs
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.abs().total_cmp(&b.abs()))
+            .map(|(i, _)| i)
+        else {
+            return;
+        };
+        for (i, o) in outputs.iter_mut().enumerate() {
+            if i != winner {
+                *o = 0.0;
+            }
+        }
     }
 
     /// Sets the input node states from sensor values.
@@ -203,40 +248,7 @@ impl Brain {
         input_count: usize,
         output_count: usize,
     ) -> Self {
-        // Sort synapses by target node to allow efficient GPU gather operations
-        synapses.sort_by_key(|s| s.target);
-
-        // Reset all synapse counts
-        for node in &mut nodes {
-            node.first_synapse = 0;
-            node.synapse_count = 0;
-        }
-
-        // Compute offsets
-        if !synapses.is_empty() {
-            let mut current_target = synapses[0].target as usize;
-            let mut current_start = 0;
-            let mut current_count = 0;
-
-            for (i, syn) in synapses.iter().enumerate() {
-                if syn.target as usize != current_target {
-                    if current_target < nodes.len() {
-                        nodes[current_target].first_synapse = current_start;
-                        nodes[current_target].synapse_count = current_count;
-                    }
-                    current_target = syn.target as usize;
-                    current_start = i as u32;
-                    current_count = 1;
-                } else {
-                    current_count += 1;
-                }
-            }
-            // Tail
-            if current_target < nodes.len() {
-                nodes[current_target].first_synapse = current_start;
-                nodes[current_target].synapse_count = current_count;
-            }
-        }
+        Self::reindex_synapses(&mut nodes, &mut synapses);
 
         Self {
             id,
@@ -244,7 +256,191 @@ impl Brain {
             synapses,
             input_count,
             output_count,
+            winner_take_all: false,
+            plasticity_enabled: true,
         }
+    }
+
+    /// Enables winner-take-all output gating (see that field's doc comment).
+    /// Builder-style, so existing `Brain::new` call sites are unaffected.
+    pub fn with_winner_take_all(mut self, enabled: bool) -> Self {
+        self.winner_take_all = enabled;
+        self
+    }
+
+    /// Sets whether this brain's synapses adapt via Hebbian plasticity (see
+    /// [`Brain::plasticity_enabled`]'s doc comment for the ablation use
+    /// case). Builder-style, so existing `Brain::new` call sites are
+    /// unaffected.
+    pub fn with_plasticity_enabled(mut self, enabled: bool) -> Self {
+        self.plasticity_enabled = enabled;
+        self
+    }
+
+    /// Sorts `synapses` by target node and rebuilds each node's
+    /// `first_synapse`/`synapse_count` GPU-gather offsets — shared by
+    /// [`Brain::new`] and [`Brain::prune_weak_synapses`], since removing
+    /// synapses invalidates the same offsets a fresh brain needs computed.
+    fn reindex_synapses(nodes: &mut [CtrnnNode], synapses: &mut [CtrnnSynapse]) {
+        synapses.sort_by_key(|s| s.target);
+
+        for node in nodes.iter_mut() {
+            node.first_synapse = 0;
+            node.synapse_count = 0;
+        }
+
+        if synapses.is_empty() {
+            return;
+        }
+
+        let mut current_target = synapses[0].target as usize;
+        let mut current_start = 0;
+        let mut current_count = 0;
+
+        for (i, syn) in synapses.iter().enumerate() {
+            if syn.target as usize != current_target {
+                if current_target < nodes.len() {
+                    nodes[current_target].first_synapse = current_start;
+                    nodes[current_target].synapse_count = current_count;
+                }
+                current_target = syn.target as usize;
+                current_start = i as u32;
+                current_count = 1;
+            } else {
+                current_count += 1;
+            }
+        }
+        // Tail
+        if current_target < nodes.len() {
+            nodes[current_target].first_synapse = current_start;
+            nodes[current_target].synapse_count = current_count;
+        }
+    }
+
+    /// Removes synapses whose `|weight|` has decayed below `threshold`, then
+    /// rebuilds GPU-gather offsets via [`Brain::reindex_synapses`] so the
+    /// brain stays internally consistent after pruning.
+    pub fn prune_weak_synapses(&mut self, threshold: f32) {
+        self.synapses.retain(|s| s.weight.abs() >= threshold);
+        Self::reindex_synapses(&mut self.nodes, &mut self.synapses);
+    }
+
+    /// Applies one Hebbian-plasticity step to every synapse's weight, using
+    /// this tick's already-integrated CTRNN node states as the pre/post
+    /// synaptic activity signal — "neurons that fire together, wire
+    /// together," with an Oja-style weight-decay term so weights settle
+    /// instead of growing without bound. A no-op when
+    /// [`Brain::plasticity_enabled`] is false or `hebbian_rate` is `0.0`.
+    ///
+    /// Deliberately CPU-only rather than folded into the `brain.wgsl` CTRNN
+    /// integration kernel: synapse weights are CPU-authoritative and
+    /// re-uploaded fresh to the GPU every tick (see
+    /// `crates/app/src/simulation.rs`), so mutating them on the GPU would
+    /// need a second read-back round-trip for no benefit — this runs after
+    /// this tick's GPU-integrated states are already back on the CPU (see
+    /// `organisms::hebbian_plasticity_system`).
+    pub fn apply_hebbian_update(&mut self, hebbian_rate: f32, weight_decay: f32, max_weight: f32) {
+        if !self.plasticity_enabled || hebbian_rate == 0.0 {
+            return;
+        }
+
+        let Brain {
+            nodes, synapses, ..
+        } = self;
+        for syn in synapses.iter_mut() {
+            let (Some(pre_node), Some(post_node)) = (
+                nodes.get(syn.source as usize),
+                nodes.get(syn.target as usize),
+            ) else {
+                continue;
+            };
+            let pre = Self::apply_activation(pre_node.state + pre_node.bias, pre_node.activation);
+            let post =
+                Self::apply_activation(post_node.state + post_node.bias, post_node.activation);
+            let delta = hebbian_rate * (pre * post - weight_decay * syn.weight);
+            syn.weight = (syn.weight + delta).clamp(-max_weight, max_weight);
+        }
+    }
+}
+
+/// Global tunables for Hebbian plasticity and synapse pruning — see
+/// `organisms::hebbian_plasticity_system` for how each field is applied.
+#[derive(bevy_ecs::prelude::Resource, Debug, Clone)]
+pub struct PlasticityConfig {
+    /// Base Hebbian learning rate applied to every plastic brain's synapses
+    /// each tick, before [`Neuromodulators::dopamine`] scaling.
+    pub hebbian_rate: f32,
+    /// Oja-style weight-decay coefficient in [`Brain::apply_hebbian_update`]
+    /// that keeps weights bounded instead of growing without limit.
+    pub weight_decay: f32,
+    /// Absolute clamp applied to every synapse weight after a Hebbian update.
+    pub max_weight: f32,
+    /// Synapses with `|weight|` below this are pruned every
+    /// `prune_interval_ticks`.
+    pub prune_threshold: f32,
+    /// How often (in simulation ticks) pruning runs.
+    pub prune_interval_ticks: u64,
+    /// How much [`Neuromodulators::dopamine`] scales the base Hebbian rate:
+    /// `effective_rate = hebbian_rate * (1.0 + dopamine_gain * dopamine)`.
+    pub dopamine_gain: f32,
+}
+
+impl Default for PlasticityConfig {
+    fn default() -> Self {
+        Self {
+            hebbian_rate: 0.01,
+            weight_decay: 0.01,
+            max_weight: 8.0,
+            prune_threshold: 0.02,
+            prune_interval_ticks: 600, // ~10s at the default 60 Hz tick rate
+            dopamine_gain: 1.0,
+        }
+    }
+}
+
+/// # Neuromodulator Channels
+///
+/// Per-organism analogues of dopamine/serotonin/noradrenaline, updated each
+/// tick from metabolic state (see `organisms::neuromodulator_system`) and
+/// consumed to scale the effective Hebbian learning rate — a reward/stress
+/// signal gating *how much* plasticity happens, not the plasticity rule
+/// itself.
+#[derive(bevy_ecs::prelude::Component, Debug, Clone, Copy)]
+pub struct Neuromodulators {
+    /// Reward signal: an exponential moving average of positive ATP deltas
+    /// (energy gained this tick, normalized against `max_atp`), in `[0, 1]`.
+    pub dopamine: f32,
+    /// Satiety/stability signal: current ATP as a fraction of max ATP, in
+    /// `[0, 1]`.
+    pub serotonin: f32,
+    /// Arousal/stress signal: `1.0 - serotonin`, high when energy reserves
+    /// are low, in `[0, 1]`.
+    pub noradrenaline: f32,
+    last_atp: f32,
+}
+
+impl Neuromodulators {
+    /// Creates a fresh, neutral neuromodulator state seeded from an
+    /// organism's starting ATP, so the first tick's dopamine delta isn't
+    /// computed against a bogus `0.0` baseline.
+    pub fn new(initial_atp: f32) -> Self {
+        Self {
+            dopamine: 0.0,
+            serotonin: 0.0,
+            noradrenaline: 0.0,
+            last_atp: initial_atp,
+        }
+    }
+
+    /// Updates all three channels from this tick's ATP reading. Called once
+    /// per organism per tick by `organisms::neuromodulator_system`.
+    pub fn update(&mut self, atp: f32, max_atp: f32) {
+        let capacity = max_atp.max(1e-6);
+        let normalized_delta = ((atp - self.last_atp) / capacity).clamp(0.0, 1.0);
+        self.dopamine = (self.dopamine * 0.9 + normalized_delta * 0.1).clamp(0.0, 1.0);
+        self.serotonin = (atp / capacity).clamp(0.0, 1.0);
+        self.noradrenaline = 1.0 - self.serotonin;
+        self.last_atp = atp;
     }
 }
 
@@ -261,5 +457,133 @@ mod tests {
     fn activation_fn_is_copy() {
         let a = ActivationFn::Sigmoid;
         let _a2 = a;
+    }
+
+    fn two_node_brain(weight: f32) -> Brain {
+        Brain::new(
+            BrainId(0),
+            vec![
+                CtrnnNode {
+                    state: 1.0,
+                    time_constant: 1.0,
+                    bias: 0.0,
+                    activation: 7, // Linear
+                    first_synapse: 0,
+                    synapse_count: 0,
+                },
+                CtrnnNode {
+                    state: 1.0,
+                    time_constant: 1.0,
+                    bias: 0.0,
+                    activation: 7, // Linear
+                    first_synapse: 0,
+                    synapse_count: 0,
+                },
+            ],
+            vec![CtrnnSynapse {
+                source: 0,
+                target: 1,
+                weight,
+                _padding: 0,
+            }],
+            1,
+            1,
+        )
+    }
+
+    #[test]
+    fn new_defaults_to_plastic_and_not_winner_take_all() {
+        let brain = two_node_brain(0.5);
+        assert!(brain.plasticity_enabled);
+        assert!(!brain.winner_take_all);
+    }
+
+    #[test]
+    fn winner_take_all_zeroes_all_but_largest_magnitude_output() {
+        let brain = Brain::new(
+            BrainId(0),
+            vec![
+                CtrnnNode {
+                    state: 0.0,
+                    time_constant: 1.0,
+                    bias: 0.2,
+                    activation: 7,
+                    first_synapse: 0,
+                    synapse_count: 0,
+                },
+                CtrnnNode {
+                    state: 0.0,
+                    time_constant: 1.0,
+                    bias: -0.9,
+                    activation: 7,
+                    first_synapse: 0,
+                    synapse_count: 0,
+                },
+            ],
+            vec![],
+            0,
+            2,
+        )
+        .with_winner_take_all(true);
+        let outputs = brain.get_outputs();
+        assert_eq!(outputs[0], 0.0);
+        assert_eq!(outputs[1], -0.9);
+    }
+
+    #[test]
+    fn hebbian_update_is_noop_when_plasticity_disabled() {
+        let mut brain = two_node_brain(0.5).with_plasticity_enabled(false);
+        brain.apply_hebbian_update(0.1, 0.01, 8.0);
+        assert_eq!(brain.synapses[0].weight, 0.5);
+    }
+
+    #[test]
+    fn hebbian_update_moves_weight_toward_correlated_activity() {
+        let mut brain = two_node_brain(0.0);
+        // Both nodes are active (state 1.0, linear activation), so
+        // pre*post > 0 — the weight should grow from zero.
+        brain.apply_hebbian_update(0.1, 0.0, 8.0);
+        assert!(brain.synapses[0].weight > 0.0);
+    }
+
+    #[test]
+    fn hebbian_update_respects_max_weight_clamp() {
+        let mut brain = two_node_brain(7.99);
+        for _ in 0..1000 {
+            brain.apply_hebbian_update(0.5, 0.0, 8.0);
+        }
+        assert!(brain.synapses[0].weight <= 8.0);
+    }
+
+    #[test]
+    fn prune_weak_synapses_removes_below_threshold_and_reindexes() {
+        let mut brain = two_node_brain(0.01);
+        brain.prune_weak_synapses(0.1);
+        assert!(brain.synapses.is_empty());
+        assert_eq!(brain.nodes[1].synapse_count, 0);
+    }
+
+    #[test]
+    fn prune_weak_synapses_keeps_strong_connections() {
+        let mut brain = two_node_brain(5.0);
+        brain.prune_weak_synapses(0.1);
+        assert_eq!(brain.synapses.len(), 1);
+        assert_eq!(brain.nodes[1].synapse_count, 1);
+    }
+
+    #[test]
+    fn neuromodulators_dopamine_rises_on_atp_gain_and_serotonin_tracks_satiety() {
+        let mut neuro = Neuromodulators::new(50.0);
+        neuro.update(60.0, 100.0);
+        assert!(neuro.dopamine > 0.0);
+        assert_eq!(neuro.serotonin, 0.6);
+        assert!((neuro.noradrenaline - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn neuromodulators_dopamine_stays_zero_on_atp_loss() {
+        let mut neuro = Neuromodulators::new(50.0);
+        neuro.update(40.0, 100.0);
+        assert_eq!(neuro.dopamine, 0.0);
     }
 }

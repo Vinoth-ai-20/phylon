@@ -21,14 +21,17 @@ impl PhylonApp {
     /// The ECS `World` executes systems sequentially:
     /// 1. **GPU readback resolution**: physics/brain results dispatched *last* tick are collected
     ///    and written into the ECS first, so this tick's systems see them as their starting state.
-    /// 2. **Biology**: Organism growth and sensory data gathering.
-    /// 3. **Neural Compute**: Batched ECS `Brain` data is mapped to `GpuCtrnnNode` buffers and
+    /// 2. **Neural plasticity**: neuromodulator channels update from this tick's metabolic state,
+    ///    then Hebbian weight adaptation (and, periodically, pruning) runs against the CTRNN node
+    ///    states just resolved in step 1 — see `organisms::hebbian_plasticity_system`.
+    /// 3. **Biology**: Organism growth and sensory data gathering.
+    /// 4. **Neural Compute**: Batched ECS `Brain` data is mapped to `GpuCtrnnNode` buffers and
     ///    dispatched to the GPU for numerical integration via Euler's method — asynchronously;
     ///    the result is collected at the start of the *next* tick (see step 1):
     ///    $$ y_{i}(t + DT) = y_{i}(t) + \frac{DT}{\tau_i} \left( -y_i + \sum_{j} w_{ji} \sigma(y_j + \theta_j) + I_i \right) $$
-    /// 4. **Behavior & Physics**: Node forces are accumulated and integrated into velocity/position
+    /// 5. **Behavior & Physics**: Node forces are accumulated and integrated into velocity/position
     ///    vectors, dispatched asynchronously the same way as brain compute.
-    /// 5. **Spatial Dynamics**: Pheromones and gases diffuse across the `texture_2d_array`.
+    /// 6. **Spatial Dynamics**: Pheromones and gases diffuse across the `texture_2d_array`.
     ///
     /// Dispatching brain/physics asynchronously means their GPU work for tick N overlaps with
     /// tick N's CPU-side ECS systems instead of stalling the CPU immediately after submission;
@@ -45,6 +48,18 @@ impl PhylonApp {
         // positions/brain state this tick.
         self.resolve_pending_physics();
         self.resolve_pending_brain();
+
+        // 0.5. Neural plasticity: update neuromodulator channels from this
+        // tick's metabolic state, then apply Hebbian weight adaptation (and,
+        // periodically, pruning) using the node states just resolved above —
+        // see `organisms::hebbian_plasticity_system`'s doc comment for why
+        // this must run right after the brain readback, not before it.
+        self.world
+            .ecs
+            .run_system_once(organisms::neuromodulator_system);
+        self.world
+            .ecs
+            .run_system_once(organisms::hebbian_plasticity_system);
 
         // 1. Run Biology Systems (Sensing, Brain, Behavior)
         self.world.ecs.run_system_once(organisms::growth_system);
