@@ -26,5 +26,8 @@ PhylonConfig(
         realtime_lock: false,
         max_ticks: 0,
         batch_seeds: [],
+        replay_path: None,
+        replay_speed: 1.0,
+        replay_realtime_pacing: false,
     ),
 )

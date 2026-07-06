@@ -28,7 +28,9 @@ pub mod app;
 pub mod batch;
 pub mod capture;
 pub mod events;
+pub mod interventions;
 pub mod render;
+pub mod replay;
 pub mod simulation;
 pub mod systems;
 
@@ -62,6 +64,27 @@ fn main() -> Result<()> {
         rng_seed = sim_config.simulation.rng_seed,
         "Configuration loaded"
     );
+
+    if let Some(replay_path) = &sim_config.research.replay_path {
+        info!(path = %replay_path, "Running replay playback");
+        let bundle =
+            storage::replay::ReplayBundle::load_from_file(std::path::Path::new(replay_path))
+                .context("failed to load replay bundle")?;
+        let target_tick = if sim_config.research.max_ticks > 0 {
+            sim_config.research.max_ticks
+        } else {
+            bundle.log.last_event_tick() + 1
+        };
+        let _app = replay::run_replay(
+            &sim_config,
+            &bundle,
+            target_tick,
+            sim_config.research.replay_speed,
+            sim_config.research.replay_realtime_pacing,
+        );
+        info!(ticks = target_tick, "Replay playback completed");
+        return Ok(());
+    }
 
     if !sim_config.research.batch_seeds.is_empty() {
         info!(

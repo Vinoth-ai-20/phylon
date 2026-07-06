@@ -307,6 +307,27 @@ pub struct ResearchConfig {
     /// existed keep loading instead of failing with a missing-field error.
     #[serde(default)]
     pub batch_seeds: Vec<u64>,
+
+    /// When `Some`, `main` loads the `.phylon-replay` bundle at this path
+    /// and plays it back (via `app::replay::run_replay`) instead of the
+    /// normal single-run/windowed/batch flow. Default: `None` (off).
+    #[serde(default)]
+    pub replay_path: Option<String>,
+
+    /// Playback speed multiplier used when `replay_path` is set and
+    /// `replay_realtime_pacing` is `true`. Default: `1.0`.
+    #[serde(default = "default_replay_speed")]
+    pub replay_speed: f32,
+
+    /// When `true`, replay playback sleeps between ticks to match
+    /// `replay_speed`× real time; when `false` (default), replay runs ticks
+    /// back to back as fast as possible, matching headless/batch mode.
+    #[serde(default)]
+    pub replay_realtime_pacing: bool,
+}
+
+fn default_replay_speed() -> f32 {
+    1.0
 }
 
 impl Default for ResearchConfig {
@@ -319,6 +340,9 @@ impl Default for ResearchConfig {
             max_ticks: 0,
             network_port: None,
             batch_seeds: Vec::new(),
+            replay_path: None,
+            replay_speed: default_replay_speed(),
+            replay_realtime_pacing: false,
         }
     }
 }

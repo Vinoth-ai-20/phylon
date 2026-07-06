@@ -69,6 +69,9 @@ impl common::PhylonError for StorageError {}
 
 pub mod snapshot;
 
+/// Deterministic replay: initial snapshot + recorded intervention log.
+pub mod replay;
+
 use snapshot::SimulationSnapshot;
 use std::fs::File;
 use std::io::{Read, Write};

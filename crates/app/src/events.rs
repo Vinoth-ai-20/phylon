@@ -86,96 +86,15 @@ impl PhylonApp {
                     tracing::warn!("DuplicateSelection not implemented")
                 }
                 ui::MenuAction::SpawnPreset(name) => {
-                    let preset_opt = organisms::sandbox::PresetDefinition::standard_presets()
-                        .into_iter()
-                        .find(|p| p.name == name);
-
-                    if let Some(preset) = preset_opt {
-                        let spawn_pos = self.ui.camera_pos;
-                        if preset.evolvable {
-                            let diet = preset.diet.unwrap_or(ecology::Diet::Herbivore);
-                            // Evolvable presets get a HoxSequence colored by
-                            // the standard per-diet palette, so a
-                            // sandbox-spawned organism looks identical to one
-                            // seeded at simulation start.
-                            let color = diet.standard_color();
-                            let hox = match name.as_str() {
-                                "Herbivore (Evolvable)" => genetics::HoxSequence::worm(6, color),
-                                "Hunter (Evolvable)" => genetics::HoxSequence::fish(5, 2, color),
-                                "Edible Plant (Evolvable)" => genetics::HoxSequence::worm(2, color),
-                                _ => genetics::HoxSequence::worm(4, color),
-                            };
-                            let genome = genetics::Genome::new_hox_driven(
-                                genetics::GenomeId(0), // Would normally be a unique ID
-                                common::EntityId(0),
-                                hox,
-                            );
-
-                            let category =
-                                preset.category.unwrap_or(ecology::EcologicalCategory::None);
-
-                            // Spawn the organism
-                            self.world.ecs.resource_scope::<common::SimRng, _>(
-                                |ecs, mut sim_rng| {
-                                    organisms::spawn_organism(
-                                        ecs,
-                                        &genome,
-                                        spawn_pos,
-                                        diet,
-                                        category,
-                                        0,
-                                        0,
-                                        &mut sim_rng.0,
-                                    );
-                                },
-                            );
-
-                            // We would attach the sandbox traits to the root node if possible,
-                            // but spawn_organism doesn't return the head node easily right now.
-                            // We'll leave the marker traits for later or add them to all nodes.
-                        } else {
-                            // Non-evolvable structures get a fixed static node topology.
-                            // For Membrane Seed or Structure Node, just spawn a single node.
-                            let seg_type = if preset.traits.is_membrane_seed { 1 } else { 0 };
-                            let color = if preset.traits.is_membrane_seed {
-                                [0.5, 0.5, 0.9]
-                            } else {
-                                [0.7, 0.7, 0.7]
-                            };
-
-                            let entity = self.world.ecs.spawn_empty().id();
-                            let mut node = physics::ParticleNode::new(
-                                spawn_pos,
-                                5.0,
-                                seg_type,
-                                entity.index(),
-                            );
-                            node.is_fixed = preset.traits.fixable;
-                            self.world.ecs.entity_mut(entity).insert((
-                                node,
-                                organisms::OrganismColor(color),
-                                preset.traits, // Attach SandboxTraits
-                            ));
-
-                            // Attach biological components so Inspector can view it
-                            self.world.ecs.entity_mut(entity).insert((
-                                metabolism::ChemicalEconomy {
-                                    glucose: 10000.0,
-                                    o2: 10000.0,
-                                    co2: 0.0,
-                                    atp: 10000.0,
-                                    max_glucose: 100000.0,
-                                    max_o2: 10000.0,
-                                    max_co2: 10000.0,
-                                    max_atp: 100000.0,
-                                },
-                                metabolism::Age {
-                                    ticks: 0,
-                                    max_lifespan: 10000,
-                                },
-                            ));
-                        }
-                    }
+                    let spawn_pos = self.ui.camera_pos;
+                    self.replay_log.record(
+                        self.current_tick(),
+                        storage::replay::ReplayAction::SpawnPreset {
+                            name: name.clone(),
+                            position: spawn_pos.into(),
+                        },
+                    );
+                    self.apply_spawn_preset(&name, spawn_pos);
                 }
                 ui::MenuAction::GenerateHexMesh {
                     cols,
@@ -196,13 +115,14 @@ impl PhylonApp {
                 }
                 ui::MenuAction::SpawnManualHazard => {
                     let pos = self.ui.camera_pos;
-                    let dt = self.world.ecs.resource::<common::TickRate>().dt();
-                    let tick = (self.total_sim_time / dt).round() as u64;
-                    let mut manager = self
-                        .world
-                        .ecs
-                        .resource_mut::<ecology::catastrophe::CatastropheManager>();
-                    manager.spawn_hazard(common::Tick(tick), pos);
+                    let tick = self.current_tick();
+                    self.replay_log.record(
+                        tick,
+                        storage::replay::ReplayAction::SpawnManualHazard {
+                            position: pos.into(),
+                        },
+                    );
+                    self.apply_spawn_manual_hazard(pos, tick);
                 }
                 ui::MenuAction::SpawnPaste => tracing::warn!("SpawnPaste not implemented"),
                 ui::MenuAction::JoinSelection => tracing::warn!("JoinSelection not implemented"),
@@ -248,56 +168,11 @@ impl PhylonApp {
                     self.accumulated_time += 1.0;
                 }
                 ui::MenuAction::ReseedEcosystem => {
-                    // Despawn all entities
-                    let entities: Vec<_> = self.world.ecs.iter_entities().map(|e| e.id()).collect();
-                    for entity in entities {
-                        self.world.ecs.despawn(entity);
-                    }
-
-                    // Reset tracking
-                    self.ui.selected_entity = None;
-                    self.ui.tracked_entity = None;
-
-                    // Reset time/atmosphere/metrics — without this, a "fresh"
-                    // simulation kept the old tick count, day-night phase,
-                    // and Metrics history, so the status bar and graphs
-                    // looked like nothing had actually reset.
-                    self.total_sim_time = 0.0;
-                    self.accumulated_time = 0.0;
-                    self.world
-                        .ecs
-                        .insert_resource(metabolism::GlobalAtmosphere::default());
-                    self.world
-                        .ecs
-                        .insert_resource(analytics::MetricsState::new());
-
-                    // Clear lineage tracker
-                    if let Some(mut tracker) = self
-                        .world
-                        .ecs
-                        .get_resource_mut::<evolution::LineageTracker>()
-                    {
-                        *tracker = evolution::LineageTracker::new();
-                    }
-
-                    // Respawn defaults
-                    let mut tracker = evolution::LineageTracker::new();
-                    let mut species_registry = evolution::SpeciesRegistry::default();
-                    let mut global_tracker = genetics::GlobalInnovationTracker::default();
-                    self.world
-                        .ecs
-                        .resource_scope::<common::SimRng, _>(|ecs, mut sim_rng| {
-                            crate::app::seed_ecosystem(
-                                ecs,
-                                &mut tracker,
-                                &mut species_registry,
-                                &mut global_tracker,
-                                &mut sim_rng.0,
-                            );
-                        });
-                    self.world.ecs.insert_resource(tracker);
-                    self.world.ecs.insert_resource(species_registry);
-                    self.world.ecs.insert_resource(global_tracker);
+                    self.replay_log.record(
+                        self.current_tick(),
+                        storage::replay::ReplayAction::ReseedEcosystem,
+                    );
+                    self.apply_reseed_ecosystem();
                 }
                 ui::MenuAction::TakeScreenshot => {
                     // Actual capture happens in `render()`, right before
@@ -350,26 +225,14 @@ impl PhylonApp {
                     }
                 }
                 ui::MenuAction::SpawnProtoFish => {
-                    let fish_hox = genetics::HoxSequence::fish(5, 2, [0.25, 0.60, 0.90]);
-                    let fish_genome = genetics::Genome::new_hox_driven(
-                        genetics::GenomeId(100),
-                        common::EntityId(0),
-                        fish_hox,
+                    let pos = self.ui.camera_pos;
+                    self.replay_log.record(
+                        self.current_tick(),
+                        storage::replay::ReplayAction::SpawnProtoFish {
+                            position: pos.into(),
+                        },
                     );
-                    self.world
-                        .ecs
-                        .resource_scope::<common::SimRng, _>(|ecs, mut sim_rng| {
-                            organisms::spawn_organism(
-                                ecs,
-                                &fish_genome,
-                                self.ui.camera_pos,
-                                ecology::Diet::Carnivore,
-                                ecology::EcologicalCategory::None,
-                                0,
-                                0,
-                                &mut sim_rng.0,
-                            );
-                        });
+                    self.apply_spawn_proto_fish(pos);
                 }
                 ui::MenuAction::ShowDocumentation => {
                     self.ui.show_docs = true;
@@ -798,7 +661,18 @@ impl ApplicationHandler for PhylonApp {
                         tracing::error!("Failed to save state: {}", e);
                     }
                     crate::app::BackgroundTaskResult::LoadComplete(Ok(snapshot)) => {
+                        // Reseed the shared SimRng from the snapshot's
+                        // recorded seed — without this, a loaded run
+                        // continues drawing from whatever RNG stream state
+                        // happened to be live before the load, silently
+                        // breaking the "seed + interventions guarantee
+                        // replay" determinism promise (see
+                        // `storage::ReplayLog`'s doc comment).
+                        let seed = snapshot.seed;
                         snapshot.restore_world(&mut self.world.ecs);
+                        self.world
+                            .ecs
+                            .insert_resource(common::SimRng::from_seed(seed));
                         self.ui
                             .push_toast("Simulation loaded", ui::ToastSeverity::Success, 3.0);
                         tracing::info!("Loaded state successfully");

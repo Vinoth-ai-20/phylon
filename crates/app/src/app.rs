@@ -176,6 +176,12 @@ pub(crate) struct PhylonApp {
     /// `research::ExperimentManifest` is no longer dead code (see that
     /// crate's doc comment for the history).
     pub(crate) experiment_manifest: research::ExperimentManifest,
+
+    /// Every safe external intervention (see `storage::replay::ReplayAction`)
+    /// applied this run, in tick order — always recording (cheap; these
+    /// events are rare), so a `.phylon-replay` bundle is available to save
+    /// at any point via `MenuAction::SaveState`'s replay counterpart.
+    pub(crate) replay_log: storage::replay::ReplayLog,
 }
 
 /// Per-entity `(start_node_index, node_count)` offsets into a batched
@@ -313,6 +319,8 @@ impl PhylonApp {
             tracing::warn!("failed to save experiment manifest: {e}");
         }
 
+        let replay_log = storage::replay::ReplayLog::new(sim_config.simulation.rng_seed);
+
         Self {
             sim_config,
             scheduler,
@@ -343,7 +351,18 @@ impl PhylonApp {
             pending_screenshot: false,
             recording: None,
             experiment_manifest,
+            replay_log,
         }
+    }
+
+    /// The current simulation tick, derived from `total_sim_time` and the
+    /// configured tick rate — the same computation `MenuAction::SpawnManualHazard`'s
+    /// handler already used inline before this helper existed. Used to tag
+    /// recorded `storage::replay::ReplayEvent`s with the tick they occurred
+    /// at.
+    pub(crate) fn current_tick(&self) -> u64 {
+        let dt = self.world.ecs.resource::<common::TickRate>().dt();
+        (self.total_sim_time / dt).round() as u64
     }
 
     /// Initialises the wgpu instance, adapter, device, and surface for `window`.
