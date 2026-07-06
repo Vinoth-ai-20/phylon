@@ -277,8 +277,13 @@ pub fn install_fonts(fonts: &mut egui::FontDefinitions) {
     );
 }
 
-/// Applies global spacing + text-style tokens. Call once, after `set_fonts`.
-pub fn apply_style(ctx: &egui::Context) {
+/// Applies global spacing + text-style tokens. Called once at startup (after
+/// `set_fonts`) and again every frame from `render_ui` with the current
+/// `high_contrast` setting (Phase 2, M18 — Accessibility pass 2), so toggling
+/// it takes effect immediately; the per-field writes here are cheap enough
+/// (no font re-registration, just style-struct assignment) that calling this
+/// once per frame is not a measurable cost.
+pub fn apply_style(ctx: &egui::Context, high_contrast: bool) {
     ctx.style_mut(|style| {
         style.spacing.item_spacing = egui::vec2(SPACE_SM, SPACE_XS + 2.0);
         style.spacing.window_margin = egui::Margin::same(SPACE_SM);
@@ -316,5 +321,26 @@ pub fn apply_style(ctx: &egui::Context) {
         // thick enough to actually notice.
         style.visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0, FOCUS_RING);
         style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, FOCUS_RING);
+
+        // High Contrast Mode (Phase 2, M18): brightens body/button text and
+        // widget borders app-wide. Scoped to these few style fields rather
+        // than a full second token palette — a live colorblind preview
+        // (also considered for this pass) would need a genuine color-space
+        // transform pipeline and is deliberately deferred, tied to the same
+        // `palette`-crate trigger condition the Phase 2 roadmap's Color
+        // Architecture section already documents, not silently dropped.
+        if high_contrast {
+            style.visuals.override_text_color = Some(egui::Color32::WHITE);
+            style.visuals.widgets.noninteractive.bg_stroke =
+                egui::Stroke::new(1.0, egui::Color32::from_gray(200));
+            style.visuals.widgets.inactive.bg_stroke =
+                egui::Stroke::new(1.0, egui::Color32::from_gray(160));
+        } else {
+            style.visuals.override_text_color = None;
+            style.visuals.widgets.noninteractive.bg_stroke =
+                egui::Visuals::dark().widgets.noninteractive.bg_stroke;
+            style.visuals.widgets.inactive.bg_stroke =
+                egui::Visuals::dark().widgets.inactive.bg_stroke;
+        }
     });
 }

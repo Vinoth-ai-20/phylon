@@ -34,6 +34,10 @@ pub fn render_ui(
     state.time = ctx.input(|i| i.time);
     state.cleanup_toasts();
     track_recent_selections(state);
+    // Accessibility pass 2 (Phase 2, M18) — reactive every frame so toggling
+    // either setting in the Settings tab takes effect immediately.
+    crate::theme::apply_style(ctx, state.high_contrast);
+    ctx.set_zoom_factor(state.ui_scale.clamp(0.5, 3.0));
     // Reset each frame; whichever panel's row the cursor is over this frame
     // (if any) sets it again while rendering — see `panel_hover_entity`'s
     // doc comment.
@@ -167,6 +171,14 @@ pub fn render_ui(
     if state.show_world_boundary {
         render_world_boundary(ctx, state, interact_response.rect);
     }
+
+    // ── Minimap overlay (Phase 2, M17) ───────────────────────────────────────
+    if state.show_minimap {
+        render_minimap(ctx, state, world, interact_response.rect);
+    }
+
+    // ── Command Palette overlay (Phase 2, M15) ──────────────────────────────
+    crate::plugins::command_palette::command_palette_ui(ctx, state, &mut actions);
 
     // ── Toast notifications overlay ─────────────────────────────────────────
     render_toasts(ctx, state);
@@ -614,4 +626,96 @@ fn render_world_boundary(
             egui::Color32::from_rgba_premultiplied(255, 200, 0, 220),
         ),
     ));
+}
+
+/// Fixed size of the minimap's inset square, in screen points.
+const MINIMAP_SIZE: f32 = 160.0;
+
+/// Draws a fixed-size overview map in the viewport's bottom-right corner
+/// (Phase 2, M17): every organism's head position as a Diet-colored dot, plus
+/// a rectangle showing the main camera's currently-visible world extent.
+/// Unlike `render_scale_grid`/`render_world_boundary`, this has its own
+/// independent world→minimap-space transform (always shows the *whole*
+/// bounded world, regardless of the main camera's zoom).
+///
+/// **Scope note:** click-to-recenter-camera was considered but not built —
+/// this overlay is drawn on the background painter layer, not through a
+/// `Sense`d widget, so a manual click check here would double-fire alongside
+/// the viewport's own click-to-select handling for the same screen
+/// coordinates with no easy way to verify the interaction doesn't conflict
+/// without a live visual test. Left as a visual reference only; noted here
+/// rather than silently attempted.
+fn render_minimap(
+    ctx: &egui::Context,
+    state: &crate::WorkbenchState,
+    world: &mut world::World,
+    viewport_rect: egui::Rect,
+) {
+    if !viewport_rect.is_positive() {
+        return;
+    }
+    let margin = 12.0;
+    let minimap_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            viewport_rect.right() - MINIMAP_SIZE - margin,
+            viewport_rect.bottom() - MINIMAP_SIZE - margin,
+        ),
+        egui::vec2(MINIMAP_SIZE, MINIMAP_SIZE),
+    );
+
+    let e = WORLD_HALF_EXTENT;
+    let world_to_minimap = |pos: common::Vec2| {
+        egui::pos2(
+            minimap_rect.left() + (pos.x + e) / (2.0 * e) * MINIMAP_SIZE,
+            minimap_rect.bottom() - (pos.y + e) / (2.0 * e) * MINIMAP_SIZE,
+        )
+    };
+
+    let mut painter = ctx.layer_painter(egui::LayerId::background());
+    painter.set_clip_rect(viewport_rect);
+
+    painter.rect(
+        minimap_rect,
+        crate::theme::RADIUS_TIGHT,
+        egui::Color32::from_rgba_premultiplied(0, 0, 0, 140),
+        egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgba_premultiplied(255, 255, 255, 100),
+        ),
+    );
+
+    let mut query = world
+        .ecs
+        .query::<(&physics::ParticleNode, Option<&ecology::Diet>)>();
+    for (node, diet) in query.iter(&world.ecs) {
+        if node.segment_type != 0 {
+            continue; // head nodes only — one dot per organism
+        }
+        let color = diet
+            .map(crate::theme::chart_color)
+            .unwrap_or(crate::theme::DISABLED_FG);
+        painter.circle_filled(world_to_minimap(node.position), 1.5, color);
+    }
+
+    // Main camera's visible world extent, so the minimap also shows "you are
+    // here" — reuses the same screen-size/zoom math `render_scale_grid` uses
+    // to derive visible world bounds from `camera_zoom`.
+    let ppp = ctx.pixels_per_point();
+    let half_w_world = (viewport_rect.width() / 2.0) / (state.camera_zoom / ppp);
+    let half_h_world = (viewport_rect.height() / 2.0) / (state.camera_zoom / ppp);
+    let frustum = egui::Rect::from_min_max(
+        world_to_minimap(common::Vec2::new(
+            state.camera_pos.x - half_w_world,
+            state.camera_pos.y + half_h_world,
+        )),
+        world_to_minimap(common::Vec2::new(
+            state.camera_pos.x + half_w_world,
+            state.camera_pos.y - half_h_world,
+        )),
+    );
+    painter.rect_stroke(
+        frustum.intersect(minimap_rect),
+        0.0,
+        egui::Stroke::new(1.0, crate::theme::ACCENT),
+    );
 }

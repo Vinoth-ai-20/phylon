@@ -832,6 +832,20 @@ fn settings_panel(
             ui.checkbox(&mut state.show_world_boundary, "Show World Boundary");
         });
 
+    // Accessibility (Phase 2, M18 — Accessibility pass 2). Live colorblind
+    // preview was considered but deferred — see `theme::apply_style`'s doc
+    // comment for why (needs a real color-transform pipeline, tied to the
+    // same `palette`-crate trigger the Phase 2 roadmap already documents).
+    egui::CollapsingHeader::new("Accessibility")
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.checkbox(&mut state.high_contrast, "High Contrast Mode");
+            ui.horizontal(|ui| {
+                ui.label("UI Scale");
+                ui.add(egui::Slider::new(&mut state.ui_scale, 0.5..=2.0).text("×"));
+            });
+        });
+
     egui::CollapsingHeader::new("About")
         .default_open(false)
         .show(ui, |ui| {

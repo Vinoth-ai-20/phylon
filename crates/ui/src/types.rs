@@ -259,6 +259,23 @@ pub enum MenuAction {
     OpenReplayBundle,
     /// Clear the Replay Browser's currently-loaded bundle summary.
     CloseReplayBundle,
+    /// Open a save dialog and export the `lineages` SQLite table to CSV
+    /// (Phase 2, M14).
+    ExportLineagesCsv,
+    /// Open a save dialog and export the `events` SQLite table to CSV
+    /// (Phase 2, M14).
+    ExportEventsCsv,
+    /// Open a save dialog and export a fresh organism snapshot to CSV
+    /// (Phase 2, M14).
+    ExportOrganismsCsv,
+    /// Open a save dialog and export `MetricsState` history to CSV
+    /// (Phase 2, M14).
+    ExportMetricsCsv,
+    /// Open a save dialog and export `MetricsState` history to JSON
+    /// (Phase 2, M14).
+    ExportMetricsJson,
+    /// Toggle the Command Palette overlay (Phase 2, M15).
+    ToggleCommandPalette,
 
     // Overlay — canonical command routed through HeatmapState
     /// Set the active simulation overlay (updates HeatmapState ECS resource).

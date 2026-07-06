@@ -821,6 +821,37 @@ pub fn apply_default_layout(state: &mut WorkbenchState) {
     apply_layout_preset(state, LayoutPreset::Research);
 }
 
+/// Toggle Focus Mode (Phase 2, M16): closes every panel except the
+/// Viewport, remembering the prior arrangement in
+/// `WorkbenchState::focus_mode_previous` so a second toggle restores it
+/// exactly — a fullscreen-viewport toggle, not a fourth named preset.
+/// Entirely UI-side, following the same direct-call pattern
+/// `apply_layout_preset` already uses from `menu.rs` (no `MenuAction`
+/// round-trip needed for panel-arrangement changes).
+pub fn toggle_focus_mode(state: &mut WorkbenchState) {
+    if let Some(previous) = state.focus_mode_previous.take() {
+        state.panel_modes = previous;
+    } else {
+        state.focus_mode_previous = Some(state.panel_modes.clone());
+        let mut modes = std::collections::HashMap::new();
+        for &name in ALL_PANEL_NAMES {
+            let mode = if name == "Viewport" {
+                PanelMode::Docked
+            } else {
+                PanelMode::Closed
+            };
+            modes.insert(name.to_string(), mode);
+        }
+        state.panel_modes = modes;
+    }
+    state.layout_shares.clear();
+    rebuild_tree_from_modes(
+        &mut state.dock_tree,
+        &state.panel_modes,
+        &state.layout_shares,
+    );
+}
+
 /// Immediately remove a named panel's tile from the tree, if present.
 ///
 /// `retain_pane` already causes egui_tiles to drop Floating/Closed panes on

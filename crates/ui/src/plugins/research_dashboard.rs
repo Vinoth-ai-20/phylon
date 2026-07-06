@@ -16,8 +16,46 @@ pub fn research_dashboard_ui(
     ui: &mut egui::Ui,
     _state: &mut crate::WorkbenchState,
     _world: &mut world::World,
-    _actions: &mut [MenuAction],
+    actions: &mut Vec<MenuAction>,
 ) {
+    // Export triggers (Phase 2, M14) — the underlying export functions
+    // (`storage::export_lineages_csv`/`export_events_csv`/
+    // `export_organisms_csv`) already existed with no UI path to them
+    // anywhere in the app; these just wire buttons to the `MenuAction`s
+    // `app::events.rs` now handles.
+    ui.horizontal(|ui| {
+        if ui
+            .button(format!(
+                "{} Export Lineages CSV",
+                egui_remixicon::icons::DOWNLOAD_LINE
+            ))
+            .clicked()
+        {
+            actions.push(MenuAction::ExportLineagesCsv);
+        }
+        if ui
+            .button(format!(
+                "{} Export Events CSV",
+                egui_remixicon::icons::DOWNLOAD_LINE
+            ))
+            .clicked()
+        {
+            actions.push(MenuAction::ExportEventsCsv);
+        }
+        if ui
+            .button(format!(
+                "{} Export Organisms CSV",
+                egui_remixicon::icons::DOWNLOAD_LINE
+            ))
+            .clicked()
+        {
+            actions.push(MenuAction::ExportOrganismsCsv);
+        }
+    });
+    ui.add_space(crate::theme::SPACE_SM);
+    ui.separator();
+    ui.add_space(crate::theme::SPACE_SM);
+
     let reports = discover_experiment_reports(std::path::Path::new("data/experiments"));
 
     if reports.is_empty() {

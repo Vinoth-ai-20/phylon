@@ -374,6 +374,131 @@ impl PhylonApp {
                 ui::MenuAction::CloseReplayBundle => {
                     self.ui.replay_browser = None;
                 }
+                ui::MenuAction::ExportLineagesCsv => {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("CSV", &["csv"])
+                        .set_file_name("lineages.csv")
+                        .save_file()
+                    {
+                        match self.storage.export_lineages_csv(&path) {
+                            Ok(()) => self.ui.push_toast(
+                                "Lineages exported",
+                                ui::ToastSeverity::Success,
+                                3.0,
+                            ),
+                            Err(e) => self.ui.push_toast(
+                                format!("Export failed: {e}"),
+                                ui::ToastSeverity::Error,
+                                5.0,
+                            ),
+                        }
+                    }
+                }
+                ui::MenuAction::ExportEventsCsv => {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("CSV", &["csv"])
+                        .set_file_name("events.csv")
+                        .save_file()
+                    {
+                        match self.storage.export_events_csv(&path) {
+                            Ok(()) => self.ui.push_toast(
+                                "Events exported",
+                                ui::ToastSeverity::Success,
+                                3.0,
+                            ),
+                            Err(e) => self.ui.push_toast(
+                                format!("Export failed: {e}"),
+                                ui::ToastSeverity::Error,
+                                5.0,
+                            ),
+                        }
+                    }
+                }
+                ui::MenuAction::ExportOrganismsCsv => {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("CSV", &["csv"])
+                        .set_file_name("organisms.csv")
+                        .save_file()
+                    {
+                        let snapshot = storage::snapshot::SimulationSnapshot::from_world(
+                            &mut self.world.ecs,
+                            self.sim_config.simulation.rng_seed,
+                            self.total_sim_time,
+                        );
+                        match storage::export_organisms_csv(&snapshot, &path) {
+                            Ok(()) => self.ui.push_toast(
+                                "Organisms exported",
+                                ui::ToastSeverity::Success,
+                                3.0,
+                            ),
+                            Err(e) => self.ui.push_toast(
+                                format!("Export failed: {e}"),
+                                ui::ToastSeverity::Error,
+                                5.0,
+                            ),
+                        }
+                    }
+                }
+                ui::MenuAction::ExportMetricsCsv => {
+                    if let Some(metrics) = self.world.ecs.get_resource::<analytics::MetricsState>()
+                    {
+                        let csv = analytics::export::metrics_to_csv(metrics);
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("CSV", &["csv"])
+                            .set_file_name("metrics.csv")
+                            .save_file()
+                        {
+                            match std::fs::write(&path, csv) {
+                                Ok(()) => self.ui.push_toast(
+                                    "Metrics exported",
+                                    ui::ToastSeverity::Success,
+                                    3.0,
+                                ),
+                                Err(e) => self.ui.push_toast(
+                                    format!("Export failed: {e}"),
+                                    ui::ToastSeverity::Error,
+                                    5.0,
+                                ),
+                            }
+                        }
+                    }
+                }
+                ui::MenuAction::ExportMetricsJson => {
+                    if let Some(metrics) = self.world.ecs.get_resource::<analytics::MetricsState>()
+                    {
+                        match analytics::export::metrics_to_json(metrics) {
+                            Ok(json) => {
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .add_filter("JSON", &["json"])
+                                    .set_file_name("metrics.json")
+                                    .save_file()
+                                {
+                                    match std::fs::write(&path, json) {
+                                        Ok(()) => self.ui.push_toast(
+                                            "Metrics exported",
+                                            ui::ToastSeverity::Success,
+                                            3.0,
+                                        ),
+                                        Err(e) => self.ui.push_toast(
+                                            format!("Export failed: {e}"),
+                                            ui::ToastSeverity::Error,
+                                            5.0,
+                                        ),
+                                    }
+                                }
+                            }
+                            Err(e) => self.ui.push_toast(
+                                format!("Failed to serialize metrics: {e}"),
+                                ui::ToastSeverity::Error,
+                                5.0,
+                            ),
+                        }
+                    }
+                }
+                ui::MenuAction::ToggleCommandPalette => {
+                    self.ui.show_command_palette = !self.ui.show_command_palette;
+                    self.ui.command_palette_query.clear();
+                }
                 ui::MenuAction::FocusSelection => {
                     tracing::warn!("FocusSelection not yet implemented.");
                 }

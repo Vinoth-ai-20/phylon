@@ -1,3 +1,5 @@
+/// Command Palette overlay — fuzzy-searchable action list (Ctrl+Shift+P).
+pub mod command_palette;
 /// UI plugin modules.
 pub mod dialogs;
 /// Event log panel — recent births, deaths, hazard events.

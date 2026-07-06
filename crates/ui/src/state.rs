@@ -126,6 +126,28 @@ pub struct WorkbenchState {
     /// Saved camera views (Phase 2, M12), most-recently-added last.
     /// Session-only by design — see `CameraBookmark`'s doc comment.
     pub bookmarks: Vec<crate::CameraBookmark>,
+    /// Whether the Command Palette overlay is open (Phase 2, M15).
+    pub show_command_palette: bool,
+    /// The Command Palette's current search text.
+    pub command_palette_query: String,
+    /// `Some(prior panel_modes)` while Focus Mode (Phase 2, M16) is active,
+    /// restored on exit — `None` means Focus Mode is off. A toggle, not a
+    /// fourth `LayoutPreset`, since (unlike the 3 named presets, which are
+    /// one-way resets) it needs to remember and restore whatever arrangement
+    /// was active before it was turned on.
+    pub focus_mode_previous: Option<std::collections::HashMap<String, PanelMode>>,
+    /// Whether the viewport minimap overlay is shown (Phase 2, M17).
+    pub show_minimap: bool,
+    /// Whether High Contrast Mode is active (Phase 2, M18 — Accessibility
+    /// pass 2). Applied every frame via `theme::apply_style`.
+    pub high_contrast: bool,
+    /// Global UI scale factor (Phase 2, M18), applied via
+    /// `egui::Context::set_zoom_factor` every frame — scales the whole
+    /// interface (fonts, spacing, icons together), which egui's own zoom
+    /// mechanism already handles correctly, rather than reimplementing a
+    /// font-only scale that would leave layouts inconsistent at non-1.0
+    /// values.
+    pub ui_scale: f32,
     /// Simulation speed multiplier (1.0 = real time).
     pub simulation_speed: f32,
     /// Whether the simulation is playing or paused.
@@ -373,6 +395,12 @@ impl Default for WorkbenchState {
             measure_mode: false,
             measure_result: None,
             bookmarks: Vec::new(),
+            show_command_palette: false,
+            command_palette_query: String::new(),
+            focus_mode_previous: None,
+            show_minimap: true,
+            high_contrast: false,
+            ui_scale: 1.0,
             simulation_speed: 1.0,
             playback_state: PlaybackState::Paused,
 
@@ -413,7 +441,7 @@ impl Default for WorkbenchState {
             show_keybinds: false,
             show_vision_cones: false,
             show_world_boundary: false,
-            show_scale_grid: true,
+            show_scale_grid: false,
             recording_active: false,
             recording_started_at: None,
             activity_bar_expanded: true,

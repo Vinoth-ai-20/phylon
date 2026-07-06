@@ -462,7 +462,7 @@ impl PhylonApp {
         ui::theme::install_fonts(&mut fonts);
         egui_remixicon::add_to_fonts(&mut fonts);
         egui_context.set_fonts(fonts);
-        ui::theme::apply_style(&egui_context);
+        ui::theme::apply_style(&egui_context, false);
         egui_context.options_mut(|o| {
             o.zoom_with_keyboard = false;
         });

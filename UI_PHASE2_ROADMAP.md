@@ -260,11 +260,11 @@ Each is sized to Phase 1's proven milestone shape (1-3 files' worth of new/chang
 | M11 | ~~Measurement tool~~ | 2 | `state.rs`, `viewport.rs`, `toolbar.rs` | Low-Medium — **Done** |
 | M12 | ~~Bookmarks~~ (camera views, not tick-tied — see Execution Log) | 2 | `types.rs` (new `CameraBookmark`), `state.rs`, `toolbar.rs` | Medium — **Done** |
 | M13 | ~~Quick Organism Search + Recent Selections~~ | 2 | `state.rs`, `sidebar.rs` (search, reusing the Lineage tab), `inspector.rs` (Recent row), `render.rs` (frame-diff tracker) | Low — **Done** |
-| M14 | UI export triggers (CSV/JSON/report) | 3 | `research_dashboard.rs`, `metrics.rs` | Low |
-| M15 | Command Palette | 3 | new `plugins/command_palette.rs`, action registry in `types.rs` | Medium |
-| M16 | Focus Mode | 3 | `layout.rs` or `menu.rs` | Low |
-| M17 | Minimap | 3 | `render.rs`, `state.rs` | Medium |
-| M18 | Accessibility pass 2 (High Contrast, colorblind preview, font scaling) | 3 | `theme.rs`, `state.rs`, `menu.rs` | Medium |
+| M14 | ~~UI export triggers (CSV/JSON/report)~~ | 3 | `research_dashboard.rs`, `metrics.rs`, `types.rs`, `app/src/events.rs` | Low — **Done** |
+| M15 | ~~Command Palette~~ | 3 | new `plugins/command_palette.rs`, `shortcuts.rs` (Ctrl+Shift+P), `types.rs`, `state.rs` | Medium — **Done** |
+| M16 | ~~Focus Mode~~ | 3 | `layout.rs` (new `toggle_focus_mode`), `state.rs`, `toolbar.rs` | Low — **Done** |
+| M17 | ~~Minimap~~ | 3 | `render.rs` (new `render_minimap`), `state.rs`, `menu.rs` | Medium — **Done** |
+| M18 | ~~Accessibility pass 2~~ (High Contrast + UI scale — colorblind preview deferred, see Execution Log) | 3 | `theme.rs`, `state.rs`, `sidebar.rs`, `app/src/app.rs`, `render.rs` | Medium — **Done** |
 
 **Never combine milestones. Never continue automatically. Stop after each for review**, per the standing instruction.
 
@@ -343,7 +343,21 @@ Per your instruction ("wait for my acknowledgement only if you discover architec
 
 **Verification (all of M7–M13):** `cargo build --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check` all clean (one auto-fmt pass applied and re-verified); `cargo test --workspace` — all passed, 0 failed, throughout.
 
-**Wave 2 complete.** Two milestones (M9, M12) were scoped down from the milestone table's original guess after concrete findings during implementation — a field-overwrite conflict and an honest read of what "bookmark" can mean without live tick-jumping — both noted above rather than silently reinterpreted. Wave 3 (M14 export triggers → M15 Command Palette → M16 Focus Mode → M17 Minimap → M18 Accessibility pass 2) is next, pending your go-ahead.
+**Wave 2 complete.** Two milestones (M9, M12) were scoped down from the milestone table's original guess after concrete findings during implementation — a field-overwrite conflict and an honest read of what "bookmark" can mean without live tick-jumping — both noted above rather than silently reinterpreted.
+
+### Wave 3 (M14–M18), implemented as one bundle per your instruction
+
+| Milestone | Outcome |
+| --- | --- |
+| M14 — UI export triggers | Verified: `storage::export_lineages_csv`/`export_events_csv` (SQLite-backed, methods on `StorageManager`, already a `PhylonApp` field) and `storage::export_organisms_csv` (free function over a fresh `SimulationSnapshot`) and `analytics::export::metrics_to_csv`/`metrics_to_json` all already existed with zero UI path to any of them. Added 5 new `MenuAction` variants, handled in `events.rs` with the same save-dialog-then-write pattern `ExportGenome` already established; added buttons to the Research Dashboard (lineages/events/organisms) and Metrics panel (CSV/JSON) — the two files the roadmap itself named. Also fixed `metrics.rs`'s own doc comment, which had explicitly listed "data export" as out-of-scope future work — stale as of this milestone. |
+| M15 — Command Palette | New `plugins/command_palette.rs`: a `const COMMANDS: &[(&str, MenuAction)]` registry (26 entries) scoped strictly to argument-free `MenuAction` variants, per the roadmap's own risk note not to expand `MenuAction` for this. Ctrl+Shift+P toggle added to `ShortcutManager`, ordered *before* the pre-existing Ctrl+P (`spawn`) binding in `consume_all` — both share the P key, and `shortcuts.rs`'s own established ordering rule (more-specific combos checked first) applied here too. A floating, centered, non-modal window with a live substring filter. |
+| M16 — Focus Mode | Found the existing precedent this should follow: `apply_layout_preset` is already called directly from `menu.rs` (UI-side, no `MenuAction` round-trip) for the 3 named presets — Focus Mode uses the same direct-call shape via a new `layout::toggle_focus_mode`, but as a *toggle* (remembers the prior `panel_modes` in `focus_mode_previous` and restores them) rather than a one-way reset like the named presets. Toolbar button, right of Bookmarks. |
+| M17 — Minimap | New `render_minimap` in `ui/src/render.rs`, following the exact overlay pattern `render_scale_grid`/`render_world_boundary`/`render_vision_cones` already established (background-layer painter, toggled via `state.show_minimap`, a new View-menu checkbox). Shows every organism's head position as a Diet-colored dot plus the main camera's visible-extent rectangle, using its own independent world→minimap transform (always shows the whole bounded world, unlike the main camera transform). **Scope note:** click-to-recenter-camera was considered but not built — this overlay is drawn on the background painter layer, not through a `Sense`d widget, so a manual click-region check would risk double-firing alongside the viewport's own click-to-select handling for the same screen coordinates, with no way to verify the interaction doesn't conflict without a live visual test. Left as a visual reference only, noted rather than silently attempted. |
+| M18 — Accessibility pass 2 | Scoped to High Contrast Mode + a global UI-scale slider; **live colorblind preview was deferred**, tied explicitly to the same `palette`-crate trigger condition §6 of this roadmap already documents (a live preview needs a real color-transform pipeline, not a token swap) — not silently dropped, the same honest scoping call §6 made originally. `theme::apply_style` gained a `high_contrast: bool` parameter and is now called every frame from `render_ui` (previously once at startup only) so the Settings-tab checkbox takes effect immediately; the one pre-existing call site (`app/src/app.rs`'s startup path) passes `false` and is superseded by the per-frame call on the very next frame. UI scale uses `egui::Context::set_zoom_factor` (scales fonts/spacing/icons together correctly) rather than a hand-rolled font-only multiplier, clamped to `0.5..=3.0`. |
+
+**Verification (all of M14–M18):** `cargo build --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check` all clean (one auto-fmt pass applied and re-verified); `cargo test --workspace` — all passed, 0 failed.
+
+**Wave 3 complete — all 18 Phase 2 milestones are now done.** Three milestones across the full plan required a real scope adjustment discovered during implementation rather than assumed at planning time (M9's hover-conflict, M12's tick-jumping honesty, M18's colorblind-preview deferral); each is documented in place rather than silently reinterpreted, matching the discipline this document held to from Phase 1 onward.
 
 Implementation audit complete.
 UI roadmap ready for review.

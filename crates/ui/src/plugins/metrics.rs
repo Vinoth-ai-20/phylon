@@ -10,23 +10,47 @@ use crate::types::*;
 ///
 /// **Future Scope (explicitly out of scope here — see
 /// `docs/design/design_system.md` / the roadmap's Milestone 7 note):**
-/// zoom/pan, time-range selection, data export, running statistics,
-/// smoothing, multiple Y-axes, per-series visibility toggles, and saved
-/// chart presets would make this a full scientific-analytics workspace
-/// rather than a dashboard — tracked as a follow-on initiative, not
-/// silently expanded here.
+/// zoom/pan, time-range selection, running statistics, smoothing, multiple
+/// Y-axes, per-series visibility toggles, and saved chart presets would make
+/// this a full scientific-analytics workspace rather than a dashboard —
+/// tracked as a follow-on initiative, not silently expanded here. (Data
+/// export, also originally listed here, was added in Phase 2, M14 —
+/// `analytics::export::metrics_to_csv`/`metrics_to_json` already existed
+/// with no UI path to them.)
 #[allow(clippy::too_many_arguments)]
 pub fn metrics_ui(
     _ctx: &egui::Context,
     ui: &mut egui::Ui,
     _state: &mut crate::WorkbenchState,
     world: &mut world::World,
-    _actions: &mut [MenuAction],
+    actions: &mut Vec<MenuAction>,
 ) {
     let Some(metrics) = world.ecs.get_resource::<analytics::MetricsState>() else {
         crate::widgets::empty_state(ui, "Metrics not yet available.");
         return;
     };
+
+    ui.horizontal(|ui| {
+        if ui
+            .button(format!(
+                "{} Export CSV",
+                egui_remixicon::icons::DOWNLOAD_LINE
+            ))
+            .clicked()
+        {
+            actions.push(MenuAction::ExportMetricsCsv);
+        }
+        if ui
+            .button(format!(
+                "{} Export JSON",
+                egui_remixicon::icons::DOWNLOAD_LINE
+            ))
+            .clicked()
+        {
+            actions.push(MenuAction::ExportMetricsJson);
+        }
+    });
+    ui.add_space(crate::theme::SPACE_SM);
 
     let to_pts = |hist: &std::collections::VecDeque<[f64; 2]>| -> egui_plot::PlotPoints {
         hist.iter().copied().collect()

@@ -53,6 +53,8 @@ pub struct ShortcutManager {
     pub deselect: KeyboardShortcut,
     /// Spawn a prototype organism at the cursor.
     pub spawn: KeyboardShortcut,
+    /// Toggle the Command Palette (Phase 2, M15).
+    pub command_palette: KeyboardShortcut,
 }
 
 impl Default for ShortcutManager {
@@ -81,6 +83,7 @@ impl Default for ShortcutManager {
             select_all: KeyboardShortcut::new(Modifiers::CTRL, Key::A),
             deselect: KeyboardShortcut::new(Modifiers::NONE, Key::Escape),
             spawn: KeyboardShortcut::new(Modifiers::CTRL, Key::P),
+            command_palette: KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::P),
         }
     }
 }
@@ -96,6 +99,13 @@ impl ShortcutManager {
         // more specific Shift-combos must be checked (and consume the key
         // event) before their less-specific counterparts, or the wrong
         // action fires — check those first.
+        // Checked before `spawn` (Ctrl+P): both share the P key, and the
+        // more specific Ctrl+Shift+P combo must consume the event first, or
+        // it would satisfy the less-specific Ctrl+P check instead (same
+        // ordering rule as take_screenshot/toggle_recording below).
+        if ctx.input_mut(|i| i.consume_shortcut(&self.command_palette)) {
+            actions.push(MenuAction::ToggleCommandPalette);
+        }
         if ctx.input_mut(|i| i.consume_shortcut(&self.take_screenshot)) {
             actions.push(MenuAction::TakeScreenshot);
         }

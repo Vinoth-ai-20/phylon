@@ -186,6 +186,21 @@ pub fn toolbar_ui(
 
         ui.separator();
 
+        // Focus Mode (Phase 2, M16) — fullscreen viewport toggle, entirely
+        // UI-side (see `layout::toggle_focus_mode`'s doc comment).
+        if ui
+            .selectable_label(
+                state.focus_mode_previous.is_some(),
+                egui_remixicon::icons::FULLSCREEN_LINE.to_string(),
+            )
+            .on_hover_text("Focus Mode — hide all panels except the Viewport")
+            .clicked()
+        {
+            crate::layout::toggle_focus_mode(state);
+        }
+
+        ui.separator();
+
         // Bookmarks (Phase 2, M12) — save/jump-to camera views. Entirely
         // UI-side: camera position/zoom already live in `WorkbenchState`,
         // so no `MenuAction`/ECS round-trip is needed to apply one.
