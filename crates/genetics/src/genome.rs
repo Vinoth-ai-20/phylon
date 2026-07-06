@@ -379,10 +379,9 @@ impl Genome {
                         morph_cppn: self_allele
                             .morph_cppn
                             .crossover(&other_allele.morph_cppn, rng),
-                        // Not yet crossed — Phase 3 M2's scope, not M1's.
-                        // Carried over from `self`'s allele unchanged in the
-                        // meantime, same as `regulatory_cppn` below.
-                        regulatory_cppn: self_allele.regulatory_cppn.clone(),
+                        regulatory_cppn: self_allele
+                            .regulatory_cppn
+                            .crossover(&other_allele.regulatory_cppn, rng),
                     },
                     None => self_allele.clone(),
                 });
@@ -394,11 +393,7 @@ impl Genome {
             ploidy: self.ploidy,
             brain_cppn: self.brain_cppn.crossover(&other.brain_cppn, rng),
             morph_cppn: self.morph_cppn.crossover(&other.morph_cppn, rng),
-            // Not yet crossed with `other` — real NEAT-style crossover for
-            // this field is Phase 3 M2's explicit scope. Carrying `self`'s
-            // value over unchanged is a known, temporary, documented state,
-            // not an oversight.
-            regulatory_cppn: self.regulatory_cppn.clone(),
+            regulatory_cppn: self.regulatory_cppn.crossover(&other.regulatory_cppn, rng),
             second_allele,
             hox,
         }
@@ -409,27 +404,27 @@ impl Genome {
     /// For a diploid genome, the second allele is mutated independently —
     /// each allele copy accumulates its own mutations, exactly as separate
     /// chromosome copies would, rather than always mutating in lockstep.
-    ///
-    /// **`regulatory_cppn` is deliberately not mutated here** — real
-    /// mutation for that field is Phase 3 M2's explicit scope, not M1's. It
-    /// stays exactly as constructed until M2 lands.
+    /// As of Phase 3 M2, `regulatory_cppn` mutates under the same pass gate
+    /// as `brain_cppn`/`morph_cppn` — see `mutate_cppn_trio`.
     pub fn mutate<R: rand::Rng>(
         &mut self,
         mutation_rate: f32,
         rng: &mut R,
         tracker: &mut GlobalInnovationTracker,
     ) {
-        mutate_cppn_pair(
+        mutate_cppn_trio(
             &mut self.brain_cppn,
             &mut self.morph_cppn,
+            &mut self.regulatory_cppn,
             mutation_rate,
             rng,
             tracker,
         );
         if let Some(alleles) = &mut self.second_allele {
-            mutate_cppn_pair(
+            mutate_cppn_trio(
                 &mut alleles.brain_cppn,
                 &mut alleles.morph_cppn,
+                &mut alleles.regulatory_cppn,
                 mutation_rate,
                 rng,
                 tracker,
@@ -438,10 +433,14 @@ impl Genome {
     }
 }
 
-/// Applies the standard mutation roll to one brain/morph CPPN pair — shared
-/// between `Genome::mutate`'s primary allele and (for diploid genomes) its
-/// second allele, so the two are mutated independently rather than the
-/// second allele silently never mutating.
+/// Applies the standard mutation roll to one genome's `brain`/`morph`/
+/// `regulatory` CPPN triplet — shared between `Genome::mutate`'s primary
+/// allele and (for diploid genomes) its second allele, so the two are
+/// mutated independently rather than the second allele silently never
+/// mutating. Named `_trio` (not `_pair`) since Phase 3 M2 extended this from
+/// two CPPNs to three; `regulatory_cppn` uses the identical mutation rates
+/// (5% add-node, 10% add-connection, per-connection jitter) as the other
+/// two — no separate tuning was judged necessary for this milestone.
 /// Maximum per-mutation-pass drift applied to a connection's own
 /// `mutation_rate`, and the range it's clamped to — self-adaptation lets
 /// evolution itself tune how volatile each locus is, rather than fixing it
@@ -462,9 +461,10 @@ fn mutate_connection<R: rand::Rng>(conn: &mut CppnConnection, rng: &mut R) {
         .clamp(*MUTATION_RATE_RANGE.start(), *MUTATION_RATE_RANGE.end());
 }
 
-fn mutate_cppn_pair<R: rand::Rng>(
+fn mutate_cppn_trio<R: rand::Rng>(
     brain_cppn: &mut Cppn,
     morph_cppn: &mut Cppn,
+    regulatory_cppn: &mut Cppn,
     mutation_rate: f32,
     rng: &mut R,
     tracker: &mut GlobalInnovationTracker,
@@ -489,6 +489,20 @@ fn mutate_cppn_pair<R: rand::Rng>(
             morph_cppn.mutate_add_connection(&mut tracker.next_innovation, rng);
         }
         for conn in &mut morph_cppn.connections {
+            mutate_connection(conn, rng);
+        }
+
+        // Mutate Regulatory CPPN (Phase 3, M2) — same rates as brain/morph
+        // above; appended after them (rather than interleaved) so the
+        // pre-existing brain/morph mutation draw sequence for a given seed
+        // is disturbed as little as possible by this addition.
+        if rng.gen::<f32>() < 0.05 {
+            regulatory_cppn.mutate_add_node(&mut tracker.next_innovation, rng);
+        }
+        if rng.gen::<f32>() < 0.10 {
+            regulatory_cppn.mutate_add_connection(&mut tracker.next_innovation, rng);
+        }
+        for conn in &mut regulatory_cppn.connections {
             mutate_connection(conn, rng);
         }
     }
@@ -565,24 +579,43 @@ mod tests {
     }
 
     #[test]
-    fn crossover_carries_regulatory_cppn_over_unchanged_for_now() {
-        // Phase 3 M1's documented, temporary behavior: real crossover for
-        // this field is M2's scope. Confirm it's `self`'s value, not
-        // `other`'s and not silently dropped/reset.
+    fn crossover_combines_regulatory_cppn_from_both_parents() {
+        // Phase 3 M2: real NEAT-style crossover now applies to this field,
+        // matching brain_cppn/morph_cppn (superseding M1's "carried over
+        // unchanged" placeholder). For a single-connection CPPN,
+        // `Cppn::crossover`'s per-gene coin flip means the result always
+        // equals exactly one parent's weight, never a blend — so across
+        // enough seeds, both parents' values should each appear at least
+        // once, proving real combination (not always picking one side).
         let mut a = Genome::new_minimal(GenomeId(1), EntityId(0));
         a.regulatory_cppn = sample_cppn(0.7);
         let mut b = Genome::new_minimal(GenomeId(2), EntityId(0));
         b.regulatory_cppn = sample_cppn(-0.3);
 
-        let mut rng = ChaCha8Rng::seed_from_u64(1);
-        let child = a.crossover(&b, GenomeId(3), &mut rng);
-        assert_eq!(child.regulatory_cppn, a.regulatory_cppn);
+        let mut saw_a = false;
+        let mut saw_b = false;
+        for seed in 0..30 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let child = a.crossover(&b, GenomeId(3), &mut rng);
+            let w = child.regulatory_cppn.connections[0].weight;
+            if w == 0.7 {
+                saw_a = true;
+            }
+            if w == -0.3 {
+                saw_b = true;
+            }
+        }
+        assert!(
+            saw_a && saw_b,
+            "expected crossover to draw this gene from each parent at least once across 30 seeds"
+        );
     }
 
     #[test]
-    fn mutate_does_not_change_regulatory_cppn_yet() {
-        // Phase 3 M1's documented, temporary behavior: real mutation for
-        // this field is M2's scope.
+    fn mutate_changes_regulatory_cppn() {
+        // Phase 3 M2: real mutation now applies to this field (superseding
+        // M1's "unchanged" placeholder), using the same rates as
+        // brain_cppn/morph_cppn — see `mutate_cppn_trio`.
         let mut g = Genome::new_minimal(GenomeId(1), EntityId(0));
         g.regulatory_cppn = sample_cppn(0.42);
         let before = g.regulatory_cppn.clone();
@@ -591,7 +624,7 @@ mod tests {
         for _ in 0..50 {
             g.mutate(1.0, &mut rng, &mut tracker);
         }
-        assert_eq!(g.regulatory_cppn, before);
+        assert_ne!(g.regulatory_cppn, before);
     }
 
     #[test]
@@ -648,6 +681,34 @@ mod tests {
         // Both alleles started identical (weight 0.1); since they're
         // mutated independently (not in lockstep) from the same rng
         // stream, they consume different draws and should have diverged.
+        assert_ne!(primary_weight, second_weight);
+    }
+
+    #[test]
+    fn diploid_second_allele_regulatory_cppn_crosses_and_mutates_too() {
+        // Phase 3 M2: verifies the diploid second-allele path for
+        // `regulatory_cppn` specifically — both `new_diploid`'s 3-tuple
+        // signature and `mutate_cppn_trio`'s per-allele call.
+        let mut g = Genome::new_diploid(
+            GenomeId(1),
+            EntityId(0),
+            None,
+            (Cppn::new(), Cppn::new(), sample_cppn(0.2)),
+            (Cppn::new(), Cppn::new(), sample_cppn(0.2)),
+        );
+        let mut rng = ChaCha8Rng::seed_from_u64(11);
+        let mut tracker = GlobalInnovationTracker::default();
+        for _ in 0..50 {
+            g.mutate(1.0, &mut rng, &mut tracker);
+        }
+        let primary_weight = g.regulatory_cppn.connections[0].weight;
+        let second_weight = g
+            .second_allele
+            .as_ref()
+            .unwrap()
+            .regulatory_cppn
+            .connections[0]
+            .weight;
         assert_ne!(primary_weight, second_weight);
     }
 
