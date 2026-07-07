@@ -242,11 +242,24 @@ impl PhylonApp {
         self.world
             .ecs
             .run_system_once(ecology::disease_spread_system);
+        // Per-segment immune response (Phase 4, P4-F5): spreads the
+        // organism-wide `Infection` progressed just above out into each
+        // segment's own severity/resistance state.
+        self.world
+            .ecs
+            .run_system_once(organisms::segment_infection_system);
         // Intra-body transport (Phase 4, P4-F3) right before metabolism, so
         // resources gained this tick (foraging/photosynthesis, above) can
         // reach a segment's local pool before `metabolism_system` respires
         // from it — see `organisms::transport_system`'s doc comment.
         self.world.ecs.run_system_once(organisms::transport_system);
+        // Endocrine diffusion (Phase 4, P4-F4): propagates the head's
+        // `Neuromodulators` reading (last updated this tick at step 0.5,
+        // above) out to every segment's own `HormoneLevel` along the same
+        // Body Graph edges transport just used.
+        self.world
+            .ecs
+            .run_system_once(organisms::endocrine_diffusion_system);
         self.world
             .ecs
             .run_system_once(metabolism::metabolism_system);

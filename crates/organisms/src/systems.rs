@@ -236,6 +236,17 @@ pub fn growth_system(
                 ParticleNode::new(spawn_pos, 1.0, seg_u32, entity.index()),
                 OrganismColor(outputs.pigment),
                 metabolism::ChemicalEconomy::segment_default(),
+                // Phase 4, P4-F4: every non-head segment also gets a
+                // `HormoneLevel` — `organisms::endocrine_diffusion_system`
+                // relaxes it toward its structural parent's channel
+                // reading each tick (see that system's doc comment).
+                brain::HormoneLevel::default(),
+                // Phase 4, P4-F5: every non-head segment also gets its own
+                // infection severity/immune resistance —
+                // `organisms::segment_infection_system` spreads the
+                // organism-wide `Infection` (if any) out into these.
+                ecology::disease::SegmentInfection::healthy(),
+                ecology::disease::SegmentImmunity::baseline(),
             ))
             .id();
 
@@ -314,6 +325,9 @@ pub fn growth_system(
                     ParticleNode::new(f_up_pos, 0.5, 4, entity.index()),
                     OrganismColor(outputs.pigment),
                     metabolism::ChemicalEconomy::segment_default(),
+                    brain::HormoneLevel::default(),
+                    ecology::disease::SegmentInfection::healthy(),
+                    ecology::disease::SegmentImmunity::baseline(),
                 ))
                 .id();
             let f_dn = commands
@@ -321,6 +335,9 @@ pub fn growth_system(
                     ParticleNode::new(f_dn_pos, 0.5, 4, entity.index()),
                     OrganismColor(outputs.pigment),
                     metabolism::ChemicalEconomy::segment_default(),
+                    brain::HormoneLevel::default(),
+                    ecology::disease::SegmentInfection::healthy(),
+                    ecology::disease::SegmentImmunity::baseline(),
                 ))
                 .id();
 

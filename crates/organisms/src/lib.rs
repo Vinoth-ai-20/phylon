@@ -60,3 +60,13 @@ pub use spawning::{spawn_organism, spawn_proto_fish};
 /// P4-F3).
 pub mod transport;
 pub use transport::transport_system;
+
+/// Per-region endocrine signalling along the persistent Body Graph (Phase 4,
+/// P4-F4).
+pub mod endocrine;
+pub use endocrine::endocrine_diffusion_system;
+
+/// Per-segment immune response along the persistent Body Graph (Phase 4,
+/// P4-F5).
+pub mod immune;
+pub use immune::segment_infection_system;

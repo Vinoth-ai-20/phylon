@@ -475,6 +475,29 @@ impl Neuromodulators {
     }
 }
 
+/// # Per-Segment Hormone Level
+///
+/// A body segment's own local reading of the same three channels
+/// [`Neuromodulators`] tracks — Phase 4, `PHASE4_ROADMAP.md` milestone
+/// P4-F4. The organism's head carries the authoritative [`Neuromodulators`]
+/// (driven directly by its own metabolic state); every other segment
+/// carries a `HormoneLevel` instead, which `organisms::endocrine_diffusion_system`
+/// relaxes toward its structural parent's level each tick (head's
+/// `Neuromodulators` for a segment attached directly to the head, or an
+/// upstream segment's own already-updated `HormoneLevel` otherwise) — an
+/// unbroadcast, non-conserved diffusion (the source keeps its own level;
+/// only the receiving side moves), unlike P4-F3's mass-conserving
+/// `ChemicalEconomy` transport.
+#[derive(bevy_ecs::prelude::Component, Debug, Clone, Copy, Default)]
+pub struct HormoneLevel {
+    /// Local reading of the organism-wide dopamine channel, in `[0, 1]`.
+    pub dopamine: f32,
+    /// Local reading of the organism-wide serotonin channel, in `[0, 1]`.
+    pub serotonin: f32,
+    /// Local reading of the organism-wide noradrenaline channel, in `[0, 1]`.
+    pub noradrenaline: f32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

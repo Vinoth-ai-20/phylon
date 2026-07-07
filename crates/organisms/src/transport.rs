@@ -1,16 +1,22 @@
-//! Intra-body resource transport (Phase 4, `PHASE4_ROADMAP.md` milestone
-//! P4-F3) — moves glucose, oxygen, and ATP along the persistent
+//! Intra-body resource transport (Phase 4, `PHASE4_ROADMAP.md` milestones
+//! P4-F3 and P4-F6) — moves glucose, oxygen, ATP, and (as of P4-F6) carbon
+//! dioxide along the persistent
 //! [`crate::developmental_graph::DevelopmentalGraph`]'s parent/child edges,
 //! the same edges `physics::Spring` uses to hold the body together
 //! structurally. This is the consumer P4-F2's per-segment
 //! `metabolism::ChemicalEconomy` pools were seeded for: without it, those
 //! pools are inert placeholder data (see P4-F2's execution log entry).
 //!
-//! **Scope, deliberately bounded:** only glucose/o2/atp move here.
-//! Carbon dioxide and other waste products are explicitly left to a later
-//! milestone (P4-F6, "waste products") per the roadmap's own epic
-//! boundary — folding waste transport in here would blur what each
-//! milestone is responsible for.
+//! **Waste expulsion (P4-F6), reusing the same mechanism, not a new one:**
+//! co2 was deliberately excluded from P4-F3 pending this milestone. No
+//! segment produces co2 locally — only `metabolism::compute_metabolism`
+//! (organism-level respiration, head-only) does, and `metabolism_system`
+//! actively vents the head's co2 toward `GlobalAtmosphere` every tick,
+//! keeping the head's own co2 low relative to any that spreads out to
+//! segments. Simply including co2 in the same equalizing relaxation below
+//! is therefore sufficient to model waste expulsion: the head-vs-segment
+//! gradient the venting maintains pulls co2 back toward the head (and out)
+//! on its own, with no separate "expulsion" system needed.
 //!
 //! **Model:** each edge independently relaxes toward equalizing
 //! concentration with its neighbor, one bounded step per tick — the same
@@ -54,8 +60,9 @@ fn relax_toward_equilibrium(from: f32, from_max: f32, to: f32, to_max: f32) -> (
 ///
 /// ## 1. What Happens
 /// For every organism's persistent Body Graph, walks each parent/child edge
-/// and exchanges glucose, oxygen, and ATP between the two segments' own
-/// `ChemicalEconomy` pools, moving each toward the other's concentration.
+/// and exchanges glucose, oxygen, ATP, and carbon dioxide between the two
+/// segments' own `ChemicalEconomy` pools, moving each toward the other's
+/// concentration.
 ///
 /// ## 2. Why It Happens
 /// P4-F2 gave every body segment its own small resource pool, but nothing
@@ -133,16 +140,19 @@ pub fn transport_system(
             relax_toward_equilibrium(p.glucose, p.max_glucose, c.glucose, c.max_glucose);
         let (p_o2, c_o2) = relax_toward_equilibrium(p.o2, p.max_o2, c.o2, c.max_o2);
         let (p_atp, c_atp) = relax_toward_equilibrium(p.atp, p.max_atp, c.atp, c.max_atp);
+        let (p_co2, c_co2) = relax_toward_equilibrium(p.co2, p.max_co2, c.co2, c.max_co2);
 
         if let Some(p) = snapshot.get_mut(&parent) {
             p.glucose = p_glucose;
             p.o2 = p_o2;
             p.atp = p_atp;
+            p.co2 = p_co2;
         }
         if let Some(c) = snapshot.get_mut(&child) {
             c.glucose = c_glucose;
             c.o2 = c_o2;
             c.atp = c_atp;
+            c.co2 = c_co2;
         }
     }
 
@@ -153,6 +163,7 @@ pub fn transport_system(
             existing.glucose = chem.glucose;
             existing.o2 = chem.o2;
             existing.atp = chem.atp;
+            existing.co2 = chem.co2;
         }
     }
 }
@@ -186,6 +197,24 @@ mod tests {
             max_o2: 100.0,
             max_co2: 100.0,
             max_atp: 200.0,
+        }
+    }
+
+    /// A head that has been actively venting co2 (per `metabolism_system`'s
+    /// own behavior) — low co2 relative to a segment that has accumulated
+    /// some, modeling the gradient P4-F6 relies on to pull co2 back toward
+    /// the head.
+    fn vented_head_economy() -> ChemicalEconomy {
+        ChemicalEconomy {
+            co2: 0.0,
+            ..rich_economy()
+        }
+    }
+
+    fn congested_segment_economy() -> ChemicalEconomy {
+        ChemicalEconomy {
+            co2: 80.0,
+            ..ChemicalEconomy::segment_default()
         }
     }
 
@@ -270,6 +299,50 @@ mod tests {
         world.run_system_once(transport_system);
         let glucose_after = world.get::<ChemicalEconomy>(head).unwrap().glucose;
         assert_eq!(glucose_before, glucose_after);
+    }
+
+    #[test]
+    fn transport_system_pulls_co2_from_a_congested_segment_toward_a_vented_head() {
+        // Phase 4, P4-F6: co2 now moves too — a segment with accumulated
+        // co2 next to a head kept low by `metabolism_system`'s own venting
+        // should see its co2 decrease (flowing toward, and eventually out
+        // through, the head).
+        let mut world = World::new();
+        let head = world.spawn(vented_head_economy()).id();
+        let segment = world.spawn(congested_segment_economy()).id();
+
+        let mut graph = DevelopmentalGraph::new();
+        graph.nodes.push(DevelopmentalNode {
+            role: SegmentType::Head,
+            outputs: sample_outputs(SegmentType::Head),
+            parent: None,
+            is_branch: false,
+            position: 0,
+            entity: Some(head),
+        });
+        graph.nodes.push(DevelopmentalNode {
+            role: SegmentType::Torso,
+            outputs: sample_outputs(SegmentType::Torso),
+            parent: Some(0),
+            is_branch: false,
+            position: 1,
+            entity: Some(segment),
+        });
+        world.entity_mut(head).insert(graph);
+
+        let segment_co2_before = world.get::<ChemicalEconomy>(segment).unwrap().co2;
+        world.run_system_once(transport_system);
+        let segment_co2_after = world.get::<ChemicalEconomy>(segment).unwrap().co2;
+        let head_co2_after = world.get::<ChemicalEconomy>(head).unwrap().co2;
+
+        assert!(
+            segment_co2_after < segment_co2_before,
+            "segment's co2 should decrease as it flows toward the lower-co2 head"
+        );
+        assert!(
+            head_co2_after > 0.0,
+            "head should have received the co2 that left the segment"
+        );
     }
 
     /// Builds a 3-node chain (head → torso → tail) with a full head and two

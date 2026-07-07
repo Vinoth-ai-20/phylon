@@ -43,6 +43,51 @@ pub struct Infection {
     pub transmissibility: f32,
 }
 
+/// # Per-Segment Infection Severity
+///
+/// A single body segment's own local infection severity (Phase 4,
+/// `PHASE4_ROADMAP.md` milestone P4-F5) — extends the existing
+/// organism-wide [`Infection`] (which stays the authority on
+/// incubation/infectious/recovered state and ATP/health drain) with a
+/// spatial dimension: how strongly *this* segment, specifically, is
+/// affected right now. Attached to every non-head body segment, mirroring
+/// `metabolism::ChemicalEconomy::segment_default()`'s per-segment pattern
+/// (P4-F2).
+#[derive(Component, Debug, Clone, Copy)]
+pub struct SegmentInfection {
+    /// Local severity, in `[0, 1]` — `0.0` is unaffected, `1.0` is maximal.
+    pub severity: f32,
+}
+
+impl SegmentInfection {
+    /// A freshly grown segment starts unaffected.
+    pub fn healthy() -> Self {
+        Self { severity: 0.0 }
+    }
+}
+
+/// # Per-Segment Immune Resistance
+///
+/// A body segment's own local immune clearance rate (Phase 4, P4-F5) —
+/// subtracted from [`SegmentInfection::severity`] each tick by
+/// `organisms::immune::segment_infection_system`, modeling localized immune
+/// defense independent of the organism-wide recovery roll
+/// [`disease_progression_system`] already performs.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct SegmentImmunity {
+    /// Severity cleared per tick, in `[0, 1]`.
+    pub resistance: f32,
+}
+
+impl SegmentImmunity {
+    /// A placeholder baseline clearance rate — not biologically tuned, same
+    /// status as `metabolism::ChemicalEconomy::segment_default()`'s pool
+    /// sizes.
+    pub fn baseline() -> Self {
+        Self { resistance: 0.02 }
+    }
+}
+
 /// Global tunables for disease spread and progression.
 #[derive(Resource, Debug, Clone)]
 pub struct DiseaseConfig {

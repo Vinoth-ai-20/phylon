@@ -15,6 +15,7 @@ pub mod catastrophe;
 pub mod disease;
 pub use disease::{
     disease_progression_system, disease_spread_system, DiseaseConfig, Infection, InfectionState,
+    SegmentImmunity, SegmentInfection,
 };
 
 /// Fungal (Decomposer) nutrient-redistribution network.
