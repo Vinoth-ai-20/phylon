@@ -44,6 +44,11 @@ pub fn hormone_viewer_ui(
     }
 
     ui.label(egui::RichText::new("Per-Segment Hormone Level (P4-F4)").strong());
+    crate::plugins::organism_panel_common::viewport_overlay_toggle(
+        ui,
+        state,
+        crate::types::PhysiologyOverlayLayer::Hormone,
+    );
     ui.label(
         egui::RichText::new(
             "Each segment relaxes toward its parent's reading every tick — the head's own Neuromodulators above is the source, unaffected by this spread.",

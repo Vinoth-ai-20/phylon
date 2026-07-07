@@ -35,3 +35,19 @@ pub fn segment_identity_cells(
         if is_branch { " (branch)" } else { "" }
     ));
 }
+
+/// A checkbox toggling `state.physiology_overlay` between `None` and
+/// `Some(layer)` (Phase 4, P4-V2) — shared by the Circulation/Hormone/Immune
+/// Viewer panels, each of which has exactly one overlay layer it can turn
+/// on. Checking one layer's box implicitly turns off any other, since only
+/// one overlay is drawn at a time (see `ui::render::render_physiology_overlay`).
+pub fn viewport_overlay_toggle(
+    ui: &mut egui::Ui,
+    state: &mut crate::WorkbenchState,
+    layer: crate::types::PhysiologyOverlayLayer,
+) {
+    let mut enabled = state.physiology_overlay == Some(layer);
+    if ui.checkbox(&mut enabled, "Show on viewport").changed() {
+        state.physiology_overlay = if enabled { Some(layer) } else { None };
+    }
+}

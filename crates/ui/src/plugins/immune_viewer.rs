@@ -57,6 +57,11 @@ pub fn immune_viewer_ui(
     ui.add_space(crate::theme::SPACE_SM);
 
     ui.label(egui::RichText::new("Per-Segment Severity/Resistance (P4-F5)").strong());
+    crate::plugins::organism_panel_common::viewport_overlay_toggle(
+        ui,
+        state,
+        crate::types::PhysiologyOverlayLayer::Immune,
+    );
     ui.label(
         egui::RichText::new(
             "Severity spreads outward from the head's Infection (if Infectious); each segment's own resistance clears it over time.",

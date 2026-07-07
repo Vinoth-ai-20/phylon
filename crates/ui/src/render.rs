@@ -177,6 +177,16 @@ pub fn render_ui(
         render_minimap(ctx, state, world, interact_response.rect);
     }
 
+    // ── Timed interaction-effect overlay (Phase 4, P4-V1) ───────────────────
+    // Renders `events::TimedEffects` — the data-side framework P4-E1 built
+    // but deliberately left unrendered (see that milestone's execution log).
+    render_timed_effects(ctx, state, world, interact_response.rect);
+
+    // ── Physiology science overlay (Phase 4, P4-V2) ─────────────────────────
+    if state.physiology_overlay.is_some() {
+        render_physiology_overlay(ctx, state, world, interact_response.rect);
+    }
+
     // ── Command Palette overlay (Phase 2, M15) ──────────────────────────────
     crate::plugins::command_palette::command_palette_ui(ctx, state, &mut actions);
 
@@ -509,6 +519,203 @@ fn render_vision_cones(
                 egui::Color32::from_rgba_premultiplied(0, 255, 255, 200),
             ),
         ));
+    }
+}
+
+/// # Timed Interaction-Effect Overlay
+///
+/// ## 1. What Happens
+/// Draws every currently-active `events::TimedEffects::FloatingText` at its
+/// world position, converted to screen space — the rendering P4-E1's
+/// `TimedEffects` framework deliberately deferred (see that milestone's
+/// module doc comment: "Epic 8's job").
+///
+/// ## 2. Why It Happens
+/// P4-E1 proved the data-side framework works (a real predation death spawns
+/// a real, correctly-expiring `TimedEffect`) but drawing it was explicitly
+/// out of scope, per ADR-P4-05's Epic 6/Epic 8 split. This is that drawing
+/// step, for whichever event types by then have a real producer (see
+/// `crates/app/src/systems.rs` for the current producers: predation,
+/// reproduction, disease transmission, decomposition).
+///
+/// ## 3. How It Happens
+/// Same world→screen transform and background-layer `Painter` pattern as
+/// `render_vision_cones` above. Text fades linearly over its last third of
+/// remaining lifetime rather than popping off abruptly, using
+/// `TimedEffects`' own `expires_at_tick` and the current tick (read from
+/// `metabolism::GlobalAtmosphere`, the same tick source every P4-F/E-tier
+/// system this phase already uses).
+fn render_timed_effects(
+    ctx: &egui::Context,
+    state: &crate::WorkbenchState,
+    world: &mut world::World,
+    viewport_rect: egui::Rect,
+) {
+    let Some(effects) = world.ecs.get_resource::<events::TimedEffects>() else {
+        return;
+    };
+    if effects.active.is_empty() {
+        return;
+    }
+    let current_tick = world
+        .ecs
+        .get_resource::<metabolism::GlobalAtmosphere>()
+        .map_or(0, |a| a.ticks);
+
+    let screen_center = viewport_rect.center();
+    let ppp = ctx.pixels_per_point();
+    let to_screen = |pos: common::Vec2| {
+        egui::pos2(
+            screen_center.x + (pos.x - state.camera_pos.x) * state.camera_zoom / ppp,
+            screen_center.y - (pos.y - state.camera_pos.y) * state.camera_zoom / ppp,
+        )
+    };
+
+    let mut painter = ctx.layer_painter(egui::LayerId::background());
+    painter.set_clip_rect(viewport_rect);
+
+    // Fade-out window: the last third of an effect's remaining lifetime at
+    // the moment it's drawn is not knowable without its original duration,
+    // so this fades over a fixed tail instead — simple and effect-agnostic.
+    const FADE_TICKS: u64 = 20;
+
+    for effect in world
+        .ecs
+        .get_resource::<events::TimedEffects>()
+        .into_iter()
+        .flat_map(|e| e.active.iter())
+    {
+        let events::TimedEffectKind::FloatingText { text, color } = &effect.kind;
+        let remaining = effect.expires_at_tick.saturating_sub(current_tick);
+        let alpha = if remaining < FADE_TICKS {
+            (remaining as f32 / FADE_TICKS as f32).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let color32 = egui::Color32::from_rgba_unmultiplied(
+            (color[0] * 255.0) as u8,
+            (color[1] * 255.0) as u8,
+            (color[2] * 255.0) as u8,
+            (alpha * 255.0) as u8,
+        );
+        painter.text(
+            to_screen(effect.position),
+            egui::Align2::CENTER_BOTTOM,
+            text,
+            egui::FontId::proportional(14.0),
+            color32,
+        );
+    }
+}
+
+/// # Physiology Science Overlay
+///
+/// ## 1. What Happens
+/// For the selected/tracked organism, draws a colored ring at each Body
+/// Graph segment's world position, sized/colored by whichever physiology
+/// layer `state.physiology_overlay` is set to (Circulation → ATP level,
+/// Hormone → dominant channel, Immune → infection severity) — toggled from
+/// the corresponding P4-R1-R4 Viewer panel's own "Show on viewport" control.
+///
+/// ## 2. Why It Happens
+/// P4-R1-R4's panels are tables in a side dock — useful for precise values,
+/// but they don't show *where on the body* something is happening at a
+/// glance. ADR-P4-05 frames Epic 8's visualization needs (blood flow, ATP
+/// transport, hormone diffusion, immune activity) as viewport-space
+/// overlays, the same category as P4-V1's timed effects, not another table.
+///
+/// ## 3. How It Happens
+/// **Disclosed scope simplification:** this draws current per-segment
+/// *magnitude* as a static colored ring, not animated directional flow
+/// particles along Body Graph edges — matching Circulation Viewer's own
+/// "levels, not flow rate" disclosure (P4-R2). A future milestone could add
+/// particle-trail animation along edges if that fidelity is wanted; this is
+/// a real, live, per-segment visualization, not a placeholder.
+fn render_physiology_overlay(
+    ctx: &egui::Context,
+    state: &crate::WorkbenchState,
+    world: &mut world::World,
+    viewport_rect: egui::Rect,
+) {
+    let Some(layer) = state.physiology_overlay else {
+        return;
+    };
+    let Some(entity) = state.selected_entity.or(state.tracked_entity) else {
+        return;
+    };
+    let Some(graph) = world
+        .ecs
+        .query::<&organisms::DevelopmentalGraph>()
+        .get(&world.ecs, entity)
+        .ok()
+        .cloned()
+    else {
+        return;
+    };
+
+    let screen_center = viewport_rect.center();
+    let ppp = ctx.pixels_per_point();
+    let to_screen = |pos: common::Vec2| {
+        egui::pos2(
+            screen_center.x + (pos.x - state.camera_pos.x) * state.camera_zoom / ppp,
+            screen_center.y - (pos.y - state.camera_pos.y) * state.camera_zoom / ppp,
+        )
+    };
+
+    let mut painter = ctx.layer_painter(egui::LayerId::background());
+    painter.set_clip_rect(viewport_rect);
+
+    let mut node_q = world.ecs.query::<&physics::ParticleNode>();
+    let mut chem_q = world.ecs.query::<&metabolism::ChemicalEconomy>();
+    let mut hormone_q = world.ecs.query::<&brain::HormoneLevel>();
+    let mut severity_q = world.ecs.query::<&ecology::disease::SegmentInfection>();
+
+    for graph_node in &graph.nodes {
+        let Some(seg_entity) = graph_node.entity else {
+            continue;
+        };
+        let Ok(node) = node_q.get(&world.ecs, seg_entity) else {
+            continue;
+        };
+
+        let (intensity, color) = match layer {
+            PhysiologyOverlayLayer::Circulation => {
+                let Ok(chem) = chem_q.get(&world.ecs, seg_entity) else {
+                    continue;
+                };
+                let frac = if chem.max_atp > 0.0 {
+                    (chem.atp / chem.max_atp).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                (frac, egui::Color32::from_rgb(220, 90, 90))
+            }
+            PhysiologyOverlayLayer::Hormone => {
+                let Ok(level) = hormone_q.get(&world.ecs, seg_entity) else {
+                    continue;
+                };
+                let frac = level.dopamine.max(level.serotonin).max(level.noradrenaline);
+                (frac.clamp(0.0, 1.0), egui::Color32::from_rgb(160, 120, 220))
+            }
+            PhysiologyOverlayLayer::Immune => {
+                let Ok(segment_infection) = severity_q.get(&world.ecs, seg_entity) else {
+                    continue;
+                };
+                (
+                    segment_infection.severity.clamp(0.0, 1.0),
+                    egui::Color32::from_rgb(90, 200, 120),
+                )
+            }
+        };
+
+        let screen_pos = to_screen(node.position);
+        let radius = 6.0 + intensity * 14.0;
+        let alpha = (60.0 + intensity * 180.0) as u8;
+        painter.circle_stroke(
+            screen_pos,
+            radius,
+            egui::Stroke::new(2.0, color.gamma_multiply(alpha as f32 / 255.0)),
+        );
     }
 }
 

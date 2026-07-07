@@ -43,6 +43,11 @@ pub fn circulation_viewer_ui(
         .small()
         .color(crate::theme::DISABLED_FG),
     );
+    crate::plugins::organism_panel_common::viewport_overlay_toggle(
+        ui,
+        state,
+        crate::types::PhysiologyOverlayLayer::Circulation,
+    );
     ui.add_space(crate::theme::SPACE_SM);
 
     let mut chem_q = world.ecs.query::<&metabolism::ChemicalEconomy>();

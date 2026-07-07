@@ -216,6 +216,9 @@ pub struct WorkbenchState {
     // Tracked / selected
     /// The entity the camera is currently following, if any.
     pub tracked_entity: Option<Entity>,
+    /// Which physiology layer's viewport overlay is active, if any (Phase 4,
+    /// P4-V2) — see `crate::types::PhysiologyOverlayLayer`.
+    pub physiology_overlay: Option<crate::types::PhysiologyOverlayLayer>,
     /// Whether the simulation is currently paused.
     pub is_paused: bool,
     /// Whether to show the About dialog.
@@ -459,6 +462,7 @@ impl Default for WorkbenchState {
             event_log_auto_scroll: true,
 
             tracked_entity: None,
+            physiology_overlay: None,
             is_paused: false,
             show_about: false,
             show_docs: false,

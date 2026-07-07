@@ -227,12 +227,15 @@ type SusceptibleFilter = (Without<Infection>, With<metabolism::ChemicalEconomy>)
 /// **jitters** the new infection's `virulence`/`transmissibility` away from
 /// the source's — pathogen mutation, drifting the strain each time it jumps
 /// hosts, without a full separate genome representation.
+#[allow(clippy::too_many_arguments)]
 pub fn disease_spread_system(
     mut commands: Commands,
     config: Res<DiseaseConfig>,
     mut sim_rng: ResMut<common::SimRng>,
     infectious_query: Query<(Entity, &Diet, &physics::ParticleNode, &Infection)>,
     susceptible_query: Query<(Entity, &Diet, &physics::ParticleNode), SusceptibleFilter>,
+    mut timed_effects: ResMut<events::TimedEffects>,
+    atmosphere: Res<metabolism::GlobalAtmosphere>,
 ) {
     let mut grid = spatial::UniformGrid::new(50.0).unwrap();
     for (entity, _diet, node) in susceptible_query.iter() {
@@ -275,6 +278,10 @@ pub fn disease_spread_system(
         }
     }
 
+    // Phase 4, P4-V1: not biologically tuned, same placeholder status as
+    // every other Phase 4 effect-duration constant.
+    const INFECTION_EFFECT_DURATION_TICKS: u64 = 90;
+
     for (entity, virulence, transmissibility) in newly_infected {
         commands.entity(entity).insert(Infection {
             state: InfectionState::Incubating,
@@ -282,11 +289,22 @@ pub fn disease_spread_system(
             virulence,
             transmissibility,
         });
+        if let Ok((_, _, node)) = susceptible_query.get(entity) {
+            timed_effects.spawn(
+                node.position,
+                events::TimedEffectKind::FloatingText {
+                    text: "Infected!".to_string(),
+                    color: [0.7, 0.5, 0.2],
+                },
+                atmosphere.ticks,
+                INFECTION_EFFECT_DURATION_TICKS,
+            );
+        }
     }
 
     // Spontaneous infection: a background environmental reservoir, since
     // nothing else seeds the very first case in a fresh ecosystem.
-    for (entity, _diet, _node) in susceptible_query.iter() {
+    for (entity, _diet, node) in susceptible_query.iter() {
         if already_targeted.contains(&entity) {
             continue;
         }
@@ -297,6 +315,15 @@ pub fn disease_spread_system(
                 virulence: config.initial_virulence,
                 transmissibility: config.initial_transmissibility,
             });
+            timed_effects.spawn(
+                node.position,
+                events::TimedEffectKind::FloatingText {
+                    text: "Infected!".to_string(),
+                    color: [0.7, 0.5, 0.2],
+                },
+                atmosphere.ticks,
+                INFECTION_EFFECT_DURATION_TICKS,
+            );
         }
     }
 }
@@ -454,6 +481,8 @@ mod tests {
             ..DiseaseConfig::default()
         });
         world.insert_resource(common::SimRng::from_seed(1));
+        world.insert_resource(events::TimedEffects::default());
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
 
         world.spawn((
             Diet::Herbivore,
@@ -488,6 +517,8 @@ mod tests {
             ..DiseaseConfig::default()
         });
         world.insert_resource(common::SimRng::from_seed(1));
+        world.insert_resource(events::TimedEffects::default());
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
 
         world.spawn((
             Diet::Herbivore,
@@ -522,6 +553,8 @@ mod tests {
             ..DiseaseConfig::default()
         });
         world.insert_resource(common::SimRng::from_seed(1));
+        world.insert_resource(events::TimedEffects::default());
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
 
         world.spawn((
             Diet::Herbivore,
@@ -555,6 +588,8 @@ mod tests {
                 ..DiseaseConfig::default()
             });
             world.insert_resource(common::SimRng::from_seed(seed));
+            world.insert_resource(events::TimedEffects::default());
+            world.insert_resource(metabolism::GlobalAtmosphere::default());
             world.spawn((
                 Diet::Herbivore,
                 physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 1),

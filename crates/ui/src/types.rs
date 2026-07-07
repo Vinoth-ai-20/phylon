@@ -348,6 +348,20 @@ pub enum ActiveHeatmap {
     CO2,
 }
 
+/// Which physiology layer's viewport overlay (Phase 4, P4-V2) is currently
+/// active, if any — toggled from the corresponding P4-R1-R4 Viewer panel's
+/// "Show on viewport" control; `None` shows nothing. See
+/// `ui::render::render_physiology_overlay`'s doc comment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhysiologyOverlayLayer {
+    /// Per-segment ATP level, from `metabolism::ChemicalEconomy` (P4-F2/F3).
+    Circulation,
+    /// Per-segment hormone channel intensity, from `brain::HormoneLevel` (P4-F4).
+    Hormone,
+    /// Per-segment infection severity, from `ecology::disease::SegmentInfection` (P4-F5).
+    Immune,
+}
+
 /// ECS Resource storing the state of the heatmap UI and shader.
 #[derive(bevy_ecs::prelude::Resource, Debug, Clone)]
 pub struct HeatmapState {

@@ -142,6 +142,20 @@ impl bevy_ecs::world::Command for SpawnOrganismCommand {
                 tick,
             });
         }
+
+        // Phase 4, P4-V1: reproduction is one of this milestone's individual
+        // interaction VFX triggers — rendered by `ui::render::render_timed_effects`.
+        if let Some(mut timed_effects) = world.get_resource_mut::<events::TimedEffects>() {
+            timed_effects.spawn(
+                self.position,
+                events::TimedEffectKind::FloatingText {
+                    text: "Born!".to_string(),
+                    color: [0.4, 0.8, 0.5],
+                },
+                tick.0,
+                BIRTH_EFFECT_DURATION_TICKS,
+            );
+        }
     }
 }
 
@@ -226,6 +240,10 @@ pub fn expire_timed_effects_system(
 /// after being spawned — not biologically tuned, same placeholder status as
 /// every other Phase 4 rate/duration constant introduced so far.
 const DEATH_EFFECT_DURATION_TICKS: u64 = 90; // ~1.5s at 60Hz
+
+/// Same as [`DEATH_EFFECT_DURATION_TICKS`], for the "Born!" effect (Phase 4,
+/// P4-V1).
+const BIRTH_EFFECT_DURATION_TICKS: u64 = 90;
 
 /// Traverses the physics spring network to completely remove organisms marked as Dead.
 #[allow(clippy::type_complexity)]

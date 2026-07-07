@@ -500,7 +500,12 @@ pub fn corpse_decay_system(
     mut commands: Commands,
     mut atmosphere: ResMut<metabolism::GlobalAtmosphere>,
     mut corpse_query: Query<(Entity, &mut Corpse)>,
+    mut timed_effects: ResMut<events::TimedEffects>,
 ) {
+    // Phase 4, P4-V1: not biologically tuned, same placeholder status as
+    // every other Phase 4 effect-duration constant.
+    const DECOMPOSITION_EFFECT_DURATION_TICKS: u64 = 90;
+
     for (entity, mut corpse) in corpse_query.iter_mut() {
         if corpse.decay_timer > 0 {
             corpse.decay_timer -= 1;
@@ -515,6 +520,16 @@ pub fn corpse_decay_system(
             });
             // Final burst of CO2 upon complete decay
             atmosphere.co2 += corpse.energy_value * 0.1;
+
+            timed_effects.spawn(
+                corpse.position,
+                events::TimedEffectKind::FloatingText {
+                    text: "Decomposed".to_string(),
+                    color: [0.5, 0.4, 0.3],
+                },
+                atmosphere.ticks,
+                DECOMPOSITION_EFFECT_DURATION_TICKS,
+            );
 
             if let Some(mut e) = commands.get_entity(entity) {
                 e.despawn();
