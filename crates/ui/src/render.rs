@@ -178,6 +178,26 @@ pub fn render_ui(
         render_minimap(ctx, state, world, interact_response.rect);
     }
 
+    // ── Organism labels (Phase 5, SX-5a) ─────────────────────────────────────
+    // Priority 5 (cosmetic/identity, lowest) per the Numeric priority
+    // hierarchy — drawn before every other biological overlay so labels
+    // never sit on top of (obscure) a Behavior glyph, Health/Disease badge,
+    // or Death/Reproduction burst; those all paint after this.
+    if state.show_organism_labels {
+        render_organism_labels(ctx, state, world, interact_response.rect);
+    }
+
+    // ── Trajectory trail (Phase 5, SX-5c) ────────────────────────────────────
+    // Priority 4 (Ecological status), tied to the tracked entity only —
+    // reuses `state.trajectory_history`, the data SX-4c's Inspector
+    // Relationships/History section already populates every tick; this is
+    // the viewport-visual half of that same feature, not a second tracking
+    // mechanism. No separate toggle: tracking an entity (`tracked_entity`)
+    // is already the opt-in gesture.
+    if state.tracked_entity.is_some() {
+        render_trajectory_trail(ctx, state, interact_response.rect);
+    }
+
     // ── Behavior-state glyph overlay (Phase 5, SX-1b) ───────────────────────
     // Population-wide, not opt-in — per `docs/design/biological_visual_language.md`'s
     // Behavior entry, a Priority-4 state.
@@ -275,6 +295,69 @@ fn track_trajectory_history(state: &mut crate::WorkbenchState, world: &mut world
             state.trajectory_history.pop_front();
         }
         state.trajectory_last_tick = Some(current_tick);
+    }
+}
+
+/// # Trajectory Trail
+///
+/// ## 1. What Happens
+/// Draws `state.trajectory_history` (populated by `track_trajectory_history`,
+/// SX-4c) as a short, fading polyline behind the tracked entity — oldest
+/// samples nearly transparent, newest fully opaque.
+///
+/// ## 2. Why It Happens
+/// Population-wide trails would be visual noise, not signal (this
+/// milestone's own framing) — hundreds of overlapping paths would obscure
+/// the viewport rather than clarify it. Limited to the one entity the
+/// researcher already opted into tracking, the same restraint
+/// `render_physiology_overlay` already applies to per-segment detail.
+///
+/// ## 3. How It Happens
+/// No new data — this is the visual half of SX-4c's already-populated
+/// `trajectory_history`, not a second tracking mechanism. Segment alpha
+/// scales linearly by position in the buffer (oldest→newest), so the trail
+/// visibly fades rather than cutting off abruptly at its start.
+fn render_trajectory_trail(
+    ctx: &egui::Context,
+    state: &crate::WorkbenchState,
+    viewport_rect: egui::Rect,
+) {
+    if state.trajectory_history.len() < 2 {
+        return;
+    }
+
+    let screen_center = viewport_rect.center();
+    let ppp = ctx.pixels_per_point();
+    let to_screen = |pos: common::Vec2| {
+        egui::pos2(
+            screen_center.x + (pos.x - state.camera_pos.x) * state.camera_zoom / ppp,
+            screen_center.y - (pos.y - state.camera_pos.y) * state.camera_zoom / ppp,
+        )
+    };
+
+    let mut painter = ctx.layer_painter(egui::LayerId::background());
+    painter.set_clip_rect(viewport_rect);
+
+    let total = state.trajectory_history.len();
+    let [r, g, b, _] = crate::theme::ACCENT.to_normalized_gamma_f32();
+    for (i, (a, b_pos)) in state
+        .trajectory_history
+        .iter()
+        .zip(state.trajectory_history.iter().skip(1))
+        .enumerate()
+    {
+        let progress = (i + 1) as f32 / total as f32; // 0 (oldest) .. 1 (newest)
+        let alpha = (progress * 200.0) as u8;
+        let color = egui::Color32::from_rgba_unmultiplied(
+            (r * 255.0) as u8,
+            (g * 255.0) as u8,
+            (b * 255.0) as u8,
+            alpha,
+        );
+        painter.line_segment(
+            [to_screen(*a), to_screen(*b_pos)],
+            egui::Stroke::new(2.0, color),
+        );
     }
 }
 
@@ -745,6 +828,105 @@ fn render_behavior_glyphs(
             glyph,
             egui::FontId::proportional(14.0),
             color,
+        );
+    }
+}
+
+/// # Organism Labels
+///
+/// ## 1. What Happens
+/// Draws a small text label ("`<Diet> {Idx, Gen}`", the same format
+/// `inspector_ui`'s header already uses) above every organism head within
+/// `state.show_organism_labels`'s scope: the selected/tracked entity
+/// (always, if one exists), plus the nearest
+/// `crate::state::ORGANISM_LABEL_MAX_COUNT` other organisms to the camera
+/// center.
+///
+/// ## 2. Why It Happens
+/// Opt-in, per the roadmap's own framing — most research sessions don't
+/// want a label on every organism at once. "Density-aware" is the other
+/// half: even with labels enabled, the count actually drawn is bounded
+/// regardless of total population (hundreds to thousands at typical
+/// scales), so turning this on doesn't turn the viewport into unreadable
+/// text clutter — the exact failure this milestone's own name warns
+/// against.
+///
+/// ## 3. How It Happens
+/// Nearest-to-camera-center selection reuses the same "sort by distance,
+/// take N" shape `inspector_ui`'s Relationships section already established
+/// for its nearby-organisms list (SX-4c) — a different distance origin
+/// (camera center here, vs. a specific organism there), same pattern, not a
+/// new one invented for this milestone.
+fn render_organism_labels(
+    ctx: &egui::Context,
+    state: &crate::WorkbenchState,
+    world: &mut world::World,
+    viewport_rect: egui::Rect,
+) {
+    let screen_center = viewport_rect.center();
+    let ppp = ctx.pixels_per_point();
+    let to_screen = |pos: common::Vec2| {
+        egui::pos2(
+            screen_center.x + (pos.x - state.camera_pos.x) * state.camera_zoom / ppp,
+            screen_center.y - (pos.y - state.camera_pos.y) * state.camera_zoom / ppp,
+        )
+    };
+
+    let mut painter = ctx.layer_painter(egui::LayerId::background());
+    painter.set_clip_rect(viewport_rect);
+
+    let label_for = |diet: &ecology::Diet, entity: bevy_ecs::entity::Entity| -> String {
+        format!("{:?} {{Idx: {}}}", diet, entity.index())
+    };
+
+    let mut query = world.ecs.query::<(
+        bevy_ecs::entity::Entity,
+        &physics::ParticleNode,
+        &ecology::Diet,
+    )>();
+
+    let mut always_labeled: std::collections::HashSet<bevy_ecs::entity::Entity> =
+        std::collections::HashSet::new();
+    for pinned in [state.selected_entity, state.tracked_entity]
+        .into_iter()
+        .flatten()
+    {
+        if let Ok((entity, node, diet)) = query.get(&world.ecs, pinned) {
+            always_labeled.insert(entity);
+            painter.text(
+                to_screen(node.position) - egui::vec2(0.0, 18.0),
+                egui::Align2::CENTER_BOTTOM,
+                label_for(diet, entity),
+                egui::FontId::proportional(12.0),
+                crate::theme::ACCENT,
+            );
+        }
+    }
+
+    let mut nearby: Vec<(bevy_ecs::entity::Entity, common::Vec2, ecology::Diet, f32)> = query
+        .iter(&world.ecs)
+        .filter(|(e, ..)| !always_labeled.contains(e))
+        .map(|(e, node, diet)| {
+            (
+                e,
+                node.position,
+                diet.clone(),
+                node.position.distance(state.camera_pos),
+            )
+        })
+        .collect();
+    nearby.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
+
+    for (entity, position, diet, _dist) in nearby
+        .into_iter()
+        .take(crate::state::ORGANISM_LABEL_MAX_COUNT)
+    {
+        painter.text(
+            to_screen(position) - egui::vec2(0.0, 18.0),
+            egui::Align2::CENTER_BOTTOM,
+            label_for(&diet, entity),
+            egui::FontId::proportional(12.0),
+            crate::theme::DISABLED_FG,
         );
     }
 }

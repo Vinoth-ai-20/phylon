@@ -668,7 +668,56 @@ pub fn inspector_ui(
                                 }
                             }
 
-                            crate::widgets::kv_row(ui, "SpeciesMembership", "Not Available");
+                            // Phase 5, SX-4d: previously a hardcoded
+                            // "Not Available" sitting alongside the
+                            // Identity section's real, working "SpeciesId"
+                            // row — a confirmed redundancy-inconsistency
+                            // (same underlying species assignment, one
+                            // section showing it, the other faking it).
+                            // Rather than duplicate the same `SpeciesId`
+                            // value in two places, this row answers a
+                            // genuinely different, Ecology-relevant
+                            // question: how large is that species'
+                            // *current living population* — reusing
+                            // SX-3b's `MetricsState::species_distribution`
+                            // snapshot, not a second lookup mechanism.
+                            let species_id = world
+                                .ecs
+                                .get_resource::<evolution::LineageTracker>()
+                                .and_then(|tracker| {
+                                    tracker.get_record(common::EntityId(entity.to_bits()))
+                                })
+                                .map(|record| record.species.0);
+                            match species_id {
+                                Some(id) => {
+                                    let population = world
+                                        .ecs
+                                        .get_resource::<analytics::MetricsState>()
+                                        .and_then(|m| {
+                                            m.species_distribution
+                                                .iter()
+                                                .find(|&&(sid, _)| sid == id)
+                                                .map(|&(_, count)| count)
+                                        });
+                                    match population {
+                                        Some(count) => crate::widgets::kv_row_mono(
+                                            ui,
+                                            "SpeciesMembership",
+                                            &format!("{count} organisms currently alive"),
+                                        ),
+                                        None => crate::widgets::kv_row(
+                                            ui,
+                                            "SpeciesMembership",
+                                            "Not yet sampled (Metrics updates periodically)",
+                                        ),
+                                    }
+                                }
+                                None => crate::widgets::kv_row(
+                                    ui,
+                                    "SpeciesMembership",
+                                    "Not Available",
+                                ),
+                            }
                         });
                 });
 

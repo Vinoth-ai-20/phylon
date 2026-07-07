@@ -604,6 +604,75 @@ impl PhylonApp {
                 })
                 .collect();
 
+        // Spotlight mode (Phase 5, SX-5b) — dims every organism except the
+        // selected entity, its connected body/colony (reusing the exact
+        // `selected_component` BFS already computed above for selection
+        // highlighting, not a second traversal), and any other organism
+        // whose head falls within the selected organism's interaction
+        // radius (`sensing::HeadVision.range`, falling back to `250.0` —
+        // the same fallback SX-4c/5a's nearby-organism lookups already use,
+        // for consistency). `None` (not gated at all) when the mode is off
+        // or nothing is selected, so this costs nothing in the common case.
+        let spotlight_dim_entities: Option<std::collections::HashSet<bevy_ecs::entity::Entity>> =
+            if self.ui.spotlight_mode {
+                self.ui.selected_entity.map(|selected| {
+                    let selected_pos = node_positions.get(&selected).copied();
+                    let radius = {
+                        let mut vision_q = self.world.ecs.query::<&sensing::HeadVision>();
+                        vision_q
+                            .get(&self.world.ecs, selected)
+                            .map(|v| v.range)
+                            .unwrap_or(250.0)
+                    };
+
+                    let mut nearby_organism_ids: std::collections::HashSet<u32> =
+                        std::collections::HashSet::new();
+                    if let Some(&sel_pos) = selected_pos.as_ref() {
+                        let mut diet_q = self
+                            .world
+                            .ecs
+                            .query::<(&physics::ParticleNode, &ecology::Diet)>();
+                        for (node, _diet) in diet_q.iter(&self.world.ecs) {
+                            let d = ((node.position.x - sel_pos[0]).powi(2)
+                                + (node.position.y - sel_pos[1]).powi(2))
+                            .sqrt();
+                            if d <= radius {
+                                nearby_organism_ids.insert(node.organism_id);
+                            }
+                        }
+                    }
+
+                    // Every entity to *keep lit*: the BFS-connected body/
+                    // colony, plus every segment belonging to a nearby
+                    // organism_id.
+                    let mut lit: std::collections::HashSet<bevy_ecs::entity::Entity> =
+                        selected_component.clone().unwrap_or_default();
+                    for (&e, &oid) in entity_organism_id.iter() {
+                        if nearby_organism_ids.contains(&oid) {
+                            lit.insert(e);
+                        }
+                    }
+
+                    // Return the complement — everything to *dim* — since
+                    // that's what the render loop below actually looks up
+                    // per-bone (dimming is the exception, not the rule).
+                    entity_organism_id
+                        .keys()
+                        .filter(|e| !lit.contains(e))
+                        .copied()
+                        .collect()
+                })
+            } else {
+                None
+            };
+        const SPOTLIGHT_DIM_FACTOR: f32 = 0.15;
+        let spotlight_factor = |e: bevy_ecs::entity::Entity| -> f32 {
+            match &spotlight_dim_entities {
+                Some(dim_set) if dim_set.contains(&e) => SPOTLIGHT_DIM_FACTOR,
+                _ => 1.0,
+            }
+        };
+
         // Collect springs for SDF capsule rendering.
         let mut query_springs_render = self
             .world
@@ -709,7 +778,8 @@ impl PhylonApp {
                     let health = entity_health_fraction
                         .get(&spring.node_a)
                         .copied()
-                        .unwrap_or(1.0);
+                        .unwrap_or(1.0)
+                        * spotlight_factor(spring.node_a);
 
                     if should_draw_sdf && bone_visible(pa, pb) {
                         sdf_bones.push(rendering::SdfBoneInstance {
@@ -743,7 +813,8 @@ impl PhylonApp {
                     let health = entity_health_fraction
                         .get(&spring.node_a)
                         .copied()
-                        .unwrap_or(1.0);
+                        .unwrap_or(1.0)
+                        * spotlight_factor(spring.node_a);
                     if should_draw_sdf && bone_visible(pa, pb) {
                         sdf_bones.push(rendering::SdfBoneInstance {
                             pos_a: pa,
@@ -784,7 +855,8 @@ impl PhylonApp {
                 let health = entity_health_fraction
                     .get(&spring.node_a)
                     .copied()
-                    .unwrap_or(1.0);
+                    .unwrap_or(1.0)
+                    * spotlight_factor(spring.node_a);
                 if should_draw_sdf && bone_visible(pa, pb) {
                     sdf_bones.push(rendering::SdfBoneInstance {
                         pos_a: pa,

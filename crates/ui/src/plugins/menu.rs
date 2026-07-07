@@ -173,6 +173,20 @@ pub fn menu_ui(
             ui.checkbox(&mut state.debug_structural, "Wireframe View");
             ui.checkbox(&mut state.show_vision_cones, "Show Vision Cones");
             ui.checkbox(
+                &mut state.show_organism_labels,
+                format!(
+                    "{} Show Organism Labels",
+                    egui_remixicon::icons::PRICE_TAG_3_LINE
+                ),
+            );
+            ui.checkbox(
+                &mut state.spotlight_mode,
+                format!(
+                    "{} Spotlight Selected Organism",
+                    egui_remixicon::icons::FOCUS_LINE
+                ),
+            );
+            ui.checkbox(
                 &mut state.show_world_boundary,
                 format!(
                     "{} Show World Boundary",

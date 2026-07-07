@@ -138,6 +138,16 @@ pub struct WorkbenchState {
     pub focus_mode_previous: Option<std::collections::HashMap<String, PanelMode>>,
     /// Whether the viewport minimap overlay is shown (Phase 2, M17).
     pub show_minimap: bool,
+    /// Whether Spotlight mode is active (Phase 5, SX-5b) — dims every
+    /// organism except the selected entity, its connected body/colony
+    /// (reusing the same BFS `render.rs`'s selection highlight already
+    /// computes), and any other organism within its interaction radius.
+    /// Deliberately **not** named "Focus Mode" — that name is already taken
+    /// by `focus_mode_previous`/`layout::toggle_focus_mode` (Phase 2, M16),
+    /// an unrelated panel-layout fullscreen-viewport toggle. Reusing the
+    /// same name for a different concept would be a real, avoidable
+    /// confusion; picked a distinct one instead.
+    pub spotlight_mode: bool,
     /// Whether High Contrast Mode is active (Phase 2, M18 — Accessibility
     /// pass 2). Applied every frame via `theme::apply_style`.
     pub high_contrast: bool,
@@ -247,6 +257,15 @@ pub struct WorkbenchState {
     pub show_keybinds: bool,
     /// Whether to draw organism vision-cone overlays.
     pub show_vision_cones: bool,
+    /// Whether to draw organism name labels in the viewport (Phase 5,
+    /// SX-5a) — opt-in and density-aware: even when enabled, only the
+    /// selected/tracked organism plus the nearest `ORGANISM_LABEL_MAX_COUNT`
+    /// others to the camera center are labeled (`render::render_organism_labels`),
+    /// never the whole population — labeling every organism at typical
+    /// scales (hundreds to thousands) would be unreadable clutter, not a
+    /// signal, the exact failure mode this milestone's own name warns
+    /// against.
+    pub show_organism_labels: bool,
     /// Whether to draw the world boundary outline (visual only — the
     /// simulation always hard-reflects organisms at the same bounds).
     pub show_world_boundary: bool,
@@ -444,6 +463,7 @@ impl Default for WorkbenchState {
             command_palette_query: String::new(),
             focus_mode_previous: None,
             show_minimap: true,
+            spotlight_mode: false,
             high_contrast: false,
             ui_scale: 1.0,
             simulation_speed: 1.0,
@@ -489,6 +509,7 @@ impl Default for WorkbenchState {
             show_docs: false,
             show_keybinds: false,
             show_vision_cones: false,
+            show_organism_labels: false,
             show_world_boundary: false,
             show_scale_grid: false,
             recording_active: false,
@@ -534,6 +555,13 @@ pub const RECENT_SELECTIONS_CAPACITY: usize = 8;
 /// full-lifetime path (which would need unbounded memory for a
 /// long-running organism).
 pub const TRAJECTORY_HISTORY_CAPACITY: usize = 300;
+
+/// Maximum number of non-selected/tracked organisms labeled at once by
+/// `render::render_organism_labels` (Phase 5, SX-5a) — the "density-aware"
+/// half of "opt-in, density-aware" labels: bounded regardless of total
+/// population, so enabling labels at 1000+ organisms doesn't render 1000+
+/// labels.
+pub const ORGANISM_LABEL_MAX_COUNT: usize = 20;
 
 impl WorkbenchState {
     /// Every currently-selected entity: the primary `selected_entity` plus
