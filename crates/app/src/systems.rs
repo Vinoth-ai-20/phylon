@@ -22,6 +22,15 @@ struct SpawnOrganismCommand {
 
 impl bevy_ecs::world::Command for SpawnOrganismCommand {
     fn apply(self, world: &mut bevy_ecs::world::World) {
+        // Phase 5, SX-3a: computed up front (previously computed later, near
+        // the `OrganismBorn` emission) so `register_birth` below can use the
+        // real current tick instead of a hardcoded `0 // TODO` placeholder.
+        let tick = common::Tick(
+            world
+                .get_resource::<metabolism::GlobalAtmosphere>()
+                .map_or(0, |a| a.ticks),
+        );
+
         let (lineage_id, generation) = {
             if let Some(parent_id) = self.parent_id {
                 if let Some(tracker) = world.get_resource::<evolution::LineageTracker>() {
@@ -77,7 +86,7 @@ impl bevy_ecs::world::Command for SpawnOrganismCommand {
                 lineage_id,
                 species_id,
                 generation,
-                0, // TODO: Get actual tick
+                tick.0,
             );
         }
 
@@ -108,38 +117,29 @@ impl bevy_ecs::world::Command for SpawnOrganismCommand {
             }
         }
 
-        if generation > 0 && generation % 5 == 0 {
-            if let Some(mut log) = world.get_resource_mut::<analytics::NarrationLog>() {
-                log.push_event(
-                    0, // TODO: tick
-                    "Lineage",
-                    format!(
-                        "Lineage {} reached generation {}!",
-                        lineage_id.0, generation
-                    ),
-                );
-            }
-        }
-
         // Phase 4, P4-E1: the first real `events::PhylonEvent` producer for
         // births/reproduction — mirrors the death-side emission in
         // `process_deaths_system`. `Command::apply` runs directly against
         // `&mut World`, so events are sent via `World::send_event` rather
         // than an `EventWriter` system param.
-        let tick = common::Tick(
-            world
-                .get_resource::<metabolism::GlobalAtmosphere>()
-                .map_or(0, |a| a.ticks),
-        );
         world.send_event(events::PhylonEvent::OrganismBorn {
             id: common::EntityId(entity.to_bits()),
             tick,
         });
+        // Phase 5, SX-3a: the "every 5th generation" lineage-milestone
+        // narration previously lived here as a direct `NarrationLog` write
+        // that never actually consumed `ReproductionEvent` — a real,
+        // silently-dead event variant (published, but read by nothing).
+        // Moved to `interaction_event_log_system`, which now reads this
+        // event to produce the exact same message, with the real `tick`
+        // (was hardcoded `0`) instead of a duplicate code path.
         if let Some(parent_id) = self.parent_id {
             world.send_event(events::PhylonEvent::ReproductionEvent {
                 parent: common::EntityId(parent_id.to_bits()),
                 child: common::EntityId(entity.to_bits()),
                 tick,
+                generation: generation as u32,
+                lineage: lineage_id.0,
             });
         }
 
@@ -205,10 +205,17 @@ pub fn process_narrative_events_system(
 /// event, published by `process_deaths_system`, drained and acted on here.
 ///
 /// ## 3. How It Happens
-/// Only `OrganismDied { cause: Predation, .. }` is logged — births and
-/// ordinary (non-predation) deaths are common enough that logging every one
-/// would flood `NarrationLog` (which already has its own, separate
-/// generation-milestone logging for births; see `SpawnOrganismCommand::apply`).
+/// `OrganismDied { cause: Predation, .. }` is logged — ordinary
+/// (non-predation) deaths are common enough that logging every one would
+/// flood `NarrationLog`. `ReproductionEvent` is logged only on a lineage
+/// milestone (every 5th generation), for the same reason — births
+/// themselves are far too frequent to log individually. Phase 5, SX-3a:
+/// this milestone-narration logic used to live directly in
+/// `SpawnOrganismCommand::apply` as a parallel write to `NarrationLog` that
+/// never actually read `ReproductionEvent` — a real, silently-dead event
+/// variant (published every non-seed birth, consumed by nothing). Moved
+/// here so the event has a genuine consumer, and so the tick it logs is the
+/// event's own real tick rather than a hardcoded placeholder.
 pub fn interaction_event_log_system(
     mut phylon_events: EventReader<events::PhylonEvent>,
     mut log: ResMut<analytics::NarrationLog>,
@@ -221,6 +228,21 @@ pub fn interaction_event_log_system(
         } = event
         {
             log.push_event(tick.0, "Predation", format!("Organism {} was eaten", id.0));
+        }
+        if let events::PhylonEvent::ReproductionEvent {
+            tick,
+            generation,
+            lineage,
+            ..
+        } = event
+        {
+            if *generation > 0 && generation % 5 == 0 {
+                log.push_event(
+                    tick.0,
+                    "Lineage",
+                    format!("Lineage {lineage} reached generation {generation}!"),
+                );
+            }
         }
     }
 }
@@ -601,5 +623,57 @@ mod tests {
         assert_ne!(predation_text, disease_text);
         assert_ne!(predation_color, disease_color);
         assert_eq!(disease_color, ecology::Diet::Decomposer.standard_color());
+    }
+
+    /// Phase 5, SX-3a: `ReproductionEvent` was published but had zero
+    /// consumers — a silently-dead event variant. This proves
+    /// `interaction_event_log_system` now genuinely reads it: a generation-5
+    /// milestone must produce a real `NarrationLog` entry, using the event's
+    /// own tick (not a hardcoded placeholder).
+    #[test]
+    fn reproduction_event_at_a_generation_milestone_is_logged() {
+        let mut world = World::new();
+        world.insert_resource(bevy_ecs::event::Events::<events::PhylonEvent>::default());
+        world.insert_resource(analytics::NarrationLog::new(10));
+        world.send_event(events::PhylonEvent::ReproductionEvent {
+            parent: common::EntityId(1),
+            child: common::EntityId(2),
+            tick: common::Tick(999),
+            generation: 5,
+            lineage: 42,
+        });
+
+        world.run_system_once(interaction_event_log_system);
+
+        let log = world.resource::<analytics::NarrationLog>();
+        assert_eq!(log.events.len(), 1);
+        assert_eq!(log.events[0].tick, 999);
+        assert_eq!(log.events[0].event_type, "Lineage");
+        assert!(log.events[0].description.contains("42"));
+        assert!(log.events[0].description.contains('5'));
+    }
+
+    /// A non-milestone generation (not a multiple of 5) must not be logged —
+    /// otherwise every birth would flood `NarrationLog`, the exact failure
+    /// mode this restraint exists to avoid.
+    #[test]
+    fn reproduction_event_off_milestone_is_not_logged() {
+        let mut world = World::new();
+        world.insert_resource(bevy_ecs::event::Events::<events::PhylonEvent>::default());
+        world.insert_resource(analytics::NarrationLog::new(10));
+        world.send_event(events::PhylonEvent::ReproductionEvent {
+            parent: common::EntityId(1),
+            child: common::EntityId(2),
+            tick: common::Tick(999),
+            generation: 3,
+            lineage: 42,
+        });
+
+        world.run_system_once(interaction_event_log_system);
+
+        assert!(world
+            .resource::<analytics::NarrationLog>()
+            .events
+            .is_empty());
     }
 }

@@ -50,7 +50,7 @@ use crossbeam::channel::{self, Receiver, Sender, TrySendError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use common::{ChunkId, EntityId, Tick};
+use common::{EntityId, Tick};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Supporting enums
@@ -78,29 +78,6 @@ pub enum DeathCause {
     Environment,
     /// An unknown or unclassified cause.
     Unknown,
-}
-
-/// Identifies which diffusion field triggered a [`PhylonEvent::FieldSpike`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum FieldType {
-    /// Oxygen concentration field.
-    Oxygen,
-    /// Carbon dioxide concentration field.
-    CarbonDioxide,
-    /// Food / nutrient availability field.
-    Nutrient,
-    /// Pheromone signal field.
-    Pheromone,
-    /// Thermal energy field.
-    Temperature,
-    /// Toxin concentration field.
-    Toxin,
-    /// Disease / pathogen concentration field.
-    Disease,
-    /// Bioluminescence intensity field.
-    Bioluminescence,
-    /// Sound pressure field (used by directional hearing sensor).
-    SoundPressure,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -157,6 +134,13 @@ pub enum PhylonEvent {
     },
 
     /// An organism has reproduced, creating a child entity.
+    ///
+    /// Phase 5, SX-3a: `generation`/`lineage` were added so a real consumer
+    /// (`crates/app/src/systems.rs`'s `interaction_event_log_system`) could
+    /// log lineage milestones *from this event* instead of a parallel,
+    /// never-actually-reading-this-event code path in
+    /// `SpawnOrganismCommand::apply` that duplicated the same "every 5th
+    /// generation" logic directly against `NarrationLog`.
     ReproductionEvent {
         /// The parent organism's ID.
         parent: EntityId,
@@ -164,21 +148,14 @@ pub enum PhylonEvent {
         child: EntityId,
         /// The tick on which reproduction completed.
         tick: Tick,
-    },
-
-    /// A diffusion field value in a chunk has exceeded a significant threshold.
-    ///
-    /// Used by analytics to record environmental spikes and by the ecology
-    /// system to trigger reactive responses.
-    FieldSpike {
-        /// The chunk where the spike occurred.
-        chunk: ChunkId,
-        /// The field type that spiked.
-        field: FieldType,
-        /// The peak value recorded.
-        value: f32,
-        /// The tick on which the spike was detected.
-        tick: Tick,
+        /// The child's generation number (0 for an initial seed organism
+        /// with no parent — though such organisms don't publish this event
+        /// at all, see `SpawnOrganismCommand::apply`).
+        generation: u32,
+        /// The lineage this reproduction belongs to (`evolution::LineageId`'s
+        /// inner value — `events` doesn't depend on `evolution`, so this is
+        /// the raw `u64`, not the newtype).
+        lineage: u64,
     },
 
     /// A researcher-defined checkpoint in the experiment timeline.
@@ -200,7 +177,6 @@ impl PhylonEvent {
             PhylonEvent::OrganismBorn { tick, .. }
             | PhylonEvent::OrganismDied { tick, .. }
             | PhylonEvent::ReproductionEvent { tick, .. }
-            | PhylonEvent::FieldSpike { tick, .. }
             | PhylonEvent::ExperimentCheckpoint { tick, .. } => *tick,
         }
     }

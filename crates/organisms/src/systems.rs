@@ -29,6 +29,7 @@ use common::Vec2;
 ///    is `Tail`), it wires the `Brain` CTRNN topology.
 pub fn growth_system(
     mut commands: Commands,
+    atmosphere: bevy_ecs::prelude::Res<metabolism::GlobalAtmosphere>,
     mut query: Query<(
         Entity,
         &mut GrowthState,
@@ -262,6 +263,12 @@ pub fn growth_system(
                 // organism-wide `Infection` (if any) out into these.
                 ecology::disease::SegmentInfection::healthy(),
                 ecology::disease::SegmentImmunity::baseline(),
+                // Phase 5, SX-2d: reuses the existing `SpawnTick` component
+                // (previously only attached to an organism's head at
+                // creation, `organisms::spawning`) rather than adding a new
+                // type — `crates/app/src/render.rs` reads this to fade/scale
+                // a just-formed segment in over a short fixed window.
+                crate::components::SpawnTick(atmosphere.ticks),
             ))
             .id();
 
@@ -343,6 +350,7 @@ pub fn growth_system(
                     brain::HormoneLevel::default(),
                     ecology::disease::SegmentInfection::healthy(),
                     ecology::disease::SegmentImmunity::baseline(),
+                    crate::components::SpawnTick(atmosphere.ticks),
                 ))
                 .id();
             let f_dn = commands
@@ -353,6 +361,7 @@ pub fn growth_system(
                     brain::HormoneLevel::default(),
                     ecology::disease::SegmentInfection::healthy(),
                     ecology::disease::SegmentImmunity::baseline(),
+                    crate::components::SpawnTick(atmosphere.ticks),
                 ))
                 .id();
 
@@ -564,6 +573,10 @@ pub fn producer_growth_system(
                         head_entity.index(),
                     ),
                     crate::components::OrganismColor([0.2, 0.9, 0.2]), // Bright green new leaf
+                    // Phase 5, SX-2d: same fade-in-on-spawn treatment as
+                    // `growth_system`'s new segments — a plant sprouting a
+                    // new leaf is the same kind of "growth" event.
+                    crate::components::SpawnTick(atmosphere.ticks),
                 ))
                 .id();
 
@@ -640,6 +653,7 @@ mod tests {
     #[test]
     fn growth_system_completes_for_a_default_genome_without_panicking() {
         let mut world = World::new();
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
         let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
         let entity = spawn_growth_entity(&mut world, genome);
         run_growth_to_completion(&mut world, entity);
@@ -654,6 +668,7 @@ mod tests {
         // sibling component must still be present, non-empty, and
         // unchanged after `GrowthState` is gone.
         let mut world = World::new();
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
         let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
         let entity = spawn_growth_entity(&mut world, genome);
         run_growth_to_completion(&mut world, entity);
@@ -678,9 +693,64 @@ mod tests {
         assert_eq!(node_count_before, node_count_after);
     }
 
+    /// Phase 5, SX-2d: every newly-grown segment must carry a `SpawnTick`
+    /// matching the *current* tick, not `0` or the head's own spawn tick —
+    /// `crates/app/src/render.rs` reads this to fade/scale the segment in
+    /// over a short window rather than popping it in at full size.
+    #[test]
+    fn growth_system_tags_new_segments_with_the_current_tick() {
+        let mut world = World::new();
+        world.insert_resource(metabolism::GlobalAtmosphere {
+            ticks: 12_345,
+            ..Default::default()
+        });
+        let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        let head = world
+            .spawn(physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 0))
+            .id();
+        world.entity_mut(head).insert(metabolism::ChemicalEconomy {
+            glucose: 1000.0,
+            o2: 1000.0,
+            co2: 0.0,
+            atp: 1000.0,
+            max_glucose: 1000.0,
+            max_o2: 1000.0,
+            max_co2: 1000.0,
+            max_atp: 1000.0,
+        });
+        world.entity_mut(head).insert((
+            GrowthState {
+                genome,
+                next_segment_index: 1,
+                ticks_until_next_bud: 0,
+                base_bud_interval: 0,
+                parent_spine_node: Some(head),
+                current_pos: Vec2::new(0.0, 0.0),
+                segment_length: 20.0,
+                effectors: Vec::new(),
+                is_organism_complete: false,
+                heading: 0.0,
+            },
+            DevelopmentalGraph::new(),
+        ));
+
+        world.run_system_once(growth_system);
+
+        let mut newly_grown =
+            world.query::<(&physics::ParticleNode, &crate::components::SpawnTick)>();
+        let found = newly_grown
+            .iter(&world)
+            .any(|(_, spawn_tick)| spawn_tick.0 == 12_345);
+        assert!(
+            found,
+            "at least one newly-grown segment must be tagged with the current tick"
+        );
+    }
+
     #[test]
     fn growth_system_produces_more_than_one_particle_node() {
         let mut world = World::new();
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
         let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
         // The head node itself isn't spawned by `growth_system` (that's
         // `spawning::spawn_organism`'s job) — spawn a stand-in head so
@@ -732,6 +802,7 @@ mod tests {
         // deterministically never branches — `Cppn::new()`'s empty
         // regulatory network always decodes `branches: false`).
         let mut world = World::new();
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
         let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
         let entity = spawn_growth_entity(&mut world, genome);
 
@@ -757,6 +828,7 @@ mod tests {
         // `metabolism::ChemicalEconomy` pool — proving the graph index can
         // be used to look up live physiological state, not just anatomy.
         let mut world = World::new();
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
         let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
         let entity = spawn_growth_entity(&mut world, genome);
 
@@ -825,6 +897,7 @@ mod tests {
         assert_ne!(outputs.segment_type, genetics::SegmentType::Germinal);
 
         let mut world = World::new();
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
         let entity = spawn_growth_entity(&mut world, genome);
 
         world.run_system_once(growth_system);
@@ -899,6 +972,7 @@ mod tests {
         // necessary to capture it before `GrowthState` disappears, since it
         // simply survives that removal now; just read it once growth ends.
         let mut world = World::new();
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
         let head_outputs = genetics::develop_at_position(&regulatory_cppn, 0, crate::MAX_SEGMENTS);
         let mut graph = crate::DevelopmentalGraph::new();
         graph.push(

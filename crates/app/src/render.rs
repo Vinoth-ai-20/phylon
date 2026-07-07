@@ -565,12 +565,48 @@ impl PhylonApp {
             }
         }
 
+        // Developmental growth visual (Phase 5, SX-2d): a just-formed segment
+        // scales in from near-0 to full radius over a short fixed window,
+        // rather than popping into existence at full size. `SpawnTick`
+        // (reused, not a new component — see `organisms::systems::growth_system`'s
+        // doc comment) is looked up per spring's `node_b`, which is always
+        // the newer of the two endpoints under this codebase's own `Spring`
+        // convention (`node_a` is always the pre-existing parent/anchor;
+        // confirmed by reading every `Spring` construction site in
+        // `growth_system`/`producer_growth_system`, not assumed).
+        const GROWTH_FADE_IN_TICKS: u64 = 30; // 0.5s at 60Hz — brief, per the design doc
+        let current_tick = self
+            .world
+            .ecs
+            .get_resource::<metabolism::GlobalAtmosphere>()
+            .map_or(0, |a| a.ticks);
+        let mut query_spawn_ticks = self
+            .world
+            .ecs
+            .query::<(bevy_ecs::entity::Entity, &organisms::SpawnTick)>();
+        let entity_growth_progress: std::collections::HashMap<bevy_ecs::entity::Entity, f32> =
+            query_spawn_ticks
+                .iter(&self.world.ecs)
+                .map(|(e, spawn_tick)| {
+                    let age_ticks = current_tick.saturating_sub(spawn_tick.0);
+                    let progress = (age_ticks as f32 / GROWTH_FADE_IN_TICKS as f32).clamp(0.0, 1.0);
+                    (e, progress)
+                })
+                .collect();
+
         // Collect springs for SDF capsule rendering.
         let mut query_springs_render = self
             .world
             .ecs
             .query::<(&physics::Spring, Option<&organisms::OrganismColor>)>();
         for (spring, opt_color) in query_springs_render.iter(&self.world.ecs) {
+            // Absent from the map (segments that existed before this
+            // milestone shipped, or non-organism structures) defaults to
+            // `1.0` — fully grown, not "always freshly spawned."
+            let growth_scale = entity_growth_progress
+                .get(&spring.node_b)
+                .copied()
+                .unwrap_or(1.0);
             let is_in_selected = selected_component
                 .as_ref()
                 .is_some_and(|comp| comp.contains(&spring.node_a) && comp.contains(&spring.node_b));
@@ -640,7 +676,7 @@ impl PhylonApp {
                         sdf_bones.push(rendering::SdfBoneInstance {
                             pos_a: pa,
                             pos_b: pb,
-                            radius: 4.0 * (self.ui.skin_thickness / 3.0),
+                            radius: 4.0 * (self.ui.skin_thickness / 3.0) * growth_scale,
                             color,
                             health,
                         });
@@ -673,7 +709,7 @@ impl PhylonApp {
                         sdf_bones.push(rendering::SdfBoneInstance {
                             pos_a: pa,
                             pos_b: pb,
-                            radius: 6.0 * (self.ui.skin_thickness / 3.0),
+                            radius: 6.0 * (self.ui.skin_thickness / 3.0) * growth_scale,
                             color,
                             health,
                         });
@@ -701,8 +737,9 @@ impl PhylonApp {
                 node_positions.get(&spring.node_b),
             ) {
                 // Determine bone thickness
-                let radius =
-                    (if spring.is_fin == 1 { 4.0 } else { 8.0 }) * (self.ui.skin_thickness / 3.0);
+                let radius = (if spring.is_fin == 1 { 4.0 } else { 8.0 })
+                    * (self.ui.skin_thickness / 3.0)
+                    * growth_scale;
 
                 let color = opt_color.map(|c| c.0).unwrap_or([0.8, 0.8, 0.8]);
                 let health = entity_health_fraction

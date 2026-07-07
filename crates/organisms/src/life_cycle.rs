@@ -231,6 +231,7 @@ mod tests {
     #[test]
     fn life_stage_system_does_not_promote_before_maturity_age() {
         let mut world = World::new();
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
         let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
         let mut rng = rand::rngs::StdRng::seed_from_u64(1);
         let entity = crate::spawn_organism(
@@ -261,6 +262,7 @@ mod tests {
     #[test]
     fn life_stage_system_promotes_and_resumes_growth_at_maturity_age() {
         let mut world = World::new();
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
         let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
         let entity = spawn_and_grow_to_adulthood(&mut world, genome);
 
@@ -286,6 +288,7 @@ mod tests {
     #[test]
     fn resumed_growth_reaches_completion_and_rebuilds_the_brain() {
         let mut world = World::new();
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
         let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
         let entity = spawn_and_grow_to_adulthood(&mut world, genome);
 
@@ -347,6 +350,7 @@ mod tests {
         );
 
         let mut world = World::new();
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
         let entity = world
             .spawn((
                 GrowthState {
