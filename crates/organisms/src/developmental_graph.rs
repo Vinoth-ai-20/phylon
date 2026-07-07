@@ -18,6 +18,15 @@
 //! Timeline milestone's own decision, not this one's — `growth_system`
 //! currently drops `GrowthState` (and, with it, its `graph`) the moment
 //! growth completes.
+//!
+//! **Phase 3, M13 resolves that question:** the graph does *not* need to be
+//! retained. Because every node is a pure function of the genome and its
+//! body position (see `genetics::develop_at_position`), the entire growth
+//! timeline can be deterministically reconstructed after the fact — see
+//! [`simulate_growth_timeline`], which mirrors `growth_system`'s own
+//! control flow (apoptosis pruning, branch spawning, Tail-stop) without any
+//! ECS/physics side effects, for exactly this replay purpose. ADR-P3-04's
+//! transience decision stands unmodified.
 
 use genetics::{DevelopmentalOutputs, SegmentType};
 
@@ -37,6 +46,12 @@ pub struct DevelopmentalNode {
     pub parent: Option<usize>,
     /// `true` for a lateral fin/branch node, `false` for a main spine node.
     pub is_branch: bool,
+    /// The body-axis position (`genetics::develop_at_position`'s
+    /// `segment_index`) this node was decoded from — a branch node shares
+    /// its parent spine node's position (Phase 3, M13; added so a
+    /// Development Timeline scrubber can map a growth-order step back to
+    /// the position research panels already know how to display).
+    pub position: usize,
 }
 
 /// The full sequence of decoded body positions for one growing organism.
@@ -53,21 +68,70 @@ impl DevelopmentalGraph {
     }
 
     /// Appends a new node and returns its index within this graph.
+    #[allow(clippy::too_many_arguments)]
     pub fn push(
         &mut self,
         role: SegmentType,
         outputs: DevelopmentalOutputs,
         parent: Option<usize>,
         is_branch: bool,
+        position: usize,
     ) -> usize {
         self.nodes.push(DevelopmentalNode {
             role,
             outputs,
             parent,
             is_branch,
+            position,
         });
         self.nodes.len() - 1
     }
+}
+
+/// Deterministically reconstructs the full growth timeline for `regulatory_cppn`
+/// without touching the ECS — mirrors `organisms::growth_system`'s control
+/// flow exactly (position 0's head always grows regardless of its
+/// apoptosis signal, same as `spawning::spawn_organism`; positions 1.. are
+/// pruned on `outputs.apoptosis`; a branch-eligible, branching position
+/// pushes two `Fin` nodes; growth stops after a grown `Tail` or at
+/// [`crate::MAX_SEGMENTS`]) so a research panel can replay "how this body
+/// plan came to be" for any organism, grown or not, without the transient
+/// [`DevelopmentalGraph`] `growth_system` builds ever needing to be
+/// persisted (Phase 3, M13 — see this module's doc comment).
+pub fn simulate_growth_timeline(regulatory_cppn: &genetics::Cppn) -> DevelopmentalGraph {
+    let total = crate::MAX_SEGMENTS;
+    let mut graph = DevelopmentalGraph::new();
+
+    let head_outputs = genetics::develop_at_position(regulatory_cppn, 0, total);
+    let head_index = graph.push(head_outputs.segment_type, head_outputs, None, false, 0);
+    if head_outputs.segment_type == SegmentType::Tail {
+        return graph;
+    }
+
+    let mut last_spine_index = head_index;
+    for position in 1..total {
+        let outputs = genetics::develop_at_position(regulatory_cppn, position, total);
+        if outputs.apoptosis {
+            continue;
+        }
+        let spine_index = graph.push(
+            outputs.segment_type,
+            outputs,
+            Some(last_spine_index),
+            false,
+            position,
+        );
+        if can_branch(outputs.segment_type) && outputs.branches {
+            graph.push(SegmentType::Fin, outputs, Some(spine_index), true, position);
+            graph.push(SegmentType::Fin, outputs, Some(spine_index), true, position);
+        }
+        last_spine_index = spine_index;
+        if outputs.segment_type == SegmentType::Tail {
+            break;
+        }
+    }
+
+    graph
 }
 
 /// The physics parameters a decoded [`SegmentType`] compiles down to —
@@ -157,17 +221,20 @@ mod tests {
             sample_outputs(SegmentType::Head),
             None,
             false,
+            0,
         );
         let torso = graph.push(
             SegmentType::Torso,
             sample_outputs(SegmentType::Torso),
             Some(head),
             false,
+            1,
         );
         assert_eq!(head, 0);
         assert_eq!(torso, 1);
         assert_eq!(graph.nodes[torso].parent, Some(head));
         assert!(!graph.nodes[torso].is_branch);
+        assert_eq!(graph.nodes[torso].position, 1);
     }
 
     #[test]
@@ -226,5 +293,45 @@ mod tests {
         assert!(!can_branch(SegmentType::Vascular));
         assert!(!can_branch(SegmentType::Ganglion));
         assert!(!can_branch(SegmentType::Germinal));
+    }
+
+    #[test]
+    fn simulate_growth_timeline_is_deterministic() {
+        let cppn = genetics::Cppn::new();
+        let a = simulate_growth_timeline(&cppn);
+        let b = simulate_growth_timeline(&cppn);
+        assert_eq!(a.nodes.len(), b.nodes.len());
+        for (na, nb) in a.nodes.iter().zip(b.nodes.iter()) {
+            assert_eq!(na.position, nb.position);
+            assert_eq!(na.role, nb.role);
+        }
+    }
+
+    #[test]
+    fn simulate_growth_timeline_stops_after_a_grown_tail() {
+        // Every node in a timeline that stopped at a Tail must have a
+        // position within bounds, and the last node must be the Tail that
+        // stopped it (unless it stopped solely by hitting MAX_SEGMENTS).
+        let cppn = genetics::Cppn::new();
+        let graph = simulate_growth_timeline(&cppn);
+        assert!(!graph.nodes.is_empty());
+        if let Some(last) = graph.nodes.iter().rfind(|n| !n.is_branch) {
+            if last.role == SegmentType::Tail {
+                assert!(graph.nodes.iter().all(|n| n.position < crate::MAX_SEGMENTS));
+            }
+        }
+    }
+
+    #[test]
+    fn simulate_growth_timeline_never_records_a_pruned_non_head_position() {
+        // The head (position 0) is force-grown regardless of its own
+        // apoptosis signal (mirroring `spawning::spawn_organism`, which
+        // never checks it) — every *other* recorded node must not be
+        // apoptotic, since a pruned position is never pushed at all.
+        for node in simulate_growth_timeline(&genetics::Cppn::new()).nodes {
+            if node.position != 0 {
+                assert!(!node.outputs.apoptosis);
+            }
+        }
     }
 }

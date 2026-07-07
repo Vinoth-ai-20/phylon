@@ -46,6 +46,16 @@ pub fn hox_visualizer_ui(
     let expressed_regulatory_cppn = genome.expressed_regulatory_cppn();
     let total = organisms::MAX_SEGMENTS;
 
+    let grown_positions = crate::timeline::grown_positions(&expressed_regulatory_cppn);
+    if let Some(position) =
+        crate::timeline::timeline_scrubber_ui(ui, &grown_positions, &mut state.timeline_step)
+    {
+        if ui.small_button("Show this position's details").clicked() {
+            state.hox_visualizer_selected_index = Some(position);
+        }
+    }
+    ui.add_space(crate::theme::SPACE_SM);
+
     ui.label(egui::RichText::new("Body Plan Decode").strong());
     ui.label(
         egui::RichText::new(

@@ -38,7 +38,7 @@ pub fn spawn_organism(
     // The Body Graph's root node (Phase 3, M6 — see ADR-P3-04): index 0,
     // no parent, not a branch.
     let mut graph = crate::developmental_graph::DevelopmentalGraph::new();
-    graph.push(head_outputs.segment_type, head_outputs, None, false);
+    graph.push(head_outputs.segment_type, head_outputs, None, false, 0);
 
     // Spawn the head node at start_pos (gene index 0).
     let head_node = world.spawn_empty().id();

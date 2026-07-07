@@ -30,7 +30,8 @@ pub use components::{
 /// record (Phase 3, M6). See `PHASE3_ROADMAP.md`'s ADR-P3-04.
 pub mod developmental_graph;
 pub use developmental_graph::{
-    can_branch, compile_segment, CompiledSegment, DevelopmentalGraph, DevelopmentalNode,
+    can_branch, compile_segment, simulate_growth_timeline, CompiledSegment, DevelopmentalGraph,
+    DevelopmentalNode,
 };
 
 /// Organism ECS systems.

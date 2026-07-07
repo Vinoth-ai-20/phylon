@@ -43,10 +43,21 @@ pub fn grn_viewer_ui(
         genome.clone()
     };
 
+    let expressed = genome.expressed_regulatory_cppn();
+
+    let grown_positions = crate::timeline::grown_positions(&expressed);
+    if let Some(position) =
+        crate::timeline::timeline_scrubber_ui(ui, &grown_positions, &mut state.timeline_step)
+    {
+        if ui.small_button("Jump to this position").clicked() {
+            state.grn_position = position;
+        }
+    }
+    ui.add_space(crate::theme::SPACE_SM);
+
     playback_controls(ui, state);
     ui.add_space(crate::theme::SPACE_SM);
 
-    let expressed = genome.expressed_regulatory_cppn();
     let network = developed_network(&expressed, state.grn_position, state.grn_step);
     draw_grn_graph(ui, &network, &mut state.grn_view);
 

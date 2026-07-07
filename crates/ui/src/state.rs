@@ -309,6 +309,11 @@ pub struct WorkbenchState {
     /// Evolution Debugger's organism-picker search text (filters the live
     /// organism list by entity id substring) — Phase 3, M12.
     pub evo_debugger_search: String,
+    /// Shared Development Timeline scrubber position (an index into the
+    /// selected organism's actual grown-position sequence, not a raw body
+    /// position) — shared between the HOX Visualizer and GRN Viewer tabs
+    /// so scrubbing in one carries over to the other (Phase 3, M13).
+    pub timeline_step: usize,
 
     /// Last-known split ratio for each named docking split, keyed by the
     /// child tile's label (`"Sidebar"`, `"MainColumn"`, `"Neural Viewer"`,
@@ -471,6 +476,7 @@ impl Default for WorkbenchState {
             grn_step: genetics::develop::DEVELOPMENT_STEPS,
             evo_debugger_entity_b: None,
             evo_debugger_search: String::new(),
+            timeline_step: 0,
             layout_shares: std::collections::HashMap::new(),
             active_tab: crate::SidebarTab::Inspector,
             lineage_view: crate::LineageView::Ancestry,

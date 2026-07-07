@@ -47,6 +47,10 @@ pub(crate) mod graph_canvas;
 /// (Phase 3 M11) and Evolution Debugger (Phase 3 M12).
 pub(crate) mod regulatory_view;
 
+/// Shared Development Timeline scrubber (Phase 3 M13), used by HOX
+/// Visualizer and GRN Viewer.
+pub(crate) mod timeline;
+
 /// Immediate-mode rendering logic.
 pub mod render;
 pub use render::render_ui;

@@ -234,9 +234,14 @@ pub fn growth_system(
         // this push, since branch nodes (below) never become anyone's
         // structural parent.
         let parent_graph_index = state.graph.nodes.len().checked_sub(1);
-        state
-            .graph
-            .push(outputs.segment_type, outputs, parent_graph_index, false);
+        let current_position = state.next_segment_index;
+        state.graph.push(
+            outputs.segment_type,
+            outputs,
+            parent_graph_index,
+            false,
+            current_position,
+        );
 
         // ── Connect to previous spine node with a Rigid bone ─────────────────
         if let Some(prev) = state.parent_spine_node {
@@ -283,12 +288,21 @@ pub fn growth_system(
             // This branch's parent is the spine node just pushed above —
             // its index is the graph's current last entry.
             let spine_graph_index = state.graph.nodes.len() - 1;
-            state
-                .graph
-                .push(SegmentType::Fin, outputs, Some(spine_graph_index), true);
-            state
-                .graph
-                .push(SegmentType::Fin, outputs, Some(spine_graph_index), true);
+            let current_position = state.next_segment_index;
+            state.graph.push(
+                SegmentType::Fin,
+                outputs,
+                Some(spine_graph_index),
+                true,
+                current_position,
+            );
+            state.graph.push(
+                SegmentType::Fin,
+                outputs,
+                Some(spine_graph_index),
+                true,
+                current_position,
+            );
 
             let fin_spread = state.segment_length * 0.75;
             let dir = Vec2::new(state.heading.cos(), state.heading.sin());
@@ -720,5 +734,105 @@ mod tests {
             0,
             "a pruned position must never spawn a ParticleNode"
         );
+    }
+
+    #[test]
+    fn simulate_growth_timeline_matches_a_real_growth_system_run() {
+        // Phase 3 M13's whole justification for not persisting the Body
+        // Graph (see `developmental_graph`'s doc comment) is that
+        // `simulate_growth_timeline` faithfully predicts what a real
+        // `growth_system` run actually builds. This test is the direct
+        // proof: same genome (the M8 apoptosis fixture, which exercises
+        // real pruning — the simplest all-`Cppn::new()` fixture never
+        // prunes anything, so it wouldn't stress this claim), predicted
+        // timeline vs. the graph a real run actually produces, compared
+        // node-for-node.
+        use genetics::cppn::DEFAULT_MUTATION_RATE;
+        use genetics::{Cppn, CppnConnection, CppnNode};
+
+        let regulatory_cppn = Cppn {
+            nodes: vec![
+                CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 0,
+                },
+                CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 0,
+                },
+                CppnNode {
+                    activation: brain::ActivationFn::Sine,
+                    bias: -3.0,
+                    layer: 1,
+                },
+            ],
+            connections: vec![CppnConnection {
+                source: 0,
+                target: 2,
+                weight: 5.0,
+                enabled: true,
+                innovation: 0,
+                mutation_rate: DEFAULT_MUTATION_RATE,
+            }],
+        };
+        let mut genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        genome.regulatory_cppn = regulatory_cppn.clone();
+
+        let predicted = crate::simulate_growth_timeline(&regulatory_cppn);
+
+        // Real run: seed the graph with the head node exactly as
+        // `spawning::spawn_organism` does, then step growth_system to
+        // completion, capturing the graph on the last tick before
+        // `GrowthState` is removed.
+        let mut world = World::new();
+        let head_outputs = genetics::develop_at_position(&regulatory_cppn, 0, crate::MAX_SEGMENTS);
+        let mut graph = crate::DevelopmentalGraph::new();
+        graph.push(head_outputs.segment_type, head_outputs, None, false, 0);
+        let entity = world
+            .spawn((
+                metabolism::ChemicalEconomy {
+                    glucose: 1000.0,
+                    o2: 1000.0,
+                    co2: 0.0,
+                    atp: 1000.0,
+                    max_glucose: 1000.0,
+                    max_o2: 1000.0,
+                    max_co2: 1000.0,
+                    max_atp: 1000.0,
+                },
+                GrowthState {
+                    genome,
+                    next_segment_index: 1,
+                    ticks_until_next_bud: 0,
+                    base_bud_interval: 0,
+                    parent_spine_node: None,
+                    current_pos: Vec2::new(0.0, 0.0),
+                    segment_length: 20.0,
+                    effectors: Vec::new(),
+                    is_organism_complete: head_outputs.segment_type == genetics::SegmentType::Tail,
+                    graph,
+                    heading: 0.0,
+                },
+            ))
+            .id();
+
+        let mut last_graph = world.get::<GrowthState>(entity).unwrap().graph.clone();
+        for _ in 0..(crate::MAX_SEGMENTS * 40) {
+            if let Some(state) = world.get::<GrowthState>(entity) {
+                last_graph = state.graph.clone();
+            } else {
+                break;
+            }
+            world.run_system_once(growth_system);
+        }
+
+        assert_eq!(predicted.nodes.len(), last_graph.nodes.len());
+        for (p, r) in predicted.nodes.iter().zip(last_graph.nodes.iter()) {
+            assert_eq!(p.position, r.position);
+            assert_eq!(p.role, r.role);
+            assert_eq!(p.is_branch, r.is_branch);
+        }
     }
 }
