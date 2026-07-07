@@ -347,6 +347,51 @@ pub fn inspector_ui(
                             crate::widgets::kv_row(ui, "Mass", "Not Available");
                         }
                     });
+
+                // Phase 5, Epic 6 (ADR-P5-04): folds the P4-R1-R4 standalone
+                // panels' full per-segment detail directly into Inspector,
+                // instead of leaving them as separate, default-closed dock
+                // panels a researcher would never discover. Each nested
+                // section reuses that panel's own render function verbatim
+                // (not a reimplementation) — `physiology_viewer_ui`/
+                // `circulation_viewer_ui`/`hormone_viewer_ui`/`immune_viewer_ui`
+                // all already take the same `(ctx, ui, state, world, actions)`
+                // shape Inspector itself uses, so they compose directly
+                // inside a nested `CollapsingHeader`. Collapsed by default
+                // (per ADR-P5-04's own explicit mitigation) — this is a lot
+                // of additional detail, and progressive disclosure is what
+                // keeps Inspector from becoming the same "everything
+                // competing for attention" wall the redesign's audit found
+                // elsewhere.
+                ui.add_space(crate::theme::SPACE_SM);
+                egui::CollapsingHeader::new("Per-Segment Detail (SX-6a)")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        crate::plugins::physiology_viewer::physiology_viewer_ui(
+                            _ctx, ui, state, world, actions,
+                        );
+                    });
+                egui::CollapsingHeader::new("Circulation (SX-6b)")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        crate::plugins::circulation_viewer::circulation_viewer_ui(
+                            _ctx, ui, state, world, actions,
+                        );
+                    });
+                egui::CollapsingHeader::new("Hormones (SX-6b)")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        crate::plugins::hormone_viewer::hormone_viewer_ui(
+                            _ctx, ui, state, world, actions,
+                        );
+                    });
+                egui::CollapsingHeader::new("Immune Response (SX-6b)")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        crate::plugins::immune_viewer::immune_viewer_ui(
+                            _ctx, ui, state, world, actions,
+                        );
+                    });
             });
 
             // --- GENETICS ---
@@ -433,6 +478,22 @@ pub fn inspector_ui(
                         );
                     }
                 }
+            });
+
+            // --- EVOLUTION / HISTORY ---
+            // Phase 5, SX-6c (ADR-P5-04): folds the Cell Lineage Viewer
+            // (P4-R5) in the same way SX-6a/6b fold Physiology/Circulation/
+            // Hormone/Immune above — `lineage_viewer_ui` already takes the
+            // same `(ctx, ui, state, world, actions)` shape, reused
+            // verbatim. Collapsed by default, same progressive-disclosure
+            // reasoning.
+            egui::CollapsingHeader::new(format!(
+                "{} Evolution / History",
+                egui_remixicon::icons::GIT_BRANCH_LINE
+            ))
+            .default_open(false)
+            .show(ui, |ui| {
+                crate::plugins::lineage_viewer::lineage_viewer_ui(_ctx, ui, state, world, actions);
             });
 
             // --- NEURAL ---

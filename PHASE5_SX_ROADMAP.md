@@ -182,10 +182,10 @@ Milestones are scoped at the same resolution `PHASE4_ROADMAP.md` used for its ow
 
 | Milestone | Goal | Effort | Risk |
 |---|---|---|---|
-| **SX-6a** | Fold Physiology Viewer (P4-R1)'s per-segment table into Inspector's existing Physiology section as an expandable sub-view | 3 | Low |
-| **SX-6b** | Fold Circulation/Hormone/Immune Viewers (P4-R2-R4) similarly | 4 | Medium |
-| **SX-6c** | Fold Cell Lineage Viewer (P4-R5) into a new Evolution/History section per ADR-P5-04 | 2 | Low |
-| **SX-6d** | Decide fate of the now-possibly-redundant standalone panels (keep as "detached/full-size" views vs. retire) — a real design decision, not pre-decided here | 1 (decision) + follow-on | Low |
+| **SX-6a** | **Done — see §11 (bundled, per your explicit request).** Folded via direct reuse — `physiology_viewer_ui` already took the same `(ctx, ui, state, world, actions)` shape Inspector uses, called verbatim inside a nested, collapsed-by-default `CollapsingHeader` | 3 | Low |
+| **SX-6b** | **Done — see §11 (bundled).** Same reuse pattern for Circulation/Hormone/Immune — 3 more nested sections, no reimplementation | 4 | Medium |
+| **SX-6c** | **Done — see §11 (bundled).** New "Evolution / History" section, `lineage_viewer_ui` reused verbatim | 2 | Low |
+| **SX-6d** | **Already decided — see §11.** ADR-P5-04 (written before this epic started) already made this decision explicitly: keep the standalone panels for undocked/full-size use. Confirmed still true by checking `layout.rs`'s tile-tree wiring, not re-litigated | 1 (decision) + follow-on | Low |
 
 ### Epic 7 — Scientific Visualization (depends on: nothing; extends Metrics)
 
@@ -767,3 +767,25 @@ Both fixes are pure call-order changes — no new drawing logic, no new renderin
 - As with every SX milestone so far: no screen-capture/automation driver available in this session — the fade gradient's actual visibility against the viewport background, and whether the 300-sample/~5-second window feels like a sensible trail length, are unconfirmed, compiled and logically reviewed only.
 
 **Stopping here, per Implementation Discipline.** Epic 5 (Viewport UX) is now complete: SX-5a (organism labels), SX-5b (Spotlight), SX-5c (trajectory trails). Waiting for approval before starting the next epic.
+
+### Epic 6 — Inspector Redesign (SX-6a/6b/6c/6d, bundled per your explicit request)
+
+**Departure from the standing "one milestone at a time" discipline, noted explicitly:** you asked for Epic 6 to proceed as a bundle. All four milestones were still individually re-audited before touching any code — bundling changed the stop-and-report cadence, not the audit discipline itself.
+
+**Re-audit before implementing:** read `physiology_viewer_ui`, `circulation_viewer_ui`, `hormone_viewer_ui`, `immune_viewer_ui`, and `lineage_viewer_ui` directly. All five already take the exact same `(ctx, ui, state, world, actions)` signature `inspector_ui` itself uses, and all resolve their own target entity/graph internally (`organism_panel_common::resolve_target_and_graph`, or — for lineage — `state.selected_entity.or(state.tracked_entity)` directly, the same resolution Inspector already performs). This means folding them in is a direct reuse — calling the existing function from inside a nested `CollapsingHeader` — not a reimplementation or a new abstraction.
+
+**Implementation (SX-6a/6b):** Inspector's existing Physiology section gained four nested, collapsed-by-default `CollapsingHeader`s after its own organism-scale summary grid: "Per-Segment Detail" (`physiology_viewer_ui`), "Circulation," "Hormones," "Immune Response" (`circulation_viewer_ui`/`hormone_viewer_ui`/`immune_viewer_ui`). Collapsed by default is not a stylistic choice — it's ADR-P5-04's own explicit, named mitigation for the risk this exact epic creates ("could bloat Inspector into an unreadable wall... progressive disclosure is the explicit mitigation").
+
+**Implementation (SX-6c):** a new top-level "Evolution / History" section, collapsed by default, wrapping `lineage_viewer_ui` verbatim — placed after Genetics (before Neural), grouping it with the other genome/lineage-adjacent content rather than at an arbitrary position.
+
+**SX-6d wasn't re-decided — it was already decided, and confirmed still true:** ADR-P5-04 (written before Epic 6 began) already states the standalone panels remain available for undocked/full-size use, panels are integrated *not* abandoned. Re-litigating that here would contradict "never silently reinterpret" the same way ignoring it would. Verified this is still actually true, not just historically stated: grepped `layout.rs` and confirmed all five panels (`physiology_viewer_ui`/`circulation_viewer_ui`/`hormone_viewer_ui`/`immune_viewer_ui`/`lineage_viewer_ui`) are still wired into both the docked-tile and floating-window render paths, fully reachable as standalone panels exactly as the ADR intended — folding them into Inspector added a second access path, it didn't remove the first.
+
+**Verification:** `cargo build --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `cargo test --workspace` — all clean, 0 failures, no regressions, run once across the full bundle rather than four times.
+
+**Disclosed limitations, not glossed over:**
+
+- No new automated tests — this is `inspector_ui`-only composition of already-existing render functions; none of the five had a test suite before this either (UI-panel functions across this codebase generally don't).
+- Calling five panels' full render logic from within Inspector means Inspector now performs strictly more ECS queries per frame when its Physiology/Evolution sections are expanded (each nested section re-resolves the target entity/graph independently, rather than sharing one resolution) — real, not measured against a performance budget, since no profiling tooling was run this session; flagged as a potential (not confirmed) cost, not asserted to be negligible.
+- As with every SX milestone so far: no screen-capture/automation driver available in this session — whether the nested sections read as organized progressive disclosure versus still-too-much-at-once is unconfirmed without an actual viewer's reaction.
+
+**Stopping here, per Implementation Discipline.** Epic 6 (Inspector Redesign) is now complete: SX-6a, SX-6b, SX-6c (implemented), SX-6d (confirmed already decided). Waiting for approval before starting the next epic.
