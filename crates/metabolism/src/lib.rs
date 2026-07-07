@@ -41,6 +41,32 @@ pub struct ChemicalEconomy {
     pub max_atp: f32,
 }
 
+impl ChemicalEconomy {
+    /// A small, per-body-segment resource pool (Phase 4, `PHASE4_ROADMAP.md`
+    /// milestone P4-F2) — deliberately much smaller than an organism's own
+    /// head-level pool (used organism-wide by `metabolism_system`,
+    /// `reproduction`, and `ecology::foraging_system`, all unaffected by
+    /// this milestone). These placeholder values are not tuned; they exist
+    /// so a future intra-body transport pass (P4-F3) has real per-segment
+    /// state to move resources between. `metabolism_system`'s query also
+    /// requires `&Age`/`&Metabolism`, which only the head entity carries —
+    /// so a segment with just this component is never picked up by it,
+    /// confirmed by this crate's own existing test suite still passing
+    /// unmodified after this milestone.
+    pub fn segment_default() -> Self {
+        Self {
+            glucose: 100.0,
+            o2: 50.0,
+            co2: 0.0,
+            atp: 100.0,
+            max_glucose: 200.0,
+            max_o2: 100.0,
+            max_co2: 100.0,
+            max_atp: 200.0,
+        }
+    }
+}
+
 /// Global planetary atmosphere.
 #[derive(Resource, Debug, Clone)]
 pub struct GlobalAtmosphere {
@@ -431,6 +457,46 @@ pub fn day_night_cycle_system(mut atmosphere: ResMut<GlobalAtmosphere>) {
 mod tests {
     use super::*;
     use bevy_ecs::system::RunSystemOnce;
+
+    #[test]
+    fn segment_default_is_smaller_than_a_typical_organism_pool() {
+        // Not a tuning assertion — just confirms the documented intent
+        // (a genuinely small per-segment pool, not an organism-sized one)
+        // holds, so a future accidental "make it organism-sized" edit
+        // would fail loudly.
+        let segment = ChemicalEconomy::segment_default();
+        assert!(segment.max_glucose < 1000.0);
+        assert!(segment.max_atp < 1000.0);
+        assert!(segment.glucose <= segment.max_glucose);
+        assert!(segment.atp <= segment.max_atp);
+    }
+
+    #[test]
+    fn metabolism_system_ignores_a_segment_missing_age_and_metabolism() {
+        // Phase 4, P4-F2: a plain `ChemicalEconomy` (no `Age`/`Metabolism`)
+        // — exactly what a non-head body segment now carries — must not be
+        // picked up by `metabolism_system`'s query, so per-segment pools
+        // introduced by this milestone can never accidentally trigger
+        // organism-level death/ageing logic.
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(GlobalAtmosphere::default());
+        world.spawn((
+            physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 1, 0),
+            ChemicalEconomy::segment_default(),
+        ));
+        // Must not panic on a query mismatch; ticking should simply skip it.
+        world.run_system_once(metabolism_system);
+        assert_eq!(
+            world
+                .query::<&ChemicalEconomy>()
+                .iter(&world)
+                .next()
+                .unwrap()
+                .atp,
+            ChemicalEconomy::segment_default().atp,
+            "a segment-only entity's economy must be left untouched by metabolism_system"
+        );
+    }
 
     fn build_world_with_organisms(n: u32) -> bevy_ecs::world::World {
         let mut world = bevy_ecs::world::World::new();

@@ -222,10 +222,20 @@ pub fn growth_system(
             state.current_pos
         };
 
+        // Phase 4, P4-F2: every body segment gets its own small physiology
+        // pool, not just the head — `metabolism::ChemicalEconomy` is reused
+        // verbatim (not a new type) at a deliberately smaller scale (see
+        // `ChemicalEconomy::segment_default`'s doc comment). This is
+        // additive: `metabolism_system`'s query also requires `&Age`/
+        // `&Metabolism`, which no non-head segment carries, so this cannot
+        // change any existing organism-level metabolism/reproduction/
+        // foraging behavior — confirmed by this crate's full test suite
+        // still passing unmodified.
         let spine_node = commands
             .spawn((
                 ParticleNode::new(spawn_pos, 1.0, seg_u32, entity.index()),
                 OrganismColor(outputs.pigment),
+                metabolism::ChemicalEconomy::segment_default(),
             ))
             .id();
 
@@ -242,6 +252,7 @@ pub fn growth_system(
             parent_graph_index,
             false,
             current_position,
+            Some(spine_node),
         );
 
         // ── Connect to previous spine node with a Rigid bone ─────────────────
@@ -290,20 +301,6 @@ pub fn growth_system(
             // its index is the graph's current last entry.
             let spine_graph_index = graph.nodes.len() - 1;
             let current_position = state.next_segment_index;
-            graph.push(
-                SegmentType::Fin,
-                outputs,
-                Some(spine_graph_index),
-                true,
-                current_position,
-            );
-            graph.push(
-                SegmentType::Fin,
-                outputs,
-                Some(spine_graph_index),
-                true,
-                current_position,
-            );
 
             let fin_spread = state.segment_length * 0.75;
             let dir = Vec2::new(state.heading.cos(), state.heading.sin());
@@ -316,14 +313,33 @@ pub fn growth_system(
                 .spawn((
                     ParticleNode::new(f_up_pos, 0.5, 4, entity.index()),
                     OrganismColor(outputs.pigment),
+                    metabolism::ChemicalEconomy::segment_default(),
                 ))
                 .id();
             let f_dn = commands
                 .spawn((
                     ParticleNode::new(f_dn_pos, 0.5, 4, entity.index()),
                     OrganismColor(outputs.pigment),
+                    metabolism::ChemicalEconomy::segment_default(),
                 ))
                 .id();
+
+            graph.push(
+                SegmentType::Fin,
+                outputs,
+                Some(spine_graph_index),
+                true,
+                current_position,
+                Some(f_up),
+            );
+            graph.push(
+                SegmentType::Fin,
+                outputs,
+                Some(spine_graph_index),
+                true,
+                current_position,
+                Some(f_dn),
+            );
 
             // Attach fins via Rigid hinges to the spine
             commands.spawn((
@@ -701,6 +717,32 @@ mod tests {
     }
 
     #[test]
+    fn growth_system_records_a_real_entity_and_chemical_economy_per_segment() {
+        // Phase 4, P4-F2: every `DevelopmentalNode` grown by `growth_system`
+        // (not `simulate_growth_timeline`'s pure reconstruction) must carry
+        // `Some(entity)` pointing at the real `ParticleNode` entity spawned
+        // for that position, and that entity must carry its own
+        // `metabolism::ChemicalEconomy` pool — proving the graph index can
+        // be used to look up live physiological state, not just anatomy.
+        let mut world = World::new();
+        let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        let entity = spawn_growth_entity(&mut world, genome);
+
+        world.run_system_once(growth_system);
+        world.run_system_once(growth_system);
+
+        let graph = world.get::<DevelopmentalGraph>(entity).unwrap();
+        assert_eq!(graph.nodes.len(), 2);
+        let spine_entity = graph.nodes[1]
+            .entity
+            .expect("non-head segment should record its live entity");
+        assert!(spine_entity != entity);
+        assert!(world
+            .get::<metabolism::ChemicalEconomy>(spine_entity)
+            .is_some());
+    }
+
+    #[test]
     fn growth_system_prunes_an_apoptotic_position_without_spawning_it() {
         // Phase 3 M8 (DEF-002): a hand-built regulatory_cppn found (via a
         // throwaway scan, not guessed) to decode position 1 as `Ganglion`
@@ -827,7 +869,14 @@ mod tests {
         let mut world = World::new();
         let head_outputs = genetics::develop_at_position(&regulatory_cppn, 0, crate::MAX_SEGMENTS);
         let mut graph = crate::DevelopmentalGraph::new();
-        graph.push(head_outputs.segment_type, head_outputs, None, false, 0);
+        graph.push(
+            head_outputs.segment_type,
+            head_outputs,
+            None,
+            false,
+            0,
+            None,
+        );
         let entity = world
             .spawn((
                 metabolism::ChemicalEconomy {

@@ -35,11 +35,6 @@ pub fn spawn_organism(
     // — no separate head-specific lookup.
     let head_compiled = crate::compile_segment(head_outputs.segment_type);
 
-    // The Body Graph's root node (Phase 3, M6 — see ADR-P3-04): index 0,
-    // no parent, not a branch.
-    let mut graph = crate::developmental_graph::DevelopmentalGraph::new();
-    graph.push(head_outputs.segment_type, head_outputs, None, false, 0);
-
     // Spawn the head node at start_pos (gene index 0).
     let head_node = world.spawn_empty().id();
     world.entity_mut(head_node).insert((
@@ -51,6 +46,20 @@ pub fn spawn_organism(
         ),
         OrganismColor(color),
     ));
+
+    // The Body Graph's root node (Phase 3, M6 — see ADR-P3-04): index 0,
+    // no parent, not a branch. `entity` (Phase 4, P4-F2) is `head_node`
+    // itself — the same entity this milestone's per-segment physiology
+    // would look up via `DevelopmentalGraph::root()`.
+    let mut graph = crate::developmental_graph::DevelopmentalGraph::new();
+    graph.push(
+        head_outputs.segment_type,
+        head_outputs,
+        None,
+        false,
+        0,
+        Some(head_node),
+    );
 
     // Attach biology to the head node.
     world.entity_mut(head_node).insert((

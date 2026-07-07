@@ -76,6 +76,13 @@ pub struct DevelopmentalNode {
     /// Development Timeline scrubber can map a growth-order step back to
     /// the position research panels already know how to display).
     pub position: usize,
+    /// The live `physics::ParticleNode` entity this position was
+    /// materialized as, if any (Phase 4, P4-F2) — lets a future system map
+    /// a graph index back to the physical/physiological entity carrying
+    /// this segment's actual state (e.g. its `metabolism::ChemicalEconomy`
+    /// pool). `None` for [`simulate_growth_timeline`]'s pure, ECS-free
+    /// reconstruction, which has no real entities to reference.
+    pub entity: Option<bevy_ecs::entity::Entity>,
 }
 
 /// The full sequence of decoded body positions for one organism — as of
@@ -103,6 +110,7 @@ impl DevelopmentalGraph {
         parent: Option<usize>,
         is_branch: bool,
         position: usize,
+        entity: Option<bevy_ecs::entity::Entity>,
     ) -> usize {
         self.nodes.push(DevelopmentalNode {
             role,
@@ -110,6 +118,7 @@ impl DevelopmentalGraph {
             parent,
             is_branch,
             position,
+            entity,
         });
         self.nodes.len() - 1
     }
@@ -155,7 +164,14 @@ pub fn simulate_growth_timeline(regulatory_cppn: &genetics::Cppn) -> Development
     let mut graph = DevelopmentalGraph::new();
 
     let head_outputs = genetics::develop_at_position(regulatory_cppn, 0, total);
-    let head_index = graph.push(head_outputs.segment_type, head_outputs, None, false, 0);
+    let head_index = graph.push(
+        head_outputs.segment_type,
+        head_outputs,
+        None,
+        false,
+        0,
+        None,
+    );
     if head_outputs.segment_type == SegmentType::Tail {
         return graph;
     }
@@ -172,10 +188,25 @@ pub fn simulate_growth_timeline(regulatory_cppn: &genetics::Cppn) -> Development
             Some(last_spine_index),
             false,
             position,
+            None,
         );
         if can_branch(outputs.segment_type) && outputs.branches {
-            graph.push(SegmentType::Fin, outputs, Some(spine_index), true, position);
-            graph.push(SegmentType::Fin, outputs, Some(spine_index), true, position);
+            graph.push(
+                SegmentType::Fin,
+                outputs,
+                Some(spine_index),
+                true,
+                position,
+                None,
+            );
+            graph.push(
+                SegmentType::Fin,
+                outputs,
+                Some(spine_index),
+                true,
+                position,
+                None,
+            );
         }
         last_spine_index = spine_index;
         if outputs.segment_type == SegmentType::Tail {
@@ -274,6 +305,7 @@ mod tests {
             None,
             false,
             0,
+            None,
         );
         let torso = graph.push(
             SegmentType::Torso,
@@ -281,6 +313,7 @@ mod tests {
             Some(head),
             false,
             1,
+            None,
         );
         assert_eq!(head, 0);
         assert_eq!(torso, 1);
@@ -299,6 +332,7 @@ mod tests {
             None,
             false,
             0,
+            None,
         );
         assert_eq!(graph.root().unwrap().role, SegmentType::Head);
     }
@@ -312,6 +346,7 @@ mod tests {
             None,
             false,
             0,
+            None,
         );
         let torso = graph.push(
             SegmentType::Torso,
@@ -319,6 +354,7 @@ mod tests {
             Some(head),
             false,
             1,
+            None,
         );
         let fin_a = graph.push(
             SegmentType::Fin,
@@ -326,6 +362,7 @@ mod tests {
             Some(torso),
             true,
             1,
+            None,
         );
         let fin_b = graph.push(
             SegmentType::Fin,
@@ -333,6 +370,7 @@ mod tests {
             Some(torso),
             true,
             1,
+            None,
         );
 
         let head_children: Vec<usize> = graph.children_of(head).map(|_| torso).collect();
@@ -354,6 +392,7 @@ mod tests {
             None,
             false,
             0,
+            None,
         );
         let torso = graph.push(
             SegmentType::Torso,
@@ -361,6 +400,7 @@ mod tests {
             Some(head),
             false,
             1,
+            None,
         );
         graph.push(
             SegmentType::Fin,
@@ -368,6 +408,7 @@ mod tests {
             Some(torso),
             true,
             1,
+            None,
         );
 
         let found = graph.node_at_position(1).expect("spine node at position 1");
