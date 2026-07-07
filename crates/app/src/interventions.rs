@@ -85,18 +85,54 @@ impl PhylonApp {
             // M4 — see `app::seed_ecosystem`'s doc comment; pigmentation is
             // emergent, so this no longer forces the diet's canonical
             // color the way the retired `HoxSequence`-driven path did).
-            let (bias, weight) = match name {
-                "Herbivore (Evolvable)" => (0.0, 0.0),
-                "Hunter (Evolvable)" => (0.6, -2.4),
-                "Edible Plant (Evolvable)" => (-2.0, 4.0),
-                _ => (0.0, 0.0),
+            // Phase 5, SX-2a (ADR-P5-07): mirrors `seed_ecosystem`'s own
+            // swept `RegulatorySeedWeights` combinations for the
+            // corresponding starter species — see
+            // `crate::app::seed_regulatory_cppn`'s doc comment.
+            let weights = match name {
+                "Herbivore (Evolvable)" => crate::app::RegulatorySeedWeights {
+                    output_bias: -4.45,
+                    hox_weight: 8.97,
+                    differentiation_weight: 7.07,
+                    effector_weight: 3.12,
+                    pigment_weight: 1.22,
+                    sine_coarse_weight: 2.15,
+                    sine_fine_weight: 1.76,
+                },
+                "Hunter (Evolvable)" => crate::app::RegulatorySeedWeights {
+                    output_bias: -4.40,
+                    hox_weight: 6.21,
+                    differentiation_weight: 6.27,
+                    effector_weight: 6.99,
+                    pigment_weight: 0.88,
+                    sine_coarse_weight: 0.34,
+                    sine_fine_weight: 1.95,
+                },
+                "Edible Plant (Evolvable)" => crate::app::RegulatorySeedWeights {
+                    output_bias: -3.0,
+                    hox_weight: 0.0,
+                    differentiation_weight: 0.0,
+                    effector_weight: 0.0,
+                    pigment_weight: 1.0,
+                    sine_coarse_weight: 0.0,
+                    sine_fine_weight: 0.0,
+                },
+                _ => crate::app::RegulatorySeedWeights {
+                    output_bias: -4.45,
+                    hox_weight: 8.97,
+                    differentiation_weight: 7.07,
+                    effector_weight: 3.12,
+                    pigment_weight: 1.22,
+                    sine_coarse_weight: 2.15,
+                    sine_fine_weight: 1.76,
+                },
             };
             let genome = genetics::Genome::seed(
                 genetics::GenomeId(0), // Would normally be a unique ID
                 common::EntityId(0),
                 crate::app::seed_brain_cppn(),
                 genetics::Cppn::new(),
-                crate::app::seed_regulatory_cppn(bias, weight),
+                crate::app::seed_regulatory_cppn(weights),
             );
 
             let category = preset.category.unwrap_or(ecology::EcologicalCategory::None);
@@ -162,7 +198,15 @@ impl PhylonApp {
             common::EntityId(0),
             crate::app::seed_brain_cppn(),
             genetics::Cppn::new(),
-            crate::app::seed_regulatory_cppn(0.6, -2.4),
+            crate::app::seed_regulatory_cppn(crate::app::RegulatorySeedWeights {
+                output_bias: -4.40,
+                hox_weight: 6.21,
+                differentiation_weight: 6.27,
+                effector_weight: 6.99,
+                pigment_weight: 0.88,
+                sine_coarse_weight: 0.34,
+                sine_fine_weight: 1.95,
+            }),
         );
         self.world
             .ecs

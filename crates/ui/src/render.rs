@@ -177,15 +177,32 @@ pub fn render_ui(
         render_minimap(ctx, state, world, interact_response.rect);
     }
 
-    // ── Timed interaction-effect overlay (Phase 4, P4-V1) ───────────────────
-    // Renders `events::TimedEffects` — the data-side framework P4-E1 built
-    // but deliberately left unrendered (see that milestone's execution log).
-    render_timed_effects(ctx, state, world, interact_response.rect);
+    // ── Behavior-state glyph overlay (Phase 5, SX-1b) ───────────────────────
+    // Population-wide, not opt-in — per `docs/design/biological_visual_language.md`'s
+    // Behavior entry, a Priority-4 state.
+    render_behavior_glyphs(ctx, state, world, interact_response.rect);
 
     // ── Physiology science overlay (Phase 4, P4-V2) ─────────────────────────
+    // Priority 4 (Tertiary/opt-in detail) — drawn before the Priority 2/3
+    // timed-effect overlay below, for the same reason Behavior is: it must
+    // never paint over a Death/Reproduction burst.
     if state.physiology_overlay.is_some() {
         render_physiology_overlay(ctx, state, world, interact_response.rect);
     }
+
+    // ── Timed interaction-effect overlay (Phase 4, P4-V1) ───────────────────
+    // Renders `events::TimedEffects` — the data-side framework P4-E1 built
+    // but deliberately left unrendered (see that milestone's execution log).
+    // Phase 5, SX-1e: moved to *last* among the biological overlays — Death/
+    // Reproduction bursts are Priority 2/3, strictly above Behavior's and
+    // Physiology's Priority 4, so they must paint on top of both, never
+    // underneath. Re-audited the previous order (this call preceded both)
+    // and found it violated the mandatory priority hierarchy: a Behavior
+    // glyph or Physiology ring could visually sit on top of (obscure) a
+    // same-position death/birth burst. Painter calls composite in call order
+    // within the same egui layer, so this reorder is the entire fix — no new
+    // drawing logic.
+    render_timed_effects(ctx, state, world, interact_response.rect);
 
     // ── Command Palette overlay (Phase 2, M15) ──────────────────────────────
     crate::plugins::command_palette::command_palette_ui(ctx, state, &mut actions);
@@ -604,6 +621,89 @@ fn render_timed_effects(
             text,
             egui::FontId::proportional(14.0),
             color32,
+        );
+    }
+}
+
+/// # Behavior-State Glyph Overlay
+///
+/// ## 1. What Happens
+/// Draws a small glyph above every organism whose `behavior::BehaviorState`
+/// is not `Idle` — one canonical icon+color pair per state, per
+/// `docs/design/biological_visual_language.md`'s Behavior entry. `Idle`
+/// (the most common state) draws nothing, so the viewport isn't cluttered
+/// with a badge on every resting organism — absence *is* the encoding.
+///
+/// ## 2. Why It Happens
+/// SX-1a/SX-2a's investigation found Phylon's dominant readability problem
+/// isn't motion, it's communication: nothing in the viewport currently
+/// reflects what an organism is *doing*. `BehaviorState` is already computed
+/// every tick by `behavior::behavior_system` and already shown live in the
+/// Inspector — this overlay is the same data, population-wide, in the one
+/// place a researcher is actually looking most of the time.
+///
+/// ## 3. How It Happens
+/// Same world→screen transform and background-layer `Painter` pattern as
+/// `render_timed_effects` above — reused, not reinvented. `BehaviorState`
+/// lives on the same entity as `physics::ParticleNode` (confirmed by reading
+/// `behavior::behavior_system`'s own query tuple), so this is a single flat
+/// query, no per-organism graph walk needed. The glyph is drawn via
+/// `egui_remixicon`, matching every panel's existing icon usage, at a fixed
+/// size — no decorative animation, per this phase's engineering rule (the
+/// glyph's *presence*, not any motion on it, carries the meaning).
+fn render_behavior_glyphs(
+    ctx: &egui::Context,
+    state: &crate::WorkbenchState,
+    world: &mut world::World,
+    viewport_rect: egui::Rect,
+) {
+    let screen_center = viewport_rect.center();
+    let ppp = ctx.pixels_per_point();
+    let to_screen = |pos: common::Vec2| {
+        egui::pos2(
+            screen_center.x + (pos.x - state.camera_pos.x) * state.camera_zoom / ppp,
+            screen_center.y - (pos.y - state.camera_pos.y) * state.camera_zoom / ppp,
+        )
+    };
+
+    let mut painter = ctx.layer_painter(egui::LayerId::background());
+    painter.set_clip_rect(viewport_rect);
+
+    let mut query = world
+        .ecs
+        .query::<(&physics::ParticleNode, &behavior::BehaviorState)>();
+    for (node, behavior_state) in query.iter(&world.ecs) {
+        let (glyph, color) = match behavior_state {
+            behavior::BehaviorState::Idle => continue,
+            behavior::BehaviorState::Hunting => (
+                egui_remixicon::icons::ARROW_UP_S_LINE,
+                egui::Color32::from_rgb(230, 140, 30),
+            ),
+            behavior::BehaviorState::Fleeing => (
+                egui_remixicon::icons::ALERT_LINE,
+                egui::Color32::from_rgb(220, 60, 60),
+            ),
+            behavior::BehaviorState::Foraging => (
+                egui_remixicon::icons::LEAF_LINE,
+                egui::Color32::from_rgb(80, 190, 90),
+            ),
+            behavior::BehaviorState::Mating => (
+                egui_remixicon::icons::HEART_LINE,
+                egui::Color32::from_rgb(230, 110, 170),
+            ),
+            behavior::BehaviorState::Sleeping => (
+                egui_remixicon::icons::ZZZ_LINE,
+                egui::Color32::from_rgb(100, 140, 220),
+            ),
+        };
+
+        let screen_pos = to_screen(node.position);
+        painter.text(
+            screen_pos - egui::vec2(0.0, 14.0),
+            egui::Align2::CENTER_BOTTOM,
+            glyph,
+            egui::FontId::proportional(14.0),
+            color,
         );
     }
 }

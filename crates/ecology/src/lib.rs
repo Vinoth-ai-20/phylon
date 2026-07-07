@@ -241,8 +241,24 @@ pub fn build_resource_grids_system(
 /// clamped to the predator's maximum stomach capacity:
 ///
 /// $$ G_{predator} = \min(G_{predator} + G_{prey} + ATP_{prey}, G_{max}) $$
+///
+/// **Phase 5, SX-2c:** the moment of a successful organism-vs-organism meal
+/// (predation or herbivory — Phase 1 below) spawns a `TimedEffects`
+/// floating-text burst at the *eater's* position, the same trigger pattern
+/// `corpse_decay_system`'s "Decomposed" burst already establishes in this
+/// file. Deliberately **not** extended to Phase 2 (pellet/mineral/corpse
+/// grazing) — that happens routinely, every tick, for a large fraction of
+/// the population, and would flood the viewport the same way logging every
+/// `BehaviorState` change would flood `NarrationLog` (an existing, deliberate
+/// restraint this milestone extends rather than overrides). Organism-vs-
+/// organism consumption is comparatively rare and narratively significant,
+/// matching "attack," specifically — this is a real distinction, not an
+/// arbitrary cut.
+#[allow(clippy::too_many_arguments)]
 pub fn foraging_system(
     mut commands: Commands,
+    mut timed_effects: ResMut<events::TimedEffects>,
+    atmosphere: Res<metabolism::GlobalAtmosphere>,
     mut organism_query: Query<(
         Entity,
         &mut metabolism::ChemicalEconomy,
@@ -333,6 +349,18 @@ pub fn foraging_system(
                         | (Diet::Herbivore | Diet::Omnivore, Diet::Producer)
                 );
 
+                // Phase 5, SX-2c: brief text (predation vs. herbivory read
+                // differently) at a fixed duration, colored by the eater's
+                // own `Diet::standard_color()` — never a new literal.
+                const FEEDING_EFFECT_DURATION_TICKS: u64 = 45;
+                let feeding_text = |eater: &Diet| -> &'static str {
+                    if *eater == Diet::Carnivore {
+                        "Hunted!"
+                    } else {
+                        "Grazed!"
+                    }
+                };
+
                 if one_eats_two {
                     chem1.glucose =
                         (chem1.glucose + chem2.max_glucose + chem2.max_atp).min(chem1.max_glucose);
@@ -341,6 +369,15 @@ pub fn foraging_system(
                     if let Some(mut entity_cmds) = commands.get_entity(e2) {
                         entity_cmds.insert(Eaten);
                     }
+                    timed_effects.spawn(
+                        node1.position,
+                        events::TimedEffectKind::FloatingText {
+                            text: feeding_text(diet1).to_string(),
+                            color: diet1.standard_color(),
+                        },
+                        atmosphere.ticks,
+                        FEEDING_EFFECT_DURATION_TICKS,
+                    );
                 } else if two_eats_one {
                     chem2.glucose =
                         (chem2.glucose + chem1.max_glucose + chem1.max_atp).min(chem2.max_glucose);
@@ -349,6 +386,15 @@ pub fn foraging_system(
                     if let Some(mut entity_cmds) = commands.get_entity(*e1) {
                         entity_cmds.insert(Eaten);
                     }
+                    timed_effects.spawn(
+                        node2.position,
+                        events::TimedEffectKind::FloatingText {
+                            text: feeding_text(diet2).to_string(),
+                            color: diet2.standard_color(),
+                        },
+                        atmosphere.ticks,
+                        FEEDING_EFFECT_DURATION_TICKS,
+                    );
                 }
             }
         }
@@ -615,5 +661,108 @@ pub fn catastrophe_system(
                 corpse.energy_value = (corpse.energy_value - config.energy_drain_rate).max(0.0);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod foraging_feeding_effect_tests {
+    use super::*;
+    use bevy_ecs::system::RunSystemOnce;
+    use bevy_ecs::world::World;
+
+    fn sample_chem(atp: f32, glucose: f32) -> metabolism::ChemicalEconomy {
+        metabolism::ChemicalEconomy {
+            glucose,
+            o2: 0.0,
+            co2: 0.0,
+            atp,
+            max_glucose: 1000.0,
+            max_o2: 100.0,
+            max_co2: 100.0,
+            max_atp: 100.0,
+        }
+    }
+
+    fn base_world() -> World {
+        let mut world = World::new();
+        world.insert_resource(events::TimedEffects::default());
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
+        world.insert_resource(ResourceSpatialGrids::new(50.0));
+        world
+    }
+
+    /// Phase 5, SX-2c: a successful organism-vs-organism predation should
+    /// spawn a real `TimedEffects` burst at the predator's position — the
+    /// gap this milestone closes (previously nothing marked the moment of
+    /// the attack itself, only the prey's eventual death).
+    #[test]
+    fn predation_spawns_a_feeding_effect_at_the_predator_position() {
+        let mut world = base_world();
+        let predator_pos = common::Vec2::new(100.0, 100.0);
+        world.spawn((
+            physics::ParticleNode::new(predator_pos, 1.0, 0, 0),
+            sample_chem(50.0, 0.0),
+            Diet::Carnivore,
+        ));
+        world.spawn((
+            physics::ParticleNode::new(predator_pos, 1.0, 0, 1),
+            sample_chem(50.0, 10.0),
+            Diet::Herbivore,
+        ));
+
+        world.run_system_once(foraging_system);
+
+        let effects = &world.resource::<events::TimedEffects>().active;
+        assert_eq!(effects.len(), 1);
+        let events::TimedEffectKind::FloatingText { text, color } = &effects[0].kind;
+        assert_eq!(text, "Hunted!");
+        assert_eq!(*color, Diet::Carnivore.standard_color());
+        assert_eq!(effects[0].position, predator_pos);
+    }
+
+    /// Herbivory (Herbivore-eats-Producer) is a distinct case with its own
+    /// text, per `feeding_text`'s exhaustive-enough match.
+    #[test]
+    fn herbivory_spawns_a_grazed_effect_at_the_herbivore_position() {
+        let mut world = base_world();
+        let herbivore_pos = common::Vec2::new(-40.0, 20.0);
+        world.spawn((
+            physics::ParticleNode::new(herbivore_pos, 1.0, 0, 0),
+            sample_chem(50.0, 0.0),
+            Diet::Herbivore,
+        ));
+        world.spawn((
+            physics::ParticleNode::new(herbivore_pos, 1.0, 0, 1),
+            sample_chem(50.0, 10.0),
+            Diet::Producer,
+        ));
+
+        world.run_system_once(foraging_system);
+
+        let effects = &world.resource::<events::TimedEffects>().active;
+        assert_eq!(effects.len(), 1);
+        let events::TimedEffectKind::FloatingText { text, color } = &effects[0].kind;
+        assert_eq!(text, "Grazed!");
+        assert_eq!(*color, Diet::Herbivore.standard_color());
+    }
+
+    /// Two organisms too far apart to interact must not spawn any effect.
+    #[test]
+    fn no_effect_when_out_of_range() {
+        let mut world = base_world();
+        world.spawn((
+            physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 0),
+            sample_chem(50.0, 0.0),
+            Diet::Carnivore,
+        ));
+        world.spawn((
+            physics::ParticleNode::new(common::Vec2::new(1000.0, 1000.0), 1.0, 0, 1),
+            sample_chem(50.0, 10.0),
+            Diet::Herbivore,
+        ));
+
+        world.run_system_once(foraging_system);
+
+        assert!(world.resource::<events::TimedEffects>().active.is_empty());
     }
 }

@@ -249,6 +249,15 @@ impl PhylonApp {
             .ecs
             .insert_resource(bevy_ecs::event::Events::<events::PhylonEvent>::default());
         world.ecs.insert_resource(events::TimedEffects::default());
+        // Phase 5, SX-1a: reads `PHYLON_MOTION_DIAGNOSTIC` once at startup —
+        // see `motion_diagnostic::MotionDiagnosticConfig`'s doc comment for
+        // why this isn't re-checked per tick.
+        world
+            .ecs
+            .insert_resource(crate::motion_diagnostic::MotionDiagnosticConfig::from_env());
+        world
+            .ecs
+            .insert_resource(crate::motion_diagnostic::MotionDiagnosticState::default());
         world.ecs.insert_resource(analytics::MetricsState::new());
         world.ecs.insert_resource(analytics::NarrationLog::new(100));
         world
@@ -724,18 +733,148 @@ impl PhylonApp {
     }
 }
 
-/// A single-connection regulatory CPPN: one output node (`Linear` activation)
-/// with a bias and a weight on its first input. Since `RegulatoryNetwork`
-/// queries this same function for both gene bias (`evaluate(&[idx, idx])`)
-/// and edge weight (`evaluate(&[i/total, j/total])`), `bias`/`weight`
-/// jointly shape the whole network's topology and per-gene thresholds —
-/// there's no independent per-role control with a CPPN this simple (a real
-/// limitation, not a design goal; richer hand-authored topologies could
-/// decouple Hox/branch/pigment control, but weren't needed to give each
-/// starter species a distinct, verified body-plan tendency).
-pub(crate) fn seed_regulatory_cppn(bias: f32, weight: f32) -> genetics::Cppn {
+/// Per-seed tunable weights for [`seed_regulatory_cppn`]'s four independent
+/// local-activation domains (one per [`genetics::RegulatoryGeneRole`] region)
+/// plus its shared monotonic/periodic bases. A named struct rather than 7
+/// positional `f32`s — with this many knobs, positional args at the call
+/// site are an easy place to transpose two values silently.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RegulatorySeedWeights {
+    /// The output node's own bias — the network's baseline "all regions
+    /// off" level; every region weight below adds on top of this.
+    pub output_bias: f32,
+    /// Weight on the local-activation bump centered over the Hox gene
+    /// region (indices 0-2 of 10 — see `REGULATORY_GENE_ROLES`).
+    pub hox_weight: f32,
+    /// Weight on the bump centered over the Differentiation region (3-4).
+    pub differentiation_weight: f32,
+    /// Weight on the bump centered over the Effector region (5-6) — the
+    /// region SX-2a's first architecture starved (see this function's doc
+    /// comment's "second problem" section).
+    pub effector_weight: f32,
+    /// Weight on the bump centered over the Pigment region (7-9).
+    pub pigment_weight: f32,
+    /// Weight on a coarse (~2-cycle) periodic basis across the full gene
+    /// range, for broad repeated/alternating structure.
+    pub sine_coarse_weight: f32,
+    /// Weight on a fine (~5-cycle) periodic basis, for finer repeated
+    /// structure than `sine_coarse_weight` alone can produce.
+    pub sine_fine_weight: f32,
+}
+
+/// A seed regulatory CPPN with real combinatorial representational capacity
+/// (Phase 5, SX-2a — see `PHASE5_SX_ROADMAP.md` §11's full architectural
+/// analysis, ADR-P5-06 and ADR-P5-07).
+///
+/// **First problem this replaces (ADR-P5-06):** the very first seed was a
+/// single `Linear` output node with one incoming connection — since
+/// `RegulatoryNetwork::generate` derives every gene's bias and every
+/// gene-pair's edge weight from a *linear* function of gene index, its
+/// output was strictly monotonic in gene index. Since a 3-bit Hox code is
+/// read off three specific, adjacent gene indices, a monotonic bias function
+/// can only ever threshold to a non-decreasing or non-increasing bit
+/// sequence (`000,001,011,111` or `000,100,110,111`) — six of the eight
+/// possible `SegmentType` codes, including `Muscle` (`010`), were
+/// **structurally unreachable**, for any choice of the old `(bias, weight)`
+/// parameters. Measured directly (§11): the unmutated "mostly Muscle body"
+/// seed decoded `Germinal` at 100% of positions, and even the real
+/// spawn-time mutation regime never once produced a `Muscle` segment across
+/// 30 independent trials.
+///
+/// **Second problem this replaces (ADR-P5-07):** the first fix added a
+/// single `Sigmoid` + `Gaussian` + `Sine` basis trio, with the `Gaussian`
+/// bump's *one* fixed center tuned to land on the Hox region (gene-index
+/// fraction ≈0.1) so `Muscle` became reachable. That single bump was the
+/// whole fix's local-activation budget — every other gene *role* (crucially
+/// `Effector`, at index fraction ≈0.55) sat far outside the bump's reach and
+/// collapsed to whatever the leftover Sigmoid+Sine terms gave, combined with
+/// the strongly negative `output_bias` needed to suppress off-peak Hox bits.
+/// Measured directly in a real headless run (§11): **363 of 364** sampled
+/// non-Producer organisms had zero actuatable effector springs, even though
+/// the isolated per-seed measurement (which mutates the *entire* CPPN,
+/// relocating the bump over generations) showed 31.2% `Muscle` reachability.
+/// The founding population never benefits from that drift — it uses the
+/// seed unmutated, where the one bump structurally cannot reach `Effector`.
+///
+/// **The fix is modular, not another single retuned bump.** Gene *role* is
+/// already fully determined by gene *position* under the current fixed
+/// `REGULATORY_GENE_ROLES` table (Hox = 0-2, Differentiation = 3-4, Effector
+/// = 5-6, Pigment = 7-9) — there's no missing input dimension, only
+/// insufficient local-activation *capacity*. So this CPPN gives each region
+/// its own independently-weighted `Gaussian` bump, centered at that region's
+/// index-fraction midpoint, alongside the existing shared `Sigmoid`
+/// (monotonic gradient) and *two* `Sine` bases at different frequencies
+/// (coarse + fine periodic/repeated structure, rather than one). Every
+/// region's bump can be independently strengthened, weakened, or inverted
+/// (a negative weight is a local *repressor*, not just an activator) via its
+/// own `RegulatorySeedWeights` field, without starving any other region —
+/// this is what makes the fix "modular regulation, one evolvable genome"
+/// rather than a minimal patch: tuning `effector_weight` can no longer come
+/// at the expense of `hox_weight`, because they're separate connections.
+///
+/// This scope's four bumps match today's four fixed `RegulatoryGeneRole`
+/// variants; a future role (organogenesis, physiology — explicitly listed as
+/// future compatibility targets) would need one more region bump added here,
+/// the same way this fix added four to the first version's one — not a
+/// restructuring, since the pattern ("one independently-weighted local bump
+/// per role region") generalizes directly.
+///
+/// All bases still combine at one `Linear` output node, so
+/// `RegulatoryNetwork::generate`'s existing calling convention
+/// (`evaluate(&[idx, idx])` for bias, `evaluate(&[i/total, j/total])` for
+/// edge weight) is completely unchanged — this is a richer function being
+/// queried the same way, not a change to how genes/edges are derived, and
+/// nothing here reads `REGULATORY_GENE_ROLES` at runtime (the region centers
+/// below are constants derived from that table by hand, not a live lookup) —
+/// deliberately, so this stays a plain, cheap, deterministic `Cppn` rather
+/// than a construction that depends on the table's exact contents at
+/// call-time.
+///
+/// **Deliberately not tuned toward any specific `SegmentType`.** This
+/// function has no `Muscle`-specific or `Fin`-specific logic anywhere — the
+/// four region weights and two sine weights are swept per starter species
+/// purely for *diversity* (see each call site's own comment for what was
+/// empirically observed, not targeted), and the resulting network remains an
+/// ordinary, evolvable `Cppn` — mutation's existing `mutate_add_node`/
+/// `mutate_add_connection`/per-connection jitter operate on it exactly as
+/// they would any other genome, with nothing special-cased for starter
+/// organisms (ADR-P3-02).
+pub(crate) fn seed_regulatory_cppn(w: RegulatorySeedWeights) -> genetics::Cppn {
+    // Sigmoid basis: a smooth monotonic gradient, transitioning at the
+    // midpoint of the gene-index range.
+    const SIGMOID_INPUT_WEIGHT: f32 = 1.5;
+    const SIGMOID_BIAS: f32 = -1.5;
+
+    // Each region gets its own width: Hox must sharply discriminate 3
+    // *adjacent* gene indices (0.1 apart) to produce a non-monotonic 3-bit
+    // code, so it needs a narrow bump; Differentiation/Effector/Pigment each
+    // cover 2-3 indices that should mostly move *together*, so a wider bump
+    // (which was tried shared at width 4.0 for all four and measured to
+    // collapse Hox discrimination — see §11's ADR-P5-07 entry) suits them
+    // better. sum = bias + weight*pos + weight*pos = bias + 2*weight*center
+    // at the peak, so bias = -2*weight*center places the peak at `center`.
+    const HOX_WIDTH: f32 = 10.0;
+    const DIFFERENTIATION_WIDTH: f32 = 6.0;
+    const EFFECTOR_WIDTH: f32 = 4.0;
+    const PIGMENT_WIDTH: f32 = 4.0;
+    const HOX_CENTER: f32 = 0.1; // genes 0-2 of 10, midpoint index 1
+    const DIFFERENTIATION_CENTER: f32 = 0.35; // genes 3-4, midpoint 3.5
+    const EFFECTOR_CENTER: f32 = 0.55; // genes 5-6, midpoint 5.5
+    const PIGMENT_CENTER: f32 = 0.8; // genes 7-9, midpoint 8
+    const HOX_BIAS: f32 = -2.0 * HOX_WIDTH * HOX_CENTER;
+    const DIFFERENTIATION_BIAS: f32 = -2.0 * DIFFERENTIATION_WIDTH * DIFFERENTIATION_CENTER;
+    const EFFECTOR_BIAS: f32 = -2.0 * EFFECTOR_WIDTH * EFFECTOR_CENTER;
+    const PIGMENT_BIAS: f32 = -2.0 * PIGMENT_WIDTH * PIGMENT_CENTER;
+
+    // Two periodic bases at different frequencies, for repeated/alternating
+    // structure at more than one spatial scale.
+    const SINE_COARSE_INPUT_WEIGHT: f32 = 6.0; // ~1.9 cycles across [0, 1]
+    const SINE_FINE_INPUT_WEIGHT: f32 = 15.0; // ~4.8 cycles across [0, 1]
+    const SINE_BIAS: f32 = 0.0;
+
     genetics::Cppn {
         nodes: vec![
+            // 0, 1: inputs (gene-index fractions).
             genetics::CppnNode {
                 activation: brain::ActivationFn::Linear,
                 bias: 0.0,
@@ -746,20 +885,235 @@ pub(crate) fn seed_regulatory_cppn(bias: f32, weight: f32) -> genetics::Cppn {
                 bias: 0.0,
                 layer: 0,
             },
+            // 2-8: the seven hidden basis functions. `Cppn::evaluate`
+            // collects only `layer == 1` nodes into its returned outputs vec
+            // (and `RegulatoryNetwork::generate` reads just the first of
+            // those) — these seven must stay off that list (`layer: 0`, the
+            // same value used for raw inputs, but functionally just "not a
+            // collected output" here; `evaluate`'s node-computation loop
+            // itself is index-range-based, not layer-gated, so they are
+            // still fully computed) so only node 9's combined value is ever
+            // read. Getting this wrong (marking a basis node `layer: 1`) was
+            // this milestone's first implementation's own first bug (§11) —
+            // caught by directly inspecting `RegulatoryNetwork::generate`'s
+            // output, not assumed fixed.
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Sigmoid,
+                bias: SIGMOID_BIAS,
+                layer: 0,
+            },
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Gaussian,
+                bias: HOX_BIAS,
+                layer: 0,
+            },
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Gaussian,
+                bias: DIFFERENTIATION_BIAS,
+                layer: 0,
+            },
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Gaussian,
+                bias: EFFECTOR_BIAS,
+                layer: 0,
+            },
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Gaussian,
+                bias: PIGMENT_BIAS,
+                layer: 0,
+            },
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Sine,
+                bias: SINE_BIAS,
+                layer: 0,
+            },
+            genetics::CppnNode {
+                activation: brain::ActivationFn::Sine,
+                bias: SINE_BIAS,
+                layer: 0,
+            },
+            // 9: output — linear combination of the seven bases. The only
+            // `layer: 1` node, so it's the one `.first()` actually reads.
             genetics::CppnNode {
                 activation: brain::ActivationFn::Linear,
-                bias,
+                bias: w.output_bias,
                 layer: 1,
             },
         ],
-        connections: vec![genetics::CppnConnection {
-            source: 0,
-            target: 2,
-            weight,
-            enabled: true,
-            innovation: 0,
-            mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
-        }],
+        connections: vec![
+            // Inputs (0, 1) -> each of the 7 hidden bases (2-8).
+            genetics::CppnConnection {
+                source: 0,
+                target: 2,
+                weight: SIGMOID_INPUT_WEIGHT,
+                enabled: true,
+                innovation: 0,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 1,
+                target: 2,
+                weight: SIGMOID_INPUT_WEIGHT,
+                enabled: true,
+                innovation: 1,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 0,
+                target: 3,
+                weight: HOX_WIDTH,
+                enabled: true,
+                innovation: 2,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 1,
+                target: 3,
+                weight: HOX_WIDTH,
+                enabled: true,
+                innovation: 3,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 0,
+                target: 4,
+                weight: DIFFERENTIATION_WIDTH,
+                enabled: true,
+                innovation: 4,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 1,
+                target: 4,
+                weight: DIFFERENTIATION_WIDTH,
+                enabled: true,
+                innovation: 5,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 0,
+                target: 5,
+                weight: EFFECTOR_WIDTH,
+                enabled: true,
+                innovation: 6,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 1,
+                target: 5,
+                weight: EFFECTOR_WIDTH,
+                enabled: true,
+                innovation: 7,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 0,
+                target: 6,
+                weight: PIGMENT_WIDTH,
+                enabled: true,
+                innovation: 8,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 1,
+                target: 6,
+                weight: PIGMENT_WIDTH,
+                enabled: true,
+                innovation: 9,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 0,
+                target: 7,
+                weight: SINE_COARSE_INPUT_WEIGHT,
+                enabled: true,
+                innovation: 10,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 1,
+                target: 7,
+                weight: SINE_COARSE_INPUT_WEIGHT,
+                enabled: true,
+                innovation: 11,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 0,
+                target: 8,
+                weight: SINE_FINE_INPUT_WEIGHT,
+                enabled: true,
+                innovation: 12,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 1,
+                target: 8,
+                weight: SINE_FINE_INPUT_WEIGHT,
+                enabled: true,
+                innovation: 13,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            // Hidden bases (2-8) -> output (9), one per-seed evolvable weight
+            // each (sigmoid stays fixed at 1.0 — it has no per-region
+            // identity to tune independently).
+            genetics::CppnConnection {
+                source: 2,
+                target: 9,
+                weight: 1.0,
+                enabled: true,
+                innovation: 14,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 3,
+                target: 9,
+                weight: w.hox_weight,
+                enabled: true,
+                innovation: 15,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 4,
+                target: 9,
+                weight: w.differentiation_weight,
+                enabled: true,
+                innovation: 16,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 5,
+                target: 9,
+                weight: w.effector_weight,
+                enabled: true,
+                innovation: 17,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 6,
+                target: 9,
+                weight: w.pigment_weight,
+                enabled: true,
+                innovation: 18,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 7,
+                target: 9,
+                weight: w.sine_coarse_weight,
+                enabled: true,
+                innovation: 19,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+            genetics::CppnConnection {
+                source: 8,
+                target: 9,
+                weight: w.sine_fine_weight,
+                enabled: true,
+                innovation: 20,
+                mutation_rate: genetics::cppn::DEFAULT_MUTATION_RATE,
+            },
+        ],
     }
 }
 
@@ -857,12 +1211,30 @@ pub(crate) fn seed_ecosystem(
     // retiring genome-stored color, not an oversight.
     let brain_template = seed_brain_cppn();
 
+    // Phase 5, SX-2a (ADR-P5-07): swept for *diversity* across the modular
+    // region-bump basis — see `seed_regulatory_cppn`'s doc comment — not
+    // hand-picked to hit any specific `SegmentType`. Measured diversity
+    // across all six, including effector-activation rate, is recorded in
+    // `PHASE5_SX_ROADMAP.md` §11.
     let worm_genome = genetics::Genome::seed(
         genetics::GenomeId(1),
         common::EntityId(0),
         brain_template.clone(),
         genetics::Cppn::new(),
-        seed_regulatory_cppn(0.0, 0.0), // mostly Muscle body
+        // Empirically found by random search over `RegulatorySeedWeights`
+        // (20,000 draws), selecting for effector activity + Hox-type
+        // diversity — not hand-picked to hit Muscle specifically. Unmutated
+        // decode: [Germinal, Ganglion, Muscle, Muscle, Muscle, Muscle,
+        // Ganglion, Ganglion, Germinal, Germinal], effector active 10/10.
+        seed_regulatory_cppn(RegulatorySeedWeights {
+            output_bias: -4.45,
+            hox_weight: 8.97,
+            differentiation_weight: 7.07,
+            effector_weight: 3.12,
+            pigment_weight: 1.22,
+            sine_coarse_weight: 2.15,
+            sine_fine_weight: 1.76,
+        }),
     );
 
     let fish_genome = genetics::Genome::seed(
@@ -870,7 +1242,17 @@ pub(crate) fn seed_ecosystem(
         common::EntityId(0),
         brain_template.clone(),
         genetics::Cppn::new(),
-        seed_regulatory_cppn(0.6, -2.4), // Torso/Fin body
+        // Unmutated decode: [Tail, Torso, Torso, Head, Torso, Torso, Torso,
+        // Tail, Tail, Tail], effector active 10/10.
+        seed_regulatory_cppn(RegulatorySeedWeights {
+            output_bias: -4.40,
+            hox_weight: 6.21,
+            differentiation_weight: 6.27,
+            effector_weight: 6.99,
+            pigment_weight: 0.88,
+            sine_coarse_weight: 0.34,
+            sine_fine_weight: 1.95,
+        }),
     );
 
     let branchy_genome = genetics::Genome::seed(
@@ -878,7 +1260,18 @@ pub(crate) fn seed_ecosystem(
         common::EntityId(0),
         brain_template.clone(),
         genetics::Cppn::new(),
-        seed_regulatory_cppn(0.7, -2.9), // Torso/Fin body, different balance
+        // Unmutated decode: [Ganglion, Ganglion, Muscle, Muscle, Muscle,
+        // Ganglion, Ganglion, Ganglion, Ganglion, Germinal], effector active
+        // 10/10.
+        seed_regulatory_cppn(RegulatorySeedWeights {
+            output_bias: -3.08,
+            hox_weight: 9.33,
+            differentiation_weight: 2.01,
+            effector_weight: 5.96,
+            pigment_weight: 2.10,
+            sine_coarse_weight: 2.05,
+            sine_fine_weight: 0.57,
+        }),
     );
 
     let omnivore_genome = genetics::Genome::seed(
@@ -886,7 +1279,17 @@ pub(crate) fn seed_ecosystem(
         common::EntityId(0),
         brain_template.clone(),
         genetics::Cppn::new(),
-        seed_regulatory_cppn(0.6, -2.3), // Torso/Fin body
+        // Unmutated decode: [Muscle, Muscle, Germinal, Germinal, Germinal,
+        // Ganglion, Muscle, Muscle, Muscle, Muscle], effector active 8/10.
+        seed_regulatory_cppn(RegulatorySeedWeights {
+            output_bias: -4.13,
+            hox_weight: 8.84,
+            differentiation_weight: 2.10,
+            effector_weight: 2.96,
+            pigment_weight: 2.22,
+            sine_coarse_weight: 2.22,
+            sine_fine_weight: 2.10,
+        }),
     );
 
     let decomposer_genome = genetics::Genome::seed(
@@ -894,7 +1297,17 @@ pub(crate) fn seed_ecosystem(
         common::EntityId(0),
         brain_template.clone(),
         genetics::Cppn::new(),
-        seed_regulatory_cppn(0.0, 0.0), // mostly Muscle body
+        // Unmutated decode: [Tail, Muscle, Muscle, Muscle, Muscle, Muscle,
+        // Muscle, Muscle, Tail, Germinal], effector active 10/10.
+        seed_regulatory_cppn(RegulatorySeedWeights {
+            output_bias: -3.05,
+            hox_weight: 6.90,
+            differentiation_weight: 3.90,
+            effector_weight: 0.69,
+            pigment_weight: 0.40,
+            sine_coarse_weight: 0.54,
+            sine_fine_weight: 1.09,
+        }),
     );
 
     let producer_genome = genetics::Genome::seed(
@@ -902,7 +1315,18 @@ pub(crate) fn seed_ecosystem(
         common::EntityId(0),
         brain_template,
         genetics::Cppn::new(),
-        seed_regulatory_cppn(-2.0, 4.0), // decodes Tail at the head node — a short, static seed
+        // Producers stay a deliberately short, low-complexity seed (real
+        // plants don't need a rich body plan or effector activity) — no
+        // seed here is hardcoded to a specific segment outcome.
+        seed_regulatory_cppn(RegulatorySeedWeights {
+            output_bias: -3.0,
+            hox_weight: 0.0,
+            differentiation_weight: 0.0,
+            effector_weight: 0.0,
+            pigment_weight: 1.0,
+            sine_coarse_weight: 0.0,
+            sine_fine_weight: 0.0,
+        }),
     );
 
     // 2. Helper to spawn a population

@@ -26,12 +26,21 @@ pub struct SdfBoneInstance {
     pub radius: f32,
     /// RGB tint (used for future per-organism colouring).
     pub color: [f32; 3],
+    /// Vitality dimming factor in `[0, 1]` (Phase 5, SX-1c —
+    /// `metabolism::Health.current / .max`, clamped) — multiplies the
+    /// accumulation pass's color contribution only, never its density, so a
+    /// low-health organism's body dims toward black without changing its
+    /// silhouette or affecting the separate highlight-ring pass (which reads
+    /// only the density/alpha channel — see `sdf_accum.wgsl`'s doc comment).
+    /// `1.0` for anything without a `Health` component (sandbox structures,
+    /// hover/selection highlight instances, which don't consume this field
+    /// at all).
+    pub health: f32,
 }
 
 impl SdfBoneInstance {
-    // Vertex attributes: locations 1-4 (location 0 is reserved for built-ins)
-    const ATTRIBS: [wgpu::VertexAttribute; 4] =
-        wgpu::vertex_attr_array![1 => Float32x2, 2 => Float32x2, 3 => Float32, 4 => Float32x3];
+    // Vertex attributes: locations 1-5 (location 0 is reserved for built-ins)
+    const ATTRIBS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![1 => Float32x2, 2 => Float32x2, 3 => Float32, 4 => Float32x3, 5 => Float32];
 
     fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {

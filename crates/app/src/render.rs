@@ -354,12 +354,78 @@ impl PhylonApp {
         let mut node_positions: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 2]> =
             std::collections::HashMap::new();
 
+        // Per-segment vitality lookup (Phase 5, SX-1c) — `metabolism::Health`
+        // lives only on an organism's head entity (`organisms::spawning`), not
+        // every segment, so this maps every segment entity in that organism's
+        // `DevelopmentalGraph` to the same head-derived health fraction,
+        // mirroring `render_physiology_overlay`'s existing graph-walk pattern
+        // rather than inventing a new one. Absent from this map (sandbox
+        // structures with no `Health`) defaults to `1.0` (fully vital) at the
+        // lookup site below, not inserted here.
+        let mut entity_health_fraction: std::collections::HashMap<bevy_ecs::entity::Entity, f32> =
+            std::collections::HashMap::new();
+        let mut query_health_graphs = self
+            .world
+            .ecs
+            .query::<(&organisms::DevelopmentalGraph, &metabolism::Health)>();
+        for (graph, health) in query_health_graphs.iter(&self.world.ecs) {
+            let fraction = if health.max > 0.0 {
+                (health.current / health.max).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            for graph_node in &graph.nodes {
+                if let Some(seg_entity) = graph_node.entity {
+                    entity_health_fraction.insert(seg_entity, fraction);
+                }
+            }
+        }
+
+        // Per-organism average infection severity lookup (Phase 5, SX-1d),
+        // keyed by head entity (the only entity `ecology::disease::Infection`
+        // lives on, mirroring `metabolism::Health`'s own placement) — walks
+        // the same `DevelopmentalGraph` used above for Health, averaging
+        // `SegmentInfection.severity` across segments rather than reading a
+        // single value, since severity is a genuinely per-segment quantity
+        // (P4-F5).
+        let mut entity_avg_severity: std::collections::HashMap<bevy_ecs::entity::Entity, f32> =
+            std::collections::HashMap::new();
+        let mut query_segment_infection = self
+            .world
+            .ecs
+            .query::<&ecology::disease::SegmentInfection>();
+        let mut query_infection_graphs = self.world.ecs.query::<(
+            bevy_ecs::entity::Entity,
+            &organisms::DevelopmentalGraph,
+            &ecology::disease::Infection,
+        )>();
+        for (head_entity, graph, _infection) in query_infection_graphs.iter(&self.world.ecs) {
+            let mut total = 0.0f32;
+            let mut count = 0u32;
+            for graph_node in &graph.nodes {
+                if let Some(seg_entity) = graph_node.entity {
+                    if let Ok(seg_infection) =
+                        query_segment_infection.get(&self.world.ecs, seg_entity)
+                    {
+                        total += seg_infection.severity;
+                        count += 1;
+                    }
+                }
+            }
+            if count > 0 {
+                entity_avg_severity.insert(head_entity, total / count as f32);
+            }
+        }
+
         let mut query_nodes_render = self.world.ecs.query::<(
             bevy_ecs::entity::Entity,
             &physics::ParticleNode,
             Option<&ecology::EcologicalCategory>,
+            Option<&metabolism::Health>,
+            Option<&ecology::disease::Infection>,
         )>();
-        for (entity, node, category) in query_nodes_render.iter(&self.world.ecs) {
+        for (entity, node, category, health, infection) in query_nodes_render.iter(&self.world.ecs)
+        {
             node_positions.insert(entity, [node.position.x, node.position.y]);
 
             let is_in_selected = selected_component
@@ -367,6 +433,93 @@ impl PhylonApp {
                 .is_some_and(|comp| comp.contains(&entity));
             let should_draw_debug =
                 self.ui.debug_structural && (selected_component.is_none() || is_in_selected);
+
+            // Low-health ring (Phase 5, SX-1c) — Primary tier, always visible,
+            // not gated behind `debug_structural` (unlike the category ring
+            // below, which stays debug-only). `Health` only exists on the
+            // head entity (`organisms::spawning`), so this naturally draws
+            // once per organism. Amber below 40%, red below 15%, per
+            // `docs/design/biological_visual_language.md`'s Health entry;
+            // nothing drawn above 40% — absence is the encoding for the
+            // common healthy case, matching SX-1b's Idle precedent.
+            if let Some(health) = health {
+                let fraction = if health.max > 0.0 {
+                    (health.current / health.max).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                if fraction < 0.40 {
+                    let token = if fraction < 0.15 {
+                        ui::theme::BAD
+                    } else {
+                        ui::theme::WARN
+                    };
+                    let [r, g, b, _] = token.to_normalized_gamma_f32();
+                    debug_instances.push(rendering::DebugInstance {
+                        pos_a: [node.position.x, node.position.y],
+                        pos_b: [node.position.x, node.position.y],
+                        color: [r, g, b, 0.6],
+                        radius: 10.0 * (self.ui.node_radius / 5.0),
+                        segment_type: 99,
+                    });
+                }
+            }
+
+            // Disease badge (Phase 5, SX-1d) — Primary tier, always visible,
+            // offset up-and-left from the head position so it never blends
+            // with the Health disk above into an ambiguous combined color
+            // (both are opaque-ish filled disks on the shared
+            // `debug_quad.wgsl` primitive — see this document's own note in
+            // `biological_visual_language.md`'s Disease entry on why this
+            // isn't a true concentric ring). No animation — a fully static
+            // function of current `Infection.state`/severity, per this
+            // milestone's explicit "no pulses" instruction.
+            if let Some(infection) = infection {
+                let avg_severity = entity_avg_severity.get(&entity).copied().unwrap_or(0.0);
+                let health_fraction = health.map_or(1.0, |h| {
+                    if h.max > 0.0 {
+                        (h.current / h.max).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    }
+                });
+                let is_critical = avg_severity > 0.70 || health_fraction < 0.15;
+
+                let (color, alpha, radius) = match infection.state {
+                    ecology::disease::InfectionState::Incubating => {
+                        // Faintest, smallest — biologically asymptomatic, but
+                        // not literally invisible (this milestone's own brief
+                        // asks that it be distinguishable at a glance).
+                        ([0.6, 0.6, 0.65], 0.25, 4.0)
+                    }
+                    ecology::disease::InfectionState::Infectious if is_critical => {
+                        // Critical: an intensified version of Infectious, not
+                        // a separately-tracked simulation state — escalates
+                        // toward `theme::BAD`'s hue.
+                        let [r, g, b, _] = ui::theme::BAD.to_normalized_gamma_f32();
+                        ([r, g, b], 0.85, 9.0)
+                    }
+                    ecology::disease::InfectionState::Infectious => {
+                        let purple = ecology::Diet::Decomposer.standard_color();
+                        (purple, 0.4 + avg_severity * 0.4, 5.0 + avg_severity * 3.0)
+                    }
+                    ecology::disease::InfectionState::Recovered => {
+                        // Permanent "survived and immune" marker — solid,
+                        // small, not severity-scaled (there's no ongoing
+                        // severity for a recovered organism).
+                        let [r, g, b, _] = ui::theme::GOOD.to_normalized_gamma_f32();
+                        ([r, g, b], 0.5, 4.0)
+                    }
+                };
+                let offset = 12.0 * (self.ui.node_radius / 5.0);
+                debug_instances.push(rendering::DebugInstance {
+                    pos_a: [node.position.x - offset, node.position.y - offset],
+                    pos_b: [node.position.x - offset, node.position.y - offset],
+                    color: [color[0], color[1], color[2], alpha],
+                    radius,
+                    segment_type: 99,
+                });
+            }
 
             if should_draw_debug {
                 debug_instances.push(rendering::DebugInstance {
@@ -446,6 +599,7 @@ impl PhylonApp {
                         pos_b: pb,
                         radius: highlight_radius,
                         color: [0.0, 1.0, 0.0],
+                        health: 1.0,
                     });
                 }
                 if is_in_selected {
@@ -454,6 +608,7 @@ impl PhylonApp {
                         pos_b: pb,
                         radius: highlight_radius,
                         color: [1.0, 1.0, 1.0],
+                        health: 1.0,
                     });
                 }
             }
@@ -476,6 +631,10 @@ impl PhylonApp {
                             [c[0] * 0.6, c[1] * 0.6, c[2] * 0.6]
                         })
                         .unwrap_or([0.4, 0.4, 0.4]);
+                    let health = entity_health_fraction
+                        .get(&spring.node_a)
+                        .copied()
+                        .unwrap_or(1.0);
 
                     if should_draw_sdf && bone_visible(pa, pb) {
                         sdf_bones.push(rendering::SdfBoneInstance {
@@ -483,6 +642,7 @@ impl PhylonApp {
                             pos_b: pb,
                             radius: 4.0 * (self.ui.skin_thickness / 3.0),
                             color,
+                            health,
                         });
                     }
                     if should_draw_debug {
@@ -505,12 +665,17 @@ impl PhylonApp {
                     node_positions.get(&spring.node_b),
                 ) {
                     let color = opt_color.map(|c| c.0).unwrap_or([0.5, 0.5, 0.8]);
+                    let health = entity_health_fraction
+                        .get(&spring.node_a)
+                        .copied()
+                        .unwrap_or(1.0);
                     if should_draw_sdf && bone_visible(pa, pb) {
                         sdf_bones.push(rendering::SdfBoneInstance {
                             pos_a: pa,
                             pos_b: pb,
                             radius: 6.0 * (self.ui.skin_thickness / 3.0),
                             color,
+                            health,
                         });
                     }
                     if should_draw_debug {
@@ -540,12 +705,17 @@ impl PhylonApp {
                     (if spring.is_fin == 1 { 4.0 } else { 8.0 }) * (self.ui.skin_thickness / 3.0);
 
                 let color = opt_color.map(|c| c.0).unwrap_or([0.8, 0.8, 0.8]);
+                let health = entity_health_fraction
+                    .get(&spring.node_a)
+                    .copied()
+                    .unwrap_or(1.0);
                 if should_draw_sdf && bone_visible(pa, pb) {
                     sdf_bones.push(rendering::SdfBoneInstance {
                         pos_a: pa,
                         pos_b: pb,
                         radius,
                         color,
+                        health,
                     });
                 }
                 if should_draw_debug {
@@ -590,6 +760,7 @@ impl PhylonApp {
                     pos_b: pos,
                     radius: 2.5,
                     color: [1.000, 0.665, 0.078], // #FFD54F
+                    health: 1.0,
                 });
             }
             if hovered_component
@@ -601,6 +772,7 @@ impl PhylonApp {
                     pos_b: pos,
                     radius: 2.5,
                     color: [0.0, 1.0, 0.0],
+                    health: 1.0,
                 });
             }
             if selected_component
@@ -612,6 +784,7 @@ impl PhylonApp {
                     pos_b: pos,
                     radius: 2.5,
                     color: [1.0, 1.0, 1.0],
+                    health: 1.0,
                 });
             }
         }
@@ -646,6 +819,7 @@ impl PhylonApp {
                     pos_b: pos,
                     radius: 2.0,
                     color: [0.397, 0.539, 0.584], // #A9C2C9
+                    health: 1.0,
                 });
             }
             if hovered_component
@@ -657,6 +831,7 @@ impl PhylonApp {
                     pos_b: pos,
                     radius: 2.0,
                     color: [0.0, 1.0, 0.0],
+                    health: 1.0,
                 });
             }
             if selected_component
@@ -668,6 +843,7 @@ impl PhylonApp {
                     pos_b: pos,
                     radius: 2.0,
                     color: [1.0, 1.0, 1.0],
+                    health: 1.0,
                 });
             }
         }
@@ -702,6 +878,7 @@ impl PhylonApp {
                     pos_b: pos,
                     radius: 4.0,
                     color: [0.153, 0.136, 0.156], // #6D676E
+                    health: 1.0,
                 });
             }
             if hovered_component
@@ -713,6 +890,7 @@ impl PhylonApp {
                     pos_b: pos,
                     radius: 4.0,
                     color: [0.0, 1.0, 0.0],
+                    health: 1.0,
                 });
             }
             if selected_component
@@ -724,6 +902,7 @@ impl PhylonApp {
                     pos_b: pos,
                     radius: 4.0,
                     color: [1.0, 1.0, 1.0],
+                    health: 1.0,
                 });
             }
         }
@@ -1030,6 +1209,29 @@ impl PhylonApp {
             }
         }
 
+        // Phase 5, SX-1e: `debug_instances` (Health/Disease/Category badges —
+        // Priority 2/3/5 biological signals) now draws *before* the
+        // hover/selection highlight, not after. Re-auditing the previous
+        // order found it drew debug instances last, meaning a low-health
+        // ring or disease badge would paint *over* (and could visually
+        // obscure) the Priority-1 selection/hover outline wherever they
+        // overlapped — a direct violation of "higher-priority signals must
+        // always remain readable." Selection/hover now always paints last.
+        if !debug_instances.is_empty() {
+            if let Some(debug_renderer) = self.debug_renderer.as_mut() {
+                debug_renderer.render(
+                    &gpu.device,
+                    &gpu.queue,
+                    &view,
+                    &debug_instances,
+                    [view_w, view_h],
+                    self.ui.camera_pos,
+                    self.ui.camera_zoom,
+                    central_rect_px,
+                );
+            }
+        }
+
         if !hover_bones.is_empty() {
             if let Some(sdf_renderer) = self.sdf_skin_renderer.as_mut() {
                 sdf_renderer.render_highlight(
@@ -1055,20 +1257,6 @@ impl PhylonApp {
                     &view,
                     &selected_bones,
                     [1.0, 1.0, 1.0, pulse],
-                    [view_w, view_h],
-                    self.ui.camera_pos,
-                    self.ui.camera_zoom,
-                    central_rect_px,
-                );
-            }
-        }
-        if !debug_instances.is_empty() {
-            if let Some(debug_renderer) = self.debug_renderer.as_mut() {
-                debug_renderer.render(
-                    &gpu.device,
-                    &gpu.queue,
-                    &view,
-                    &debug_instances,
                     [view_w, view_h],
                     self.ui.camera_pos,
                     self.ui.camera_zoom,

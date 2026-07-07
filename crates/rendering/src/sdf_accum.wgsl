@@ -15,6 +15,7 @@ struct BoneInstance {
     @location(2) pos_b:  vec2<f32>,   // World-space endpoint B
     @location(3) radius: f32,          // Capsule skin radius
     @location(4) color:  vec3<f32>,    // RGB tint (unused in accum; stored for composite)
+    @location(5) health: f32,          // Vitality dimming factor [0, 1] (Phase 5, SX-1c) — see SdfBoneInstance's doc comment
 }
 
 struct VertexOutput {
@@ -24,6 +25,7 @@ struct VertexOutput {
     @location(2)       pos_b:     vec2<f32>,
     @location(3)       radius:    f32,
     @location(4)       color:     vec3<f32>,
+    @location(5)       health:    f32,
 }
 
 @vertex
@@ -54,6 +56,7 @@ fn vs_accum(
     out.pos_b     = inst.pos_b;
     out.radius    = inst.radius;
     out.color     = inst.color;
+    out.health    = inst.health;
     return out;
 }
 
@@ -84,6 +87,10 @@ fn fs_accum(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Output density in the A channel and pre-multiplied color in RGB.
-    let color_contribution = in.color * density;
+    // `health` dims only the color contribution, never `density` — the
+    // composite pass's shape/edge thresholding (and the separate highlight
+    // pass, which reads only this alpha channel) are therefore completely
+    // unaffected by vitality; only the body's rendered color darkens.
+    let color_contribution = in.color * density * in.health;
     return vec4<f32>(color_contribution, density);
 }

@@ -282,6 +282,11 @@ impl PhylonApp {
         // `process_deaths_system` (this tick's producer, above).
         self.world.ecs.run_system_once(interaction_event_log_system);
         self.world.ecs.run_system_once(expire_timed_effects_system);
+        // Phase 5, SX-1a: opt-in, zero-cost when `PHYLON_MOTION_DIAGNOSTIC`
+        // is unset — see `motion_diagnostic`'s module doc comment.
+        self.world
+            .ecs
+            .run_system_once(crate::motion_diagnostic::motion_diagnostic_system);
         self.world
             .ecs
             .run_system_once(crate::analytics_bridge::analytics_bridge_system);

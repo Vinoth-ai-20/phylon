@@ -241,6 +241,50 @@ pub fn expire_timed_effects_system(
 /// every other Phase 4 rate/duration constant introduced so far.
 const DEATH_EFFECT_DURATION_TICKS: u64 = 90; // ~1.5s at 60Hz
 
+/// One shared `(text, color)` mapping, exhaustive over every
+/// [`events::DeathCause`] — Phase 5, SX-1e. Before this milestone only
+/// `Predation` (`eaten.is_some()`) got a `TimedEffects` floating-text burst;
+/// `Starvation`/`Senescence`/`Disease` deaths produced a correctly-caused
+/// `PhylonEvent::OrganismDied` but no viewport signal at all, an event-
+/// coverage gap (`PHASE5_SX_ROADMAP.md` §2.6). This function is the single
+/// place every current *and future* cause is visualized — `GodMode`/
+/// `Injury`/`Environment` aren't constructed by any code path yet, but are
+/// matched here anyway so a future system that starts producing them needs
+/// no rendering change, only a new arm here (per the standing "plug into the
+/// same architecture without new rendering systems" rule).
+///
+/// Colors are drawn from the same limited semantic palette every other SX
+/// milestone uses — never a new literal per cause: `Disease` reuses
+/// `ecology::Diet::Decomposer.standard_color()`, the *exact* purple SX-1d's
+/// Disease badge already uses, so a death-by-disease burst visually
+/// reads as the same biological family, not a coincidentally similar hue.
+/// `Starvation`/`Environment` (resource/condition depletion) share
+/// `theme::WARN`; `Predation`/`Injury` (violent/traumatic) share
+/// `theme::BAD`; `Senescence` (a natural, expected end) and `GodMode` (a
+/// non-biological, experimenter-driven removal) both get the neutral
+/// `theme::ACCENT` rather than an alarm color, since neither is a biological
+/// failure; `Unknown` gets a muted grey fallback, deliberately not `BAD`,
+/// since an unclassified cause hasn't been confirmed to actually be adverse.
+fn death_effect_text_and_color(cause: events::DeathCause) -> (&'static str, [f32; 3]) {
+    let color32_rgb = |c: egui::Color32| {
+        let [r, g, b, _] = c.to_normalized_gamma_f32();
+        [r, g, b]
+    };
+    match cause {
+        events::DeathCause::Predation => ("Eaten!", color32_rgb(ui::theme::BAD)),
+        events::DeathCause::Injury => ("Injured", color32_rgb(ui::theme::BAD)),
+        events::DeathCause::Starvation => ("Starved", color32_rgb(ui::theme::WARN)),
+        events::DeathCause::Environment => ("Environmental exposure", color32_rgb(ui::theme::WARN)),
+        events::DeathCause::Disease => (
+            "Succumbed to disease",
+            ecology::Diet::Decomposer.standard_color(),
+        ),
+        events::DeathCause::Senescence => ("Died of old age", color32_rgb(ui::theme::ACCENT)),
+        events::DeathCause::GodMode => ("Removed", color32_rgb(ui::theme::ACCENT)),
+        events::DeathCause::Unknown => ("Died", [0.6, 0.6, 0.6]),
+    }
+}
+
 /// Same as [`DEATH_EFFECT_DURATION_TICKS`], for the "Born!" effect (Phase 4,
 /// P4-V1).
 const BIRTH_EFFECT_DURATION_TICKS: u64 = 90;
@@ -333,17 +377,17 @@ pub fn process_deaths_system(
             tick: common::Tick(atmosphere.ticks),
         });
 
-        // A predation death is the one trigger this milestone demonstrates
-        // the new timed-effects framework with — proving `TimedEffects`
-        // works end-to-end against a real event, without yet building the
-        // rendering that would actually draw it (out of scope for P4-E1;
-        // see `events::TimedEffects`'s doc comment).
-        if eaten.is_some() {
+        // Phase 5, SX-1e: every death gets a `TimedEffects` floating-text
+        // burst, not just predation (P4-E1's original demonstration trigger)
+        // — see `death_effect_text_and_color`'s doc comment for the single
+        // shared `(text, color)` mapping every cause routes through.
+        {
+            let (text, color) = death_effect_text_and_color(cause);
             timed_effects.spawn(
                 node.position,
                 events::TimedEffectKind::FloatingText {
-                    text: "Eaten!".to_string(),
-                    color: [0.8, 0.2, 0.2],
+                    text: text.to_string(),
+                    color,
                 },
                 atmosphere.ticks,
                 DEATH_EFFECT_DURATION_TICKS,
@@ -522,5 +566,40 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// Phase 5, SX-1e: before this milestone, only a predation death (the
+    /// `eaten.is_some()` branch) spawned a `TimedEffects::FloatingText` —
+    /// Starvation/Senescence/Disease deaths produced a correctly-caused
+    /// `PhylonEvent` but no viewport signal at all. This proves the gap is
+    /// closed for a real non-predation cause, not just asserted.
+    #[test]
+    fn non_predation_death_still_spawns_a_timed_effect() {
+        let mut world = base_world();
+        // Plain starvation: not eaten, not old, not infectious, ATP depleted.
+        spawn_dead(&mut world, 0, 1000, 0.0, false, false);
+        world.run_system_once(process_deaths_system);
+        let effects = &world.resource::<events::TimedEffects>().active;
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(
+            effects[0].kind,
+            events::TimedEffectKind::FloatingText { .. }
+        ));
+    }
+
+    #[test]
+    fn death_effect_text_and_color_is_exhaustive_and_distinguishes_predation_from_disease() {
+        // Not a full snapshot of every string/color (brittle) — just the
+        // property this milestone actually cares about: two causes with very
+        // different biological meaning must not render identically, and the
+        // Disease color must be the *exact* value SX-1d's Disease badge
+        // uses, not a coincidentally similar one.
+        let (predation_text, predation_color) =
+            death_effect_text_and_color(events::DeathCause::Predation);
+        let (disease_text, disease_color) =
+            death_effect_text_and_color(events::DeathCause::Disease);
+        assert_ne!(predation_text, disease_text);
+        assert_ne!(predation_color, disease_color);
+        assert_eq!(disease_color, ecology::Diet::Decomposer.standard_color());
     }
 }
