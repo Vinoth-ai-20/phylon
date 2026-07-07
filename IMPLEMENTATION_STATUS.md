@@ -6,6 +6,8 @@
 **Audience:** Any engineer picking up this project cold
 
 > **Reading order for a new contributor:** (1) this document's Executive Summary, (2) the Implementation Status Matrix, (3) the ADRs for the subsystem you're about to touch, (4) the Deferred Work Inventory and Technical Debt sections for that subsystem, before writing any code.
+>
+> **Forward pointer (added during Phase 4, milestone P4-F1) — this document was never updated during Phase 3 and its "Advanced Biology" section (Phase 4 theme, Phase 2 Deferred Work Inventory) is now stale in places.** Concretely: DEF-002 (germ-soma/apoptosis) and part of DEF-003 (vascular differentiation) were activated in Phase 3 (M8, M9); DEF-022 (speciation representative refresh) was activated in Phase 3 (M7). None of those rows below were edited to reflect that — treat this document's Deferred Work Inventory and per-epic status as a snapshot frozen at the end of Phase 2, not current truth, for anything Phase 3 or Phase 4 has since touched. `PHASE3_ROADMAP.md` (closed, M1-M13 done) and `PHASE4_ROADMAP.md` (in progress) are the current sources of truth for post-Phase-2 work. This document is not being retroactively corrected — see those two files' own Execution Logs instead.
 
 ---
 

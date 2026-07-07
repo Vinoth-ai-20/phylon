@@ -1,4 +1,5 @@
 use crate::components::{GrowthState, OrganismColor};
+use crate::developmental_graph::DevelopmentalGraph;
 use bevy_ecs::prelude::{Commands, Entity, Query};
 use common::Vec2;
 
@@ -28,7 +29,7 @@ use common::Vec2;
 ///    is `Tail`), it wires the `Brain` CTRNN topology.
 pub fn growth_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut GrowthState)>,
+    mut query: Query<(Entity, &mut GrowthState, &mut DevelopmentalGraph)>,
     node_query: Query<&physics::ParticleNode>,
     spring_query: Query<&physics::Spring>,
     chem_query: Query<&metabolism::ChemicalEconomy>,
@@ -36,7 +37,7 @@ pub fn growth_system(
     use genetics::SegmentType;
     use physics::{ParticleNode, Spring};
 
-    for (entity, mut state) in query.iter_mut() {
+    for (entity, mut state, mut graph) in query.iter_mut() {
         // Expressed (dominance-resolved for diploid genomes — see
         // `Genome::expressed_brain_cppn`/`expressed_regulatory_cppn`) once
         // per organism, not per query, since growth/brain-wiring below
@@ -228,14 +229,14 @@ pub fn growth_system(
             ))
             .id();
 
-        // Body Graph (Phase 3, M6): this spine node's parent is always the
-        // most recently pushed non-branch node — i.e. the last spine node,
-        // which is exactly `state.graph.nodes.len() - 1` immediately before
-        // this push, since branch nodes (below) never become anyone's
-        // structural parent.
-        let parent_graph_index = state.graph.nodes.len().checked_sub(1);
+        // Body Graph (Phase 3, M6; persistent as of Phase 4, ADR-P4-01):
+        // this spine node's parent is always the most recently pushed
+        // non-branch node — i.e. the last spine node, which is exactly
+        // `graph.nodes.len() - 1` immediately before this push, since
+        // branch nodes (below) never become anyone's structural parent.
+        let parent_graph_index = graph.nodes.len().checked_sub(1);
         let current_position = state.next_segment_index;
-        state.graph.push(
+        graph.push(
             outputs.segment_type,
             outputs,
             parent_graph_index,
@@ -287,16 +288,16 @@ pub fn growth_system(
         if branch_eligible && outputs.branches && state.parent_spine_node.is_some() {
             // This branch's parent is the spine node just pushed above —
             // its index is the graph's current last entry.
-            let spine_graph_index = state.graph.nodes.len() - 1;
+            let spine_graph_index = graph.nodes.len() - 1;
             let current_position = state.next_segment_index;
-            state.graph.push(
+            graph.push(
                 SegmentType::Fin,
                 outputs,
                 Some(spine_graph_index),
                 true,
                 current_position,
             );
-            state.graph.push(
+            graph.push(
                 SegmentType::Fin,
                 outputs,
                 Some(spine_graph_index),
@@ -581,9 +582,9 @@ mod tests {
                     segment_length: 20.0,
                     effectors: Vec::new(),
                     is_organism_complete: false,
-                    graph: crate::DevelopmentalGraph::new(),
                     heading: 0.0,
                 },
+                DevelopmentalGraph::new(),
             ))
             .id()
     }
@@ -595,6 +596,38 @@ mod tests {
         let entity = spawn_growth_entity(&mut world, genome);
         run_growth_to_completion(&mut world, entity);
         assert!(world.get::<brain::Brain>(entity).is_some());
+    }
+
+    #[test]
+    fn developmental_graph_survives_growth_completion_and_removal_of_growth_state() {
+        // Phase 4, ADR-P4-01's whole point: unlike pre-Phase-4 behavior
+        // (where the graph was nested in `GrowthState` and discarded the
+        // moment it was removed), the persistent `DevelopmentalGraph`
+        // sibling component must still be present, non-empty, and
+        // unchanged after `GrowthState` is gone.
+        let mut world = World::new();
+        let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        let entity = spawn_growth_entity(&mut world, genome);
+        run_growth_to_completion(&mut world, entity);
+
+        assert!(
+            world.get::<GrowthState>(entity).is_none(),
+            "GrowthState must actually be gone for this test to prove anything"
+        );
+        let graph = world
+            .get::<DevelopmentalGraph>(entity)
+            .expect("DevelopmentalGraph must survive GrowthState's removal");
+        assert!(
+            !graph.nodes.is_empty(),
+            "the persisted graph must contain the nodes grown during this run"
+        );
+
+        // Stays stable afterward too — running the (now no-op, since
+        // GrowthState is gone) system again must not mutate or clear it.
+        let node_count_before = graph.nodes.len();
+        world.run_system_once(growth_system);
+        let node_count_after = world.get::<DevelopmentalGraph>(entity).unwrap().nodes.len();
+        assert_eq!(node_count_before, node_count_after);
     }
 
     #[test]
@@ -618,19 +651,21 @@ mod tests {
             max_co2: 1000.0,
             max_atp: 1000.0,
         });
-        world.entity_mut(head).insert(GrowthState {
-            genome,
-            next_segment_index: 1,
-            ticks_until_next_bud: 0,
-            base_bud_interval: 0,
-            parent_spine_node: Some(head),
-            current_pos: Vec2::new(0.0, 0.0),
-            segment_length: 20.0,
-            effectors: Vec::new(),
-            is_organism_complete: false,
-            graph: crate::DevelopmentalGraph::new(),
-            heading: 0.0,
-        });
+        world.entity_mut(head).insert((
+            GrowthState {
+                genome,
+                next_segment_index: 1,
+                ticks_until_next_bud: 0,
+                base_bud_interval: 0,
+                parent_spine_node: Some(head),
+                current_pos: Vec2::new(0.0, 0.0),
+                segment_length: 20.0,
+                effectors: Vec::new(),
+                is_organism_complete: false,
+                heading: 0.0,
+            },
+            DevelopmentalGraph::new(),
+        ));
         run_growth_to_completion(&mut world, head);
 
         let node_count = world.query::<&physics::ParticleNode>().iter(&world).count();
@@ -642,7 +677,8 @@ mod tests {
 
     #[test]
     fn growth_system_pushes_one_body_graph_node_per_segment() {
-        // Phase 3 M6: `state.graph` should accumulate exactly one
+        // Phase 3 M6 (persistent as of Phase 4, ADR-P4-01): the sibling
+        // `DevelopmentalGraph` component should accumulate exactly one
         // `DevelopmentalNode` per non-branching tick, tracking
         // `next_segment_index`'s growth 1:1 (this fixture's genome
         // deterministically never branches — `Cppn::new()`'s empty
@@ -652,14 +688,14 @@ mod tests {
         let entity = spawn_growth_entity(&mut world, genome);
 
         world.run_system_once(growth_system);
-        let after_one = world.get::<GrowthState>(entity).unwrap().graph.nodes.len();
+        let after_one = world.get::<DevelopmentalGraph>(entity).unwrap().nodes.len();
         assert_eq!(after_one, 1);
 
         world.run_system_once(growth_system);
-        let after_two = world.get::<GrowthState>(entity).unwrap().graph.nodes.len();
+        let after_two = world.get::<DevelopmentalGraph>(entity).unwrap().nodes.len();
         assert_eq!(after_two, 2);
         assert_eq!(
-            world.get::<GrowthState>(entity).unwrap().graph.nodes[1].parent,
+            world.get::<DevelopmentalGraph>(entity).unwrap().nodes[1].parent,
             Some(0)
         );
     }
@@ -725,7 +761,7 @@ mod tests {
             "index must still advance past a pruned position"
         );
         assert_eq!(
-            state.graph.nodes.len(),
+            world.get::<DevelopmentalGraph>(entity).unwrap().nodes.len(),
             0,
             "a pruned position must not be recorded in the graph"
         );
@@ -784,8 +820,10 @@ mod tests {
 
         // Real run: seed the graph with the head node exactly as
         // `spawning::spawn_organism` does, then step growth_system to
-        // completion, capturing the graph on the last tick before
-        // `GrowthState` is removed.
+        // completion. As of Phase 4 (ADR-P4-01) the graph is a persistent
+        // sibling component, not nested in `GrowthState` — it's no longer
+        // necessary to capture it before `GrowthState` disappears, since it
+        // simply survives that removal now; just read it once growth ends.
         let mut world = World::new();
         let head_outputs = genetics::develop_at_position(&regulatory_cppn, 0, crate::MAX_SEGMENTS);
         let mut graph = crate::DevelopmentalGraph::new();
@@ -812,21 +850,19 @@ mod tests {
                     segment_length: 20.0,
                     effectors: Vec::new(),
                     is_organism_complete: head_outputs.segment_type == genetics::SegmentType::Tail,
-                    graph,
                     heading: 0.0,
                 },
+                graph,
             ))
             .id();
 
-        let mut last_graph = world.get::<GrowthState>(entity).unwrap().graph.clone();
         for _ in 0..(crate::MAX_SEGMENTS * 40) {
-            if let Some(state) = world.get::<GrowthState>(entity) {
-                last_graph = state.graph.clone();
-            } else {
+            if world.get::<GrowthState>(entity).is_none() {
                 break;
             }
             world.run_system_once(growth_system);
         }
+        let last_graph = world.get::<DevelopmentalGraph>(entity).unwrap();
 
         assert_eq!(predicted.nodes.len(), last_graph.nodes.len());
         for (p, r) in predicted.nodes.iter().zip(last_graph.nodes.iter()) {

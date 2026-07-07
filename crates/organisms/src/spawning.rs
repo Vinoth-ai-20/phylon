@@ -96,9 +96,12 @@ pub fn spawn_organism(
             segment_length,
             effectors: Vec::new(),
             is_organism_complete: head_outputs.segment_type == genetics::SegmentType::Tail,
-            graph,
             heading,
         },
+        // Phase 4, ADR-P4-01: a sibling component, not nested in
+        // `GrowthState` — it survives that component's removal once growth
+        // completes, since `growth_system` writes to it directly.
+        graph,
         sensing::HeadVision {
             range: 250.0,
             fov: std::f32::consts::PI * 0.8, // ~144 degrees

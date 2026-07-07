@@ -1,33 +1,57 @@
-//! The Body Graph (Phase 3, M6) — see `PHASE3_ROADMAP.md`'s ADR-P3-04.
+//! The Body Graph — see `PHASE3_ROADMAP.md`'s ADR-P3-04/ADR-P3-09 for its
+//! original (transient) design, and `PHASE4_ROADMAP.md`'s **ADR-P4-01** for
+//! why that decision is reversed as of Phase 4, milestone P4-F1.
 //!
-//! `DevelopmentalGraph` is a plain, transient record of every body position
-//! `growth_system` has decoded for one organism so far, built up one
-//! [`DevelopmentalNode`] per growth tick. It is deliberately **not** a
-//! `bevy_ecs::Component`/`Resource` itself — it's reachable only through
-//! `GrowthState.graph` (an already-existing `Component`), so `physics`,
-//! `rendering`, `behavior`, and `analytics` need zero changes; growth still
-//! spawns one `physics::ParticleNode`/`Spring` pair per tick exactly as
-//! before, just via the [`compile_segment`] function extracted below instead
-//! of inline match arms, so the mapping from a decoded `SegmentType` to
-//! physics parameters is independently testable and reusable by future
-//! research panels (HOX Visualizer, Development Timeline) without
-//! re-deriving it from scratch.
+//! **History, so the reversal is understood rather than just asserted:**
+//! Phase 3 made `DevelopmentalGraph` deliberately transient — built up one
+//! [`DevelopmentalNode`] per growth tick inside `GrowthState.graph`, dropped
+//! the moment growth completed. ADR-P3-04 reasoned this was safe because
+//! every node was a *pure function* of the genome and its body position;
+//! ADR-P3-09 went on to prove that claim with a passing cross-check test
+//! (`simulate_growth_timeline_matches_a_real_growth_system_run`), so nothing
+//! was ever lost by discarding the graph — it could always be perfectly
+//! reconstructed from the genome alone via [`simulate_growth_timeline`].
 //!
-//! Per ADR-P3-04, whether the graph itself ever needs to be *retained*
-//! past an organism's growth (for development replay) is the Development
-//! Timeline milestone's own decision, not this one's — `growth_system`
-//! currently drops `GrowthState` (and, with it, its `graph`) the moment
-//! growth completes.
+//! **Phase 4 breaks that precondition on purpose.** Later Phase 4 epics
+//! (physiology with injury/regeneration; life-stage re-differentiation)
+//! introduce runtime anatomical history that is *not* a pure function of
+//! genome + position — an organ's current condition can depend on damage
+//! taken and tissue regrown, not just what the genome would decode fresh.
+//! Once that's true, discarding the graph *would* lose real information, so
+//! ADR-P4-01 makes `DevelopmentalGraph` a real `bevy_ecs::Component`,
+//! attached to an organism's head entity for its entire life — the
+//! canonical, persistent anatomical model every future biological system
+//! (physiology, circulation, organ inspection, injury) should attach to
+//! rather than duplicate.
 //!
-//! **Phase 3, M13 resolves that question:** the graph does *not* need to be
-//! retained. Because every node is a pure function of the genome and its
-//! body position (see `genetics::develop_at_position`), the entire growth
-//! timeline can be deterministically reconstructed after the fact — see
-//! [`simulate_growth_timeline`], which mirrors `growth_system`'s own
-//! control flow (apoptosis pruning, branch spawning, Tail-stop) without any
-//! ECS/physics side effects, for exactly this replay purpose. ADR-P3-04's
-//! transience decision stands unmodified.
+//! [`simulate_growth_timeline`] is **not removed** — it remains the correct
+//! tool for replaying an organism's historical growth *order* (what
+//! happened during initial growth, for the Development Timeline panel).
+//! The persistent component this module now also provides answers a
+//! different question: what is this organism's anatomy *right now*. Both
+//! coexist; see ADR-P4-01 for why neither supersedes the other.
+//!
+//! This milestone (P4-F1) is infrastructure only: the graph becomes
+//! persistent and gains a small, generic (non-biology-specific) query
+//! surface (see [`DevelopmentalGraph::root`], [`DevelopmentalGraph::children_of`],
+//! [`DevelopmentalGraph::node_at_position`]). It does not implement
+//! physiology, circulation, injury, regeneration, life stages, or any
+//! consumer of this data beyond `growth_system` itself continuing to build
+//! it — those are later Phase 4 milestones, gated behind this one.
+//!
+//! **Serialization is deliberately not implemented in this milestone.**
+//! Neither `DevelopmentalGraph`/`DevelopmentalNode` nor
+//! `genetics::DevelopmentalOutputs` derive `Serialize`/`Deserialize`.
+//! `crates/storage`'s `SimulationSnapshot` is a hand-built, explicit
+//! whitelist of components (`storage/src/snapshot.rs`), not a generic
+//! reflection-based dump — so this is safe (nothing breaks by omission) but
+//! has a real consequence, documented rather than silently accepted: an
+//! organism saved and reloaded via `SaveState`/`LoadState` loses its
+//! persistent Body Graph (falls back to not having the component at all,
+//! same as `GrowthState`/`Brain`'s internal state already do today). Adding
+//! save/load support is future work, not required for this milestone.
 
+use bevy_ecs::prelude::Component;
 use genetics::{DevelopmentalOutputs, SegmentType};
 
 /// One decoded body position (main spine) or lateral appendage (branch),
@@ -54,8 +78,11 @@ pub struct DevelopmentalNode {
     pub position: usize,
 }
 
-/// The full sequence of decoded body positions for one growing organism.
-#[derive(Debug, Clone, Default)]
+/// The full sequence of decoded body positions for one organism — as of
+/// Phase 4 (ADR-P4-01), a real, persistent ECS component attached to the
+/// organism's head entity for its entire life, not a transient value
+/// scoped to `growth_system`'s execution.
+#[derive(Component, Debug, Clone, Default)]
 pub struct DevelopmentalGraph {
     /// Every node decoded so far, in growth order.
     pub nodes: Vec<DevelopmentalNode>,
@@ -85,6 +112,31 @@ impl DevelopmentalGraph {
             position,
         });
         self.nodes.len() - 1
+    }
+
+    /// The graph's root node (the head, always index 0 if the graph is
+    /// non-empty) — `None` only for a graph that hasn't been seeded yet.
+    pub fn root(&self) -> Option<&DevelopmentalNode> {
+        self.nodes.first()
+    }
+
+    /// Every node whose `parent` is `Some(index)` — i.e. `index`'s direct
+    /// structural children (both spine continuation and any branch nodes).
+    /// A small, generic traversal primitive: this milestone (P4-F1)
+    /// deliberately adds no biology-specific queries (organ lookup,
+    /// injury, etc.) — those are later Phase 4 milestones building on top
+    /// of this, per ADR-P4-01.
+    pub fn children_of(&self, index: usize) -> impl Iterator<Item = &DevelopmentalNode> {
+        self.nodes.iter().filter(move |n| n.parent == Some(index))
+    }
+
+    /// The first non-branch (spine) node decoded at `position`, if any —
+    /// the position-keyed lookup a research panel or future physiology
+    /// system would use to find "the segment at body position N."
+    pub fn node_at_position(&self, position: usize) -> Option<&DevelopmentalNode> {
+        self.nodes
+            .iter()
+            .find(|n| !n.is_branch && n.position == position)
     }
 }
 
@@ -235,6 +287,93 @@ mod tests {
         assert_eq!(graph.nodes[torso].parent, Some(head));
         assert!(!graph.nodes[torso].is_branch);
         assert_eq!(graph.nodes[torso].position, 1);
+    }
+
+    #[test]
+    fn root_returns_the_first_pushed_node() {
+        let mut graph = DevelopmentalGraph::new();
+        assert!(graph.root().is_none());
+        graph.push(
+            SegmentType::Head,
+            sample_outputs(SegmentType::Head),
+            None,
+            false,
+            0,
+        );
+        assert_eq!(graph.root().unwrap().role, SegmentType::Head);
+    }
+
+    #[test]
+    fn children_of_finds_both_spine_and_branch_children() {
+        let mut graph = DevelopmentalGraph::new();
+        let head = graph.push(
+            SegmentType::Head,
+            sample_outputs(SegmentType::Head),
+            None,
+            false,
+            0,
+        );
+        let torso = graph.push(
+            SegmentType::Torso,
+            sample_outputs(SegmentType::Torso),
+            Some(head),
+            false,
+            1,
+        );
+        let fin_a = graph.push(
+            SegmentType::Fin,
+            sample_outputs(SegmentType::Fin),
+            Some(torso),
+            true,
+            1,
+        );
+        let fin_b = graph.push(
+            SegmentType::Fin,
+            sample_outputs(SegmentType::Fin),
+            Some(torso),
+            true,
+            1,
+        );
+
+        let head_children: Vec<usize> = graph.children_of(head).map(|_| torso).collect();
+        assert_eq!(head_children, vec![torso]);
+
+        let mut torso_children: Vec<bool> = graph.children_of(torso).map(|n| n.is_branch).collect();
+        torso_children.sort();
+        assert_eq!(torso_children, vec![true, true]);
+        assert_eq!(graph.nodes[fin_a].parent, Some(torso));
+        assert_eq!(graph.nodes[fin_b].parent, Some(torso));
+    }
+
+    #[test]
+    fn node_at_position_finds_the_spine_node_not_a_branch() {
+        let mut graph = DevelopmentalGraph::new();
+        let head = graph.push(
+            SegmentType::Head,
+            sample_outputs(SegmentType::Head),
+            None,
+            false,
+            0,
+        );
+        let torso = graph.push(
+            SegmentType::Torso,
+            sample_outputs(SegmentType::Torso),
+            Some(head),
+            false,
+            1,
+        );
+        graph.push(
+            SegmentType::Fin,
+            sample_outputs(SegmentType::Fin),
+            Some(torso),
+            true,
+            1,
+        );
+
+        let found = graph.node_at_position(1).expect("spine node at position 1");
+        assert!(!found.is_branch);
+        assert_eq!(found.role, SegmentType::Torso);
+        assert!(graph.node_at_position(99).is_none());
     }
 
     #[test]

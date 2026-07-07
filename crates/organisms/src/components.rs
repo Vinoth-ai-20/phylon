@@ -46,6 +46,13 @@ pub struct SpawnTick(pub u64);
 /// `genetics::develop_at_position` (Phase 3, M4) and materialises the result
 /// as a spine node (and, if the position branches, a lateral fin pair).
 /// When growth is complete the brain is wired and `GrowthState` is removed.
+///
+/// As of Phase 4 (`PHASE4_ROADMAP.md`'s ADR-P4-01), the Body Graph itself is
+/// tracked in a sibling `crate::DevelopmentalGraph` component on the same
+/// entity, not a field here — `growth_system` writes to that component
+/// directly, so it survives this component's removal instead of being
+/// dropped along with it (the pre-Phase-4 behavior; see ADR-P3-04/ADR-P3-09
+/// for why that used to be fine, and ADR-P4-01 for why it no longer is).
 #[derive(Component, Debug, Clone)]
 pub struct GrowthState {
     /// The genome driving growth.
@@ -69,12 +76,6 @@ pub struct GrowthState {
     /// `organisms::MAX_SEGMENTS` yet (Phase 3, M4; no special-cased length,
     /// just an emergent stopping condition from the decode itself).
     pub is_organism_complete: bool,
-    /// The Body Graph accumulated so far (Phase 3, M6) — one
-    /// `DevelopmentalNode` per decoded position/branch, in growth order.
-    /// Transient per ADR-P3-04: dropped along with the rest of
-    /// `GrowthState` once growth completes, never persisted or exposed as
-    /// its own ECS type.
-    pub graph: crate::developmental_graph::DevelopmentalGraph,
     /// Heading angle at which this organism spawns.
     pub heading: f32,
 }
