@@ -61,9 +61,16 @@ pub fn analytics_bridge_system(
             ages.push(atmosphere.ticks.saturating_sub(record.birth_tick));
             generations.push(record.generation);
         }
-        let counts: Vec<usize> = species_counts.values().copied().collect();
-        let alive_species: Vec<u64> = species_counts.keys().copied().collect();
-        metrics.record_diversity(&counts, &alive_species);
+        // Phase 5, SX-3b: a single paired `Vec` from one `.iter()` pass, not
+        // two separately-collected `.keys()`/`.values()` vectors — avoids
+        // relying on both iterators staying positionally aligned across two
+        // separate calls, and lets `record_diversity` retain the species-id
+        // to count pairing (previously discarded immediately after use).
+        let species_distribution: Vec<(u64, usize)> = species_counts
+            .iter()
+            .map(|(&id, &count)| (id, count))
+            .collect();
+        metrics.record_diversity(&species_distribution);
         metrics.record_distributions(ages, generations);
     }
 

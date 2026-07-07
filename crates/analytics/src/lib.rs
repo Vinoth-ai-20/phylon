@@ -202,6 +202,18 @@ pub struct MetricsState {
     /// species that weren't alive at the previous diversity sample (symmetric
     /// difference of the two alive-species sets, divided by their union size).
     pub species_turnover_history: std::collections::VecDeque<[f64; 2]>,
+    /// Snapshot of each currently-alive species's population count, as of
+    /// the last [`MetricsState::record_diversity`] call — `(species_id,
+    /// count)` pairs, sorted by count descending so the Metrics panel's
+    /// chart reads most-populous-first. Phase 5, SX-3b: `record_diversity`
+    /// already received per-species counts to compute Shannon/Simpson/
+    /// richness/turnover, but discarded the species-id↔count pairing
+    /// immediately after — nothing downstream could answer "which species,
+    /// and how many of each," only the aggregate indices. This is a
+    /// distribution snapshot, not a time series, so it's replaced wholesale
+    /// each sample rather than accumulated into a ring buffer, the same
+    /// pattern `age_distribution`/`generation_distribution` already use.
+    pub species_distribution: Vec<(u64, usize)>,
     /// Snapshot of every currently-alive organism's age in ticks, as of the
     /// last [`MetricsState::record_distributions`] call — a distribution,
     /// not a time series, so it's replaced wholesale each sample rather than
@@ -255,6 +267,7 @@ impl MetricsState {
             species_turnover_history: std::collections::VecDeque::with_capacity(
                 METRICS_RING_CAPACITY,
             ),
+            species_distribution: Vec::new(),
             age_distribution: Vec::new(),
             generation_distribution: Vec::new(),
             previous_alive_species: None,
@@ -326,22 +339,37 @@ impl MetricsState {
     }
 
     /// Records one diversity sample: Shannon/Simpson indices and species
-    /// richness computed from `species_counts` (per-species population
-    /// sizes among currently-alive organisms), plus turnover against the
+    /// richness computed from `species_distribution` (`(species_id, count)`
+    /// pairs for every currently-alive species), plus turnover against the
     /// previous sample's alive-species set.
     ///
-    /// `alive_species` is the full set of species IDs alive *this* sample —
-    /// kept as a generic `u64` (not `evolution::SpeciesId`) for the same
+    /// Takes one already-paired slice, not two separately-derived
+    /// `&[usize]`/`&[u64]` vectors (SX-3b) — the previous two-parameter
+    /// signature relied on callers deriving both from the same source
+    /// (typically a `HashMap`'s `.keys()`/`.values()`, called separately)
+    /// and trusting they'd stay positionally aligned; a single paired slice
+    /// removes that assumption entirely, as well as letting this method
+    /// retain the per-species counts as [`MetricsState::species_distribution`]
+    /// (previously discarded immediately after computing the aggregate
+    /// indices below — nothing downstream could answer "which species, and
+    /// how many of each," only the aggregate numbers). Species IDs are kept
+    /// as a generic `u64` (not `evolution::SpeciesId`) for the same
     /// decoupling reason [`shannon_index`]'s doc comment gives. Turnover is
     /// the symmetric difference of this sample's and the previous sample's
     /// alive-species sets, divided by their union size (`0.0` if both are
     /// empty, `1.0` if the sets share no species at all).
-    pub fn record_diversity(&mut self, species_counts: &[usize], alive_species: &[u64]) {
-        let shannon = shannon_index(species_counts);
-        let simpson = simpson_index(species_counts);
-        let richness = alive_species.len();
+    pub fn record_diversity(&mut self, species_distribution: &[(u64, usize)]) {
+        let counts: Vec<usize> = species_distribution.iter().map(|&(_, c)| c).collect();
+        let shannon = shannon_index(&counts);
+        let simpson = simpson_index(&counts);
+        let richness = species_distribution.len();
 
-        let current: std::collections::HashSet<u64> = alive_species.iter().copied().collect();
+        let mut sorted_distribution = species_distribution.to_vec();
+        sorted_distribution.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
+        self.species_distribution = sorted_distribution;
+
+        let current: std::collections::HashSet<u64> =
+            species_distribution.iter().map(|&(id, _)| id).collect();
         let turnover = match &self.previous_alive_species {
             Some(previous) if !previous.is_empty() || !current.is_empty() => {
                 let union_size = previous.union(&current).count();
@@ -510,8 +538,8 @@ mod tests {
     #[test]
     fn record_diversity_reports_zero_turnover_on_identical_species_sets() {
         let mut m = MetricsState::new();
-        m.record_diversity(&[5, 5], &[1, 2]);
-        m.record_diversity(&[6, 4], &[1, 2]);
+        m.record_diversity(&[(1, 5), (2, 5)]);
+        m.record_diversity(&[(1, 6), (2, 4)]);
         assert_eq!(
             *m.species_turnover_history.back().unwrap(),
             [m.sim_time, 0.0]
@@ -521,8 +549,8 @@ mod tests {
     #[test]
     fn record_diversity_reports_full_turnover_on_disjoint_species_sets() {
         let mut m = MetricsState::new();
-        m.record_diversity(&[5, 5], &[1, 2]);
-        m.record_diversity(&[5, 5], &[3, 4]);
+        m.record_diversity(&[(1, 5), (2, 5)]);
+        m.record_diversity(&[(3, 5), (4, 5)]);
         assert_eq!(
             *m.species_turnover_history.back().unwrap(),
             [m.sim_time, 1.0]
@@ -532,11 +560,22 @@ mod tests {
     #[test]
     fn record_diversity_reports_zero_turnover_on_first_sample() {
         let mut m = MetricsState::new();
-        m.record_diversity(&[5, 5], &[1, 2]);
+        m.record_diversity(&[(1, 5), (2, 5)]);
         assert_eq!(
             *m.species_turnover_history.back().unwrap(),
             [m.sim_time, 0.0]
         );
+    }
+
+    /// Phase 5, SX-3b: `species_distribution` must reflect the real
+    /// per-species counts, sorted most-populous-first, not just the
+    /// aggregate diversity indices the previous signature discarded them
+    /// into.
+    #[test]
+    fn record_diversity_stores_species_distribution_sorted_by_count_descending() {
+        let mut m = MetricsState::new();
+        m.record_diversity(&[(1, 3), (2, 9), (3, 1)]);
+        assert_eq!(m.species_distribution, vec![(2, 9), (1, 3), (3, 1)]);
     }
 
     #[test]

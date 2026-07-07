@@ -157,7 +157,7 @@ Milestones are scoped at the same resolution `PHASE4_ROADMAP.md` used for its ow
 | Milestone | Goal | Effort | Risk |
 |---|---|---|---|
 | **SX-3a** | **Done — see §11.** `ReproductionEvent` was published every non-seed birth but had zero consumers (a parallel, non-event-driven code path did the actual narration logging) — wired to a real consumer. `FieldSpike` was never constructed anywhere and had no detector — retired along with its now-unused `FieldType` enum, per this milestone's own "or explicitly retire" clause | 2 | Low |
-| **SX-3b** | Species/speciation visibility: a minimal population-by-species view (could live in Metrics as a 7th chart, reusing existing `SpeciesRegistry` data) — currently zero UI surfacing anywhere | 3 | Low |
+| **SX-3b** | **Done — see §11.** Audit found `SpeciesRegistry` only tracks species *existence* (founding/representatives), not live population counts — the real per-species counts were already computed every sample in `analytics_bridge_system` (via `evolution::LineageTracker`, not `SpeciesRegistry`) but discarded immediately after deriving Shannon/Simpson/richness. Added a real snapshot field + a 7th Metrics chart (bar chart, not a line — a snapshot, not a time series) | 3 | Low |
 | **SX-3c** | Lineage as a real DAG, not a flat record: extend Cell Lineage Viewer (P4-R5) to show a small ancestor/descendant tree (multi-generation), not just one parent id | 4 | Medium |
 | **SX-3d** | Colony/migration visualization: territory or colony-boundary overlay, reusing the existing spring-graph BFS already used for selection highlighting (`app/src/render.rs`) | 4 | Medium |
 
@@ -575,3 +575,27 @@ Both fixes are pure call-order changes — no new drawing logic, no new renderin
 - As with every SX milestone so far: no screen-capture/automation driver available in this session — whether the new Lineage narration entries read correctly in the actual Event Log panel is unconfirmed, compiled and logically reviewed only.
 
 **Stopping here, per Implementation Discipline.** Waiting for approval before starting SX-3b.
+
+### SX-3b — Species/speciation visibility
+
+**Re-audit before implementing:** read `evolution::SpeciesRegistry` directly rather than assuming it holds population data because it's named "registry." It only tracks species *existence* — `species_count()`, founding order, and each species's representative genome for future classification comparisons — with **no live per-species population counts** and no way to enumerate current species IDs at all. The actual per-organism species assignment lives in a completely different resource, `evolution::LineageTracker` (via `LineageRecord.species`, read through `active_records()`), which the roadmap's own SX-3b row didn't name.
+
+**Found the data was already computed, every sample, and thrown away:** `crates/app/src/analytics_bridge.rs`'s `analytics_bridge_system` already builds a `HashMap<u64, usize>` of exact per-species live population counts every sample (`tracker.active_records()`, tallied by `record.species.0`) — but only to feed `MetricsState::record_diversity`, which computed Shannon/Simpson/richness/turnover from the counts and discarded the species-id↔count pairing immediately after. Nothing downstream could ever answer "which species, and how many of each," only the aggregate index. This is the real reason nothing surfaced in the UI: not a missing data pipeline, a data pipeline that already reached the right place and dropped the one thing this milestone needs on the floor.
+
+**Also found and fixed a latent correctness risk in the same code, while touching it anyway:** the previous call site built two *separately*-collected vectors, `species_counts.keys()` and `species_counts.values()` (via two independent iterator calls on the same `HashMap`), and passed both to `record_diversity` under the implicit assumption that they'd stay positionally aligned — true in practice for an unmutated `HashMap` between calls, but not a documented guarantee, and fragile at the API boundary. `record_diversity`'s signature was changed to take one already-paired `&[(u64, usize)]` slice instead of two separate `&[usize]`/`&[u64]` parameters, built from a single `.iter()` pass — removing the assumption entirely, not just working around it.
+
+**Implementation:**
+- `analytics::MetricsState` gained `species_distribution: Vec<(u64, usize)>` — a point-in-time snapshot (sorted most-populous-first), replaced wholesale each sample, the same pattern `age_distribution`/`generation_distribution`/`colony_size_distribution` already established — not a new kind of field.
+- `record_diversity`'s signature changed to `record_diversity(&mut self, species_distribution: &[(u64, usize)])`, computing `shannon_index`/`simpson_index` internally from the counts (those functions stay deliberately decoupled from species IDs, per their own doc comment) while also storing the sorted distribution.
+- `crates/ui/src/plugins/metrics.rs` gained a 7th chart, "Species Distribution" — an `egui_plot::BarChart` (correct widget for a snapshot distribution, not a `Line`, which is for time series), placed as a full-width section below the existing 2-column/6-plot grid rather than reworking that grid's height-balancing math for a 7th slot, matching "minimal" from the roadmap's own wording. Reuses `theme::CHART_RICHNESS` (already the "species" hue in the Diversity plot above) rather than adding a new token for the same concept.
+
+**Measurement:** updated the 3 existing `record_diversity` tests to the new paired-slice signature (same assertions, same coverage) and added one new test, `record_diversity_stores_species_distribution_sorted_by_count_descending`, proving the distribution is both retained and correctly ordered — not just that turnover/indices still compute correctly.
+
+**Verification:** `cargo build --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `cargo test --workspace` — all clean, 0 failures (analytics: +1 net test after signature migration), no regressions.
+
+**Disclosed limitations, not glossed over:**
+- Bars are labeled "Species {id}" (a raw, meaningless-to-a-human numeric ID) — there's no species *name*/nickname concept anywhere in the codebase to label them more meaningfully; a real, deferred UX gap, not solved here.
+- The chart doesn't distinguish or highlight the selected/tracked organism's own species — a plausible future enhancement (tying this chart to the Inspector's existing "SpeciesId" row), not implemented, since the roadmap asked for a "minimal" view.
+- As with every SX milestone so far: no screen-capture/automation driver available in this session — the bar chart's actual on-screen legibility (bar width/spacing at typical species counts, whether the X-axis needing no formatter reads as intentional rather than broken) is unconfirmed, compiled and logically reviewed only.
+
+**Stopping here, per Implementation Discipline.** Waiting for approval before starting SX-3c.

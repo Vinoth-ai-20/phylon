@@ -1,6 +1,8 @@
 use crate::types::*;
 
-/// Renders the Metrics Dashboard (6-plot grid).
+/// Renders the Metrics Dashboard (a 2-column, 3-row grid of 6 time-series
+/// plots, plus one full-width snapshot bar chart below — Species
+/// Distribution, added Phase 5 SX-3b).
 ///
 /// This is its own docked tile/tab (see `layout::rebuild_tree_from_modes`) —
 /// it used to also carry an internal "Metrics Dashboard / Event Log" tab bar
@@ -314,5 +316,41 @@ pub fn metrics_ui(
                     });
             });
         });
+
+        // Phase 5, SX-3b: population-by-species, a real gap — `SpeciesRegistry`
+        // (`evolution` crate) tracked species existence/founding but never
+        // live per-species population counts anywhere reachable by the UI;
+        // `analytics_bridge_system` computed per-species counts every sample
+        // purely to derive Shannon/Simpson/richness (above) and discarded
+        // the species-id↔count pairing immediately after. A snapshot
+        // distribution (like `colony_size_distribution` above), not a time
+        // series — bar chart, not a line, since "which species has how many
+        // members right now" is the question, not a trend. Reuses
+        // `CHART_RICHNESS` (already the "species" hue in the Diversity plot
+        // above) rather than adding a new token for the same concept family.
+        ui.add_space(crate::theme::SPACE_SM);
+        ui.label(egui::RichText::new("Species Distribution").strong());
+        if metrics.species_distribution.is_empty() {
+            crate::widgets::empty_state(ui, "No species currently alive.");
+        } else {
+            let bars: Vec<egui_plot::Bar> = metrics
+                .species_distribution
+                .iter()
+                .enumerate()
+                .map(|(i, &(species_id, count))| {
+                    egui_plot::Bar::new(i as f64, count as f64)
+                        .name(format!("Species {species_id}"))
+                        .fill(richness_c)
+                })
+                .collect();
+            egui_plot::Plot::new("species_distribution_plot")
+                .height(plot_height)
+                .x_axis_formatter(|_x, _range| String::new())
+                .y_axis_formatter(|y, _range| format!("{:.0}", y.value))
+                .y_axis_label("Population (count)")
+                .show(ui, |plot_ui| {
+                    plot_ui.bar_chart(egui_plot::BarChart::new(bars).name("Species population"));
+                });
+        }
     });
 }
