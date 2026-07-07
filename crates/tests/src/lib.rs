@@ -59,3 +59,56 @@ mod integration {
         assert_eq!(sched.current_tick(), Tick(10));
     }
 }
+
+/// Phase 4, P4-E1: proves `events::PhylonEvent` works as a native
+/// `bevy_ecs::event::Events<T>` resource on the simulation `World` — the
+/// delivery path the running `app` binary actually uses (see
+/// `crates/app/src/app.rs`'s resource registration and
+/// `crates/app/src/systems.rs`'s `process_deaths_system`/
+/// `interaction_event_log_system`), as opposed to the crossbeam-channel
+/// `EventBus` the `scheduler_integrates_with_event_bus` test above exercises.
+/// Per `PHASE4_ROADMAP.md`'s own verification plan for this milestone: "An
+/// integration test publishing a `PhylonEvent` and confirming it's drained
+/// and consumed exactly once — the first such test in the codebase."
+#[cfg(test)]
+mod phylon_event_ecs_wiring {
+    use bevy_ecs::prelude::*;
+    use bevy_ecs::system::RunSystemOnce;
+    use common::{EntityId, Tick};
+    use events::{DeathCause, PhylonEvent};
+
+    #[derive(Resource, Default)]
+    struct Consumed(Vec<PhylonEvent>);
+
+    fn consume(mut reader: EventReader<PhylonEvent>, mut consumed: ResMut<Consumed>) {
+        for event in reader.read() {
+            consumed.0.push(event.clone());
+        }
+    }
+
+    #[test]
+    fn phylon_event_is_published_and_consumed_exactly_once() {
+        let mut world = World::new();
+        world.insert_resource(Events::<PhylonEvent>::default());
+        world.insert_resource(Consumed::default());
+
+        world.send_event(PhylonEvent::OrganismDied {
+            id: EntityId(7),
+            cause: DeathCause::Predation,
+            tick: Tick(42),
+        });
+
+        world.run_system_once(consume);
+
+        let consumed = world.resource::<Consumed>();
+        assert_eq!(consumed.0.len(), 1, "expected exactly one event consumed");
+        assert!(matches!(
+            consumed.0[0],
+            PhylonEvent::OrganismDied {
+                id,
+                cause: DeathCause::Predation,
+                ..
+            } if id == EntityId(7)
+        ));
+    }
+}

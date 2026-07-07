@@ -119,9 +119,34 @@ pub fn develop_at_position(
     segment_index: usize,
     total_segments: usize,
 ) -> DevelopmentalOutputs {
+    develop_at_position_with_life_stage(regulatory_cppn, segment_index, total_segments, 0.0)
+}
+
+/// Runs development at one body-axis position, exactly like
+/// [`develop_at_position`], but folds an additional `life_stage_signal` into
+/// every gene's external input (Phase 4, P4-L1 — ADR-P4-03's re-entrant
+/// growth). `life_stage_signal = 0.0` reproduces `develop_at_position`'s
+/// output exactly (see this module's `life_stage_signal_zero_matches_develop_at_position`
+/// regression test) — `organisms::life_cycle::life_stage_system` resumes a
+/// maturing organism's growth with a nonzero signal, so the *new* positions
+/// it reaches as an adult are decoded under a genuinely different context
+/// than a juvenile-context decode of the same position index would have
+/// produced, which is what makes a life-stage transition a real
+/// developmental event rather than a deterministic continuation.
+/// `develop_at_position` is a thin wrapper over this function, not a
+/// separate implementation, so the two can never drift out of sync.
+pub fn develop_at_position_with_life_stage(
+    regulatory_cppn: &Cppn,
+    segment_index: usize,
+    total_segments: usize,
+    life_stage_signal: f32,
+) -> DevelopmentalOutputs {
     let gene_count = REGULATORY_GENE_ROLES.len();
     let mut network = RegulatoryNetwork::generate(regulatory_cppn, gene_count);
-    let inputs = external_inputs_for_position(segment_index, total_segments, gene_count);
+    let mut inputs = external_inputs_for_position(segment_index, total_segments, gene_count);
+    for input in &mut inputs {
+        *input += life_stage_signal;
+    }
     network.develop(DEVELOPMENT_STEPS, &inputs);
 
     let states_for = |role: RegulatoryGeneRole| -> Vec<f32> {
@@ -256,5 +281,59 @@ mod tests {
         let mid = develop_at_position(&cppn, 4, 8);
         assert!((0.0..=1.0).contains(&head.pigment[0]));
         assert!((0.0..=1.0).contains(&mid.pigment[0]));
+    }
+
+    #[test]
+    fn life_stage_signal_zero_matches_develop_at_position() {
+        // Phase 4, P4-L1: `develop_at_position` must be exactly reproduced
+        // by the life-stage-aware function at signal 0.0 — this is the
+        // regression guarantee every existing call site (juvenile growth,
+        // `simulate_growth_timeline`, the HOX/Evolution Debugger UI panels)
+        // relies on implicitly by continuing to call `develop_at_position`
+        // unmodified.
+        let cppn = Cppn::new();
+        for position in 0..8 {
+            assert_eq!(
+                develop_at_position(&cppn, position, 8),
+                develop_at_position_with_life_stage(&cppn, position, 8, 0.0)
+            );
+        }
+    }
+
+    #[test]
+    fn nonzero_life_stage_signal_can_change_the_decode() {
+        // A hand-built regulatory network sensitive to its external input
+        // (rather than a search for one, matching this session's own
+        // "hand-built fixture, not guessed" precedent) — confirms a
+        // life-stage transition is capable of producing a genuinely
+        // different decode at the *same* body position, not a deterministic
+        // repeat of the juvenile pass.
+        use crate::cppn::{Cppn, CppnConnection, CppnNode};
+        let cppn = Cppn {
+            nodes: vec![
+                CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 0,
+                },
+                CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 1,
+                },
+            ],
+            connections: vec![CppnConnection {
+                source: 0,
+                target: 1,
+                weight: 10.0,
+                enabled: true,
+                innovation: 0,
+                mutation_rate: crate::cppn::DEFAULT_MUTATION_RATE,
+            }],
+        };
+
+        let juvenile = develop_at_position_with_life_stage(&cppn, 2, 8, 0.0);
+        let adult = develop_at_position_with_life_stage(&cppn, 2, 8, 5.0);
+        assert_ne!(juvenile, adult);
     }
 }

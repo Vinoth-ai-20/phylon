@@ -29,7 +29,12 @@ use common::Vec2;
 ///    is `Tail`), it wires the `Brain` CTRNN topology.
 pub fn growth_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut GrowthState, &mut DevelopmentalGraph)>,
+    mut query: Query<(
+        Entity,
+        &mut GrowthState,
+        &mut DevelopmentalGraph,
+        Option<&crate::components::LifeStage>,
+    )>,
     node_query: Query<&physics::ParticleNode>,
     spring_query: Query<&physics::Spring>,
     chem_query: Query<&metabolism::ChemicalEconomy>,
@@ -37,7 +42,16 @@ pub fn growth_system(
     use genetics::SegmentType;
     use physics::{ParticleNode, Spring};
 
-    for (entity, mut state, mut graph) in query.iter_mut() {
+    for (entity, mut state, mut graph, life_stage) in query.iter_mut() {
+        // Phase 4, P4-L1: an organism without a `LifeStage` component (there
+        // shouldn't be any post-P4-L1, but this keeps the query total rather
+        // than panicking on an edge case) developmentally behaves as
+        // `Juvenile` — signal `0.0`, `develop_at_position`'s original
+        // behavior.
+        let life_stage_signal = life_stage
+            .copied()
+            .unwrap_or_default()
+            .developmental_signal();
         // Expressed (dominance-resolved for diploid genomes — see
         // `Genome::expressed_brain_cppn`/`expressed_regulatory_cppn`) once
         // per organism, not per query, since growth/brain-wiring below
@@ -174,10 +188,11 @@ pub fn growth_system(
         // the same `develop_at_position` call handles every position,
         // including the head node `spawning::spawn_organism` already built
         // (Phase 3 M4; see ADR-P3-02).
-        let outputs = genetics::develop_at_position(
+        let outputs = genetics::develop_at_position_with_life_stage(
             &expressed_regulatory_cppn,
             state.next_segment_index,
             crate::MAX_SEGMENTS,
+            life_stage_signal,
         );
 
         // Phase 3 M8 (DEF-002): a position marked for apoptosis is pruned

@@ -124,7 +124,19 @@ pub enum FieldType {
 /// to see the causal timeline:
 ///
 /// $$ T_{birth} \le t \le T_{death} $$
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// **Phase 4, P4-F-adjacent milestone P4-E1:** also derives `bevy_ecs::event::Event`,
+/// so it can be published/consumed as a native `bevy_ecs::event::Events<PhylonEvent>`
+/// resource directly on the simulation `World` — the same pattern already
+/// established by `reproduction::BirthRequest`/`ecology::catastrophe::HazardSpawned`
+/// (see `crates/app/src/app.rs`'s resource registration and
+/// `crates/app/src/simulation.rs`'s per-tick `Events::update()` calls). This
+/// is deliberately a *second*, simpler delivery path alongside [`EventBus`]
+/// (which remains for `SimulationScheduler`-based, cross-thread use) rather
+/// than a replacement — the running `app` binary drives systems directly via
+/// `RunSystemOnce`, bypassing `SimulationScheduler` entirely, so a bevy-native
+/// `Events<T>` resource is what the live app can actually wire up today.
+#[derive(Debug, Clone, Serialize, Deserialize, bevy_ecs::prelude::Event)]
 pub enum PhylonEvent {
     /// A new organism has been born (either initial spawn or reproduction).
     OrganismBorn {
@@ -305,6 +317,96 @@ impl EventBus {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Timed Effects (Phase 4, P4-E1)
+// ────────────────────────────────────────────────────────────────────────────
+
+/// One kind of transient, position-anchored visual effect. Deliberately a
+/// single variant for now — this milestone (P4-E1) is the shared
+/// infrastructure, not the effect catalog; individual visual effects
+/// (predation flash, blood-flow particle trail, hormone diffusion glow) are
+/// Epic 8's job (`PHASE4_ROADMAP.md`'s P4-V1/P4-V2), gated behind this one
+/// per ADR-P4-05.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TimedEffectKind {
+    /// A short line of text that appears at a world position and expires.
+    FloatingText {
+        /// The text to display.
+        text: String,
+        /// RGB color, `[0, 1]` per channel.
+        color: [f32; 3],
+    },
+}
+
+/// One active transient visual effect, anchored to a world position and a
+/// tick-based expiry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimedEffect {
+    /// World-space position this effect is anchored to.
+    pub position: common::Vec2,
+    /// What kind of effect this is.
+    pub kind: TimedEffectKind,
+    /// The tick after which this effect is no longer active.
+    pub expires_at_tick: u64,
+}
+
+/// # Timed Effects
+///
+/// ## 1. What Happens
+/// Holds every currently-active transient visual effect (Phase 4, P4-E1) —
+/// e.g. a "such-and-such happened" floating text — each with a world
+/// position and a tick-based expiry.
+///
+/// ## 2. Why It Happens
+/// Before this milestone, every visual in the running app was steady-state,
+/// recomputed fresh every frame from current ECS state (diet rings, hover
+/// highlight, a selection pulse driven by `total_sim_time`) — there was no
+/// way to represent "this happened, briefly show something about it, then
+/// stop," which every future interaction VFX (Epic 8) and physiology
+/// visualization (blood flow, hormone diffusion) needs. This resource, plus
+/// [`expire`](Self::expire), is that missing primitive — modeled on the
+/// existing `WorkbenchState::push_toast`/`cleanup_toasts` pattern already
+/// used for UI notifications (`crates/ui/src/state.rs`), but anchored to a
+/// world position and a simulation tick instead of a screen corner and
+/// wall-clock time.
+///
+/// ## 3. How It Happens
+/// [`spawn`](Self::spawn) appends a new effect with `expires_at_tick =
+/// current_tick + duration_ticks`; [`expire`](Self::expire), called once per
+/// tick, retains only effects whose `expires_at_tick` is still in the
+/// future. **Rendering is explicitly out of scope for this milestone** — per
+/// ADR-P4-05, Epic 6 (this milestone) is the shared data-side
+/// infrastructure; drawing these onto the viewport is Epic 8's job, once a
+/// real visual effect is designed to consume them.
+#[derive(Debug, Clone, Default, bevy_ecs::prelude::Resource)]
+pub struct TimedEffects {
+    /// Every effect currently active, in spawn order.
+    pub active: Vec<TimedEffect>,
+}
+
+impl TimedEffects {
+    /// Adds a new effect that will remain active through
+    /// `current_tick + duration_ticks`, inclusive.
+    pub fn spawn(
+        &mut self,
+        position: common::Vec2,
+        kind: TimedEffectKind,
+        current_tick: u64,
+        duration_ticks: u64,
+    ) {
+        self.active.push(TimedEffect {
+            position,
+            kind,
+            expires_at_tick: current_tick + duration_ticks,
+        });
+    }
+
+    /// Drops every effect whose expiry has passed as of `current_tick`.
+    pub fn expire(&mut self, current_tick: u64) {
+        self.active.retain(|e| e.expires_at_tick > current_tick);
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Tests
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -363,5 +465,73 @@ mod tests {
         assert_eq!(bus.pending_count(), 1);
         bus.drain();
         assert_eq!(bus.pending_count(), 0);
+    }
+
+    #[test]
+    fn timed_effects_spawn_is_active_immediately() {
+        let mut effects = TimedEffects::default();
+        effects.spawn(
+            common::Vec2::new(1.0, 2.0),
+            TimedEffectKind::FloatingText {
+                text: "Eaten!".to_string(),
+                color: [1.0, 0.0, 0.0],
+            },
+            100,
+            30,
+        );
+        assert_eq!(effects.active.len(), 1);
+        assert_eq!(effects.active[0].expires_at_tick, 130);
+    }
+
+    #[test]
+    fn timed_effects_expire_removes_only_past_expiry() {
+        let mut effects = TimedEffects::default();
+        effects.spawn(
+            common::Vec2::ZERO,
+            TimedEffectKind::FloatingText {
+                text: "short".to_string(),
+                color: [1.0, 1.0, 1.0],
+            },
+            0,
+            10,
+        );
+        effects.spawn(
+            common::Vec2::ZERO,
+            TimedEffectKind::FloatingText {
+                text: "long".to_string(),
+                color: [1.0, 1.0, 1.0],
+            },
+            0,
+            1000,
+        );
+
+        effects.expire(11);
+
+        assert_eq!(effects.active.len(), 1);
+        assert_eq!(
+            effects.active[0].kind,
+            TimedEffectKind::FloatingText {
+                text: "long".to_string(),
+                color: [1.0, 1.0, 1.0],
+            }
+        );
+    }
+
+    #[test]
+    fn timed_effects_expire_at_exact_tick_removes_it() {
+        // `expires_at_tick` is the last tick an effect is still active;
+        // `current_tick == expires_at_tick` should already be expired.
+        let mut effects = TimedEffects::default();
+        effects.spawn(
+            common::Vec2::ZERO,
+            TimedEffectKind::FloatingText {
+                text: "x".to_string(),
+                color: [0.0, 0.0, 0.0],
+            },
+            0,
+            10,
+        );
+        effects.expire(10);
+        assert!(effects.active.is_empty());
     }
 }

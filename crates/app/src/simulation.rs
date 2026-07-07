@@ -63,6 +63,11 @@ impl PhylonApp {
 
         // 1. Run Biology Systems (Sensing, Brain, Behavior)
         self.world.ecs.run_system_once(organisms::growth_system);
+        // Life-stage transitions (Phase 4, P4-L1): only affects organisms
+        // not currently mid-growth, so this can safely run right after
+        // `growth_system` in the same tick without racing it — see
+        // `organisms::life_stage_system`'s doc comment.
+        self.world.ecs.run_system_once(organisms::life_stage_system);
         // Rebuilds the shared food/mineral/corpse spatial grids once for
         // this tick — must run before both sensing_system and
         // ecology::foraging_system, which otherwise would each rebuild the
@@ -272,6 +277,11 @@ impl PhylonApp {
         self.world
             .ecs
             .run_system_once(process_narrative_events_system);
+        // Phase 4, P4-E1: the first real `events::PhylonEvent` consumer,
+        // plus expiring this tick's timed effects — both must run after
+        // `process_deaths_system` (this tick's producer, above).
+        self.world.ecs.run_system_once(interaction_event_log_system);
+        self.world.ecs.run_system_once(expire_timed_effects_system);
         self.world
             .ecs
             .run_system_once(crate::analytics_bridge::analytics_bridge_system);
@@ -288,6 +298,13 @@ impl PhylonApp {
             .get_resource_mut::<bevy_ecs::event::Events<ecology::catastrophe::HazardSpawned>>()
         {
             hazard_events.update();
+        }
+        if let Some(mut phylon_events) = self
+            .world
+            .ecs
+            .get_resource_mut::<bevy_ecs::event::Events<events::PhylonEvent>>()
+        {
+            phylon_events.update();
         }
 
         if let (Some(gpu), Some(diffusion_compute)) =

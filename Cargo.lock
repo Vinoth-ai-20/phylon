@@ -1494,6 +1494,7 @@ dependencies = [
 name = "events"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "common",
  "crossbeam",
  "serde",
@@ -4090,6 +4091,7 @@ dependencies = [
 name = "tests"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "common",
  "config",
  "events",

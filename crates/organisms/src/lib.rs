@@ -23,7 +23,8 @@ pub use sandbox::{PresetDefinition, SandboxTraits};
 /// Organism components.
 pub mod components;
 pub use components::{
-    BiologicalComponents, Generation, GrowthState, OrganismColor, SpatialComponents, SpawnTick,
+    BiologicalComponents, Generation, GrowthState, LifeStage, OrganismColor, SpatialComponents,
+    SpawnTick,
 };
 
 /// The Body Graph (Phase 3, M6) — a persistent ECS component as of Phase 4,
@@ -70,3 +71,7 @@ pub use endocrine::endocrine_diffusion_system;
 /// P4-F5).
 pub mod immune;
 pub use immune::segment_infection_system;
+
+/// Life-stage transitions and re-entrant growth (Phase 4, P4-L1).
+pub mod life_cycle;
+pub use life_cycle::life_stage_system;

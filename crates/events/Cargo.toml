@@ -9,3 +9,4 @@ common    = { workspace = true }
 serde     = { workspace = true }
 thiserror = { workspace = true }
 crossbeam = { workspace = true }
+bevy_ecs  = { workspace = true }

@@ -241,6 +241,14 @@ impl PhylonApp {
         world.ecs.insert_resource(
             bevy_ecs::event::Events::<ecology::catastrophe::HazardSpawned>::default(),
         );
+        // Phase 4, P4-E1: the first real `events::PhylonEvent` producer/
+        // consumer wiring — registered the same way as the two native bevy
+        // events above (see `crates/app/src/simulation.rs`'s per-tick
+        // `Events::update()` calls, extended for this one too).
+        world
+            .ecs
+            .insert_resource(bevy_ecs::event::Events::<events::PhylonEvent>::default());
+        world.ecs.insert_resource(events::TimedEffects::default());
         world.ecs.insert_resource(analytics::MetricsState::new());
         world.ecs.insert_resource(analytics::NarrationLog::new(100));
         world

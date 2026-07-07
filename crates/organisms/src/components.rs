@@ -40,6 +40,36 @@ pub struct Generation(pub u32);
 #[derive(Component, Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct SpawnTick(pub u64);
 
+/// An organism's current life stage (Phase 4, `PHASE4_ROADMAP.md` milestone
+/// P4-L1, ADR-P4-03). Every organism starts `Juvenile`; `organisms::life_cycle::life_stage_system`
+/// promotes it to `Adult` once it clears a maturity age threshold — at which
+/// point growth becomes re-entrant (see that system's doc comment). Only two
+/// stages exist for this milestone, deliberately: the roadmap calls for a
+/// life-stage state machine, not a specific number of stages, and two is the
+/// minimum that makes "a transition" meaningful at all.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum LifeStage {
+    /// Not yet mature — the stage every organism is spawned in.
+    #[default]
+    Juvenile,
+    /// Mature — reached once `life_stage_system`'s age threshold is crossed.
+    Adult,
+}
+
+impl LifeStage {
+    /// The `develop_at_position_with_life_stage` signal for this stage —
+    /// `0.0` for `Juvenile` reproduces `develop_at_position`'s original,
+    /// pre-P4-L1 decode exactly; `Adult`'s value is an untuned placeholder,
+    /// same status as every other Phase 4 rate/signal constant introduced
+    /// this phase, chosen only to be clearly nonzero.
+    pub fn developmental_signal(self) -> f32 {
+        match self {
+            LifeStage::Juvenile => 0.0,
+            LifeStage::Adult => 1.0,
+        }
+    }
+}
+
 /// Tracks the sequential growth of an organism from its regulatory genome.
 ///
 /// Each tick, `organisms::growth_system` decodes the next body position via

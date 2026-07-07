@@ -1,4 +1,4 @@
-use crate::components::{Generation, GrowthState, OrganismColor, SpawnTick};
+use crate::components::{Generation, GrowthState, LifeStage, OrganismColor, SpawnTick};
 use common::Vec2;
 
 /// Spawns an organism's zygote based on its genome.
@@ -111,6 +111,9 @@ pub fn spawn_organism(
         // `GrowthState` — it survives that component's removal once growth
         // completes, since `growth_system` writes to it directly.
         graph,
+        // Phase 4, P4-L1 (ADR-P4-03): every organism starts `Juvenile`;
+        // `organisms::life_cycle::life_stage_system` promotes it later.
+        LifeStage::Juvenile,
         sensing::HeadVision {
             range: 250.0,
             fov: std::f32::consts::PI * 0.8, // ~144 degrees

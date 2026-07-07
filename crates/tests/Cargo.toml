@@ -9,3 +9,4 @@ common    = { workspace = true }
 config    = { workspace = true }
 events    = { workspace = true }
 scheduler = { workspace = true }
+bevy_ecs  = { workspace = true }

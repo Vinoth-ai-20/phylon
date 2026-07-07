@@ -120,6 +120,28 @@ impl bevy_ecs::world::Command for SpawnOrganismCommand {
                 );
             }
         }
+
+        // Phase 4, P4-E1: the first real `events::PhylonEvent` producer for
+        // births/reproduction — mirrors the death-side emission in
+        // `process_deaths_system`. `Command::apply` runs directly against
+        // `&mut World`, so events are sent via `World::send_event` rather
+        // than an `EventWriter` system param.
+        let tick = common::Tick(
+            world
+                .get_resource::<metabolism::GlobalAtmosphere>()
+                .map_or(0, |a| a.ticks),
+        );
+        world.send_event(events::PhylonEvent::OrganismBorn {
+            id: common::EntityId(entity.to_bits()),
+            tick,
+        });
+        if let Some(parent_id) = self.parent_id {
+            world.send_event(events::PhylonEvent::ReproductionEvent {
+                parent: common::EntityId(parent_id.to_bits()),
+                child: common::EntityId(entity.to_bits()),
+                tick,
+            });
+        }
     }
 }
 
@@ -155,7 +177,58 @@ pub fn process_narrative_events_system(
     }
 }
 
+/// # Interaction Event Log System
+///
+/// ## 1. What Happens
+/// The first real consumer of `events::PhylonEvent` (Phase 4, P4-E1) — reads
+/// every event published this tick and logs the notable ones (predation
+/// deaths) into `analytics::NarrationLog`.
+///
+/// ## 2. Why It Happens
+/// `PhylonEvent` (`crates/events`) was fully designed but never wired into
+/// the running app — nothing published or consumed a single event before
+/// this milestone. This system proves the wiring works end-to-end: a real
+/// event, published by `process_deaths_system`, drained and acted on here.
+///
+/// ## 3. How It Happens
+/// Only `OrganismDied { cause: Predation, .. }` is logged — births and
+/// ordinary (non-predation) deaths are common enough that logging every one
+/// would flood `NarrationLog` (which already has its own, separate
+/// generation-milestone logging for births; see `SpawnOrganismCommand::apply`).
+pub fn interaction_event_log_system(
+    mut phylon_events: EventReader<events::PhylonEvent>,
+    mut log: ResMut<analytics::NarrationLog>,
+) {
+    for event in phylon_events.read() {
+        if let events::PhylonEvent::OrganismDied {
+            id,
+            cause: events::DeathCause::Predation,
+            tick,
+        } = event
+        {
+            log.push_event(tick.0, "Predation", format!("Organism {} was eaten", id.0));
+        }
+    }
+}
+
+/// Expires every `events::TimedEffects` entry whose duration has elapsed —
+/// the per-tick half of the P4-E1 timed-effects framework (see
+/// `events::TimedEffects::expire`'s doc comment for why expiry is
+/// tick-based, not wall-clock).
+pub fn expire_timed_effects_system(
+    mut effects: ResMut<events::TimedEffects>,
+    atmosphere: Res<metabolism::GlobalAtmosphere>,
+) {
+    effects.expire(atmosphere.ticks);
+}
+
+/// Ticks a P4-E1 [`events::TimedEffectKind::FloatingText`] stays active for
+/// after being spawned — not biologically tuned, same placeholder status as
+/// every other Phase 4 rate/duration constant introduced so far.
+const DEATH_EFFECT_DURATION_TICKS: u64 = 90; // ~1.5s at 60Hz
+
 /// Traverses the physics spring network to completely remove organisms marked as Dead.
+#[allow(clippy::type_complexity)]
 pub fn process_deaths_system(
     mut commands: bevy_ecs::prelude::Commands,
     dead_q: bevy_ecs::prelude::Query<
@@ -163,12 +236,17 @@ pub fn process_deaths_system(
             bevy_ecs::entity::Entity,
             &physics::ParticleNode,
             &metabolism::ChemicalEconomy,
+            &metabolism::Age,
             Option<&ecology::Eaten>,
+            Option<&ecology::disease::Infection>,
         ),
         bevy_ecs::prelude::With<metabolism::Dead>,
     >,
     spring_q: bevy_ecs::prelude::Query<(bevy_ecs::entity::Entity, &physics::Spring)>,
     mut tracker: Option<bevy_ecs::prelude::ResMut<evolution::LineageTracker>>,
+    mut phylon_events: bevy_ecs::prelude::EventWriter<events::PhylonEvent>,
+    mut timed_effects: bevy_ecs::prelude::ResMut<events::TimedEffects>,
+    atmosphere: bevy_ecs::prelude::Res<metabolism::GlobalAtmosphere>,
 ) {
     if dead_q.is_empty() {
         return;
@@ -191,14 +269,67 @@ pub fn process_deaths_system(
     let mut nodes_to_despawn = std::collections::HashSet::new();
     let mut springs_to_despawn = std::collections::HashSet::new();
 
-    for (head, node, chem, eaten) in dead_q.iter() {
+    for (head, node, chem, age, eaten, infection) in dead_q.iter() {
         if nodes_to_despawn.contains(&head) {
             continue;
         }
 
         if let Some(ref mut t) = tracker {
             t.register_death(common::EntityId(head.to_bits()), 0, "Died".to_string());
-            // TODO: Get actual tick and cause
+            // TODO: Get actual tick
+        }
+
+        // Phase 4, P4-E1/P4-L2: true cause-of-death tracking. Every death
+        // that reaches this system was triggered by
+        // `metabolism::compute_metabolism`'s `should_die = atp <= 0.0 ||
+        // age_ticks >= max_lifespan` — except predation, which kills
+        // directly regardless of ATP/age. So for a non-eaten death, the two
+        // conditions that guarantee `should_die` give an honest cause
+        // hierarchy: predation (a direct kill, checked first) outranks
+        // senescence (age alone is sufficient to have caused this death,
+        // regardless of ATP), which outranks disease (an active infection
+        // was draining this organism's ATP, the same currency starvation
+        // depletes — see `ecology::disease_progression_system`), which
+        // outranks a plain starvation fallback (must be the case if none of
+        // the above applied, since `should_die` guarantees ATP was
+        // depleted). `Unknown` is kept only as a defensive fallback for a
+        // future death path that doesn't fit this hierarchy — it should be
+        // unreachable for any death `compute_metabolism` itself triggers.
+        let cause = if eaten.is_some() {
+            events::DeathCause::Predation
+        } else if age.ticks >= age.max_lifespan {
+            events::DeathCause::Senescence
+        } else if matches!(
+            infection.map(|i| i.state),
+            Some(ecology::disease::InfectionState::Infectious)
+        ) {
+            events::DeathCause::Disease
+        } else if chem.atp <= 0.0 {
+            events::DeathCause::Starvation
+        } else {
+            events::DeathCause::Unknown
+        };
+        phylon_events.send(events::PhylonEvent::OrganismDied {
+            id: common::EntityId(head.to_bits()),
+            cause,
+            tick: common::Tick(atmosphere.ticks),
+        });
+
+        // A predation death is the one trigger this milestone demonstrates
+        // the new timed-effects framework with — proving `TimedEffects`
+        // works end-to-end against a real event, without yet building the
+        // rendering that would actually draw it (out of scope for P4-E1;
+        // see `events::TimedEffects`'s doc comment).
+        if eaten.is_some() {
+            timed_effects.spawn(
+                node.position,
+                events::TimedEffectKind::FloatingText {
+                    text: "Eaten!".to_string(),
+                    color: [0.8, 0.2, 0.2],
+                },
+                atmosphere.ticks,
+                DEATH_EFFECT_DURATION_TICKS,
+            );
         }
 
         // Spawn a corpse entity at the position of the dead organism, unless it was eaten whole
@@ -236,5 +367,142 @@ pub fn process_deaths_system(
         if let Some(mut e) = commands.get_entity(s) {
             e.despawn();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy_ecs::system::RunSystemOnce;
+    use bevy_ecs::world::World;
+
+    #[derive(Resource, Default)]
+    struct Captured(Vec<events::PhylonEvent>);
+
+    fn capture(mut reader: EventReader<events::PhylonEvent>, mut captured: ResMut<Captured>) {
+        for event in reader.read() {
+            captured.0.push(event.clone());
+        }
+    }
+
+    fn base_world() -> World {
+        let mut world = World::new();
+        world.insert_resource(bevy_ecs::event::Events::<events::PhylonEvent>::default());
+        world.insert_resource(events::TimedEffects::default());
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
+        world.insert_resource(Captured::default());
+        world
+    }
+
+    fn spawn_dead(
+        world: &mut World,
+        age_ticks: u64,
+        max_lifespan: u64,
+        atp: f32,
+        eaten: bool,
+        infectious: bool,
+    ) -> Entity {
+        let mut entity = world.spawn((
+            physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 0),
+            metabolism::ChemicalEconomy {
+                glucose: 0.0,
+                o2: 0.0,
+                co2: 0.0,
+                atp,
+                max_glucose: 100.0,
+                max_o2: 100.0,
+                max_co2: 100.0,
+                max_atp: 100.0,
+            },
+            metabolism::Age {
+                ticks: age_ticks,
+                max_lifespan,
+            },
+            metabolism::Dead,
+        ));
+        if eaten {
+            entity.insert(ecology::Eaten);
+        }
+        if infectious {
+            entity.insert(ecology::disease::Infection {
+                state: ecology::disease::InfectionState::Infectious,
+                ticks_in_state: 0,
+                virulence: 1.0,
+                transmissibility: 0.1,
+            });
+        }
+        entity.id()
+    }
+
+    fn run_and_capture(world: &mut World) -> Vec<events::PhylonEvent> {
+        world.run_system_once(process_deaths_system);
+        world.run_system_once(capture);
+        world.resource::<Captured>().0.clone()
+    }
+
+    #[test]
+    fn senescence_outranks_starvation() {
+        // Age past max_lifespan AND ATP depleted — should_die's age
+        // condition alone is sufficient, so this must report Senescence,
+        // not Starvation.
+        let mut world = base_world();
+        spawn_dead(&mut world, 1000, 1000, 0.0, false, false);
+        let events = run_and_capture(&mut world);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            events::PhylonEvent::OrganismDied {
+                cause: events::DeathCause::Senescence,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn disease_outranks_plain_starvation() {
+        let mut world = base_world();
+        spawn_dead(&mut world, 0, 1000, 0.0, false, true);
+        let events = run_and_capture(&mut world);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            events::PhylonEvent::OrganismDied {
+                cause: events::DeathCause::Disease,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn plain_starvation_is_the_fallback() {
+        let mut world = base_world();
+        spawn_dead(&mut world, 0, 1000, 0.0, false, false);
+        let events = run_and_capture(&mut world);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            events::PhylonEvent::OrganismDied {
+                cause: events::DeathCause::Starvation,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn predation_outranks_every_other_cause() {
+        // Eaten, AND old, AND infectious, AND starved — predation must
+        // still win, since it's a direct kill independent of any of those
+        // conditions.
+        let mut world = base_world();
+        spawn_dead(&mut world, 1000, 1000, 0.0, true, true);
+        let events = run_and_capture(&mut world);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            events::PhylonEvent::OrganismDied {
+                cause: events::DeathCause::Predation,
+                ..
+            }
+        ));
     }
 }
