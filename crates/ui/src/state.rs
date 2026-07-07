@@ -216,6 +216,24 @@ pub struct WorkbenchState {
     // Tracked / selected
     /// The entity the camera is currently following, if any.
     pub tracked_entity: Option<Entity>,
+    /// Bounded recent-position history for whichever entity `tracked_entity`
+    /// currently points at (Phase 5, SX-4c — Inspector's "Relationships/
+    /// History" section). Reset whenever `tracked_entity` changes; sampled
+    /// once per *simulation tick* (not per render frame) by
+    /// `render::track_trajectory_history`, the same "diff once per frame,
+    /// don't touch existing write sites" pattern `track_recent_selections`
+    /// already established. This is UI-side derived history, not
+    /// simulation state — it cannot be read live from `world::World` (which
+    /// has no memory of past positions), so caching it here is a deliberate,
+    /// narrow exception to this crate's usual "never cache simulation data"
+    /// rule, the same exception `recent_selections` already is.
+    pub trajectory_history: std::collections::VecDeque<common::Vec2>,
+    /// Which entity `trajectory_history` belongs to, and the last simulation
+    /// tick a sample was recorded for — both used only by
+    /// `render::track_trajectory_history` to detect an entity change (reset)
+    /// or a new tick (sample).
+    pub(crate) trajectory_entity: Option<Entity>,
+    pub(crate) trajectory_last_tick: Option<u64>,
     /// Which physiology layer's viewport overlay is active, if any (Phase 4,
     /// P4-V2) — see `crate::types::PhysiologyOverlayLayer`.
     pub physiology_overlay: Option<crate::types::PhysiologyOverlayLayer>,
@@ -462,6 +480,9 @@ impl Default for WorkbenchState {
             event_log_auto_scroll: true,
 
             tracked_entity: None,
+            trajectory_history: std::collections::VecDeque::new(),
+            trajectory_entity: None,
+            trajectory_last_tick: None,
             physiology_overlay: None,
             is_paused: false,
             show_about: false,
@@ -505,6 +526,14 @@ impl Default for WorkbenchState {
 
 /// Maximum number of entities kept in `WorkbenchState::recent_selections`.
 pub const RECENT_SELECTIONS_CAPACITY: usize = 8;
+
+/// Maximum number of position samples kept in
+/// `WorkbenchState::trajectory_history` (Phase 5, SX-4c) — at one sample
+/// per simulation tick and the default 60 Hz tick rate, this covers the
+/// last 5 seconds of real-time movement, a "recent trajectory," not a
+/// full-lifetime path (which would need unbounded memory for a
+/// long-running organism).
+pub const TRAJECTORY_HISTORY_CAPACITY: usize = 300;
 
 impl WorkbenchState {
     /// Every currently-selected entity: the primary `selected_entity` plus

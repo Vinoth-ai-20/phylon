@@ -34,6 +34,7 @@ pub fn render_ui(
     state.time = ctx.input(|i| i.time);
     state.cleanup_toasts();
     track_recent_selections(state);
+    track_trajectory_history(state, world);
     // Accessibility pass 2 (Phase 2, M18) — reactive every frame so toggling
     // either setting in the Settings tab takes effect immediately.
     crate::theme::apply_style(ctx, state.high_contrast);
@@ -234,6 +235,46 @@ fn track_recent_selections(state: &mut crate::WorkbenchState) {
             }
         }
         state.previous_selected_entity = state.selected_entity;
+    }
+}
+
+/// Samples `tracked_entity`'s current position into
+/// `WorkbenchState::trajectory_history`, once per *simulation tick* (not per
+/// render frame — reading `metabolism::GlobalAtmosphere.ticks` and skipping
+/// unless it's changed since the last sample avoids capturing dozens of
+/// near-duplicate points per real second at typical frame rates, which
+/// would waste almost all of the bounded buffer on redundant data while the
+/// simulation is paused or between ticks). Phase 5, SX-4c.
+///
+/// Resets the history whenever `tracked_entity` changes (including to
+/// `None`) — a trail belongs to one entity at a time, not a blended path
+/// across whichever entities happened to be tracked previously.
+fn track_trajectory_history(state: &mut crate::WorkbenchState, world: &mut world::World) {
+    if state.tracked_entity != state.trajectory_entity {
+        state.trajectory_history.clear();
+        state.trajectory_entity = state.tracked_entity;
+        state.trajectory_last_tick = None;
+    }
+
+    let Some(entity) = state.tracked_entity else {
+        return;
+    };
+
+    let current_tick = world
+        .ecs
+        .get_resource::<metabolism::GlobalAtmosphere>()
+        .map_or(0, |a| a.ticks);
+    if state.trajectory_last_tick == Some(current_tick) {
+        return;
+    }
+
+    let mut node_q = world.ecs.query::<&physics::ParticleNode>();
+    if let Ok(node) = node_q.get(&world.ecs, entity) {
+        state.trajectory_history.push_back(node.position);
+        if state.trajectory_history.len() > crate::state::TRAJECTORY_HISTORY_CAPACITY {
+            state.trajectory_history.pop_front();
+        }
+        state.trajectory_last_tick = Some(current_tick);
     }
 }
 

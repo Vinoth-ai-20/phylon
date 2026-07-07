@@ -4,12 +4,15 @@ use crate::types::{GenomeId, Ploidy};
 use common::EntityId;
 use serde::{Deserialize, Serialize};
 
-/// Current `Genome::schema_version`. Bumped from 3 to 4 by the addition of
-/// `regulatory_cppn` (Phase 3, M1 — see `PHASE3_ROADMAP.md`'s ADR-P3-01).
-/// No migration path exists from schema 3 or earlier, matching the
+/// Current `Genome::schema_version`. Bumped from 4 to 5 by the addition of
+/// `mutation_count` (Phase 5, SX-4b — Inspector's "MutationCount" row had
+/// nothing to read; `Genome` tracked no mutation history or count at all).
+/// No migration path exists from schema 4 or earlier, matching the
 /// project's established policy (bump and document the break; see
-/// `IMPLEMENTATION_STATUS.md`'s ADR-010).
-pub const GENOME_SCHEMA_VERSION: u32 = 4;
+/// `IMPLEMENTATION_STATUS.md`'s ADR-010) — bincode's positional encoding
+/// means a new field changes the byte layout regardless of `#[serde(default)]`,
+/// so old snapshots genuinely cannot load against this schema.
+pub const GENOME_SCHEMA_VERSION: u32 = 5;
 
 /// A diploid genome's second allele set — present only when
 /// `Genome::ploidy` is [`Ploidy::Diploid`]. Mirrors `Genome::brain_cppn`/
@@ -58,6 +61,13 @@ pub struct Genome {
     /// Same first-allele-only caveat as `brain_cppn` — see
     /// [`Genome::expressed_regulatory_cppn`].
     pub regulatory_cppn: Cppn,
+    /// How many times [`Genome::mutate`] has been called on this genome
+    /// since it was created (Phase 5, SX-4b). Resets to `0` for a fresh
+    /// genome from any constructor, including [`Genome::crossover`]'s child
+    /// — this counts mutations applied to *this specific organism's*
+    /// genome, not a cumulative lineage total (that would need walking
+    /// `evolution::LineageTracker`'s ancestry instead, a different metric).
+    pub mutation_count: u32,
     /// The second allele set, present only when `ploidy` is
     /// [`Ploidy::Diploid`]. `None` for haploid genomes (the common case
     /// today) — this field was added in schema version 3, so bincode
@@ -78,6 +88,7 @@ impl Genome {
             brain_cppn: Cppn::new(),
             morph_cppn: Cppn::new(),
             regulatory_cppn: Cppn::new(),
+            mutation_count: 0,
             second_allele: None,
         }
     }
@@ -110,6 +121,7 @@ impl Genome {
             brain_cppn: allele_a.0,
             morph_cppn: allele_a.1,
             regulatory_cppn: allele_a.2,
+            mutation_count: 0,
             second_allele: Some(DiploidAlleles {
                 brain_cppn: allele_b.0,
                 morph_cppn: allele_b.1,
@@ -223,6 +235,7 @@ impl Genome {
             brain_cppn,
             morph_cppn,
             regulatory_cppn,
+            mutation_count: 0,
             second_allele: None,
         }
     }
@@ -262,6 +275,9 @@ impl Genome {
             brain_cppn: self.brain_cppn.crossover(&other.brain_cppn, rng),
             morph_cppn: self.morph_cppn.crossover(&other.morph_cppn, rng),
             regulatory_cppn: self.regulatory_cppn.crossover(&other.regulatory_cppn, rng),
+            // A crossover child is a fresh genome — it hasn't been mutated
+            // yet itself (mutation, if any, is a separate later call).
+            mutation_count: 0,
             second_allele,
         }
     }
@@ -297,6 +313,12 @@ impl Genome {
                 tracker,
             );
         }
+        // Phase 5, SX-4b: counts calls to `mutate`, not individual node/
+        // connection mutations within a call — Inspector's "MutationCount"
+        // row needed *some* real number; a full per-mutation-event history
+        // (what changed, when) is a larger, separate feature, not
+        // implemented here (see this milestone's roadmap entry).
+        self.mutation_count += 1;
     }
 }
 
@@ -676,5 +698,59 @@ mod tests {
             mutate_connection(&mut conn, &mut rng);
             assert!((0.0..=1.0).contains(&conn.mutation_rate));
         }
+    }
+
+    /// Phase 5, SX-4b: Inspector's "MutationCount" row needed a real number
+    /// to read — this proves `mutate` actually increments it, once per
+    /// call, regardless of how many individual node/connection mutations
+    /// happened inside that call.
+    #[test]
+    fn mutate_increments_mutation_count_once_per_call() {
+        let mut genome = Genome::new_minimal(GenomeId(1), EntityId(0));
+        assert_eq!(genome.mutation_count, 0);
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let mut tracker = GlobalInnovationTracker::default();
+
+        genome.mutate(1.0, &mut rng, &mut tracker);
+        assert_eq!(genome.mutation_count, 1);
+
+        for _ in 0..9 {
+            genome.mutate(1.0, &mut rng, &mut tracker);
+        }
+        assert_eq!(genome.mutation_count, 10);
+    }
+
+    /// A fresh genome from every constructor starts at `0`, including a
+    /// crossover child (which hasn't been mutated itself yet).
+    #[test]
+    fn fresh_genomes_start_with_zero_mutation_count() {
+        assert_eq!(
+            Genome::new_minimal(GenomeId(1), EntityId(0)).mutation_count,
+            0
+        );
+        assert_eq!(
+            Genome::seed(
+                GenomeId(2),
+                EntityId(0),
+                Cppn::new(),
+                Cppn::new(),
+                Cppn::new()
+            )
+            .mutation_count,
+            0
+        );
+
+        let mut parent = Genome::new_minimal(GenomeId(3), EntityId(0));
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let mut tracker = GlobalInnovationTracker::default();
+        parent.mutate(1.0, &mut rng, &mut tracker);
+        assert_eq!(parent.mutation_count, 1);
+
+        let other = Genome::new_minimal(GenomeId(4), EntityId(0));
+        let child = parent.crossover(&other, GenomeId(5), &mut rng);
+        assert_eq!(
+            child.mutation_count, 0,
+            "a crossover child hasn't been mutated itself yet"
+        );
     }
 }

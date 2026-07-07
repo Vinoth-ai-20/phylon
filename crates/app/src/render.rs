@@ -354,6 +354,15 @@ impl PhylonApp {
         let mut node_positions: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 2]> =
             std::collections::HashMap::new();
 
+        // Per-node organism-id lookup (Phase 5, SX-3d) — `physics::ParticleNode.organism_id`
+        // is already stored per node; no BFS/adjacency-map traversal is
+        // needed to find colony (budding) links, only a same-tick
+        // comparison of two nodes' `organism_id` on either end of a spring
+        // (see the spring loop below). Built in the same query as
+        // `node_positions` below, at no extra query cost.
+        let mut entity_organism_id: std::collections::HashMap<bevy_ecs::entity::Entity, u32> =
+            std::collections::HashMap::new();
+
         // Per-segment vitality lookup (Phase 5, SX-1c) — `metabolism::Health`
         // lives only on an organism's head entity (`organisms::spawning`), not
         // every segment, so this maps every segment entity in that organism's
@@ -427,6 +436,7 @@ impl PhylonApp {
         for (entity, node, category, health, infection) in query_nodes_render.iter(&self.world.ecs)
         {
             node_positions.insert(entity, [node.position.x, node.position.y]);
+            entity_organism_id.insert(entity, node.organism_id);
 
             let is_in_selected = selected_component
                 .as_ref()
@@ -607,6 +617,35 @@ impl PhylonApp {
                 .get(&spring.node_b)
                 .copied()
                 .unwrap_or(1.0);
+
+            // Colony/migration visualization (Phase 5, SX-3d) — a spring
+            // whose two endpoints belong to different organisms *is* a
+            // colony (budding) link, by the same definition
+            // `analytics_bridge_system`'s colony-connectivity graph already
+            // uses. Population-wide, always visible (not gated by
+            // selection) — Priority 4 (Ecological status) per the Numeric
+            // priority hierarchy, so drawn via `debug_instances` alongside
+            // Health/Disease, beneath the Priority-1 selection/hover
+            // highlight (unaffected — draw order for `debug_instances`
+            // itself was already fixed at SX-1e).
+            if let (Some(&org_a), Some(&org_b), Some(&pa), Some(&pb)) = (
+                entity_organism_id.get(&spring.node_a),
+                entity_organism_id.get(&spring.node_b),
+                node_positions.get(&spring.node_a),
+                node_positions.get(&spring.node_b),
+            ) {
+                if org_a != org_b {
+                    let [r, g, b, _] = ui::theme::ACCENT.to_normalized_gamma_f32();
+                    debug_instances.push(rendering::DebugInstance {
+                        pos_a: pa,
+                        pos_b: pb,
+                        color: [r, g, b, 0.55],
+                        radius: 5.0 * (self.ui.skin_thickness / 3.0),
+                        segment_type: 99,
+                    });
+                }
+            }
+
             let is_in_selected = selected_component
                 .as_ref()
                 .is_some_and(|comp| comp.contains(&spring.node_a) && comp.contains(&spring.node_b));

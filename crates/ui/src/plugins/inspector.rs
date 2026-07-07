@@ -76,6 +76,23 @@ pub fn inspector_ui(
         }
     };
 
+    // Phase 5, SX-4a: an explicit "this entity no longer exists" state,
+    // checked *before* any component query — previously, a despawned
+    // entity (almost always because it died) fell through every query
+    // below as a plain `Err` indistinguishable from "exists but happens to
+    // lack this one optional component," rendering 40+ generic "Not
+    // Available" rows with no indication the organism was gone at all.
+    // Deliberately does *not* clear `selected_entity`/`tracked_entity` —
+    // showing "you were looking at this, and it died" is more informative
+    // than silently reverting to the generic empty-selection prompt.
+    if world.ecs.get_entity(entity).is_none() {
+        crate::widgets::empty_state(
+            ui,
+            "This entity no longer exists (it may have died or been despawned).",
+        );
+        return;
+    }
+
     // Prefer a "<Diet> {Idx, Gen}" label over the raw Entity Debug format
     // whenever the selected entity has a Diet (i.e. is an organism node).
     let mut diet_q = world.ecs.query::<&ecology::Diet>();
@@ -383,8 +400,20 @@ pub fn inspector_ui(
                                 "Regulatory Genes",
                                 &genetics::REGULATORY_GENE_ROLES.len().to_string(),
                             );
-                            crate::widgets::kv_row(ui, "MutationHistory", "Not Available");
-                            crate::widgets::kv_row(ui, "MutationCount", "Not Available");
+                            // Phase 5, SX-4b: `Genome::mutation_count` is a
+                            // real running count (incremented once per
+                            // `Genome::mutate` call), added specifically
+                            // because nothing here previously tracked
+                            // mutations at all. A full per-event history
+                            // (what changed, when) is a larger, separate
+                            // feature — not implemented, so no
+                            // "MutationHistory" row is shown rather than a
+                            // fabricated or placeholder one.
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "MutationCount",
+                                &genome.mutation_count.to_string(),
+                            );
                         });
                     if ui.button("Export Genome…").clicked() {
                         actions.push(MenuAction::ExportGenome);
@@ -411,6 +440,19 @@ pub fn inspector_ui(
                 .default_open(true)
                 .show(ui, |ui| {
                     egui::Grid::new("insp_neural").striped(true).show(ui, |ui| {
+                        // Phase 5, SX-4b: every row below used to be a
+                        // hardcoded "Not Available" despite `Brain` already
+                        // being queried live just above — `Brain.nodes[i].state`
+                        // is real, per-tick CTRNN activation (confirmed by
+                        // reading `brain::Brain::set_inputs`/`get_outputs`
+                        // directly): inputs are written into the first
+                        // `input_count` node states, outputs are read from
+                        // the last `output_count`. A compact preview (first
+                        // 6 values), not a full per-neuron dump — the
+                        // dedicated Neural Viewer panel already owns full
+                        // topology detail; this Inspector section is a
+                        // quick-glance summary, per this phase's
+                        // progressive-disclosure principle.
                         let mut brain_q = world.ecs.query::<&brain::Brain>();
                         if let Ok(brain) = brain_q.get(&world.ecs, entity) {
                             crate::widgets::kv_row(
@@ -422,19 +464,73 @@ pub fn inspector_ui(
                                     brain.synapses.len()
                                 ),
                             );
+
+                            let preview = |values: &[f32]| -> String {
+                                let shown: Vec<String> = values
+                                    .iter()
+                                    .take(6)
+                                    .map(|v| format!("{v:.2}"))
+                                    .collect();
+                                if values.len() > 6 {
+                                    format!("[{}, …] ({} total)", shown.join(", "), values.len())
+                                } else {
+                                    format!("[{}]", shown.join(", "))
+                                }
+                            };
+
+                            let input_states: Vec<f32> = brain
+                                .nodes
+                                .iter()
+                                .take(brain.input_count)
+                                .map(|n| n.state)
+                                .collect();
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "BrainInputs",
+                                &preview(&input_states),
+                            );
+
+                            let outputs = brain.get_outputs();
+                            crate::widgets::kv_row_mono(ui, "BrainOutputs", &preview(&outputs));
+
+                            let states: Vec<f32> = brain.nodes.iter().map(|n| n.state).collect();
+                            let mean_activity = if states.is_empty() {
+                                0.0
+                            } else {
+                                states.iter().map(|s| s.abs()).sum::<f32>() / states.len() as f32
+                            };
+                            let max_activity =
+                                states.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "NeuronActivity",
+                                &format!(
+                                    "mean|state|={mean_activity:.2}, max={max_activity:.2} ({} neurons)",
+                                    states.len()
+                                ),
+                            );
+
+                            let mean_weight = if brain.synapses.is_empty() {
+                                0.0
+                            } else {
+                                brain.synapses.iter().map(|s| s.weight.abs()).sum::<f32>()
+                                    / brain.synapses.len() as f32
+                            };
+                            let max_weight = brain
+                                .synapses
+                                .iter()
+                                .fold(0.0f32, |m, s| m.max(s.weight.abs()));
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "SynapseActivity",
+                                &format!(
+                                    "mean|weight|={mean_weight:.2}, max={max_weight:.2} ({} synapses)",
+                                    brain.synapses.len()
+                                ),
+                            );
                         } else {
                             crate::widgets::kv_row(ui, "Brain", "Not Available");
                         }
-
-                        crate::widgets::kv_row(
-                            ui,
-                            "CTRNNState",
-                            "Not Available (In-place mutated)",
-                        );
-                        crate::widgets::kv_row(ui, "NeuronActivity", "Not Available");
-                        crate::widgets::kv_row(ui, "SynapseActivity", "Not Available");
-                        crate::widgets::kv_row(ui, "BrainInputs", "Not Available");
-                        crate::widgets::kv_row(ui, "BrainOutputs", "Not Available");
                     });
                 });
 
@@ -575,6 +671,145 @@ pub fn inspector_ui(
                             crate::widgets::kv_row(ui, "SpeciesMembership", "Not Available");
                         });
                 });
+
+            // --- RELATIONSHIPS / HISTORY ---
+            // Phase 5, SX-4c: previously nothing here at all. "Nearby
+            // organisms" uses spatial proximity (a distance query against
+            // `sensing::HeadVision.range` when present), not the
+            // `get_connected_component` spring-graph BFS the roadmap
+            // originally named — that BFS finds entities connected by a
+            // *physical spring* (same body, or a colony bud-link, SX-3d),
+            // which would show nothing at all for the common case of two
+            // separate, unlinked organisms simply near each other. Spatial
+            // distance is the mechanism that actually answers "who else is
+            // around me right now," which is what this section and
+            // "interaction radius" are both about.
+            egui::CollapsingHeader::new(format!(
+                "{} Relationships / History",
+                egui_remixicon::icons::TEAM_LINE
+            ))
+            .default_open(false)
+            .show(ui, |ui| {
+                let mut node_q = world
+                    .ecs
+                    .query::<(&physics::ParticleNode, Option<&sensing::HeadVision>)>();
+                let Ok((node, vision)) = node_q.get(&world.ecs, entity) else {
+                    crate::widgets::empty_state(ui, "No position data for this entity.");
+                    return;
+                };
+                let my_pos = node.position;
+                let radius = vision.map(|v| v.range);
+
+                egui::Grid::new("insp_relationships_summary")
+                    .striped(true)
+                    .show(ui, |ui| {
+                        match radius {
+                            Some(r) => crate::widgets::kv_row_mono(
+                                ui,
+                                "InteractionRadius",
+                                &format!("{r:.1} units (vision range)"),
+                            ),
+                            None => crate::widgets::kv_row(
+                                ui,
+                                "InteractionRadius",
+                                "Not Available (no HeadVision)",
+                            ),
+                        }
+                        crate::widgets::kv_row_mono(
+                            ui,
+                            "TrajectorySamples",
+                            &state.trajectory_history.len().to_string(),
+                        );
+                    });
+
+                ui.add_space(crate::theme::SPACE_SM);
+                ui.label(egui::RichText::new("Nearby Organisms").strong());
+                let search_radius = radius.unwrap_or(250.0);
+                let mut all_q = world
+                    .ecs
+                    .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode, &ecology::Diet)>();
+                let mut nearby: Vec<(bevy_ecs::entity::Entity, ecology::Diet, f32)> = all_q
+                    .iter(&world.ecs)
+                    .filter(|&(e, ..)| e != entity)
+                    .map(|(e, other_node, diet)| {
+                        (e, diet.clone(), my_pos.distance(other_node.position))
+                    })
+                    .filter(|&(_, _, dist)| dist <= search_radius)
+                    .collect();
+                nearby.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+                if nearby.is_empty() {
+                    ui.label(
+                        egui::RichText::new(format!("None within {search_radius:.0} units."))
+                            .small()
+                            .color(crate::theme::DISABLED_FG),
+                    );
+                } else {
+                    egui::Grid::new("insp_nearby")
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new("Diet").strong());
+                            ui.label(egui::RichText::new("Distance").strong());
+                            ui.end_row();
+                            for (_e, diet, dist) in nearby.iter().take(10) {
+                                ui.colored_label(
+                                    crate::theme::chart_color(diet),
+                                    format!("{diet:?}"),
+                                );
+                                ui.monospace(format!("{dist:.1}"));
+                                ui.end_row();
+                            }
+                        });
+                    if nearby.len() > 10 {
+                        ui.label(
+                            egui::RichText::new(format!("…and {} more.", nearby.len() - 10))
+                                .small()
+                                .color(crate::theme::DISABLED_FG),
+                        );
+                    }
+                }
+
+                ui.add_space(crate::theme::SPACE_SM);
+                ui.label(egui::RichText::new("Trajectory History").strong());
+                if state.tracked_entity != Some(entity) {
+                    ui.label(
+                        egui::RichText::new(
+                            "Enable \"Track\" above to start recording this organism's path.",
+                        )
+                        .small()
+                        .color(crate::theme::DISABLED_FG),
+                    );
+                } else if state.trajectory_history.len() < 2 {
+                    ui.label(
+                        egui::RichText::new("Not enough samples yet.")
+                            .small()
+                            .color(crate::theme::DISABLED_FG),
+                    );
+                } else {
+                    let start = state.trajectory_history.front().unwrap();
+                    let end = state.trajectory_history.back().unwrap();
+                    let net_displacement = start.distance(*end);
+                    let path_length: f32 = state
+                        .trajectory_history
+                        .iter()
+                        .zip(state.trajectory_history.iter().skip(1))
+                        .map(|(a, b)| a.distance(*b))
+                        .sum();
+                    egui::Grid::new("insp_trajectory")
+                        .striped(true)
+                        .show(ui, |ui| {
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "PathLength",
+                                &format!("{path_length:.1} units"),
+                            );
+                            crate::widgets::kv_row_mono(
+                                ui,
+                                "NetDisplacement",
+                                &format!("{net_displacement:.1} units"),
+                            );
+                        });
+                }
+            });
 
             // --- BODY PLAN ---
             egui::CollapsingHeader::new(format!("{} Body Plan", egui_remixicon::icons::NODE_TREE))
