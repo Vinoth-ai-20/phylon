@@ -24,11 +24,9 @@ pub fn lineage_viewer_ui(
     };
 
     ui.label(egui::RichText::new("Ancestry").strong());
-    match world
-        .ecs
-        .get_resource::<evolution::LineageTracker>()
-        .and_then(|tracker| tracker.get_record(common::EntityId(entity.to_bits())))
-    {
+    let entity_id = common::EntityId(entity.to_bits());
+    let tracker = world.ecs.get_resource::<evolution::LineageTracker>();
+    match tracker.and_then(|t| t.get_record(entity_id)) {
         Some(record) => {
             egui::Grid::new("lineage_viewer_ancestry")
                 .striped(true)
@@ -37,14 +35,6 @@ pub fn lineage_viewer_ui(
                     crate::widgets::kv_row_mono(ui, "Species", &record.species.0.to_string());
                     crate::widgets::kv_row_mono(ui, "Generation", &record.generation.to_string());
                     crate::widgets::kv_row_mono(ui, "Birth tick", &record.birth_tick.to_string());
-                    crate::widgets::kv_row(
-                        ui,
-                        "Parent",
-                        &record
-                            .parent_id
-                            .map(|p| p.0.to_string())
-                            .unwrap_or_else(|| "— (founder)".to_string()),
-                    );
                 });
         }
         None => {
@@ -52,6 +42,101 @@ pub fn lineage_viewer_ui(
                 ui,
                 "No lineage record for this organism yet (tracker may not be enabled).",
             );
+        }
+    }
+
+    ui.add_space(crate::theme::SPACE_SM);
+
+    // Phase 5, SX-3c: a real multi-generation ancestor/descendant tree,
+    // replacing the previous "one raw parent id" row — see
+    // `evolution::LineageTracker::ancestors`/`children`'s doc comments for
+    // why these two directions behave very differently in practice (a
+    // parent is usually already dead-and-extracted; a child usually isn't).
+    const MAX_ANCESTOR_DEPTH: usize = 5;
+    if let Some(tracker) = tracker {
+        ui.label(egui::RichText::new("Ancestors").strong());
+        let chain = tracker.ancestors(entity_id, MAX_ANCESTOR_DEPTH);
+        if chain.is_empty() {
+            ui.label(
+                egui::RichText::new("— (founder, or parent no longer tracked)")
+                    .small()
+                    .color(crate::theme::DISABLED_FG),
+            );
+        } else {
+            egui::Grid::new("lineage_viewer_ancestors")
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("Hops up").strong());
+                    ui.label(egui::RichText::new("Entity").strong());
+                    ui.label(egui::RichText::new("Gen").strong());
+                    ui.label(egui::RichText::new("Status").strong());
+                    ui.end_row();
+                    for (hop, ancestor) in chain.iter().enumerate() {
+                        ui.monospace((hop + 1).to_string());
+                        ui.monospace(ancestor.entity.0.to_string());
+                        ui.monospace(ancestor.generation.to_string());
+                        let status = if ancestor.death_tick.is_some() {
+                            "Deceased"
+                        } else {
+                            "Alive"
+                        };
+                        ui.label(status);
+                        ui.end_row();
+                    }
+                });
+            if chain.len() == MAX_ANCESTOR_DEPTH {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Stopped at {MAX_ANCESTOR_DEPTH} generations — further ancestors not fetched."
+                    ))
+                    .small()
+                    .color(crate::theme::DISABLED_FG),
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new(
+                        "Chain ends here — the next ancestor has already died and been \
+                         moved to permanent storage (this tracker only holds the currently \
+                         active window, not full history).",
+                    )
+                    .small()
+                    .color(crate::theme::DISABLED_FG),
+                );
+            }
+        }
+
+        ui.add_space(crate::theme::SPACE_SM);
+
+        ui.label(egui::RichText::new("Descendants").strong());
+        let children = tracker.children(entity_id);
+        if children.is_empty() {
+            ui.label(
+                egui::RichText::new("No offspring yet.")
+                    .small()
+                    .color(crate::theme::DISABLED_FG),
+            );
+        } else {
+            egui::Grid::new("lineage_viewer_children")
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("Entity").strong());
+                    ui.label(egui::RichText::new("Gen").strong());
+                    ui.label(egui::RichText::new("Status").strong());
+                    ui.label(egui::RichText::new("Grandchildren").strong());
+                    ui.end_row();
+                    for child in &children {
+                        ui.monospace(child.entity.0.to_string());
+                        ui.monospace(child.generation.to_string());
+                        let status = if child.death_tick.is_some() {
+                            "Deceased"
+                        } else {
+                            "Alive"
+                        };
+                        ui.label(status);
+                        ui.monospace(tracker.children(child.entity).len().to_string());
+                        ui.end_row();
+                    }
+                });
         }
     }
 

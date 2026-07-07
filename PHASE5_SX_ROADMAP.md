@@ -158,7 +158,7 @@ Milestones are scoped at the same resolution `PHASE4_ROADMAP.md` used for its ow
 |---|---|---|---|
 | **SX-3a** | **Done — see §11.** `ReproductionEvent` was published every non-seed birth but had zero consumers (a parallel, non-event-driven code path did the actual narration logging) — wired to a real consumer. `FieldSpike` was never constructed anywhere and had no detector — retired along with its now-unused `FieldType` enum, per this milestone's own "or explicitly retire" clause | 2 | Low |
 | **SX-3b** | **Done — see §11.** Audit found `SpeciesRegistry` only tracks species *existence* (founding/representatives), not live population counts — the real per-species counts were already computed every sample in `analytics_bridge_system` (via `evolution::LineageTracker`, not `SpeciesRegistry`) but discarded immediately after deriving Shannon/Simpson/richness. Added a real snapshot field + a 7th Metrics chart (bar chart, not a line — a snapshot, not a time series) | 3 | Low |
-| **SX-3c** | Lineage as a real DAG, not a flat record: extend Cell Lineage Viewer (P4-R5) to show a small ancestor/descendant tree (multi-generation), not just one parent id | 4 | Medium |
+| **SX-3c** | **Done — see §11.** Confirmed a real gap (one raw parent-id row, no ancestor/descendant walk at all). Implemented both directions via new `LineageTracker::ancestors`/`children` methods — but found and disclosed a real architectural asymmetry: dead records are extracted to cold storage almost immediately (every tick, unconditionally), so ancestor chains are usually only 0-1 hops deep in practice, while descendant chains genuinely support multiple generations | 4 | Medium |
 | **SX-3d** | Colony/migration visualization: territory or colony-boundary overlay, reusing the existing spring-graph BFS already used for selection highlighting (`app/src/render.rs`) | 4 | Medium |
 
 ### Epic 4 — Selection Experience (depends on: nothing new architecturally; extends existing Inspector)
@@ -599,3 +599,27 @@ Both fixes are pure call-order changes — no new drawing logic, no new renderin
 - As with every SX milestone so far: no screen-capture/automation driver available in this session — the bar chart's actual on-screen legibility (bar width/spacing at typical species counts, whether the X-axis needing no formatter reads as intentional rather than broken) is unconfirmed, compiled and logically reviewed only.
 
 **Stopping here, per Implementation Discipline.** Waiting for approval before starting SX-3c.
+
+### SX-3c — Lineage as a real DAG
+
+**Re-audit before implementing:** read `ui::plugins::lineage_viewer::lineage_viewer_ui` directly — confirmed the roadmap's premise held exactly: the "Ancestry" section showed `Lineage`/`Species`/`Generation`/`Birth tick` plus one raw `Parent` row (a bare numeric `EntityId`, no lookup, no grandparent, no children at all). A genuine flat record, unlike SX-2b.
+
+**Read `evolution::LineageTracker` directly to find what was actually available before writing any UI code.** `get_record` only ever returns one entity's own record (with its `parent_id`, not the parent's own record) — there was no existing method to walk further in either direction. Two new methods were needed, not zero (contrary to what a hastier read might assume: the roadmap describes this as if the DAG already exists structurally and just needs surfacing — the *records* form a DAG implicitly via `parent_id` links, but nothing before this milestone actually walked that structure).
+
+**A real, load-bearing architectural asymmetry found while implementing, not assumed:** read `crates/app/src/simulation.rs`'s `update_simulation` and confirmed `LineageTracker::extract_completed_records()` runs **unconditionally, every tick** (no throttled interval, unlike `analytics_bridge_system`'s 60-tick sampling) — meaning a dead organism's record is removed from the tracker (flushed to cold storage) within roughly one tick of death being registered. Consequence, stated plainly: **ancestor chains are usually only 0-1 hops long in a real running simulation** — a parent has almost always already died and been extracted by the time a multi-generation ancestor view would want to show it. Descendants don't share this problem (a child is by definition younger, so far more likely to still be alive/tracked), so the two directions of the "tree" behave very differently — this is disclosed explicitly in both the code's own doc comments and the UI's own inline messaging, not glossed over as if both directions were symmetric.
+
+**Implementation:**
+- `evolution::LineageTracker::ancestors(entity, max_depth)` — walks the `parent_id` chain up to `max_depth` hops, stopping the moment a lookup misses (an extracted ancestor), not just at the depth cap.
+- `evolution::LineageTracker::children(entity)` — an `O(records)` scan for direct offspring (no child-index maintained; this is a UI-panel-on-selection query, the same "compute on demand for the one selected entity" pattern `render_physiology_overlay` already established, not a hot per-tick path).
+- `ui::plugins::lineage_viewer::lineage_viewer_ui` gained two new sections: **Ancestors** (a table walking up to 5 generations, each row showing hop/entity/generation/alive-or-deceased, with an honest inline message distinguishing "hit the depth cap" from "the chain ended because the next ancestor is no longer tracked"), and **Descendants** (direct children with alive/deceased status, plus each child's own grandchild count via a second `children()` call — a real, if shallow, two-generation-visible descendant view).
+
+**Measurement:** added 4 new tests in `crates/evolution/src/lib.rs`: a real 3-generation live chain is walked correctly; a chain stops exactly at an extracted (dead-and-removed) ancestor rather than panicking or fabricating data; `max_depth` is respected even when the real chain is longer; and direct children plus one level of grandchildren are found correctly, including a childless leaf.
+
+**Verification:** `cargo build --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `cargo test --workspace` — all clean, 0 failures (evolution: +4 new tests), no regressions.
+
+**Disclosed limitations, not glossed over:**
+- Ancestor depth beyond the immediate parent will, in most real runs, show nothing — not a bug in this milestone's code, but a real, now-documented constraint of the tracker's "active window only" design (extraction runs every tick, unconditionally). A future milestone wanting deeper ancestor history would need to query the `storage` crate's cold-storage lineage table instead of (or alongside) `LineageTracker` — not attempted here, a materially larger change.
+- `children` is an `O(records)` scan with no index — fine for an on-selection UI panel over today's population sizes, but would need a real parent→children index if ever called somewhere hot (not needed here, noted for a future maintainer).
+- As with every SX milestone so far: no screen-capture/automation driver available in this session — the new Ancestors/Descendants tables' actual on-screen layout and readability are unconfirmed, compiled and logically reviewed only.
+
+**Stopping here, per Implementation Discipline.** Waiting for approval before starting SX-3d.

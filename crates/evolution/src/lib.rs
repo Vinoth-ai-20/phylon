@@ -155,6 +155,55 @@ impl LineageTracker {
         self.records.values().filter(|r| r.death_tick.is_none())
     }
 
+    /// Walks upward from `entity` via each record's `parent_id`, up to
+    /// `max_depth` hops, returning the chain from immediate parent to most
+    /// distant ancestor still resident in this tracker (Phase 5, SX-3c).
+    ///
+    /// **Stops as soon as a lookup misses**, not just at `max_depth` — a
+    /// dead ancestor's record is extracted from this tracker (by
+    /// [`LineageTracker::extract_completed_records`]) within roughly one
+    /// tick of death being registered (`crates/app/src/simulation.rs` calls
+    /// it unconditionally, every tick, not on any throttled interval). In a
+    /// real running simulation this means the chain returned here is
+    /// **usually only 0-1 entries long** — a parent has almost always
+    /// already died and been extracted to cold storage by the time a
+    /// multi-generation ancestor view would want to show it. This is a real
+    /// architectural constraint of the current "active window" tracker
+    /// design, not a bug in this method; callers must not assume a full
+    /// `max_depth`-length result.
+    pub fn ancestors(&self, entity: EntityId, max_depth: usize) -> Vec<LineageRecord> {
+        let mut chain = Vec::new();
+        let mut current = self.get_record(entity).and_then(|r| r.parent_id);
+        while chain.len() < max_depth {
+            let Some(parent_id) = current else {
+                break;
+            };
+            let Some(record) = self.get_record(parent_id) else {
+                break;
+            };
+            current = record.parent_id;
+            chain.push(record.clone());
+        }
+        chain
+    }
+
+    /// Returns every record whose `parent_id` is `entity` — direct children
+    /// only, one generation down (Phase 5, SX-3c). An `O(records)` scan (no
+    /// child-index is maintained, since this is a UI-panel-on-selection
+    /// query, not a hot per-tick path — the same "compute on demand for the
+    /// one selected entity" pattern `render_physiology_overlay` already
+    /// uses). Unlike [`LineageTracker::ancestors`], descendants are the
+    /// architecturally *favorable* direction to walk: a child is by
+    /// definition younger than its parent, so it's far more likely to
+    /// still be alive (and therefore still resident in this tracker) than
+    /// an ancestor is.
+    pub fn children(&self, entity: EntityId) -> Vec<&LineageRecord> {
+        self.records
+            .values()
+            .filter(|r| r.parent_id == Some(entity))
+            .collect()
+    }
+
     /// # Ephemeral DAG Cold-Storage Extraction
     ///
     /// ## 1. What Happens
@@ -469,5 +518,84 @@ mod tests {
         assert_eq!(registry.species_count(), 1);
         assert_eq!(registry.species[0].representative.id, last_genome.id);
         assert!(registry.species[0].most_recent_member.is_none());
+    }
+
+    /// Phase 5, SX-3c: walks a real 3-generation chain (grandparent →
+    /// parent → child), all still alive/tracked, proving `ancestors` climbs
+    /// more than one hop when the chain is actually resident.
+    #[test]
+    fn ancestors_walks_multiple_live_generations() {
+        let mut tracker = LineageTracker::new();
+        let grandparent = EntityId(1);
+        let parent = EntityId(2);
+        let child = EntityId(3);
+        tracker.register_birth(grandparent, None, LineageId(1), SpeciesId(1), 0, 0);
+        tracker.register_birth(parent, Some(grandparent), LineageId(1), SpeciesId(1), 1, 10);
+        tracker.register_birth(child, Some(parent), LineageId(1), SpeciesId(1), 2, 20);
+
+        let chain = tracker.ancestors(child, 5);
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0].entity, parent);
+        assert_eq!(chain[1].entity, grandparent);
+    }
+
+    /// A dead-and-extracted ancestor stops the chain early, rather than
+    /// panicking or silently fabricating a placeholder — the documented,
+    /// expected behavior once `extract_completed_records` has removed a
+    /// record.
+    #[test]
+    fn ancestors_stops_at_an_extracted_ancestor() {
+        let mut tracker = LineageTracker::new();
+        let grandparent = EntityId(1);
+        let parent = EntityId(2);
+        let child = EntityId(3);
+        tracker.register_birth(grandparent, None, LineageId(1), SpeciesId(1), 0, 0);
+        tracker.register_birth(parent, Some(grandparent), LineageId(1), SpeciesId(1), 1, 10);
+        tracker.register_birth(child, Some(parent), LineageId(1), SpeciesId(1), 2, 20);
+        tracker.register_death(grandparent, 15, "Old age".to_string());
+        tracker.extract_completed_records(); // removes grandparent's record
+
+        let chain = tracker.ancestors(child, 5);
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0].entity, parent);
+    }
+
+    /// `ancestors` respects `max_depth` even when the real chain is longer.
+    #[test]
+    fn ancestors_respects_max_depth() {
+        let mut tracker = LineageTracker::new();
+        let a = EntityId(1);
+        let b = EntityId(2);
+        let c = EntityId(3);
+        tracker.register_birth(a, None, LineageId(1), SpeciesId(1), 0, 0);
+        tracker.register_birth(b, Some(a), LineageId(1), SpeciesId(1), 1, 10);
+        tracker.register_birth(c, Some(b), LineageId(1), SpeciesId(1), 2, 20);
+
+        assert_eq!(tracker.ancestors(c, 1).len(), 1);
+    }
+
+    /// Phase 5, SX-3c: `children` finds direct offspring, and grandchildren
+    /// are reachable by calling `children` again on each child — proving the
+    /// descendant direction genuinely supports multi-generation traversal.
+    #[test]
+    fn children_finds_direct_offspring_and_grandchildren() {
+        let mut tracker = LineageTracker::new();
+        let parent = EntityId(1);
+        let child_a = EntityId(2);
+        let child_b = EntityId(3);
+        let grandchild = EntityId(4);
+        tracker.register_birth(parent, None, LineageId(1), SpeciesId(1), 0, 0);
+        tracker.register_birth(child_a, Some(parent), LineageId(1), SpeciesId(1), 1, 10);
+        tracker.register_birth(child_b, Some(parent), LineageId(1), SpeciesId(1), 1, 10);
+        tracker.register_birth(grandchild, Some(child_a), LineageId(1), SpeciesId(1), 2, 20);
+
+        let children = tracker.children(parent);
+        assert_eq!(children.len(), 2);
+        assert!(children.iter().any(|c| c.entity == child_a));
+        assert!(children.iter().any(|c| c.entity == child_b));
+
+        assert_eq!(tracker.children(child_a).len(), 1);
+        assert_eq!(tracker.children(child_a)[0].entity, grandchild);
+        assert_eq!(tracker.children(child_b).len(), 0);
     }
 }
