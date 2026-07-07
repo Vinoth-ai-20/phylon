@@ -45,6 +45,11 @@ pub const ALL_PANEL_NAMES: &[&str] = &[
     "Research Dashboard",
     "Replay Browser",
     "Evolution Debugger",
+    "Physiology Viewer",
+    "Circulation Viewer",
+    "Hormone Viewer",
+    "Immune Viewer",
+    "Cell Lineage Viewer",
     "Placeholder Panel",
 ];
 
@@ -93,6 +98,22 @@ impl<'a> Behavior<String> for WorkbenchBehavior<'a> {
                     format!("{} Replay Browser", egui_remixicon::icons::FOLDER_OPEN_LINE)
                 } else if name == "Evolution Debugger" {
                     format!("{} Evolution Debugger", egui_remixicon::icons::BUG_LINE)
+                } else if name == "Physiology Viewer" {
+                    format!(
+                        "{} Physiology Viewer",
+                        egui_remixicon::icons::HEART_PULSE_LINE
+                    )
+                } else if name == "Circulation Viewer" {
+                    format!("{} Circulation Viewer", egui_remixicon::icons::DROP_LINE)
+                } else if name == "Hormone Viewer" {
+                    format!("{} Hormone Viewer", egui_remixicon::icons::FLASK_LINE)
+                } else if name == "Immune Viewer" {
+                    format!("{} Immune Viewer", egui_remixicon::icons::SHIELD_LINE)
+                } else if name == "Cell Lineage Viewer" {
+                    format!(
+                        "{} Cell Lineage Viewer",
+                        egui_remixicon::icons::GIT_BRANCH_LINE
+                    )
                 } else {
                     name.clone()
                 };
@@ -179,6 +200,51 @@ impl<'a> Behavior<String> for WorkbenchBehavior<'a> {
                         }
                         "Evolution Debugger" => {
                             crate::plugins::evolution_debugger::evolution_debugger_ui(
+                                &ctx,
+                                ui,
+                                self.state,
+                                self.world,
+                                self.commands,
+                            );
+                        }
+                        "Physiology Viewer" => {
+                            crate::plugins::physiology_viewer::physiology_viewer_ui(
+                                &ctx,
+                                ui,
+                                self.state,
+                                self.world,
+                                self.commands,
+                            );
+                        }
+                        "Circulation Viewer" => {
+                            crate::plugins::circulation_viewer::circulation_viewer_ui(
+                                &ctx,
+                                ui,
+                                self.state,
+                                self.world,
+                                self.commands,
+                            );
+                        }
+                        "Hormone Viewer" => {
+                            crate::plugins::hormone_viewer::hormone_viewer_ui(
+                                &ctx,
+                                ui,
+                                self.state,
+                                self.world,
+                                self.commands,
+                            );
+                        }
+                        "Immune Viewer" => {
+                            crate::plugins::immune_viewer::immune_viewer_ui(
+                                &ctx,
+                                ui,
+                                self.state,
+                                self.world,
+                                self.commands,
+                            );
+                        }
+                        "Cell Lineage Viewer" => {
+                            crate::plugins::lineage_viewer::lineage_viewer_ui(
                                 &ctx,
                                 ui,
                                 self.state,
@@ -466,6 +532,22 @@ pub fn render_floating_panels(
                 format!("{} Replay Browser", egui_remixicon::icons::FOLDER_OPEN_LINE)
             } else if name == "Evolution Debugger" {
                 format!("{} Evolution Debugger", egui_remixicon::icons::BUG_LINE)
+            } else if name == "Physiology Viewer" {
+                format!(
+                    "{} Physiology Viewer",
+                    egui_remixicon::icons::HEART_PULSE_LINE
+                )
+            } else if name == "Circulation Viewer" {
+                format!("{} Circulation Viewer", egui_remixicon::icons::DROP_LINE)
+            } else if name == "Hormone Viewer" {
+                format!("{} Hormone Viewer", egui_remixicon::icons::FLASK_LINE)
+            } else if name == "Immune Viewer" {
+                format!("{} Immune Viewer", egui_remixicon::icons::SHIELD_LINE)
+            } else if name == "Cell Lineage Viewer" {
+                format!(
+                    "{} Cell Lineage Viewer",
+                    egui_remixicon::icons::GIT_BRANCH_LINE
+                )
             } else {
                 name.clone()
             };
@@ -505,6 +587,31 @@ pub fn render_floating_panels(
                     }
                     "Evolution Debugger" => {
                         crate::plugins::evolution_debugger::evolution_debugger_ui(
+                            ctx, ui, state, world, commands,
+                        );
+                    }
+                    "Physiology Viewer" => {
+                        crate::plugins::physiology_viewer::physiology_viewer_ui(
+                            ctx, ui, state, world, commands,
+                        );
+                    }
+                    "Circulation Viewer" => {
+                        crate::plugins::circulation_viewer::circulation_viewer_ui(
+                            ctx, ui, state, world, commands,
+                        );
+                    }
+                    "Hormone Viewer" => {
+                        crate::plugins::hormone_viewer::hormone_viewer_ui(
+                            ctx, ui, state, world, commands,
+                        );
+                    }
+                    "Immune Viewer" => {
+                        crate::plugins::immune_viewer::immune_viewer_ui(
+                            ctx, ui, state, world, commands,
+                        );
+                    }
+                    "Cell Lineage Viewer" => {
+                        crate::plugins::lineage_viewer::lineage_viewer_ui(
                             ctx, ui, state, world, commands,
                         );
                     }
@@ -655,6 +762,19 @@ pub fn rebuild_tree_from_modes(
     // Browser above: defaults to Closed, shares the root row when docked.
     let evolution_debugger = is_docked("Evolution Debugger")
         .then(|| tiles.insert_pane("Evolution Debugger".to_string()));
+    // P4-R1-R5 physiology/lineage panels — same treatment as Research
+    // Dashboard/Replay Browser/Evolution Debugger above: default to Closed
+    // (see `apply_layout_preset`), sharing the root row when docked.
+    let physiology_viewer =
+        is_docked("Physiology Viewer").then(|| tiles.insert_pane("Physiology Viewer".to_string()));
+    let circulation_viewer = is_docked("Circulation Viewer")
+        .then(|| tiles.insert_pane("Circulation Viewer".to_string()));
+    let hormone_viewer =
+        is_docked("Hormone Viewer").then(|| tiles.insert_pane("Hormone Viewer".to_string()));
+    let immune_viewer =
+        is_docked("Immune Viewer").then(|| tiles.insert_pane("Immune Viewer".to_string()));
+    let lineage_viewer = is_docked("Cell Lineage Viewer")
+        .then(|| tiles.insert_pane("Cell Lineage Viewer".to_string()));
     // Placeholder Panel — see `ALL_PANEL_NAMES` doc comment; shares the root
     // row with Sidebar/Neural Viewer, defaulting to Closed so it never takes
     // space unless explicitly docked.
@@ -715,6 +835,26 @@ pub fn rebuild_tree_from_modes(
     if let Some(evolution_debugger) = evolution_debugger {
         root_children.push(evolution_debugger);
         root_shares.push(share_of("Evolution Debugger", 1.0));
+    }
+    if let Some(physiology_viewer) = physiology_viewer {
+        root_children.push(physiology_viewer);
+        root_shares.push(share_of("Physiology Viewer", 1.0));
+    }
+    if let Some(circulation_viewer) = circulation_viewer {
+        root_children.push(circulation_viewer);
+        root_shares.push(share_of("Circulation Viewer", 1.0));
+    }
+    if let Some(hormone_viewer) = hormone_viewer {
+        root_children.push(hormone_viewer);
+        root_shares.push(share_of("Hormone Viewer", 1.0));
+    }
+    if let Some(immune_viewer) = immune_viewer {
+        root_children.push(immune_viewer);
+        root_shares.push(share_of("Immune Viewer", 1.0));
+    }
+    if let Some(lineage_viewer) = lineage_viewer {
+        root_children.push(lineage_viewer);
+        root_shares.push(share_of("Cell Lineage Viewer", 1.0));
     }
     if let Some(placeholder) = placeholder {
         root_children.push(placeholder);
@@ -813,6 +953,11 @@ pub fn apply_layout_preset(state: &mut WorkbenchState, preset: LayoutPreset) {
             modes.insert("Neural Viewer".to_string(), PanelMode::Closed);
             modes.insert("Research Dashboard".to_string(), PanelMode::Closed);
             modes.insert("Replay Browser".to_string(), PanelMode::Closed);
+            modes.insert("Physiology Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Circulation Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Hormone Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Immune Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Cell Lineage Viewer".to_string(), PanelMode::Closed);
             modes.insert("Placeholder Panel".to_string(), PanelMode::Closed);
         }
         LayoutPreset::Presentation => {
@@ -820,14 +965,20 @@ pub fn apply_layout_preset(state: &mut WorkbenchState, preset: LayoutPreset) {
             modes.insert("Neural Viewer".to_string(), PanelMode::Closed);
             modes.insert("Research Dashboard".to_string(), PanelMode::Closed);
             modes.insert("Replay Browser".to_string(), PanelMode::Closed);
+            modes.insert("Physiology Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Circulation Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Hormone Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Immune Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Cell Lineage Viewer".to_string(), PanelMode::Closed);
             modes.insert("Placeholder Panel".to_string(), PanelMode::Closed);
             modes.insert("Metrics".to_string(), PanelMode::Floating);
         }
         LayoutPreset::Debug => {
             // Everything docked, including Neural Viewer, Research
-            // Dashboard, and Replay Browser — Placeholder Panel stays closed
-            // even here since it carries no real content a researcher would
-            // want visible by default.
+            // Dashboard, Replay Browser, and the P4-R-tier physiology/lineage
+            // panels — Placeholder Panel stays closed even here since it
+            // carries no real content a researcher would want visible by
+            // default.
             modes.insert("Placeholder Panel".to_string(), PanelMode::Closed);
         }
     }
