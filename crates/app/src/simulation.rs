@@ -242,6 +242,11 @@ impl PhylonApp {
         self.world
             .ecs
             .run_system_once(ecology::disease_spread_system);
+        // Intra-body transport (Phase 4, P4-F3) right before metabolism, so
+        // resources gained this tick (foraging/photosynthesis, above) can
+        // reach a segment's local pool before `metabolism_system` respires
+        // from it — see `organisms::transport_system`'s doc comment.
+        self.world.ecs.run_system_once(organisms::transport_system);
         self.world
             .ecs
             .run_system_once(metabolism::metabolism_system);

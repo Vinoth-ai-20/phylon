@@ -26,8 +26,9 @@ pub use components::{
     BiologicalComponents, Generation, GrowthState, OrganismColor, SpatialComponents, SpawnTick,
 };
 
-/// The Body Graph — a transient, organisms-crate-internal developmental
-/// record (Phase 3, M6). See `PHASE3_ROADMAP.md`'s ADR-P3-04.
+/// The Body Graph (Phase 3, M6) — a persistent ECS component as of Phase 4,
+/// `PHASE4_ROADMAP.md`'s ADR-P4-01 (superseding `PHASE3_ROADMAP.md`'s
+/// ADR-P3-04, which made it transient).
 pub mod developmental_graph;
 pub use developmental_graph::{
     can_branch, compile_segment, simulate_growth_timeline, CompiledSegment, DevelopmentalGraph,
@@ -54,3 +55,8 @@ pub use quorum::{biofilm_system, BiofilmConfig};
 /// Organism spawning logic.
 pub mod spawning;
 pub use spawning::{spawn_organism, spawn_proto_fish};
+
+/// Intra-body resource transport along the persistent Body Graph (Phase 4,
+/// P4-F3).
+pub mod transport;
+pub use transport::transport_system;
