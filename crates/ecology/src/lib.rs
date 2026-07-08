@@ -6,6 +6,7 @@
 use bevy_ecs::prelude::*;
 use common::Vec2;
 
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 /// Subsystem for random and manual environmental catastrophes.
@@ -135,6 +136,7 @@ pub fn food_spawner_system(
     config: Res<EcologyConfig>,
     env: Res<environment::EnvironmentManager>,
     atmosphere: Res<metabolism::GlobalAtmosphere>,
+    mut rng: ResMut<common::SimRng>,
     query: Query<(), With<FoodPellet>>,
 ) {
     let current_count = query.iter().count();
@@ -146,14 +148,14 @@ pub fn food_spawner_system(
         // Simple rejection sampling to favor fertile biomes
         for _ in 0..10 {
             // Max 10 attempts per tick
-            let x = (fastrand::f32() - 0.5) * env.width();
-            let y = (fastrand::f32() - 0.5) * env.height();
+            let x = (rng.gen::<f32>() - 0.5) * env.width();
+            let y = (rng.gen::<f32>() - 0.5) * env.height();
 
             let biome = env.get_biome_at(x, y);
             let fertility = biome.fertility() * season_fertility_factor;
 
             // Rejection sampling: accept if random value is less than fertility
-            if fastrand::f32() * 1.5 < fertility {
+            if rng.gen::<f32>() * 1.5 < fertility {
                 commands.spawn(FoodPellet {
                     position: Vec2::new(x, y),
                     energy_value: 50.0,
@@ -585,12 +587,32 @@ pub fn corpse_decay_system(
 }
 
 /// System that manages catastrophes, updates the hazard field, and drains energy from organisms in active hazards.
+///
+/// Phase 6, Epic A (re-audit finding, folded into this milestone rather than
+/// deferred): this system previously used `Local<u64>` for `local_tick`, the
+/// same anti-pattern SX-1a's diagnostic already named and fixed elsewhere —
+/// the live app drives every system via `run_system_once` (a fresh
+/// `SystemState` per call), so a `Local<u64>` silently reset to `0` on every
+/// single tick, meaning `tick` here was **always `Tick(1)`**. Since hazard
+/// lifecycle transitions are computed as `elapsed = tick - start_tick`, and
+/// both sides of that subtraction were always `Tick(1)`, `elapsed` was
+/// always `0` — hazards spawned into `Impending` state and then **never
+/// transitioned to `Active` and never expired**, regardless of
+/// `impending_duration`/`active_duration`. Fixed by reading
+/// `metabolism::GlobalAtmosphere::ticks` (already the canonical live tick
+/// counter this exact bug class was fixed with at SX-7a), which
+/// `metabolism::day_night_cycle_system` increments earlier in the same
+/// tick's system order (confirmed via `crates/app/src/simulation.rs`) — so
+/// no new resource was introduced, just reuse of the one that already
+/// exists.
+#[allow(clippy::too_many_arguments)]
 pub fn catastrophe_system(
-    mut local_tick: Local<u64>,
     mut manager: ResMut<catastrophe::CatastropheManager>,
     config: Res<catastrophe::CatastropheConfig>,
     mut hazard_field: ResMut<diffusion::CpuHazardFieldState>,
     env: Res<environment::EnvironmentManager>,
+    atmosphere: Res<metabolism::GlobalAtmosphere>,
+    mut rng: ResMut<common::SimRng>,
     mut hazard_events: EventWriter<catastrophe::HazardSpawned>,
     mut organisms: Query<(
         &mut metabolism::ChemicalEconomy,
@@ -598,13 +620,12 @@ pub fn catastrophe_system(
         Option<&mut Corpse>,
     )>,
 ) {
-    *local_tick += 1;
-    let tick = common::Tick(*local_tick);
+    let tick = common::Tick(atmosphere.ticks);
 
     // Spawn random hazards
-    if fastrand::f32() < config.spawn_probability {
-        let x = (fastrand::f32() - 0.5) * env.width();
-        let y = (fastrand::f32() - 0.5) * env.height();
+    if rng.gen::<f32>() < config.spawn_probability {
+        let x = (rng.gen::<f32>() - 0.5) * env.width();
+        let y = (rng.gen::<f32>() - 0.5) * env.height();
         manager.spawn_hazard(tick, Vec2::new(x, y));
         hazard_events.send(catastrophe::HazardSpawned(Vec2::new(x, y)));
     }
@@ -764,5 +785,103 @@ mod foraging_feeding_effect_tests {
         world.run_system_once(foraging_system);
 
         assert!(world.resource::<events::TimedEffects>().active.is_empty());
+    }
+
+    /// Phase 6, Epic A: `catastrophe_system` used to read a per-call
+    /// `Local<u64>` tick counter that reset to `0` on every `run_system_once`
+    /// invocation, so `elapsed = tick - start_tick` was always `0` regardless
+    /// of how many real ticks had passed — a hazard could never reach
+    /// `impending_duration` and would stay `Impending` forever. This proves
+    /// the fix: a hazard whose `start_tick` is far enough in the past
+    /// (measured via the real `GlobalAtmosphere::ticks` counter) must
+    /// transition to `Active` the moment `catastrophe_system` runs.
+    #[test]
+    fn hazard_transitions_to_active_once_impending_duration_has_really_elapsed() {
+        let mut world = World::new();
+        world.insert_resource(common::SimRng::from_seed(1));
+        world.insert_resource(metabolism::GlobalAtmosphere {
+            ticks: 1000,
+            ..Default::default()
+        });
+        world.insert_resource(environment::EnvironmentManager::new(1, false, 500.0, 500.0));
+        world.insert_resource(diffusion::CpuHazardFieldState::default());
+        world.insert_resource(bevy_ecs::event::Events::<catastrophe::HazardSpawned>::default());
+        let config = catastrophe::CatastropheConfig {
+            spawn_probability: 0.0, // don't let a second hazard spawn mid-test
+            ..Default::default()
+        };
+        let impending_duration = config.impending_duration;
+        world.insert_resource(config);
+        let mut manager = catastrophe::CatastropheManager::default();
+        manager.hazards.push(catastrophe::LocalHazard {
+            center: common::Vec2::new(0.0, 0.0),
+            state: catastrophe::HazardState::Impending {
+                start_tick: common::Tick(1000 - impending_duration as u64),
+            },
+        });
+        world.insert_resource(manager);
+
+        world.run_system_once(catastrophe_system);
+
+        let manager = world.resource::<catastrophe::CatastropheManager>();
+        assert_eq!(manager.hazards.len(), 1);
+        assert!(matches!(
+            manager.hazards[0].state,
+            catastrophe::HazardState::Active { .. }
+        ));
+    }
+
+    /// Same fixed seed must produce the same hazard-spawn decision and
+    /// position across two independent `World`s — proving the `fastrand`→
+    /// `SimRng` migration preserved (rather than broke) this system's
+    /// determinism guarantee.
+    #[test]
+    fn catastrophe_system_is_deterministic_for_a_given_seed() {
+        fn run_once() -> Vec<common::Vec2> {
+            let mut world = World::new();
+            world.insert_resource(common::SimRng::from_seed(42));
+            world.insert_resource(metabolism::GlobalAtmosphere::default());
+            world.insert_resource(environment::EnvironmentManager::new(1, false, 500.0, 500.0));
+            world.insert_resource(diffusion::CpuHazardFieldState::default());
+            world.insert_resource(bevy_ecs::event::Events::<catastrophe::HazardSpawned>::default());
+            world.insert_resource(catastrophe::CatastropheConfig {
+                spawn_probability: 1.0, // always spawn, isolating the position draw
+                ..Default::default()
+            });
+            world.insert_resource(catastrophe::CatastropheManager::default());
+
+            world.run_system_once(catastrophe_system);
+
+            world
+                .resource::<catastrophe::CatastropheManager>()
+                .hazards
+                .iter()
+                .map(|h| h.center)
+                .collect()
+        }
+
+        assert_eq!(run_once(), run_once());
+    }
+
+    /// Same fixed seed must produce the same food-spawn decision (position,
+    /// or consistent absence of one) across two independent `World`s —
+    /// proving `food_spawner_system`'s `fastrand`→`SimRng` migration
+    /// preserved determinism.
+    #[test]
+    fn food_spawner_system_is_deterministic_for_a_given_seed() {
+        fn run_once() -> Vec<common::Vec2> {
+            let mut world = World::new();
+            world.insert_resource(common::SimRng::from_seed(7));
+            world.insert_resource(metabolism::GlobalAtmosphere::default());
+            world.insert_resource(environment::EnvironmentManager::new(1, false, 500.0, 500.0));
+            world.insert_resource(EcologyConfig::default());
+
+            world.run_system_once(food_spawner_system);
+
+            let mut query = world.query::<&FoodPellet>();
+            query.iter(&world).map(|p| p.position).collect()
+        }
+
+        assert_eq!(run_once(), run_once());
     }
 }

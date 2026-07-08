@@ -13,7 +13,6 @@ thiserror  = { workspace = true }
 bevy_ecs   = { workspace = true }
 physics    = { workspace = true }
 metabolism = { workspace = true }
-fastrand   = "2.3"
 rand       = { workspace = true }
 serde      = { workspace = true }
 environment = { version = "0.1.0", path = "../environment" }

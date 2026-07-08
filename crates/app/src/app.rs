@@ -9,9 +9,14 @@
 //! 3. Load `PhylonConfig` from `data/default.ron` (falls back to defaults).
 //! 4. Create a `winit` `EventLoop` and application window.
 //! 5. Initialise a `wgpu` surface on the window.
-//! 6. Create a `SimulationScheduler`.
-//! 7. Run the event loop — advancing the scheduler on each `AboutToWait` and
-//!    presenting a cleared frame on each `RedrawRequested`.
+//! 6. Run the event loop, calling `PhylonApp::update_simulation` each tick
+//!    (the per-tick system order lives in `simulation::update_simulation`;
+//!    see that module's doc comment — Phase 6, Epic A removed the
+//!    `SimulationScheduler` this step previously constructed here, since it
+//!    was never actually advanced by anything; the `scheduler` crate itself
+//!    is untouched and remains a workspace member, just no longer a
+//!    dependency of `app`) and presenting a cleared frame on each
+//!    `RedrawRequested`.
 //!
 //! ## Architecture note
 //!
@@ -26,7 +31,6 @@ use tracing::info;
 use winit::window::Window;
 
 use config::PhylonConfig;
-use scheduler::SimulationScheduler;
 
 /// # Hardware Graphics Context
 ///
@@ -70,16 +74,13 @@ pub struct GpuContext {
 ///
 /// ## 3. How It Happens
 /// During initialization, `PhylonApp` consumes the `PhylonConfig` to bootstrap the GPU device.
-/// On every OS event loop iteration, it delegates control flow to either the UI renderer
-/// or the `SimulationScheduler`. Memory is passed over the PCIe bus to the GPU compute shaders
+/// On every OS event loop iteration, it delegates control flow to the UI renderer, which
+/// drives `simulation::update_simulation` directly (see this module's top doc comment).
+/// Memory is passed over the PCIe bus to the GPU compute shaders
 /// strictly through the `Option<GpuContext>` and mapped uniform buffers.
 pub(crate) struct PhylonApp {
     /// Deserialised application/simulation config
     pub(crate) sim_config: PhylonConfig,
-
-    /// Drives the biological/physics simulation ticks
-    #[allow(dead_code)]
-    pub(crate) scheduler: SimulationScheduler,
 
     /// Central ECS World holding all entities and global resources
     pub(crate) world: world::World,
@@ -202,8 +203,6 @@ pub(crate) enum BackgroundTaskResult {
 
 impl PhylonApp {
     pub(crate) fn new(sim_config: PhylonConfig) -> Self {
-        let scheduler = SimulationScheduler::new(&sim_config);
-
         let mut world = world::World::new();
 
         // The single source of truth for the fixed per-tick delta-time —
@@ -346,7 +345,6 @@ impl PhylonApp {
 
         Self {
             sim_config,
-            scheduler,
             world,
             gpu: None,
             physics_compute: None,

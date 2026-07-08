@@ -14,8 +14,9 @@
 //!    loop instead — see the `is_headless` branch below).
 //! 6. Initialise a `wgpu` surface on the window.
 //! 7. Run the event loop, calling `PhylonApp::update_simulation` each tick
-//!    (`SimulationScheduler` is constructed but never advanced — the actual
-//!    per-tick system order lives in `simulation::update_simulation`).
+//!    (the per-tick system order lives in `simulation::update_simulation`;
+//!    Phase 6, Epic A removed the `SimulationScheduler` this step used to
+//!    construct but never advance).
 //!
 //! ## Architecture note
 //!

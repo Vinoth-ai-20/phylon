@@ -13,7 +13,6 @@ path = "src/main.rs"
 common    = { workspace = true }
 config    = { workspace = true }
 events    = { workspace = true }
-scheduler = { workspace = true }
 world     = { workspace = true }
 physics    = { workspace = true }
 sensing    = { path = "../sensing" }

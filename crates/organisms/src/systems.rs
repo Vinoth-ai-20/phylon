@@ -2,6 +2,7 @@ use crate::components::{GrowthState, OrganismColor};
 use crate::developmental_graph::DevelopmentalGraph;
 use bevy_ecs::prelude::{Commands, Entity, Query};
 use common::Vec2;
+use rand::Rng;
 
 /// # Embryonic Growth & Morphogenesis System
 ///
@@ -496,6 +497,7 @@ pub fn growth_system(
 pub fn producer_growth_system(
     mut commands: Commands,
     atmosphere: bevy_ecs::prelude::Res<metabolism::GlobalAtmosphere>,
+    mut rng: bevy_ecs::prelude::ResMut<common::SimRng>,
     mut query: Query<(
         Entity,
         &ecology::Diet,
@@ -557,11 +559,11 @@ pub fn producer_growth_system(
             }
 
             // Pick a random node from the plant body
-            let target_node = all_nodes[fastrand::usize(..all_nodes.len())];
+            let target_node = all_nodes[rng.gen_range(0..all_nodes.len())];
 
             let offset = common::Vec2::new(
-                (fastrand::f32() - 0.5) * 20.0,
-                fastrand::f32() * 20.0 + 5.0, // Upward bias
+                (rng.gen::<f32>() - 0.5) * 20.0,
+                rng.gen::<f32>() * 20.0 + 5.0, // Upward bias
             );
 
             let new_node_id = commands
@@ -1025,5 +1027,55 @@ mod tests {
             assert_eq!(p.role, r.role);
             assert_eq!(p.is_branch, r.is_branch);
         }
+    }
+
+    /// Phase 6, Epic A (milestone A2): `producer_growth_system` used
+    /// unseeded `fastrand::` for both its target-node pick and its spawn
+    /// offset. Same fixed seed, run twice from independently-constructed
+    /// `World`s, must now produce an identical new-node offset — proving the
+    /// `fastrand`→`SimRng` migration preserved determinism rather than
+    /// breaking it.
+    #[test]
+    fn producer_growth_system_is_deterministic_for_a_given_seed() {
+        fn run_once() -> common::Vec2 {
+            let mut world = World::new();
+            world.insert_resource(common::SimRng::from_seed(99));
+            world.insert_resource(metabolism::GlobalAtmosphere {
+                co2: 1000.0,
+                ..Default::default()
+            });
+
+            let head_pos = common::Vec2::new(0.0, 0.0);
+            world.spawn((
+                ecology::Diet::Producer,
+                metabolism::ChemicalEconomy {
+                    glucose: 100_000.0,
+                    o2: 0.0,
+                    co2: 0.0,
+                    atp: 100_000.0,
+                    max_glucose: 100_000.0,
+                    max_o2: 100_000.0,
+                    max_co2: 100_000.0,
+                    max_atp: 100_000.0,
+                },
+                metabolism::Metabolism {
+                    mass: 1.0,
+                    base_rate: 1.0,
+                    is_plant: true,
+                },
+                physics::ParticleNode::new(head_pos, 1.0, 0, 0),
+            ));
+
+            world.run_system_once(producer_growth_system);
+
+            let mut query = world.query::<(&OrganismColor, &physics::ParticleNode)>();
+            query
+                .iter(&world)
+                .map(|(_, node)| node.position)
+                .find(|&pos| pos != head_pos)
+                .expect("producer_growth_system should have spawned a new leaf node")
+        }
+
+        assert_eq!(run_once(), run_once());
     }
 }

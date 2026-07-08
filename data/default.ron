@@ -21,7 +21,6 @@ PhylonConfig(
     ),
     research: ResearchConfig(
         experiment_id: "default",
-        autosave_interval_ticks: 3600,
         headless: false,
         realtime_lock: false,
         max_ticks: 0,

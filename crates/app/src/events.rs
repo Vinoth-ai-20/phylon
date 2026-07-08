@@ -9,9 +9,11 @@
 //! 3. Load `PhylonConfig` from `data/default.ron` (falls back to defaults).
 //! 4. Create a `winit` `EventLoop` and application window.
 //! 5. Initialise a `wgpu` surface on the window.
-//! 6. Create a `SimulationScheduler`.
-//! 7. Run the event loop — advancing the scheduler on each `AboutToWait` and
-//!    presenting a cleared frame on each `RedrawRequested`.
+//! 6. Run the event loop, calling `PhylonApp::update_simulation` each tick
+//!    (see `app.rs`'s top doc comment — Phase 6, Epic A removed the
+//!    `SimulationScheduler` this step previously constructed, since it was
+//!    never actually advanced by anything) and presenting a cleared frame
+//!    on each `RedrawRequested`.
 //!
 //! ## Architecture note
 //!

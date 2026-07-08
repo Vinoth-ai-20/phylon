@@ -13,7 +13,7 @@
 //! PhylonConfig
 //! ├── SimulationConfig  — tick rate, RNG seed, world topology
 //! ├── RenderConfig      — window dimensions, vsync, overlay opacity
-//! └── ResearchConfig    — autosave interval, dataset export, experiment ID
+//! └── ResearchConfig    — headless/batch mode, dataset export, experiment ID
 //! ```
 //!
 //! ## Usage
@@ -262,13 +262,23 @@ impl Default for RenderConfig {
 /// # Research & Automation Configuration
 ///
 /// ## 1. What Happens
-/// `ResearchConfig` controls headless operation, autosave intervals, experiment
-/// metadata, and optional network connections for MARL.
+/// `ResearchConfig` controls headless operation, experiment metadata, and
+/// optional network connections for MARL.
 ///
 /// ## 2. Why It Happens
 /// A typical desktop game expects a human sitting at a screen. Phylon is an Alife
 /// research tool—sometimes it needs to run on a Linux cluster for 48 hours with
 /// no GPU, spitting out data to SQLite. This config enables those environments.
+///
+/// Phase 6, Epic A: this struct previously also declared
+/// `autosave_interval_ticks` — a field with a default value and zero
+/// readers anywhere in `app`. Autosave has only ever been manual
+/// (`MenuAction::SaveState`); the field silently implied periodic autosave
+/// happened when it never did. Removed rather than wired up, since building
+/// a real periodic-autosave system (save-path/rotation policy, error
+/// handling, a tick-loop hook) is feature work, not the bug-fix this epic
+/// scopes — tracked as a future research-platform feature if a real need
+/// for it emerges, not silently dropped.
 ///
 /// ## 3. How It Happens
 /// The `app` crate checks `headless`. If true, it skips initializing `winit` and
@@ -278,9 +288,6 @@ impl Default for RenderConfig {
 pub struct ResearchConfig {
     /// Human-readable experiment identifier. Recorded in the manifest.
     pub experiment_id: String,
-
-    /// Autosave interval in simulation ticks. Default: `3600` (60 s at 60 Hz).
-    pub autosave_interval_ticks: u64,
 
     /// If `true`, the simulation runs without a window (headless mode).
     /// Default: `false`.
@@ -357,7 +364,6 @@ impl Default for ResearchConfig {
     fn default() -> Self {
         Self {
             experiment_id: "default-experiment".into(),
-            autosave_interval_ticks: 3600,
             headless: false,
             realtime_lock: false,
             max_ticks: 0,
@@ -503,5 +509,17 @@ mod tests {
     fn load_none_returns_default() {
         let cfg = PhylonConfig::load(None).expect("None path should return default");
         assert_eq!(cfg.simulation.tick_rate, 60);
+    }
+
+    /// Phase 6, Epic A: `ResearchConfig::autosave_interval_ticks` was
+    /// removed (a dead field with zero readers) from both the struct and
+    /// `data/default.ron`. This proves the real, checked-in config file
+    /// still parses cleanly after that edit — not just the in-memory
+    /// `Default` impl the other tests above exercise.
+    #[test]
+    fn real_default_ron_file_still_loads() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/default.ron");
+        let cfg = PhylonConfig::load(Some(&path)).expect("data/default.ron should parse");
+        assert_eq!(cfg.research.experiment_id, "default");
     }
 }
