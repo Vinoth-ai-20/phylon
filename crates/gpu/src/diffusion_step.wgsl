@@ -10,7 +10,7 @@ struct DiffusionConfig {
     _pad1: u32,
     _pad2: u32,
     _pad3: u32,
-    layers: array<LayerConfig, 4>,
+    layers: array<LayerConfig, 5>,
 }
 
 struct GpuEmitter {
@@ -30,7 +30,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let pos = vec2<i32>(global_id.xy);
     let layer = global_id.z;
     
-    if (pos.x >= i32(dim.x) || pos.y >= i32(dim.y) || layer >= 4u) {
+    if (pos.x >= i32(dim.x) || pos.y >= i32(dim.y) || layer >= 5u) {
         return;
     }
 

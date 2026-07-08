@@ -35,7 +35,7 @@ const SEGMENT_TYPES_BY_CODE: [SegmentType; 8] = [
 ];
 
 /// All developmental outputs decoded at one body-axis position.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DevelopmentalOutputs {
     /// This position's anatomical category.
     pub segment_type: SegmentType,

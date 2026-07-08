@@ -121,6 +121,7 @@ fn assign_hidden_node_regions(
 ///    `Elastic` muscles.
 /// 5. Once growth is complete (either `organisms::MAX_SEGMENTS` is reached, or a decoded segment
 ///    is `Tail`), it wires the `Brain` CTRNN topology.
+#[allow(clippy::too_many_arguments)]
 pub fn growth_system(
     mut commands: Commands,
     atmosphere: bevy_ecs::prelude::Res<metabolism::GlobalAtmosphere>,
@@ -133,6 +134,12 @@ pub fn growth_system(
     node_query: Query<&physics::ParticleNode>,
     spring_query: Query<&physics::Spring>,
     chem_query: Query<&metabolism::ChemicalEconomy>,
+    morphogen_query: Query<&crate::morphogen_field::MorphogenLevel>,
+    // `Option` (not `Res`) so that every existing headless/unit-test `World`
+    // that never inserts this resource keeps working unchanged — a missing
+    // field reads as "no environmental signal yet" (0.0), the same neutral
+    // baseline a real run has before the GPU's first successful readback.
+    cpu_field: Option<bevy_ecs::prelude::Res<diffusion::CpuFieldState>>,
 ) {
     use genetics::SegmentType;
     use physics::{ParticleNode, Spring};
@@ -307,11 +314,60 @@ pub fn growth_system(
         // the same `develop_at_position` call handles every position,
         // including the head node `spawning::spawn_organism` already built
         // (Phase 3 M4; see ADR-P3-02).
+        //
+        // Phase 6, Epic D (D1a): the growing tip's own current
+        // `morphogen_field::MorphogenLevel` (seeded at spawn, spread and
+        // decayed each tick by `morphogen_diffusion_system`) is folded into
+        // the exact same additive signal `develop_at_position_with_life_stage`
+        // already uses for `life_stage_signal` — re-auditing `genetics`
+        // before this milestone found that function already implements the
+        // "extra scalar folded into every gene's external input, 0.0
+        // reproduces the original" seam D1a's own sub-roadmap proposed
+        // building from scratch, so no new `genetics`-crate parameter is
+        // added here.
+        let field_signal = state
+            .parent_spine_node
+            .and_then(|tip| morphogen_query.get(tip).ok())
+            .map(|level| level.concentration)
+            .unwrap_or(0.0);
+
+        // ── Where the next segment will actually form ───────────────────────
+        // Computed here (rather than after the decode, as before D1b) purely
+        // because Epic D, D1b's environmental signal needs a world position
+        // to sample *before* calling `develop_at_position_with_life_stage`
+        // — the formula itself is unchanged from pre-D1b.
+        let spawn_pos = if let Some(prev_entity) = state.parent_spine_node {
+            if let Ok(parent_node) = node_query.get(prev_entity) {
+                parent_node.position
+                    + Vec2::new(state.heading.cos(), state.heading.sin()) * -state.segment_length
+            } else {
+                state.current_pos
+            }
+        } else {
+            state.current_pos
+        };
+
+        // Phase 6, Epic D (D1b, ADR-D1-01's inter-organism/environmental
+        // half): samples the world-space GPU diffusion field's Morphogen
+        // layer at the position the next segment is about to form at.
+        // Unlike `field_signal` (this organism's own intra-organism
+        // signal), this can carry a contribution from *other* developing
+        // organisms nearby — the actual inter-organism coupling
+        // ADR-P3-03's reversal trigger named. Folded into the same
+        // additive channel as `life_stage_signal`/`field_signal` for the
+        // same reason D1a gave: that channel already exists, is already
+        // tested, and 0.0 (no nearby signal) reproduces the pre-D1
+        // baseline exactly.
+        let environmental_signal = cpu_field
+            .as_ref()
+            .map(|field| field.sample(spawn_pos, diffusion::FieldLayer::Morphogen as u32))
+            .unwrap_or(0.0);
+
         let outputs = genetics::develop_at_position_with_life_stage(
             &expressed_regulatory_cppn,
             state.next_segment_index,
             crate::MAX_SEGMENTS,
-            life_stage_signal,
+            life_stage_signal + field_signal + environmental_signal,
         );
 
         // Phase 3 M8 (DEF-002): a position marked for apoptosis is pruned
@@ -338,23 +394,6 @@ pub fn growth_system(
         let compiled = crate::compile_segment(outputs.segment_type);
         let seg_u32 = compiled.particle_segment_type;
         let stiffness = compiled.stiffness;
-
-        // ── Spawn one spine node adjacent to the actual parent position ────────
-        // Using the parent's *live* position (not a pre-calculated grid offset)
-        // means the spring starts at exactly rest_length, producing zero initial
-        // force and preventing the instability that caused fly-off.
-        let spawn_pos = if let Some(prev_entity) = state.parent_spine_node {
-            if let Ok(parent_node) = node_query.get(prev_entity) {
-                // Step one segment_length in the heading direction from where the
-                // parent node actually is right now.
-                parent_node.position
-                    + Vec2::new(state.heading.cos(), state.heading.sin()) * -state.segment_length
-            } else {
-                state.current_pos
-            }
-        } else {
-            state.current_pos
-        };
 
         // Phase 4, P4-F2: every body segment gets its own small physiology
         // pool, not just the head — `metabolism::ChemicalEconomy` is reused
@@ -387,6 +426,13 @@ pub fn growth_system(
                 // type — `crates/app/src/render.rs` reads this to fade/scale
                 // a just-formed segment in over a short fixed window.
                 crate::components::SpawnTick(atmosphere.ticks),
+                // Phase 6, Epic D (D1a): every newly-grown segment starts as
+                // the organism's new growing tip — see `morphogen_field`'s
+                // doc comment for why this is the emission/"reaction" term
+                // `morphogen_diffusion_system` then spreads and decays.
+                crate::morphogen_field::MorphogenLevel {
+                    concentration: crate::morphogen_field::MORPHOGEN_SEED_CONCENTRATION,
+                },
             ))
             .id();
 
@@ -469,6 +515,9 @@ pub fn growth_system(
                     ecology::disease::SegmentInfection::healthy(),
                     ecology::disease::SegmentImmunity::baseline(),
                     crate::components::SpawnTick(atmosphere.ticks),
+                    crate::morphogen_field::MorphogenLevel {
+                        concentration: crate::morphogen_field::MORPHOGEN_SEED_CONCENTRATION,
+                    },
                 ))
                 .id();
             let f_dn = commands
@@ -480,6 +529,9 @@ pub fn growth_system(
                     ecology::disease::SegmentInfection::healthy(),
                     ecology::disease::SegmentImmunity::baseline(),
                     crate::components::SpawnTick(atmosphere.ticks),
+                    crate::morphogen_field::MorphogenLevel {
+                        concentration: crate::morphogen_field::MORPHOGEN_SEED_CONCENTRATION,
+                    },
                 ))
                 .id();
 
@@ -1185,6 +1237,77 @@ mod tests {
     }
 
     #[test]
+    fn growth_system_decode_changes_when_the_tips_morphogen_level_is_nonzero() {
+        // Phase 6, Epic D (D1a)'s own named testing requirement: a nonzero
+        // field reading must actually change decode output vs. a zero
+        // baseline. Reuses `genetics::develop::nonzero_life_stage_signal_can_change_the_decode`'s
+        // exact hand-built sensitive CPPN and signal magnitude (5.0), since
+        // both life-stage and morphogen signals enter the same additive
+        // channel (see this crate's `morphogen_field` module doc comment).
+        use genetics::cppn::DEFAULT_MUTATION_RATE;
+        use genetics::{Cppn, CppnConnection, CppnNode};
+
+        let sensitive_cppn = Cppn {
+            nodes: vec![
+                CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 0,
+                },
+                CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 1,
+                },
+            ],
+            connections: vec![CppnConnection {
+                source: 0,
+                target: 1,
+                weight: 10.0,
+                enabled: true,
+                innovation: 0,
+                mutation_rate: DEFAULT_MUTATION_RATE,
+            }],
+        };
+
+        let grow_second_segment_with_tip_concentration = |tip_concentration: f32| {
+            let mut world = World::new();
+            world.insert_resource(metabolism::GlobalAtmosphere::default());
+            let mut genome =
+                genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+            genome.regulatory_cppn = sensitive_cppn.clone();
+            let entity = spawn_growth_entity(&mut world, genome);
+
+            // Grow the first segment (graph index 0 — `spawn_growth_entity`
+            // starts from an empty graph with no head node of its own):
+            // `parent_spine_node` is `None` at this point, so `field_signal`
+            // is 0.0 for both runs — identical so far.
+            world.run_system_once(growth_system);
+            let graph = world.get::<DevelopmentalGraph>(entity).unwrap();
+            let spine_entity = graph.nodes[0].entity.unwrap();
+
+            // Directly control the tip's concentration rather than relying
+            // on `morphogen_diffusion_system` (not run in this test) — an
+            // isolated, deterministic proof that `growth_system` itself is
+            // sensitive to this reading, independent of the diffusion
+            // system's own dynamics (covered separately in
+            // `morphogen_field`'s own tests).
+            world
+                .get_mut::<crate::morphogen_field::MorphogenLevel>(spine_entity)
+                .unwrap()
+                .concentration = tip_concentration;
+
+            world.run_system_once(growth_system);
+            let graph = world.get::<DevelopmentalGraph>(entity).unwrap();
+            graph.nodes[1].outputs
+        };
+
+        let baseline = grow_second_segment_with_tip_concentration(0.0);
+        let with_field = grow_second_segment_with_tip_concentration(5.0);
+        assert_ne!(baseline, with_field);
+    }
+
+    #[test]
     fn growth_system_prunes_an_apoptotic_position_without_spawning_it() {
         // Phase 3 M8 (DEF-002): a hand-built regulatory_cppn found (via a
         // throwaway scan, not guessed) to decode position 1 as `Ganglion`
@@ -1266,8 +1389,25 @@ mod tests {
         // proof: same genome (the M8 apoptosis fixture, which exercises
         // real pruning — the simplest all-`Cppn::new()` fixture never
         // prunes anything, so it wouldn't stress this claim), predicted
-        // timeline vs. the graph a real run actually produces, compared
-        // node-for-node.
+        // timeline vs. the graph a real run actually produces, compared.
+        //
+        // Phase 6, Epic D (D1a) note — re-audited and intentionally not
+        // fully restored to a byte-for-byte match: `growth_system` now folds
+        // the growing tip's own `morphogen_field::MorphogenLevel` into every
+        // segment's decode (see ADR-D1-01), which `simulate_growth_timeline`
+        // deliberately does not model (it remains the pure genome+position
+        // reconstruction). This test's world never runs
+        // `morphogen_diffusion_system`, so every segment after the first
+        // reads its parent's *undecayed* seed concentration — a real,
+        // reproducible divergence, not a bug. Exact node-for-node equality
+        // is retired as of this milestone; the two checks below (the
+        // field-free root and first segment still match exactly, and both
+        // graphs still complete to a sane, non-empty shape) are what
+        // remains a meaningful regression guard here. D1c's own job — a
+        // *quantified* measure of how far a live run diverges from the pure
+        // replay, so future regressions are caught by magnitude, not just
+        // pass/fail — is `real_run_field_signal_divergence_from_the_pure_replay_is_bounded_and_quantified`,
+        // below, using this exact same fixture.
         use genetics::cppn::DEFAULT_MUTATION_RATE;
         use genetics::{Cppn, CppnConnection, CppnNode};
 
@@ -1357,11 +1497,149 @@ mod tests {
         }
         let last_graph = world.get::<DevelopmentalGraph>(entity).unwrap();
 
-        assert_eq!(predicted.nodes.len(), last_graph.nodes.len());
-        for (p, r) in predicted.nodes.iter().zip(last_graph.nodes.iter()) {
+        // Both graphs still complete to a sane, bounded, non-empty shape.
+        assert!(!predicted.nodes.is_empty());
+        assert!(!last_graph.nodes.is_empty());
+        assert!(last_graph.nodes.len() <= crate::MAX_SEGMENTS * 3); // spine + bilateral fins
+
+        // The head (position 0) and the first grown segment (position 1)
+        // are decoded before any `MorphogenLevel` exists to read from
+        // (`state.parent_spine_node` is `None` until the first spine node is
+        // spawned), so these two positions are still field-free on both
+        // sides and must still match exactly.
+        for (p, r) in predicted.nodes.iter().zip(last_graph.nodes.iter()).take(2) {
             assert_eq!(p.position, r.position);
             assert_eq!(p.role, r.role);
             assert_eq!(p.is_branch, r.is_branch);
+        }
+    }
+
+    #[test]
+    fn real_run_field_signal_divergence_from_the_pure_replay_is_bounded_and_quantified() {
+        // Phase 6, Epic D (D1c): `PHASE4_EPIC4_MORPHOGEN_ROADMAP.md` §3.1's
+        // own named requirement — a comparison test that *quantifies* how
+        // far a live run's decode diverges from `simulate_growth_timeline`'s
+        // pure zero-field replay, for a fixture genome with nonzero field
+        // input, "so future regressions are caught by magnitude, not just a
+        // binary pass/fail." Reuses the exact same M8 apoptosis-fixture CPPN
+        // as `simulate_growth_timeline_matches_a_real_growth_system_run`
+        // (same genome, same setup), so this is a direct continuation of
+        // that test's own finding, not a separate discovery.
+        use genetics::cppn::DEFAULT_MUTATION_RATE;
+        use genetics::{Cppn, CppnConnection, CppnNode};
+
+        let regulatory_cppn = Cppn {
+            nodes: vec![
+                CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 0,
+                },
+                CppnNode {
+                    activation: brain::ActivationFn::Linear,
+                    bias: 0.0,
+                    layer: 0,
+                },
+                CppnNode {
+                    activation: brain::ActivationFn::Sine,
+                    bias: -3.0,
+                    layer: 1,
+                },
+            ],
+            connections: vec![CppnConnection {
+                source: 0,
+                target: 2,
+                weight: 5.0,
+                enabled: true,
+                innovation: 0,
+                mutation_rate: DEFAULT_MUTATION_RATE,
+            }],
+        };
+        let mut genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
+        genome.regulatory_cppn = regulatory_cppn.clone();
+
+        let predicted = crate::simulate_growth_timeline(&regulatory_cppn);
+
+        let mut world = World::new();
+        world.insert_resource(metabolism::GlobalAtmosphere::default());
+        let head_outputs = genetics::develop_at_position(&regulatory_cppn, 0, crate::MAX_SEGMENTS);
+        let mut graph = crate::DevelopmentalGraph::new();
+        graph.push(
+            head_outputs.segment_type,
+            head_outputs,
+            None,
+            false,
+            0,
+            None,
+        );
+        let entity = world
+            .spawn((
+                metabolism::ChemicalEconomy {
+                    glucose: 1000.0,
+                    o2: 1000.0,
+                    co2: 0.0,
+                    atp: 1000.0,
+                    max_glucose: 1000.0,
+                    max_o2: 1000.0,
+                    max_co2: 1000.0,
+                    max_atp: 1000.0,
+                },
+                GrowthState {
+                    genome,
+                    next_segment_index: 1,
+                    ticks_until_next_bud: 0,
+                    base_bud_interval: 0,
+                    parent_spine_node: None,
+                    current_pos: Vec2::new(0.0, 0.0),
+                    segment_length: 20.0,
+                    effectors: Vec::new(),
+                    is_organism_complete: head_outputs.segment_type == genetics::SegmentType::Tail,
+                    heading: 0.0,
+                },
+                graph,
+            ))
+            .id();
+
+        for _ in 0..(crate::MAX_SEGMENTS * 40) {
+            if world.get::<GrowthState>(entity).is_none() {
+                break;
+            }
+            world.run_system_once(growth_system);
+        }
+        let last_graph = world.get::<DevelopmentalGraph>(entity).unwrap();
+
+        // Magnitude 1: total node-count delta. Empirically 14 (predicted)
+        // vs. 12 (real) for this fixture at the time D1a landed — asserted
+        // here as a bounded range, not an exact pinned number, since the
+        // point is catching an implausible blow-up (e.g. a future change
+        // that makes the field signal dominate decode so badly the body
+        // plan collapses to 1 segment or explodes past `MAX_SEGMENTS`), not
+        // pinning today's precise value as sacred.
+        let node_count_delta = (predicted.nodes.len() as i64 - last_graph.nodes.len() as i64).abs();
+        assert!(
+            node_count_delta > 0,
+            "expected D1a/D1b's field signal to visibly change the grown timeline length for this fixture — if this now passes with delta 0, the fixture may have stopped exercising real divergence"
+        );
+        assert!(
+            node_count_delta < crate::MAX_SEGMENTS as i64,
+            "divergence magnitude implausibly large ({node_count_delta} segments) — this should catch a future regression that makes the field signal dominate decode, not just confirm any divergence exists"
+        );
+
+        // Magnitude 2: the first position where the two timelines actually
+        // disagree. Must be position 2 or later — position 0 (head) and
+        // position 1 (grown before any `MorphogenLevel` exists to read
+        // from) are field-free on both sides and must never be where the
+        // divergence starts.
+        let first_divergent_position = predicted
+            .nodes
+            .iter()
+            .zip(last_graph.nodes.iter())
+            .position(|(p, r)| p.role != r.role || p.position != r.position);
+        if let Some(index) = first_divergent_position {
+            assert!(
+                index >= 2,
+                "divergence must not start before position 2 — positions 0 and 1 are field-free on both sides by construction, got first divergence at index {index}"
+            );
         }
     }
 

@@ -1,6 +1,14 @@
 //! GPU compute pipeline for 2D field diffusion.
 
-/// Configuration for a single diffusion layer (e.g. Pheromones, Energy, O2, CO2).
+/// Number of texture-array layers the diffusion field carries: Pheromones,
+/// Energy, O2, CO2, and (Phase 6, Epic D, D1b) Morphogen — see
+/// `diffusion::FieldLayer`. A single named constant so every hardcoded shape
+/// (texture depth, layer-view count, dispatch z-extent, uniform array size,
+/// staging buffer size) stays in lockstep when this ever changes again,
+/// rather than requiring an audit of scattered literal `4`s/`5`s.
+pub const LAYER_COUNT: u32 = 5;
+
+/// Configuration for a single diffusion layer (e.g. Pheromones, Energy, O2, CO2, Morphogen).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LayerConfig {
@@ -26,8 +34,9 @@ pub struct DiffusionUniforms {
     pub _pad2: u32,
     /// Padding for alignment.
     pub _pad3: u32,
-    /// Config for each of the 4 layers: Pheromones, Energy, O2, CO2
-    pub layers: [LayerConfig; 4],
+    /// Config for each of the [`LAYER_COUNT`] layers: Pheromones, Energy,
+    /// O2, CO2, Morphogen.
+    pub layers: [LayerConfig; LAYER_COUNT as usize],
 }
 
 /// GPU representation of a spatial emitter.
@@ -157,7 +166,7 @@ impl DiffusionComputePipeline {
             size: wgpu::Extent3d {
                 width,
                 height,
-                depth_or_array_layers: 4,
+                depth_or_array_layers: LAYER_COUNT,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -184,9 +193,9 @@ impl DiffusionComputePipeline {
         let view_a = texture_a.create_view(&view_desc);
         let view_b = texture_b.create_view(&view_desc);
 
-        let mut layer_views_a = Vec::with_capacity(4);
-        let mut layer_views_b = Vec::with_capacity(4);
-        for i in 0..4 {
+        let mut layer_views_a = Vec::with_capacity(LAYER_COUNT as usize);
+        let mut layer_views_b = Vec::with_capacity(LAYER_COUNT as usize);
+        for i in 0..LAYER_COUNT {
             let layer_desc = wgpu::TextureViewDescriptor {
                 dimension: Some(wgpu::TextureViewDimension::D2),
                 base_array_layer: i,
@@ -260,7 +269,7 @@ impl DiffusionComputePipeline {
             ],
         });
 
-        let staging_buffer_size = (width * height * 4 * 4) as wgpu::BufferAddress;
+        let staging_buffer_size = (width * height * LAYER_COUNT * 4) as wgpu::BufferAddress;
         let staging_buffers = [
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("DiffusionStagingBuffer0"),
@@ -351,7 +360,7 @@ impl DiffusionComputePipeline {
             cpass.set_pipeline(&self.pipeline);
             cpass.set_bind_group(0, active_bind_group, &[]);
 
-            cpass.dispatch_workgroups(self.width / 16, self.height / 16, 4);
+            cpass.dispatch_workgroups(self.width / 16, self.height / 16, LAYER_COUNT);
         }
 
         if let Some(qs) = query_set {
@@ -389,7 +398,7 @@ impl DiffusionComputePipeline {
             wgpu::Extent3d {
                 width: self.width,
                 height: self.height,
-                depth_or_array_layers: 4,
+                depth_or_array_layers: LAYER_COUNT,
             },
         );
 
@@ -498,5 +507,111 @@ impl DiffusionComputePipeline {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Mirrors `crates/app/src/app.rs`'s `init_gpu_headless` — the same
+    /// adapter/device request shape the real app uses when it runs without
+    /// a window, reused here so this test exercises a real wgpu device, not
+    /// a mock.
+    fn headless_device() -> (wgpu::Device, wgpu::Queue) {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .expect("no suitable GPU adapter found for this headless test");
+        pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("DiffusionPipelineTestDevice"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: wgpu::MemoryHints::default(),
+            },
+            None,
+        ))
+        .expect("failed to create wgpu device for this headless test")
+    }
+
+    /// Phase 6, Epic D (D1b)'s own standing rule for GPU-touching work —
+    /// "not just cargo test": a real wgpu device, a real compute dispatch,
+    /// a real readback. Proves `LAYER_COUNT = 5` actually round-trips end to
+    /// end (texture depth, dispatch z-extent, and the uniform layer array
+    /// all have to agree — a mismatch between any of these would silently
+    /// corrupt data or panic inside the shader, not just fail a plain value
+    /// comparison), and that an emission targeted only at the new Morphogen
+    /// layer (index 4) produces activity there without leaking into layers
+    /// 0-3 — the GPU-side half of the same "no cross-channel bleed"
+    /// requirement the CPU-side `diffusion` crate test proves for
+    /// `CpuFieldState`.
+    #[test]
+    fn diffusion_pipeline_steps_all_5_layers_and_the_morphogen_layer_stays_isolated() {
+        let (device, queue) = headless_device();
+        let mut pipeline = DiffusionComputePipeline::new(&device, 64, 64);
+
+        let emitters = [GpuEmitter {
+            grid_pos: [32.0, 32.0],
+            value: 5.0,
+            grid_radius: 8.0,
+        }];
+        let mut layers = [LayerConfig {
+            diffusion_rate: 0.0,
+            decay_rate: 0.0,
+            emitter_count: 0,
+            emitter_offset: 0,
+        }; LAYER_COUNT as usize];
+        layers[4] = LayerConfig {
+            diffusion_rate: 0.3,
+            decay_rate: 0.0,
+            emitter_count: 1,
+            emitter_offset: 0,
+        };
+
+        pipeline.step(
+            &device,
+            &queue,
+            DiffusionUniforms {
+                dt: 1.0,
+                _pad1: 0,
+                _pad2: 0,
+                _pad3: 0,
+                layers,
+            },
+            &emitters,
+            None,
+        );
+
+        // `step` only starts the async readback; force it to complete
+        // before asking for it, unlike the real app's per-frame
+        // best-effort `try_read_field` poll.
+        device.poll(wgpu::Maintain::Wait);
+        let field = pipeline
+            .try_read_field(&device)
+            .expect("readback should be available after an explicit device.poll(Wait)");
+
+        let layer_size = 64 * 64;
+        assert_eq!(field.len(), layer_size * LAYER_COUNT as usize);
+
+        let center_idx = 32 * 64 + 32;
+        for layer in 0..4usize {
+            let value = field[layer * layer_size + center_idx];
+            assert_eq!(
+                value, 0.0,
+                "layer {layer} should be untouched by a Morphogen-only emitter"
+            );
+        }
+        let morphogen_value = field[4 * layer_size + center_idx];
+        assert!(
+            morphogen_value > 0.0,
+            "Morphogen layer should show activity near its own emitter, got {morphogen_value}"
+        );
     }
 }

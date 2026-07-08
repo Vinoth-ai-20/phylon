@@ -1820,6 +1820,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "common",
+ "pollster",
  "thiserror 2.0.18",
  "wgpu",
 ]
@@ -2430,6 +2431,7 @@ dependencies = [
  "diffusion",
  "physics",
  "rayon",
+ "serde",
  "thiserror 2.0.18",
  "world",
 ]
@@ -4000,6 +4002,7 @@ dependencies = [
  "ecology",
  "evolution",
  "genetics",
+ "metabolism",
  "organisms",
  "physics",
  "reproduction",

@@ -265,6 +265,13 @@ impl PhylonApp {
         self.world
             .ecs
             .run_system_once(organisms::endocrine_diffusion_system);
+        // Intra-organism morphogen diffusion (Phase 6, Epic D, D1a): spreads
+        // and decays the growing tip's own seeded `MorphogenLevel` along the
+        // same Body Graph edges, one tick behind `growth_system`'s own read
+        // of it — see `organisms::morphogen_field`'s doc comment.
+        self.world
+            .ecs
+            .run_system_once(organisms::morphogen_diffusion_system);
         self.world
             .ecs
             .run_system_once(metabolism::metabolism_system);
@@ -413,6 +420,34 @@ impl PhylonApp {
             }
             let co2_count = gpu_emitters.len() as u32 - co2_offset;
 
+            // Layer 4: Morphogen (Phase 6, Epic D, D1b — ADR-D1-01's
+            // inter-organism/environmental half). Every segment's own
+            // intra-organism `MorphogenLevel` (D1a) — seeded on growth,
+            // spread and decayed along the Body Graph by
+            // `organisms::morphogen_diffusion_system` — doubles as this
+            // layer's emission source: a segment only carries a meaningful
+            // concentration while its organism is actively growing (mature
+            // organisms' levels decay toward zero with nothing to reseed
+            // them), so this naturally emits only near real developmental
+            // activity without needing a separate "is growing" query.
+            let morphogen_offset = gpu_emitters.len() as u32;
+            let mut query_morphogen = self
+                .world
+                .ecs
+                .query::<(&physics::ParticleNode, &organisms::MorphogenLevel)>();
+            for (node, level) in query_morphogen.iter(&self.world.ecs) {
+                if level.concentration <= 0.0 {
+                    continue;
+                }
+                let (gx, gy, gr) = to_grid(node.position, 15.0);
+                gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
+                    grid_pos: [gx, gy],
+                    value: level.concentration,
+                    grid_radius: gr,
+                });
+            }
+            let morphogen_count = gpu_emitters.len() as u32 - morphogen_offset;
+
             let layer_configs = [
                 gpu::diffusion_pipeline::LayerConfig {
                     diffusion_rate: diff_rate,
@@ -437,6 +472,15 @@ impl PhylonApp {
                     decay_rate: 0.005,
                     emitter_count: co2_count,
                     emitter_offset: co2_offset,
+                },
+                gpu::diffusion_pipeline::LayerConfig {
+                    // Untuned placeholders, same status as every other
+                    // layer's rates here — no biological calibration
+                    // attempted (Epic M's job).
+                    diffusion_rate: 0.3,
+                    decay_rate: 0.1,
+                    emitter_count: morphogen_count,
+                    emitter_offset: morphogen_offset,
                 },
             ];
 

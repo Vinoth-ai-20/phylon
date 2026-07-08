@@ -94,7 +94,8 @@ impl Default for CpuFieldState {
 
 impl CpuFieldState {
     /// Samples the field at a given world position for a specific layer.
-    /// Layer 0: Pheromones, 1: Energy, 2: O2, 3: CO2.
+    /// Layer 0: Pheromones, 1: Energy, 2: O2, 3: CO2, 4: Morphogen (Phase 6,
+    /// Epic D, D1b — see [`FieldLayer::Morphogen`]).
     pub fn sample(&self, pos: Vec2, layer: u32) -> f32 {
         let gx = (pos.x / 10.0) + (self.width as f32 / 2.0);
         let gy = (pos.y / 10.0) + (self.height as f32 / 2.0);
@@ -137,6 +138,13 @@ pub enum FieldLayer {
     O2 = 2,
     /// Spatial carbon dioxide layer.
     CO2 = 3,
+    /// Phase 6, Epic D (D1b, ADR-D1-01): the inter-organism/environmental
+    /// developmental-coupling layer — emitted into by developing organisms
+    /// (proportional to their own intra-organism `MorphogenLevel`, see
+    /// `organisms::morphogen_field`) and sampled by nearby developing
+    /// organisms' own decode. This is the "5th layer" ADR-D1-01 calls for;
+    /// the intra-organism signal itself (D1a) never touches the GPU.
+    Morphogen = 4,
 }
 
 /// The latest state of the signal diffusion field read back from the GPU.
@@ -282,5 +290,46 @@ impl CpuHazardFieldState {
     /// Clears the hazard field.
     pub fn clear(&mut self) {
         self.data.fill(0.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Phase 6, Epic D (D1b)'s own named testing requirement: the new
+    /// `FieldLayer::Morphogen` (index 4) must round-trip independently of
+    /// the other 4 layers — no cross-channel bleed. `CpuFieldState::sample`'s
+    /// layer offset is `layer * width * height`; this proves that offset
+    /// actually isolates layer 4's data from layers 0-3, not just that the
+    /// arithmetic looks right on paper.
+    #[test]
+    fn cpu_field_state_samples_the_morphogen_layer_independently_of_the_other_4_layers() {
+        let width = 4u32;
+        let height = 4u32;
+        let layer_size = (width * height) as usize;
+        let mut data = vec![0.0f32; layer_size * 5];
+
+        // Distinct, recognizable values per layer at the same grid cell.
+        for layer in 0..5u32 {
+            let idx = (layer as usize) * layer_size; // cell (0, 0) of each layer
+            data[idx] = (layer + 1) as f32 * 10.0;
+        }
+
+        let field = CpuFieldState {
+            data,
+            width,
+            height,
+        };
+
+        // World position that maps to grid cell (0, 0) given `sample`'s own
+        // `pos / 10.0 + dimension / 2.0` convention.
+        let pos = Vec2::new(-(width as f32 / 2.0) * 10.0, -(height as f32 / 2.0) * 10.0);
+
+        assert_eq!(field.sample(pos, FieldLayer::Pheromones as u32), 10.0);
+        assert_eq!(field.sample(pos, FieldLayer::Energy as u32), 20.0);
+        assert_eq!(field.sample(pos, FieldLayer::O2 as u32), 30.0);
+        assert_eq!(field.sample(pos, FieldLayer::CO2 as u32), 40.0);
+        assert_eq!(field.sample(pos, FieldLayer::Morphogen as u32), 50.0);
     }
 }

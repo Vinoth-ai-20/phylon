@@ -536,7 +536,9 @@ impl Neuromodulators {
 /// unbroadcast, non-conserved diffusion (the source keeps its own level;
 /// only the receiving side moves), unlike P4-F3's mass-conserving
 /// `ChemicalEconomy` transport.
-#[derive(bevy_ecs::prelude::Component, Debug, Clone, Copy, Default)]
+#[derive(
+    bevy_ecs::prelude::Component, Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize,
+)]
 pub struct HormoneLevel {
     /// Local reading of the organism-wide dopamine channel, in `[0, 1]`.
     pub dopamine: f32,

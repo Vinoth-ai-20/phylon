@@ -31,7 +31,7 @@ pub enum InfectionState {
 /// by a small random amount (see [`DiseaseConfig::mutation_jitter`]) —
 /// pathogen mutation, in the sense the spec asks for, without a full
 /// separate genome representation.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Infection {
     /// Current stage of infection.
     pub state: InfectionState,
@@ -53,7 +53,7 @@ pub struct Infection {
 /// affected right now. Attached to every non-head body segment, mirroring
 /// `metabolism::ChemicalEconomy::segment_default()`'s per-segment pattern
 /// (P4-F2).
-#[derive(Component, Debug, Clone, Copy)]
+#[derive(Component, Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct SegmentInfection {
     /// Local severity, in `[0, 1]` — `0.0` is unaffected, `1.0` is maximal.
     pub severity: f32,
@@ -73,7 +73,7 @@ impl SegmentInfection {
 /// `organisms::immune::segment_infection_system`, modeling localized immune
 /// defense independent of the organism-wide recovery roll
 /// [`disease_progression_system`] already performs.
-#[derive(Component, Debug, Clone, Copy)]
+#[derive(Component, Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct SegmentImmunity {
     /// Severity cleared per tick, in `[0, 1]`.
     pub resistance: f32,

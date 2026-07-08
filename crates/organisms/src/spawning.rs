@@ -86,6 +86,12 @@ pub fn spawn_organism(
         SpawnTick(spawn_tick),
         diet,
         category,
+        // Phase 6, Epic D (D1a): the head starts as the organism's own
+        // growing tip, seeded exactly like every later segment
+        // `growth_system` spawns — see `morphogen_field`'s doc comment.
+        crate::morphogen_field::MorphogenLevel {
+            concentration: crate::morphogen_field::MORPHOGEN_SEED_CONCENTRATION,
+        },
         reproduction::ReproductionStrategy {
             energy_threshold: 900.0,
             energy_cost: 500.0,

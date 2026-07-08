@@ -4,6 +4,7 @@
 #![warn(clippy::all)]
 
 use bevy_ecs::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// # Cellular Chemical Economy
 ///
@@ -20,7 +21,7 @@ use bevy_ecs::prelude::*;
 /// ## 3. How It Happens
 /// Every tick, the `metabolism_system` attempts to perform cellular respiration, converting
 /// Glucose and Oxygen into ATP and Carbon Dioxide. If ATP drops to $0.0$, the organism dies.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct ChemicalEconomy {
     /// Glucose: Raw fuel acquired by eating or photosynthesis.
     pub glucose: f32,
@@ -103,7 +104,7 @@ impl Default for GlobalAtmosphere {
 }
 
 /// Tracks the age of an organism.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct Age {
     /// Number of ticks lived.
     pub ticks: u64,
@@ -112,7 +113,7 @@ pub struct Age {
 }
 
 /// Defines the baseline metabolic cost per tick.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct Metabolism {
     /// The abstract mass of the organism (sum of its nodes).
     pub mass: f32,
@@ -123,7 +124,7 @@ pub struct Metabolism {
 }
 
 /// Tracks physical damage and overall vitality.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct Health {
     /// Current health points (e.g. 0.0 to 100.0).
     pub current: f32,
@@ -132,7 +133,7 @@ pub struct Health {
 }
 
 /// Tracks water levels for ecological rules.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct Hydration {
     /// Current hydration level (0.0 to 1.0).
     pub level: f32,
@@ -141,7 +142,7 @@ pub struct Hydration {
 }
 
 /// Tracks body temperature for thermoregulation.
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct BodyTemperature {
     /// Current body temperature in degrees Celsius.
     pub current: f32,

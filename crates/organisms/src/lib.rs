@@ -72,6 +72,11 @@ pub use endocrine::endocrine_diffusion_system;
 pub mod immune;
 pub use immune::segment_infection_system;
 
+/// Intra-organism morphogen diffusion along the persistent Body Graph
+/// (Phase 6, Epic D, milestone D1a).
+pub mod morphogen_field;
+pub use morphogen_field::{morphogen_diffusion_system, MorphogenLevel};
+
 /// Life-stage transitions and re-entrant growth (Phase 4, P4-L1).
 pub mod life_cycle;
 pub use life_cycle::life_stage_system;

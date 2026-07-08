@@ -40,7 +40,16 @@ impl SchemaVersion {
     /// `brain::Brain::node_regions` (`Vec<RegionId>`) — same reasoning:
     /// `Brain` is embedded directly via bincode, so its positional layout
     /// changing breaks any `.phylon` file saved under version 2.
-    pub const CURRENT: Self = Self(3);
+    ///
+    /// Bumped from 3 to 4 by Phase 6, Epic E's `SnapshotNode` expansion —
+    /// ~15 new optional fields covering physiology (`ChemicalEconomy`,
+    /// `Age`, `Metabolism`, `Health`, `Hydration`, `BodyTemperature`,
+    /// `HormoneLevel`, neuromodulator channels, disease state) and the
+    /// persistent Body Graph, all of which previously vanished silently on
+    /// save/load. `SnapshotNode`'s positional/field layout changing breaks
+    /// any `.phylon` file saved under version 3, same reasoning as every
+    /// prior bump.
+    pub const CURRENT: Self = Self(4);
 }
 
 impl std::fmt::Display for SchemaVersion {
@@ -491,6 +500,22 @@ mod tests {
                 category: None,
                 genome: None,
                 brain: None,
+                chemical_economy: None,
+                age: None,
+                metabolism: None,
+                health: None,
+                hydration: None,
+                body_temperature: None,
+                generation: None,
+                spawn_tick: None,
+                life_stage: None,
+                morphogen_level: None,
+                hormone_level: None,
+                neuromodulator_channels: None,
+                infection: None,
+                segment_infection: None,
+                segment_immunity: None,
+                developmental_graph: None,
             }],
             springs: vec![],
             food_pellets: vec![],

@@ -226,6 +226,23 @@ impl DevelopmentalGraph {
 /// plan came to be" for any organism, grown or not, without the transient
 /// [`DevelopmentalGraph`] `growth_system` builds ever needing to be
 /// persisted (Phase 3, M13 — see this module's doc comment).
+///
+/// **Phase 6, Epic D (D1c) scope note:** this function calls
+/// `genetics::develop_at_position` — always a **zero-field-input** decode —
+/// not `develop_at_position_with_life_stage`. As of D1a/D1b, a real
+/// `growth_system` run folds a growing tip's own intra-organism
+/// `morphogen_field::MorphogenLevel` (D1a) and the world-space environmental
+/// Morphogen field (D1b) into every position's decode, neither of which this
+/// function has ever modeled or ever will: doing so would require a live,
+/// stateful field reading this pure `genome + position` reconstruction has
+/// no access to by design (see ADR-P3-04/ADR-P3-09's original "pure
+/// function" reasoning, which this scope note narrows rather than
+/// reverses). **This function is therefore a lower-bound / zero-field
+/// reference reconstruction, not a live-run-identical prediction**, whenever
+/// D1a/D1b's field state is nonzero — see
+/// `systems::tests::real_run_field_signal_divergence_from_the_pure_replay_is_bounded_and_quantified`
+/// for how large that divergence is actually measured to be, rather than
+/// just asserted equal/unequal.
 pub fn simulate_growth_timeline(regulatory_cppn: &genetics::Cppn) -> DevelopmentalGraph {
     let total = crate::MAX_SEGMENTS;
     let mut graph = DevelopmentalGraph::new();

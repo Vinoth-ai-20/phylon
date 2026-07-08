@@ -21,3 +21,4 @@ physics = {workspace = true}
 bevy_ecs = {workspace = true}
 organisms = {workspace = true}
 reproduction = {workspace = true}
+metabolism = {workspace = true}
