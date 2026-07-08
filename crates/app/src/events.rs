@@ -84,9 +84,6 @@ impl PhylonApp {
                         }
                     }
                 }
-                ui::MenuAction::DuplicateSelection => {
-                    tracing::warn!("DuplicateSelection not implemented")
-                }
                 ui::MenuAction::SpawnPreset(name) => {
                     let spawn_pos = self.ui.camera_pos;
                     self.replay_log.record(
@@ -126,9 +123,6 @@ impl PhylonApp {
                     );
                     self.apply_spawn_manual_hazard(pos, tick);
                 }
-                ui::MenuAction::SpawnPaste => tracing::warn!("SpawnPaste not implemented"),
-                ui::MenuAction::JoinSelection => tracing::warn!("JoinSelection not implemented"),
-                ui::MenuAction::GrabSelection => tracing::warn!("GrabSelection not implemented"),
                 ui::MenuAction::GoToMainMenu => {
                     self.app_state = ui::AppState::MainMenu;
                 }
@@ -144,10 +138,23 @@ impl PhylonApp {
                     // `show_dialogs` also renders over the Main Menu screen,
                     // where this dialog's viewport/Inspector references
                     // wouldn't make sense yet.
-                    self.ui.show_onboarding_hints = true;
+                    //
+                    // Phase 6, Epic J: gated on `preferences.onboarding_seen`
+                    // so this is genuinely first-run-ever, not first-run-
+                    // per-session — the gap SX-9a's own disclosed
+                    // limitation named. Marked seen and saved immediately
+                    // (not deferred to app exit), so an early crash/kill
+                    // doesn't make the hint reappear next launch.
+                    if !self.preferences.onboarding_seen {
+                        self.ui.show_onboarding_hints = true;
+                        self.preferences.onboarding_seen = true;
+                        self.preferences
+                            .save(&crate::preferences::preferences_path());
+                    }
                 }
                 ui::MenuAction::Quit => {
                     info!("Quit action triggered from menu.");
+                    self.save_preferences();
                     std::process::exit(0);
                 }
                 ui::MenuAction::LoadState => {
@@ -166,12 +173,6 @@ impl PhylonApp {
                             });
                         }
                     }
-                }
-                ui::MenuAction::Undo => {
-                    tracing::warn!("Undo not yet implemented fully.");
-                }
-                ui::MenuAction::Redo => {
-                    tracing::warn!("Redo not yet implemented fully.");
                 }
                 ui::MenuAction::StepForward => {
                     self.accumulated_time += 1.0;
@@ -523,7 +524,23 @@ impl PhylonApp {
                     self.ui.command_palette_query.clear();
                 }
                 ui::MenuAction::FocusSelection => {
-                    tracing::warn!("FocusSelection not yet implemented.");
+                    // Phase 6, Epic J: previously a stub. Distinct from
+                    // `tracked_entity` (viewport double-click on a real
+                    // selection, `crates/app/src/render.rs`'s "Camera
+                    // Tracking" step) — that's a continuous per-frame lerp
+                    // follow; this is a one-shot snap, matching what a
+                    // menu-triggered "Focus Selection" should do (jump
+                    // there once, don't keep following).
+                    if let Some(entity) = self.ui.selected_entity {
+                        if let Ok(node) = self
+                            .world
+                            .ecs
+                            .query::<&physics::ParticleNode>()
+                            .get(&self.world.ecs, entity)
+                        {
+                            self.ui.camera_pos = node.position;
+                        }
+                    }
                 }
                 ui::MenuAction::SetOverlay(heatmap) => {
                     if let Some(mut hs) = self.world.ecs.get_resource_mut::<ui::HeatmapState>() {
@@ -728,6 +745,7 @@ impl ApplicationHandler for PhylonApp {
         match event {
             WindowEvent::CloseRequested => {
                 info!("Window close requested — exiting");
+                self.save_preferences();
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {

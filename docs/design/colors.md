@@ -11,10 +11,10 @@
 | `CHART_PRODUCER` | Producer | `#4CAF50` (green) |
 | `CHART_HERBIVORE` | Herbivore | `#48CAE4` (blue) |
 | `CHART_CARNIVORE` | Carnivore | `#F05454` (red) |
-| `CHART_OMNIVORE` | Omnivore | `#FFB703` (amber) |
+| `CHART_OMNIVORE` | Omnivore | `#FFDE00` (bright yellow — changed from `#FFB703` amber, Phase 6 Epic J) |
 | `CHART_DECOMPOSER` | Decomposer | `#9B5DE5` (purple) |
 
-**Accessibility note:** the Producer/Carnivore pair is green/red — the single most common form of color blindness, and was verified to stay separable under a Deuteranopia simulation. The pair that actually collides post-transform is Carnivore/Omnivore — see [`accessibility.md`](accessibility.md) for the full simulation table and the (currently unlanded) recommended fix; this file records the palette's *semantic* assignment, not its colorblind sign-off.
+**Accessibility note:** the Producer/Carnivore pair is green/red — the single most common form of color blindness, and was verified to stay separable under a Deuteranopia simulation. The pair that actually collided post-transform was Carnivore/Omnivore — see [`accessibility.md`](accessibility.md) for the full simulation table and the fix (landed Phase 6, Milestone J5); this file records the palette's *semantic* assignment, not its colorblind sign-off.
 
 **Naming note:** unlike the non-diet chart tokens below, `chart_color(diet: &ecology::Diet)` is a function, not five separate constants — `Diet::standard_color()` is authored in the viewport's linear color space, so each call re-derives the on-screen sRGB value rather than caching it as a literal. Earlier drafts of this document referred to `CHART_PRODUCER`/`CHART_HERBIVORE`/etc. as if they were named constants; they aren't, and no such constants should be added — `chart_color()` is what call sites use.
 

@@ -30,8 +30,6 @@ const COMMANDS: &[(&str, MenuAction)] = &[
     ("Export Organisms CSV…", MenuAction::ExportOrganismsCsv),
     ("Export Metrics CSV…", MenuAction::ExportMetricsCsv),
     ("Export Metrics JSON…", MenuAction::ExportMetricsJson),
-    ("Undo", MenuAction::Undo),
-    ("Redo", MenuAction::Redo),
 ];
 
 /// Renders the Command Palette overlay when `state.show_command_palette` is

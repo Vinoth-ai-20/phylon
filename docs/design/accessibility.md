@@ -1,6 +1,6 @@
 # Accessibility
 
-## Highest-priority finding (from the original audit) — verified, Milestone 12
+## Highest-priority finding (from the original audit) — verified, Milestone 12; fixed, Phase 6 Epic J
 
 Phylon's core visual language leans on 5 hue-coded diet categories, repeated in the viewport, the status bar, and (since Milestone 7) the Metrics charts. Red–green confusion is the single most common form of color blindness (~8% of men), so the diet palette (`ecology::Diet::standard_color()`) was run through a Viénot-matrix Deuteranopia simulation:
 
@@ -9,12 +9,12 @@ Phylon's core visual language leans on 5 hue-coded diet categories, repeated in 
 | Producer | `#4CAF50` (green) | `#71696D` — desaturated grayish-brown |
 | Herbivore | `#48CAE4` (blue) | `#796FDC` — blue-purple (stays distinct: blue channel dominates) |
 | Carnivore | `#F05454` (red) | `#B5C154` — yellow-olive |
-| Omnivore | `#FFB703` (amber) | `#E4E939` — yellow |
+| Omnivore (original, pre-Phase-6) | `#FFB703` (amber) | `#E4E939` — yellow |
 | Decomposer | `#9B5DE5` (purple) | `#8488BC` — blue-gray (moderately close to Herbivore, still separable by lightness) |
 
-**Actual finding — not the pair the original audit named:** Producer and Carnivore turn out to stay reasonably separable (one desaturated gray-brown, the other yellow-olive), because Producer's green retains a non-trivial blue component that survives the transform. The pair that actually collides is **Carnivore and Omnivore** — red and amber both converge on near-identical yellow-olive tones (`#B5C154` vs `#E4E939`), differing mainly in lightness, which is a weak signal under real-world viewing conditions (small viewport dots, chart lines).
+**Original finding — not the pair the original audit named:** Producer and Carnivore turn out to stay reasonably separable (one desaturated gray-brown, the other yellow-olive), because Producer's green retains a non-trivial blue component that survives the transform. The pair that actually collided was **Carnivore and Omnivore** — red and amber both converged on near-identical yellow-olive tones (`#B5C154` vs `#E4E939`), differing mainly in lightness, which is a weak signal under real-world viewing conditions (small viewport dots, chart lines).
 
-**This is flagged, not fixed, here.** Changing `Diet::standard_color()` changes the simulation's visual identity outside the `ui` crate boundary, not just a chrome color — the plan calls this out as its own reviewable sub-change needing explicit sign-off before landing, so it is intentionally not changed as part of this pass. Recommended follow-up once reviewed: shift Omnivore's hue away from amber toward a more orange-red-adjacent or shift its lightness/saturation further from Carnivore's post-transform value, then re-run this same simulation to confirm separation.
+**Fixed, Phase 6 Epic J (Milestone J5).** This was flagged-not-fixed through Milestone 12 and the whole of Phase 5, since changing `Diet::standard_color()` changes the simulation's visual identity outside the `ui` crate boundary, not just a chrome color, and needed its own explicit sign-off. Measured (not guessed) via a throwaway Machado et al. (2009) deuteranopia simulation matrix applied to the real palette (`crates/ecology/examples/deuteranopia_check.rs`, deleted after use, per this project's "measure honestly, then delete" convention): the first hypothesis — shifting Omnivore's hue *toward* orange/red-adjacent tones — was tested and found to make the collision **worse** (converges harder with Carnivore's red under the transform), not better. Shifting instead toward a fully saturated, high-lightness bright yellow (`#FFDE00`, vs. the original amber `#FFB703`) measurably improved simulated-color separation from Carnivore (+43%), Producer (+35%), and Decomposer (+8%), at the cost of a small reduction vs. Herbivore (-7% — still an enormous margin; Herbivore's blue is nowhere near the yellow/red/green cluster this palette's real risk lives in). `Diet::Omnivore`'s `standard_color()` now returns `[1.0, 0.737972, 0.0]` (linear-space, `#FFDE00` sRGB) instead of `[1.0, 0.482, 0.0]` (`#FFB703`).
 
 ## Minimum text size
 

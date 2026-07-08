@@ -48,10 +48,22 @@ impl Diet {
     /// existing color literals in this codebase, e.g. `x_linear = (x_srgb/255)^2.2`).
     pub fn standard_color(&self) -> [f32; 3] {
         match self {
-            Diet::Producer => [0.070, 0.437, 0.078],   // #4CAF50 green
-            Diet::Herbivore => [0.065, 0.591, 0.776],  // #48CAE4 blue
-            Diet::Carnivore => [0.871, 0.089, 0.089],  // #F05454 red
-            Diet::Omnivore => [1.0, 0.482, 0.0],       // #FFB703 amber
+            Diet::Producer => [0.070, 0.437, 0.078],  // #4CAF50 green
+            Diet::Herbivore => [0.065, 0.591, 0.776], // #48CAE4 blue
+            Diet::Carnivore => [0.871, 0.089, 0.089], // #F05454 red
+            // Phase 6, Epic J: was #FFB703 amber ([1.0, 0.482, 0.0]) —
+            // `docs/design/accessibility.md`'s own Deuteranopia simulation
+            // found Carnivore and Omnivore converge to a near-identical
+            // yellow-olive under red-green color blindness. Measured (not
+            // guessed) via a throwaway Machado et al. (2009) deuteranopia
+            // simulation (`crates/ecology/examples/deuteranopia_check.rs`,
+            // deleted after use): shifting toward orange/brown made the
+            // collision *worse* (converges harder with red); shifting to a
+            // fully saturated bright yellow measurably improved separation
+            // from Carnivore (simulated-color distance +43%), Producer
+            // (+35%), and Decomposer (+8%), at the cost of a smaller
+            // reduction vs. Herbivore (-7%, still an enormous margin).
+            Diet::Omnivore => [1.0, 0.737972, 0.0], // #FFDE00 bright yellow
             Diet::Decomposer => [0.334, 0.109, 0.789], // #9B5DE5 purple
         }
     }
@@ -883,5 +895,35 @@ mod foraging_feeding_effect_tests {
         }
 
         assert_eq!(run_once(), run_once());
+    }
+
+    /// Phase 6, Epic J (Milestone J5): `Diet::Omnivore`'s color was changed
+    /// specifically to increase separation from `Diet::Carnivore` under a
+    /// Deuteranopia simulation (see `docs/design/accessibility.md`). This
+    /// doesn't re-run the full colorblindness simulation (that measurement
+    /// tool was a throwaway example, deleted after use, per this project's
+    /// convention) — it's a cheap, permanent guard against silently
+    /// reverting to the old amber value or picking a new one that's
+    /// trivially identical to Carnivore in plain sRGB terms, which would
+    /// undo this milestone's fix without any test catching it.
+    #[test]
+    fn omnivore_color_is_not_the_old_amber_and_stays_visibly_distinct_from_carnivore() {
+        let omnivore = Diet::Omnivore.standard_color();
+        let carnivore = Diet::Carnivore.standard_color();
+
+        let old_amber = [1.0, 0.482, 0.0];
+        assert_ne!(
+            omnivore, old_amber,
+            "Omnivore must not silently revert to the pre-Phase-6 amber that collided with Carnivore under deuteranopia"
+        );
+
+        let distance = ((omnivore[0] - carnivore[0]).powi(2)
+            + (omnivore[1] - carnivore[1]).powi(2)
+            + (omnivore[2] - carnivore[2]).powi(2))
+        .sqrt();
+        assert!(
+            distance > 0.3,
+            "Omnivore and Carnivore should read as clearly distinct colors in linear RGB; got distance {distance}"
+        );
     }
 }

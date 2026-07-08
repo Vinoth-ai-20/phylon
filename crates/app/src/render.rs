@@ -1400,7 +1400,24 @@ impl PhylonApp {
 
         if !selected_bones.is_empty() {
             if let Some(sdf_renderer) = self.sdf_skin_renderer.as_mut() {
-                let pulse = 0.6 + 0.4 * (self.total_sim_time * 3.0).sin();
+                // Phase 6, Epic J (ADR-P5-08): this was a continuous
+                // wall-clock sine oscillation (`0.6 + 0.4 *
+                // (total_sim_time * 3.0).sin()`) — the one remaining
+                // decorative animation this project's own visual-language
+                // rules prohibit ("no decorative pulsing... every
+                // animation must be driven by a real, current simulation
+                // value"), since `total_sim_time` carries no biological
+                // meaning and oscillates identically whether the selected
+                // organism is thriving or dying. Fixed, not
+                // Health-fraction-driven: `docs/design/biological_visual_
+                // language.md`'s numeric priority hierarchy places
+                // Selection at Priority 1, the highest — tying it to
+                // Health (Priority 2) would blur that ordering and create
+                // a second, competing Health signal (SX-1c already owns
+                // opacity-by-health-fraction). A static, maximum-alpha
+                // outline keeps Selection unambiguous and undiminished, as
+                // ADR-P5-08 itself required of any replacement.
+                let pulse = 1.0;
                 sdf_renderer.render_highlight(
                     &gpu.device,
                     &gpu.queue,

@@ -127,28 +127,18 @@ pub fn menu_ui(
         });
 
         // ── EDIT ──────────────────────────────────────────────────────────
+        //
+        // Phase 6, Epic J: Undo/Redo and "Duplicate Selected" were removed
+        // from here (and every other place that advertised them) — their
+        // `MenuAction` handlers only ever logged a warning and did nothing.
+        // Undo/Redo would need a real command-history stack; duplicating an
+        // organism would need to clone its genome/lineage/diet through the
+        // same spawn path births use — both are genuine new subsystems, out
+        // of proportion for a UI-debt cleanup. Removed rather than left as
+        // a control that silently does nothing while claiming otherwise.
         ui.menu_button("Edit", |ui| {
-            if ui
-                .add(Button::new("Undo").shortcut_text("Ctrl+Z"))
-                .clicked()
-            {
-                actions.push(MenuAction::Undo);
-                ui.close_menu();
-            }
-            if ui
-                .add(Button::new("Redo").shortcut_text("Ctrl+Y"))
-                .clicked()
-            {
-                actions.push(MenuAction::Redo);
-                ui.close_menu();
-            }
-            ui.separator();
             if ui.button("Delete Selected").clicked() {
                 actions.push(MenuAction::DeleteSelection);
-                ui.close_menu();
-            }
-            if ui.button("Duplicate Selected").clicked() {
-                actions.push(MenuAction::DuplicateSelection);
                 ui.close_menu();
             }
             ui.separator();
@@ -450,21 +440,6 @@ pub fn menu_ui(
                 .clicked()
             {
                 actions.push(MenuAction::ImportGenome);
-                ui.close_menu();
-            }
-            ui.separator();
-            if ui
-                .add(egui::Button::new("Screenshot").small())
-                .on_hover_text("Not yet implemented")
-                .clicked()
-            {
-                ui.close_menu();
-            }
-            if ui
-                .add(egui::Button::new("Recording").small())
-                .on_hover_text("Not yet implemented")
-                .clicked()
-            {
                 ui.close_menu();
             }
         });

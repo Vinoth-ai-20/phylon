@@ -146,7 +146,6 @@ fn keybinds_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) {
                         ("Ctrl+A", "Select First Head Node"),
                         ("Escape", "Deselect All"),
                         ("X", "Delete Selected"),
-                        ("C", "Duplicate Selected"),
                     ],
                 );
                 keybind_section(
@@ -168,18 +167,7 @@ fn keybinds_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) {
                         ("Ctrl+B", "Toggle Sidebar"),
                     ],
                 );
-                keybind_section(
-                    ui,
-                    "Editing",
-                    &[
-                        ("Ctrl+Z", "Undo"),
-                        ("Ctrl+Y", "Redo"),
-                        ("G", "Grab Selection"),
-                        ("V", "Paste / Spawn from Clipboard"),
-                        ("F", "Toggle Stationary"),
-                        ("J", "Join Selection"),
-                    ],
-                );
+                keybind_section(ui, "Editing", &[("F", "Toggle Stationary")]);
             });
         });
 }

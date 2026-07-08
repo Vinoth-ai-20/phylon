@@ -82,6 +82,12 @@ pub(crate) struct PhylonApp {
     /// Deserialised application/simulation config
     pub(crate) sim_config: PhylonConfig,
 
+    /// Cross-session UI preferences (Phase 6, Epic J) — High Contrast Mode,
+    /// UI scale, and whether onboarding hints have ever been shown. See
+    /// `crate::preferences`'s module doc comment for why this is separate
+    /// from `sim_config`.
+    pub(crate) preferences: crate::preferences::Preferences,
+
     /// Central ECS World holding all entities and global resources
     pub(crate) world: world::World,
 
@@ -203,6 +209,9 @@ pub(crate) enum BackgroundTaskResult {
 
 impl PhylonApp {
     pub(crate) fn new(sim_config: PhylonConfig) -> Self {
+        let preferences =
+            crate::preferences::Preferences::load(&crate::preferences::preferences_path());
+
         let mut world = world::World::new();
 
         // The single source of truth for the fixed per-tick delta-time —
@@ -343,8 +352,13 @@ impl PhylonApp {
 
         let replay_log = storage::replay::ReplayLog::new(sim_config.simulation.rng_seed);
 
+        let mut ui = ui::WorkbenchState::default();
+        ui.high_contrast = preferences.high_contrast;
+        ui.ui_scale = preferences.ui_scale;
+
         Self {
             sim_config,
+            preferences,
             world,
             gpu: None,
             physics_compute: None,
@@ -357,7 +371,7 @@ impl PhylonApp {
             window: None,
             egui_state: None,
             egui_renderer: None,
-            ui: ui::WorkbenchState::default(),
+            ui,
             app_state: ui::AppState::default(),
             max_ticks_per_frame: 50,
             total_sim_time: 0.0,
@@ -375,6 +389,20 @@ impl PhylonApp {
             experiment_manifest,
             replay_log,
         }
+    }
+
+    /// Syncs the live `WorkbenchState` preference fields (`high_contrast`,
+    /// `ui_scale` — toggled directly in `sidebar.rs`'s Settings tab, with no
+    /// `MenuAction` round-trip to hook a save into) back into `preferences`
+    /// and writes it to disk. Called at both real exit paths this app has
+    /// (`MenuAction::Quit`, the window's `CloseRequested` event) — see
+    /// `crate::preferences`'s module doc comment for why exit-time saving
+    /// was chosen over saving on every individual toggle.
+    pub(crate) fn save_preferences(&mut self) {
+        self.preferences.high_contrast = self.ui.high_contrast;
+        self.preferences.ui_scale = self.ui.ui_scale;
+        self.preferences
+            .save(&crate::preferences::preferences_path());
     }
 
     /// The current simulation tick, derived from `total_sim_time` and the

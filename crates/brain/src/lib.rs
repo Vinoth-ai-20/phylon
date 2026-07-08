@@ -118,6 +118,41 @@ pub struct CtrnnSynapse {
     pub _padding: u32,
 }
 
+/// # Neural Region Identity (Phase 6, Epic C, Milestone N1a)
+///
+/// ## 1. What Happens
+/// Identifies which anatomical cluster a `Brain` node belongs to — pure
+/// CPU-side wiring metadata, one entry per `Brain::nodes` element (see
+/// `Brain::node_regions`).
+///
+/// ## 2. Why It Happens
+/// `PHASE4_EPIC1_NEURAL_ROADMAP.md`'s audit found brain wiring today is
+/// purely index-driven (`growth_system` queries the CPPN with each node's
+/// *normalized array index*, not its body position or anatomy) — there is
+/// no way to express "these nodes belong to this Ganglion" at all. This is
+/// the first, additive step: the field exists and defaults uniformly, with
+/// no behavior change yet. Region-bound *wiring* (N1b) and real Ganglion
+/// anchoring (N1c) are later, separate milestones.
+///
+/// ## 3. How It Happens
+/// `RegionId::Central` is every node's default — `Brain::new` fills
+/// `node_regions` with it uniformly, so no existing organism's brain
+/// topology changes as a result of this type existing. `Ganglion(usize)`
+/// names a specific developmental-graph position (see
+/// `organisms::developmental_graph::DevelopmentalGraph`) once N1c starts
+/// actually assigning it — unused by any wiring logic until then.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum RegionId {
+    /// No anatomical anchor — every node's default today.
+    #[default]
+    Central,
+    /// Anchored to the `SegmentType::Ganglion` segment at this
+    /// developmental-graph position (see
+    /// `organisms::developmental_graph::DevelopmentalNode::position`).
+    /// Not yet assigned by any wiring logic — reserved for N1c.
+    Ganglion(usize),
+}
+
 /// # Organism Brain Substrate
 ///
 /// ## 1. What Happens
@@ -168,6 +203,17 @@ pub struct Brain {
     /// `plasticity_enabled` in Epic 8.
     #[serde(skip)]
     pub external_override: Option<Vec<f32>>,
+    /// Phase 6, Epic C (N1a): which anatomical region each node in `nodes`
+    /// belongs to, same length and index alignment as `nodes` — parallel,
+    /// not embedded in `CtrnnNode` itself, since `CtrnnNode` is a
+    /// `#[repr(C)]`/`Pod` GPU upload type and region is purely a CPU-side
+    /// wiring-time concept (ADR-N1-01: no GPU buffer/shader change). Always
+    /// `RegionId::Central` for every node until N1c starts assigning
+    /// `Ganglion` regions. `nodes` is never reordered/resized after
+    /// `Brain::new` (`prune_weak_synapses`/`reindex_synapses` only ever
+    /// mutate `synapses`), so this stays index-aligned with no
+    /// synchronization logic needed.
+    pub node_regions: Vec<RegionId>,
 }
 
 impl Brain {
@@ -272,6 +318,7 @@ impl Brain {
         output_count: usize,
     ) -> Self {
         Self::reindex_synapses(&mut nodes, &mut synapses);
+        let node_regions = vec![RegionId::Central; nodes.len()];
 
         Self {
             id,
@@ -282,6 +329,7 @@ impl Brain {
             winner_take_all: false,
             plasticity_enabled: true,
             external_override: None,
+            node_regions,
         }
     }
 
@@ -604,6 +652,27 @@ mod tests {
         let outputs = brain.get_outputs();
         assert_eq!(outputs[0], 0.0);
         assert_eq!(outputs[1], -0.9);
+    }
+
+    /// Phase 6, Epic C (N1a): `Brain::new` must default every node's region
+    /// to `RegionId::Central`, one entry per node, with no wiring-behavior
+    /// change — this is purely additive infrastructure per ADR-N1-01.
+    #[test]
+    fn brain_new_defaults_every_node_region_to_central() {
+        let brain = two_node_brain(0.5);
+        assert_eq!(brain.node_regions.len(), brain.nodes.len());
+        assert!(brain
+            .node_regions
+            .iter()
+            .all(|region| *region == RegionId::Central));
+    }
+
+    /// `RegionId::default()` (the derive N1a relies on for future
+    /// convenience constructors) must agree with what `Brain::new` actually
+    /// assigns — both should mean "no anatomical anchor."
+    #[test]
+    fn region_id_default_is_central() {
+        assert_eq!(RegionId::default(), RegionId::Central);
     }
 
     #[test]

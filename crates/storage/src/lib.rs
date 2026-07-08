@@ -35,7 +35,12 @@ impl SchemaVersion {
     /// saved under version 1 will fail to deserialize against the current
     /// layout (no migration path exists yet; the same situation as
     /// `genetics::GENOME_SCHEMA_VERSION`'s bump in Epic 7).
-    pub const CURRENT: Self = Self(2);
+    ///
+    /// Bumped from 2 to 3 by Phase 6, Epic C, Milestone N1a's addition of
+    /// `brain::Brain::node_regions` (`Vec<RegionId>`) — same reasoning:
+    /// `Brain` is embedded directly via bincode, so its positional layout
+    /// changing breaks any `.phylon` file saved under version 2.
+    pub const CURRENT: Self = Self(3);
 }
 
 impl std::fmt::Display for SchemaVersion {

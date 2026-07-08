@@ -171,10 +171,6 @@ pub enum MenuAction {
     SaveState,
     /// Load a simulation state from disk.
     LoadState,
-    /// Undo the last action.
-    Undo,
-    /// Redo the last undone action.
-    Redo,
     /// Advance the simulation by one tick while paused.
     StepForward,
     /// Reseed the entire ecosystem
@@ -230,16 +226,8 @@ pub enum MenuAction {
     // Canvas Shortcuts
     /// Delete the selected entity.
     DeleteSelection,
-    /// Duplicate the selected entity.
-    DuplicateSelection,
-    /// Spawn/paste a new entity from the clipboard.
-    SpawnPaste,
     /// Toggle whether the selected entity is fixed in place.
     ToggleStationary,
-    /// Join/link the selected entity.
-    JoinSelection,
-    /// Enter drag mode for the selected entity.
-    GrabSelection,
     /// Spawn a localized catastrophe hazard.
     SpawnManualHazard,
 

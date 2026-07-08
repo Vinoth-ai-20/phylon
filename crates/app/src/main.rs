@@ -32,6 +32,7 @@ pub mod events;
 pub mod interventions;
 pub mod learning_bridge;
 pub mod motion_diagnostic;
+pub mod preferences;
 pub mod render;
 pub mod replay;
 pub mod scripting;

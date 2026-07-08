@@ -258,11 +258,18 @@ pub struct WorkbenchState {
     /// Whether to show the first-run onboarding hints dialog (Phase 5,
     /// SX-9a). Defaults `false` here (not at construction time — see below)
     /// and is set `true` by `MenuAction::StartSimulation`'s handler
-    /// (`crates/app/src/events.rs`), the moment the user actually reaches
-    /// the simulation view for the first time each session — `show_dialogs`
-    /// also renders while `AppState::MainMenu` is active, and this dialog
-    /// references the viewport, which doesn't exist yet there. Re-openable
-    /// afterward via Help → Welcome Tips, same as About/Docs/Keybinds.
+    /// (`crates/app/src/events.rs`) the moment the user actually reaches
+    /// the simulation view — `show_dialogs` also renders while
+    /// `AppState::MainMenu` is active, and this dialog references the
+    /// viewport, which doesn't exist yet there. Re-openable afterward via
+    /// Help → Welcome Tips, same as About/Docs/Keybinds.
+    ///
+    /// Phase 6, Epic J: that handler now gates the `true` assignment on
+    /// the `app` crate's `preferences::Preferences::onboarding_seen` (a
+    /// separate, persisted `.ron` flag — this field alone was always
+    /// session-scoped by construction and cannot itself remember across
+    /// restarts), closing the "session-scoped only" limitation SX-9a
+    /// originally disclosed.
     pub show_onboarding_hints: bool,
     /// Whether to draw organism vision-cone overlays.
     pub show_vision_cones: bool,
@@ -663,94 +670,11 @@ impl WorkbenchState {
     }
 }
 
-/// Dispatched from the UI to the ECS Simulation.
-#[derive(Debug, Clone)]
-pub enum WorkbenchCommand {
-    // Project / File
-    /// Start a brand-new simulation, discarding the current one.
-    NewSimulation,
-    /// Open a previously saved simulation from disk.
-    OpenSimulation,
-    /// Save the current simulation to its existing project file.
-    SaveProject,
-    /// Save the current simulation to a new project file.
-    SaveProjectAs,
-    /// Import a genome file for the selected/spawned organism.
-    ImportGenome,
-    /// Export the selected organism's genome to disk.
-    ExportGenome,
-    /// Export the current CPPN/graph view to a file.
-    ExportGraph,
-    /// Capture a screenshot of the viewport.
-    Screenshot,
-    /// Start or stop recording the viewport.
-    Recording,
-
-    // Edit
-    /// Undo the last action.
-    Undo,
-    /// Redo the last undone action.
-    Redo,
-    /// Copy the current selection.
-    Copy,
-    /// Paste the clipboard contents.
-    Paste,
-    /// Delete the currently selected entity.
-    DeleteSelected,
-    /// Duplicate the currently selected entity.
-    DuplicateSelected,
-
-    // Selection
-    /// Select all entities.
-    SelectAll,
-    /// Select all entities belonging to a species.
-    SelectSpecies,
-    /// Select all producer organisms.
-    SelectProducers,
-    /// Select all herbivore organisms.
-    SelectHerbivores,
-    /// Select all carnivore organisms.
-    SelectCarnivores,
-    /// Select all omnivore organisms.
-    SelectOmnivores,
-    /// Invert the current selection.
-    InvertSelection,
-    /// Clear the current selection.
-    ClearSelection,
-    /// Pan/zoom the viewport to frame the current selection.
-    FocusSelection,
-
-    // Simulation
-    /// Begin running the simulation.
-    StartSimulation,
-    /// Pause the running simulation.
-    PauseSimulation,
-    /// Stop the simulation entirely.
-    StopSimulation,
-    /// Restart the simulation from its initial state.
-    RestartSimulation,
-    /// Advance the simulation by exactly one tick.
-    StepOneTick,
-    /// Set the simulation speed multiplier.
-    SetSimulationSpeed(f32),
-    /// Set the random seed used for procedural generation.
-    SetRandomSeed(u64),
-    /// Reset the world to an empty state.
-    ResetWorld,
-
-    // Camera
-    /// Reset the camera to its default position and zoom.
-    ResetCamera,
-    /// Center the camera on the world origin.
-    CenterWorld,
-    /// Make the camera follow the selected entity.
-    FollowSelected,
-    /// Toggle automatic spectator-mode camera following.
-    ToggleSpectator,
-
-    // Interaction
-    /// Spawn a manually-triggered hazard at the cursor.
-    SpawnManualHazard,
-    /// Spawn a named preset organism at the cursor.
-    SpawnPreset(String),
-}
+// Phase 6, Epic J: `WorkbenchCommand` (a ~90-line, fully parallel catalog of
+// UI-dispatchable commands — Undo/Redo/DuplicateSelected/FocusSelection/etc.)
+// was removed from here. Confirmed via a workspace-wide search that nothing
+// anywhere ever constructed, matched, or otherwise consumed it — a dead
+// enum, not a partially-wired one. It appears to have been an early sketch
+// superseded by `MenuAction` (`types.rs`) and the command palette's own
+// `(&str, MenuAction)` list (`plugins/command_palette.rs`), left behind
+// rather than deleted when that happened.

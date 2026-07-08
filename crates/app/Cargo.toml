@@ -67,3 +67,5 @@ sysinfo = "0.39.3"
 rfd.workspace = true
 bincode.workspace = true
 image.workspace = true
+serde = { workspace = true }
+ron = { workspace = true }

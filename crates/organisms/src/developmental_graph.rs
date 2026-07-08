@@ -147,6 +147,73 @@ impl DevelopmentalGraph {
             .iter()
             .find(|n| !n.is_branch && n.position == position)
     }
+
+    /// Same lookup as [`DevelopmentalGraph::node_at_position`], but returns
+    /// the node's index within this graph rather than a reference — needed
+    /// by [`DevelopmentalGraph::graph_distance`], which operates on indices
+    /// (matching `DevelopmentalNode::parent`'s own indexing), not positions.
+    /// Added alongside `graph_distance` (Phase 6, Epic C, N1c) rather than
+    /// generalizing `node_at_position` itself, to avoid changing that
+    /// method's existing return type for every current call site.
+    pub fn index_at_position(&self, position: usize) -> Option<usize> {
+        self.nodes
+            .iter()
+            .position(|n| !n.is_branch && n.position == position)
+    }
+
+    /// The number of structural edges between nodes `a` and `b` in this
+    /// graph's tree — a body-graph (topological) distance, deliberately
+    /// not a Euclidean one, since two segments can be spatially close but
+    /// developmentally distant (or vice versa via a branch). Used by
+    /// `organisms::systems::growth_system`'s brain-wiring step (Phase 6,
+    /// Epic C, N1c) to find the nearest `SegmentType::Ganglion` anchor for
+    /// a given body position.
+    ///
+    /// Implemented as a plain BFS over the undirected tree formed by
+    /// `parent` links — this graph has at most `crate::MAX_SEGMENTS * 3`
+    /// nodes (spine + up to 2 fins per branch point), so a BFS with no
+    /// further optimization is more than fast enough and keeps this
+    /// generic query surface simple, matching P4-F1's own stated principle
+    /// (a small, non-biology-specific traversal primitive, not a
+    /// specialized shortest-path structure).
+    pub fn graph_distance(&self, a: usize, b: usize) -> usize {
+        if a == b {
+            return 0;
+        }
+        // Undirected adjacency: each node's parent, plus each node's
+        // children (the reverse edge), so BFS can walk both up and down
+        // the tree.
+        let mut adjacency: std::collections::HashMap<usize, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (index, node) in self.nodes.iter().enumerate() {
+            if let Some(parent) = node.parent {
+                adjacency.entry(index).or_default().push(parent);
+                adjacency.entry(parent).or_default().push(index);
+            }
+        }
+
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back((a, 0usize));
+        visited.insert(a);
+        while let Some((current, distance)) = queue.pop_front() {
+            if current == b {
+                return distance;
+            }
+            if let Some(neighbors) = adjacency.get(&current) {
+                for &neighbor in neighbors {
+                    if visited.insert(neighbor) {
+                        queue.push_back((neighbor, distance + 1));
+                    }
+                }
+            }
+        }
+        // `a`/`b` are disconnected (shouldn't happen for indices from the
+        // same graph, since every node eventually chains to the root) —
+        // returns `usize::MAX` rather than panicking, so a caller ranking
+        // candidates by distance simply never picks an unreachable one.
+        usize::MAX
+    }
 }
 
 /// Deterministically reconstructs the full growth timeline for `regulatory_cppn`
@@ -381,6 +448,109 @@ mod tests {
         assert_eq!(torso_children, vec![true, true]);
         assert_eq!(graph.nodes[fin_a].parent, Some(torso));
         assert_eq!(graph.nodes[fin_b].parent, Some(torso));
+    }
+
+    /// Phase 6, Epic C (N1c): a straight spine chain's graph distance must
+    /// be the real number of edges walked, not a raw index difference —
+    /// they'd coincide for a pure spine anyway, but this is the base case
+    /// the branch test below is contrasted against.
+    #[test]
+    fn graph_distance_on_a_straight_spine_is_the_hop_count() {
+        let mut graph = DevelopmentalGraph::new();
+        let head = graph.push(
+            SegmentType::Head,
+            sample_outputs(SegmentType::Head),
+            None,
+            false,
+            0,
+            None,
+        );
+        let torso1 = graph.push(
+            SegmentType::Torso,
+            sample_outputs(SegmentType::Torso),
+            Some(head),
+            false,
+            1,
+            None,
+        );
+        let torso2 = graph.push(
+            SegmentType::Torso,
+            sample_outputs(SegmentType::Torso),
+            Some(torso1),
+            false,
+            2,
+            None,
+        );
+        let tail = graph.push(
+            SegmentType::Tail,
+            sample_outputs(SegmentType::Tail),
+            Some(torso2),
+            false,
+            3,
+            None,
+        );
+
+        assert_eq!(graph.graph_distance(head, head), 0);
+        assert_eq!(graph.graph_distance(head, torso1), 1);
+        assert_eq!(graph.graph_distance(head, torso2), 2);
+        assert_eq!(graph.graph_distance(head, tail), 3);
+        assert_eq!(
+            graph.graph_distance(tail, head),
+            3,
+            "distance must be symmetric"
+        );
+    }
+
+    /// The case `graph_distance` exists for: two fin branches off the same
+    /// torso are graph-adjacent to each other (2 hops, via their shared
+    /// parent) even though a *node-index* difference would suggest
+    /// otherwise — proving distance is computed from real tree structure,
+    /// not accidentally from index arithmetic.
+    #[test]
+    fn graph_distance_through_a_shared_branch_point_is_not_the_index_difference() {
+        let mut graph = DevelopmentalGraph::new();
+        let head = graph.push(
+            SegmentType::Head,
+            sample_outputs(SegmentType::Head),
+            None,
+            false,
+            0,
+            None,
+        );
+        let torso = graph.push(
+            SegmentType::Torso,
+            sample_outputs(SegmentType::Torso),
+            Some(head),
+            false,
+            1,
+            None,
+        );
+        let fin_a = graph.push(
+            SegmentType::Fin,
+            sample_outputs(SegmentType::Fin),
+            Some(torso),
+            true,
+            1,
+            None,
+        );
+        let fin_b = graph.push(
+            SegmentType::Fin,
+            sample_outputs(SegmentType::Fin),
+            Some(torso),
+            true,
+            1,
+            None,
+        );
+
+        // fin_a (index 2) and fin_b (index 3) differ by 1 in raw index, but
+        // are 2 graph hops apart (fin_a -> torso -> fin_b).
+        assert_eq!(graph.graph_distance(fin_a, fin_b), 2);
+        assert_ne!(
+            graph.graph_distance(fin_a, fin_b),
+            fin_b - fin_a,
+            "graph distance must not accidentally equal the raw index difference"
+        );
+        assert_eq!(graph.graph_distance(fin_a, torso), 1);
     }
 
     #[test]
