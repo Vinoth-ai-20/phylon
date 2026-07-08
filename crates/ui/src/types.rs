@@ -211,6 +211,9 @@ pub enum MenuAction {
     ShowAbout,
     /// Show keybinds.
     ShowKeybinds,
+    /// Re-open the first-run onboarding hints dialog (Phase 5, SX-9a) —
+    /// Help → Welcome Tips, same re-open pattern as `ShowAbout`/`ShowDocumentation`.
+    ShowOnboardingHints,
     /// Zoom camera in.
     CameraZoomIn,
     /// Zoom camera out.

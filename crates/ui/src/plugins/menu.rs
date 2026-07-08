@@ -555,6 +555,10 @@ pub fn menu_ui(
                 actions.push(MenuAction::ShowKeybinds);
                 ui.close_menu();
             }
+            if ui.button("Welcome Tips").clicked() {
+                actions.push(MenuAction::ShowOnboardingHints);
+                ui.close_menu();
+            }
             if ui.button("About").clicked() {
                 actions.push(MenuAction::ShowAbout);
                 ui.close_menu();

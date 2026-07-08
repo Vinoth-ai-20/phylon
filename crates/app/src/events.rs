@@ -136,6 +136,13 @@ impl PhylonApp {
                     self.ui.is_paused = false;
                     self.ui.show_about = false;
                     self.ui.show_docs = false;
+                    // Phase 5, SX-9a: fires the first time this session the
+                    // user actually reaches the simulation view — not at
+                    // `WorkbenchState::default()` construction time, since
+                    // `show_dialogs` also renders over the Main Menu screen,
+                    // where this dialog's viewport/Inspector references
+                    // wouldn't make sense yet.
+                    self.ui.show_onboarding_hints = true;
                 }
                 ui::MenuAction::Quit => {
                     info!("Quit action triggered from menu.");
@@ -242,6 +249,9 @@ impl PhylonApp {
                 }
                 ui::MenuAction::ShowKeybinds => {
                     self.ui.show_keybinds = true;
+                }
+                ui::MenuAction::ShowOnboardingHints => {
+                    self.ui.show_onboarding_hints = true;
                 }
                 ui::MenuAction::CameraZoomIn => {
                     self.ui.camera_zoom *= 1.1;

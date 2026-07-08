@@ -255,6 +255,15 @@ pub struct WorkbenchState {
     pub show_docs: bool,
     /// Whether to show the Keybinds dialog.
     pub show_keybinds: bool,
+    /// Whether to show the first-run onboarding hints dialog (Phase 5,
+    /// SX-9a). Defaults `false` here (not at construction time — see below)
+    /// and is set `true` by `MenuAction::StartSimulation`'s handler
+    /// (`crates/app/src/events.rs`), the moment the user actually reaches
+    /// the simulation view for the first time each session — `show_dialogs`
+    /// also renders while `AppState::MainMenu` is active, and this dialog
+    /// references the viewport, which doesn't exist yet there. Re-openable
+    /// afterward via Help → Welcome Tips, same as About/Docs/Keybinds.
+    pub show_onboarding_hints: bool,
     /// Whether to draw organism vision-cone overlays.
     pub show_vision_cones: bool,
     /// Whether to draw organism name labels in the viewport (Phase 5,
@@ -542,6 +551,7 @@ impl Default for WorkbenchState {
             show_about: false,
             show_docs: false,
             show_keybinds: false,
+            show_onboarding_hints: false,
             show_vision_cones: false,
             show_organism_labels: false,
             show_world_boundary: false,

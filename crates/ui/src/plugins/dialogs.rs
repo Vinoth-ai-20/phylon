@@ -1,4 +1,5 @@
-//! Dialogs plugin — About, Documentation, and Keybinds floating windows.
+//! Dialogs plugin — About, Documentation, Keybinds, and Onboarding Hints
+//! floating windows.
 //!
 //! All dialogs are shown based on boolean flags in `WorkbenchState`. This module
 //! consolidates them out of `render.rs` into a dedicated, testable location.
@@ -14,6 +15,7 @@ pub fn show_dialogs(
     about_dialog(ctx, state);
     documentation_dialog(ctx, state);
     keybinds_dialog(ctx, state);
+    onboarding_hints_dialog(ctx, state);
 }
 
 fn about_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) {
@@ -180,6 +182,114 @@ fn keybinds_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) {
                 );
             });
         });
+}
+
+/// First-run contextual hints (Phase 5, SX-9a) — deliberately *not* a full
+/// tour (no multi-step wizard, no forced sequence): one dismissible dialog
+/// pointing at the two things a first-time viewer has no way to discover on
+/// their own — the viewport's population-wide state-legibility signals
+/// (Epic 1) and the redesigned Inspector's progressive-disclosure sections
+/// (Epic 6). Shown automatically once per session (see
+/// `WorkbenchState::show_onboarding_hints`'s doc comment for exactly when),
+/// re-openable afterward via Help → Welcome Tips.
+fn onboarding_hints_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) {
+    if !state.show_onboarding_hints {
+        return;
+    }
+    // A local `open`/`dismissed` pair, not `.open(&mut state.show_onboarding_hints)`
+    // directly, since the "Got it" button below also needs to write
+    // `state.show_onboarding_hints` from inside the same `.show()` closure —
+    // borrowing it twice (once for `.open()`, once inside the closure) isn't
+    // possible in one call chain.
+    let mut open = true;
+    let mut dismissed = false;
+    egui::Window::new("Welcome to Phylon")
+        .open(&mut open)
+        .resizable(false)
+        .collapsible(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ctx, |ui| {
+            ui.set_max_width(420.0);
+            ui.label(
+                egui::RichText::new("A few things to look for before you dive in:")
+                    .color(crate::theme::DISABLED_FG)
+                    .italics(),
+            );
+            ui.add_space(crate::theme::SPACE_MD);
+
+            ui.label(egui::RichText::new("In the viewport").strong());
+            ui.add_space(crate::theme::SPACE_XS);
+            onboarding_row(
+                ui,
+                egui_remixicon::icons::ARROW_UP_S_LINE,
+                egui::Color32::from_rgb(230, 140, 30),
+                "A glyph above an organism shows what it's doing right now — hunting, fleeing, foraging, mating, or sleeping. No glyph means idle.",
+            );
+            onboarding_row(
+                ui,
+                egui_remixicon::icons::HEART_PULSE_LINE,
+                crate::theme::GOOD,
+                "An organism's outline brightness reflects its health — dimmer means closer to death.",
+            );
+            onboarding_row(
+                ui,
+                egui_remixicon::icons::VIRUS_LINE,
+                crate::theme::WARN,
+                "A tinted organism is infectious with disease.",
+            );
+            onboarding_row(
+                ui,
+                egui_remixicon::icons::SKULL_LINE,
+                crate::theme::BAD,
+                "Floating text marks births and deaths as they happen, including the specific cause of death.",
+            );
+
+            ui.add_space(crate::theme::SPACE_MD);
+            ui.label(egui::RichText::new("In the Inspector").strong());
+            ui.add_space(crate::theme::SPACE_XS);
+            onboarding_row(
+                ui,
+                egui_remixicon::icons::SEARCH_LINE,
+                crate::theme::ACCENT,
+                "Click any organism to inspect it. Expand its Physiology, Circulation, Hormones, Immune Response, and Evolution / History sections for full detail — collapsed by default so the panel isn't a wall of numbers.",
+            );
+
+            ui.add_space(crate::theme::SPACE_MD);
+            ui.separator();
+            ui.add_space(crate::theme::SPACE_SM);
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Reopen this any time via Help → Welcome Tips.")
+                        .small()
+                        .color(crate::theme::DISABLED_FG),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Got it").clicked() {
+                        dismissed = true;
+                    }
+                });
+            });
+        });
+
+    if !open || dismissed {
+        state.show_onboarding_hints = false;
+    }
+}
+
+/// One icon + colored swatch + explanation row for `onboarding_hints_dialog`
+/// — not `widgets::kv_row` (that's a key/value pair, this is an
+/// icon-led sentence), so a small local helper rather than a forced fit.
+fn onboarding_row(ui: &mut egui::Ui, icon: &str, color: egui::Color32, text: &str) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(icon)
+                .color(color)
+                .size(crate::theme::ICON_MD),
+        );
+        ui.add_space(crate::theme::SPACE_XS);
+        ui.label(text);
+    });
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 fn keybind_section(ui: &mut egui::Ui, title: &str, binds: &[(&str, &str)]) {
