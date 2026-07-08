@@ -175,13 +175,21 @@ pub fn process_births_system(
     }
 }
 
+/// Phase 5, SX-7a: `HazardSpawned` carries no tick of its own (just the
+/// spawn position), so this previously logged every hazard at a hardcoded
+/// `tick: 0` — harmless while nothing read `NarrativeEvent::tick`, but a
+/// real bug once SX-7a started plotting `NarrationLog` entries as
+/// time-axis annotations on Metrics (every hazard marker would have piled
+/// up at x=0). `GlobalAtmosphere::ticks` is the same tick counter
+/// `expire_timed_effects_system` (below) already reads for this purpose.
 pub fn process_narrative_events_system(
     mut hazard_events: EventReader<ecology::catastrophe::HazardSpawned>,
     mut log: ResMut<analytics::NarrationLog>,
+    atmosphere: Res<metabolism::GlobalAtmosphere>,
 ) {
     for event in hazard_events.read() {
         log.push_event(
-            0, // TODO: tick
+            atmosphere.ticks,
             "Hazard",
             format!(
                 "Toxic cloud emerged at ({:.1}, {:.1})",
@@ -675,5 +683,34 @@ mod tests {
             .resource::<analytics::NarrationLog>()
             .events
             .is_empty());
+    }
+
+    /// Phase 5, SX-7a: `process_narrative_events_system` used to log every
+    /// hazard at a hardcoded `tick: 0` — harmless until SX-7a started
+    /// plotting `NarrationLog` entries as time-axis annotations on Metrics,
+    /// at which point every hazard marker would've piled up at x=0
+    /// regardless of when it actually happened. Proves the real
+    /// `GlobalAtmosphere::ticks` value is what gets logged now.
+    #[test]
+    fn hazard_event_logs_the_real_tick_not_a_hardcoded_zero() {
+        let mut world = World::new();
+        world.insert_resource(
+            bevy_ecs::event::Events::<ecology::catastrophe::HazardSpawned>::default(),
+        );
+        world.insert_resource(analytics::NarrationLog::new(10));
+        world.insert_resource(metabolism::GlobalAtmosphere {
+            ticks: 4242,
+            ..Default::default()
+        });
+        world.send_event(ecology::catastrophe::HazardSpawned(common::Vec2::new(
+            1.0, 2.0,
+        )));
+
+        world.run_system_once(process_narrative_events_system);
+
+        let log = world.resource::<analytics::NarrationLog>();
+        assert_eq!(log.events.len(), 1);
+        assert_eq!(log.events[0].tick, 4242);
+        assert_eq!(log.events[0].event_type, "Hazard");
     }
 }

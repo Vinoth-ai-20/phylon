@@ -495,6 +495,17 @@ impl PhylonApp {
                         }
                     }
                 }
+                ui::MenuAction::ExportChartPng {
+                    x,
+                    y,
+                    width,
+                    height,
+                } => {
+                    // Same deferred-capture rationale as `TakeScreenshot`
+                    // above — actual crop+encode happens in `render()`
+                    // against the live swapchain texture.
+                    self.pending_chart_export = Some((x, y, width, height));
+                }
                 ui::MenuAction::ToggleCommandPalette => {
                     self.ui.show_command_palette = !self.ui.show_command_palette;
                     self.ui.command_palette_query.clear();

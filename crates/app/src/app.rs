@@ -166,6 +166,12 @@ pub(crate) struct PhylonApp {
     /// only place the live swapchain texture is available.
     pub(crate) pending_screenshot: bool,
 
+    /// Set by `MenuAction::ExportChartPng` (Phase 5, SX-7c) — `(x, y, width,
+    /// height)` in physical pixels. Same deferred-to-next-`render()` timing
+    /// as `pending_screenshot`, just cropped to one Metrics chart's rect
+    /// instead of the whole window.
+    pub(crate) pending_chart_export: Option<(u32, u32, u32, u32)>,
+
     /// `Some` while a recording is in progress — accumulates captured frames
     /// until `MenuAction::ToggleRecording` stops it and encodes them to GIF.
     pub(crate) recording: Option<crate::capture::RecordingState>,
@@ -366,6 +372,7 @@ impl PhylonApp {
             pending_physics: None,
             pending_brain: None,
             pending_screenshot: false,
+            pending_chart_export: None,
             recording: None,
             experiment_manifest,
             replay_log,

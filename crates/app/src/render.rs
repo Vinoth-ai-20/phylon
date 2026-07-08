@@ -1517,6 +1517,46 @@ impl PhylonApp {
             }
         }
 
+        // Chart PNG export readback (Phase 5, SX-7c) — same timing
+        // constraint as the screenshot above (must run before `present()`),
+        // just cropped to one Metrics chart's rect instead of the whole
+        // window.
+        if let Some((x, y, width, height)) = self.pending_chart_export.take() {
+            if capture_size.0 > 0 && capture_size.1 > 0 {
+                match crate::capture::read_texture_to_image(
+                    &gpu.device,
+                    &gpu.queue,
+                    &output.texture,
+                    capture_format,
+                    capture_size.0,
+                    capture_size.1,
+                ) {
+                    Some(img) => {
+                        let x = x.min(img.width().saturating_sub(1));
+                        let y = y.min(img.height().saturating_sub(1));
+                        let width = width.min(img.width() - x).max(1);
+                        let height = height.min(img.height() - y).max(1);
+                        match crate::capture::save_chart_png(&img, x, y, width, height) {
+                            Ok(path) => self.ui.push_toast(
+                                format!("Saved chart to {}", path.display()),
+                                ui::ToastSeverity::Success,
+                                3.0,
+                            ),
+                            Err(e) => {
+                                tracing::error!("Failed to save chart PNG: {e}");
+                                self.ui.push_toast(
+                                    format!("Chart export failed: {e}"),
+                                    ui::ToastSeverity::Error,
+                                    5.0,
+                                );
+                            }
+                        }
+                    }
+                    None => tracing::error!("Chart export readback produced no image"),
+                }
+            }
+        }
+
         if let Some(recording) = self.recording.as_mut() {
             if capture_size.0 > 0
                 && capture_size.1 > 0

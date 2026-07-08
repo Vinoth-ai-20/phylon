@@ -132,6 +132,27 @@ pub(crate) fn save_screenshot(image: &image::RgbaImage) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Crops `image` to `(x, y, width, height)` (physical pixels, already
+/// clamped to the image bounds by the caller) and saves it as a timestamped
+/// PNG under `./screenshots/` (Phase 5, SX-7c) — same destination/naming as
+/// `save_screenshot`, since a chart export is just a narrower crop of the
+/// same whole-window capture, not a separate artifact type. Returns the path
+/// written.
+pub(crate) fn save_chart_png(
+    image: &image::RgbaImage,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<PathBuf> {
+    let cropped = image::imageops::crop_imm(image, x, y, width, height).to_image();
+    let dir = PathBuf::from("screenshots");
+    std::fs::create_dir_all(&dir).context("creating ./screenshots directory")?;
+    let path = dir.join(format!("phylon_chart_{}.png", chrono_timestamp()));
+    cropped.save(&path).context("encoding/writing chart PNG")?;
+    Ok(path)
+}
+
 /// Encodes `frames` as an animated GIF (one `CAPTURE_INTERVAL`-spaced frame
 /// each) and saves it as a timestamped file under `./recordings/`, creating
 /// the directory if needed. Returns the path written.

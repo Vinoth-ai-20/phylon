@@ -280,6 +280,26 @@ pub enum MenuAction {
     /// Open a save dialog and export `MetricsState` history to JSON
     /// (Phase 2, M14).
     ExportMetricsJson,
+    /// Save one Metrics chart as a publication-quality PNG (Phase 5, SX-7c).
+    /// The rect is the chart's screen area in *physical pixels* (already
+    /// converted from egui's logical points via `ctx.pixels_per_point()` at
+    /// the call site in `metrics.rs`), since the actual capture crops the
+    /// swapchain texture read back in `crates/app/src/render.rs` — the same
+    /// GPU readback `TakeScreenshot` already uses, just cropped to one
+    /// chart's rect instead of the whole window. Deferred to next-frame
+    /// capture the same way `TakeScreenshot` is (see `pending_chart_export`
+    /// in `crates/app/src/app.rs`), so the rect must describe this frame's
+    /// layout, not a stale one.
+    ExportChartPng {
+        /// Crop origin X, physical pixels.
+        x: u32,
+        /// Crop origin Y, physical pixels.
+        y: u32,
+        /// Crop width, physical pixels.
+        width: u32,
+        /// Crop height, physical pixels.
+        height: u32,
+    },
     /// Toggle the Command Palette overlay (Phase 2, M15).
     ToggleCommandPalette,
 

@@ -363,6 +363,11 @@ pub struct WorkbenchState {
     /// a dock/undock/reset-triggered rebuild instead of snapping back to the
     /// hardcoded default ratio every time.
     pub layout_shares: std::collections::HashMap<String, f32>,
+
+    /// Metrics panel's per-series visibility toggles and running-mean
+    /// overlays (Phase 5, SX-7b) — pure display preference, not simulation
+    /// data, so it lives here rather than in `analytics::MetricsState`.
+    pub metrics_options: MetricsSeriesOptions,
 }
 
 /// Pan/zoom transform for one Neural Viewer graph canvas.
@@ -379,6 +384,35 @@ impl Default for GraphViewState {
         Self {
             zoom: 1.0,
             pan: egui::Vec2::ZERO,
+        }
+    }
+}
+
+/// Metrics panel's per-series visibility toggles and running-mean overlays
+/// (Phase 5, SX-7b), for the Demographics (5 diet series) and Diversity (4
+/// index series) plots — the two the roadmap names as needing toggles/stats.
+/// Every field defaults to visible/off so the plots look unchanged until a
+/// user actually opens the new controls.
+#[derive(Debug, Clone, Copy)]
+pub struct MetricsSeriesOptions {
+    /// Demographics plot: Producers/Herbivores/Carnivores/Omnivores/Decomposers.
+    pub demographics_visible: [bool; 5],
+    /// Diversity plot: Shannon/Simpson/Richness/Turnover.
+    pub diversity_visible: [bool; 4],
+    /// Overlay a running-mean line (see `metrics::RUNNING_MEAN_WINDOW`) atop
+    /// each visible Demographics series.
+    pub demographics_running_mean: bool,
+    /// Same overlay, for the Diversity plot's visible series.
+    pub diversity_running_mean: bool,
+}
+
+impl Default for MetricsSeriesOptions {
+    fn default() -> Self {
+        Self {
+            demographics_visible: [true; 5],
+            diversity_visible: [true; 4],
+            demographics_running_mean: false,
+            diversity_running_mean: false,
         }
     }
 }
@@ -524,6 +558,7 @@ impl Default for WorkbenchState {
             evo_debugger_search: String::new(),
             timeline_step: 0,
             layout_shares: std::collections::HashMap::new(),
+            metrics_options: MetricsSeriesOptions::default(),
             active_tab: crate::SidebarTab::Inspector,
             lineage_view: crate::LineageView::Ancestry,
             lineage_search: String::new(),

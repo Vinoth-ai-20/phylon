@@ -189,7 +189,11 @@ pub fn event_log_ui(
 /// Map an event type string to a display color — see `theme.rs`'s "Event Log
 /// category palette" section (`LOG_BIRTH`/`LOG_HAZARD`/`LOG_MUTATION`/
 /// `LOG_USER`; death reuses `DANGER`, which already carried the same value).
-fn severity_color_for_type(event_type: &str) -> egui::Color32 {
+///
+/// `pub(crate)` (Phase 5, SX-7a): reused by `metrics::metrics_ui` to color
+/// `NarrationLog`-derived annotations on the Demographics plot with the same
+/// category palette this panel already uses, rather than a second mapping.
+pub(crate) fn severity_color_for_type(event_type: &str) -> egui::Color32 {
     let et = event_type.to_lowercase();
     if et.contains("birth") || et.contains("spawn") || et.contains("born") {
         crate::theme::LOG_BIRTH
