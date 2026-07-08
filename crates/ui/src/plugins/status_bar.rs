@@ -170,7 +170,42 @@ pub fn status_bar_ui(
             mono(ui, corpse_count.to_string());
         });
 
-        // ── Zone 3: System (hover-reveal) ────────────────────────────────────
+        zone_separator(ui);
+
+        // ── Zone 3: Behavior (Phase 5, SX-8c) ────────────────────────────────
+        // Reuses the per-organism `BehaviorState`/`Infection` data SX-1b/1d
+        // already added (population-wide behavior glyphs, disease tint) —
+        // this is the same data aggregated into a status-bar count instead
+        // of a second query mechanism.
+        let hunting_count = world
+            .ecs
+            .query::<&behavior::BehaviorState>()
+            .iter(&world.ecs)
+            .filter(|s| **s == behavior::BehaviorState::Hunting)
+            .count();
+        let diseased_count = world
+            .ecs
+            .query::<&ecology::disease::Infection>()
+            .iter(&world.ecs)
+            .filter(|i| i.state == ecology::disease::InfectionState::Infectious)
+            .count();
+        tight_row(ui, |ui| {
+            ui.label(format!(
+                "{} Hunting: ",
+                egui_remixicon::icons::CROSSHAIR_2_LINE
+            ));
+            mono(ui, hunting_count.to_string());
+        });
+        ui.separator();
+        tight_row(ui, |ui| {
+            ui.label(egui::RichText::new(format!(
+                "{} Diseased: ",
+                egui_remixicon::icons::VIRUS_LINE
+            )).color(if diseased_count > 0 { crate::theme::WARN } else { ui.visuals().text_color() }));
+            mono(ui, diseased_count.to_string());
+        });
+
+        // ── Zone 4: System (hover-reveal) ────────────────────────────────────
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             thread_local! {
                 static SYS: std::cell::RefCell<sysinfo::System> = std::cell::RefCell::new(sysinfo::System::new());

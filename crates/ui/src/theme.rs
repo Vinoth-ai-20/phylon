@@ -143,6 +143,31 @@ pub const DISABLED_BG: Color32 = Color32::from_rgb(40, 40, 44);
 /// low-contrast against Phylon's near-black chrome.
 pub const FOCUS_RING: Color32 = ACCENT;
 
+// ─── Panel visual-hierarchy tiers (docs/design/layout.md, ADR-P5-05) ───────
+//
+// Phase 5, SX-8a: `layout::chrome_bar` is the single consolidated chrome
+// implementation every docked/tabbed/floating panel already routes through
+// (Milestone 6's consolidation, predating this epic) — these tokens give it
+// a *tiering* on top of that, so a panel whose content changes with the
+// current selection (Contextual) reads with more visual weight than an
+// aggregate dashboard/log (Secondary) that doesn't. Deliberately a color +
+// structural (accent bar) distinction, not a size change — ADR-P5-05 is
+// explicit that tiering must not just resize `CHROME_HEIGHT`.
+
+/// Chrome title color for a Contextual-tier panel (Sidebar/Inspector, Neural
+/// Viewer, the P4-R-tier Physiology/Circulation/Hormone/Immune/Lineage
+/// viewers) — full-strength text, unchanged from before tiering existed.
+pub const CHROME_TITLE_CONTEXTUAL: Color32 = Color32::from_gray(230);
+/// Chrome title color for a Secondary-tier panel (Metrics, Event Log,
+/// Research Dashboard, Replay Browser, Evolution Debugger) — dimmed one
+/// step, so an aggregate dashboard/log title doesn't visually compete with a
+/// selection-driven panel's.
+pub const CHROME_TITLE_SECONDARY: Color32 = Color32::from_gray(165);
+/// Left-edge accent bar drawn only on Contextual-tier chrome bars — its
+/// content is tied to the current selection; this is the visual tell for
+/// that, independent of the title color difference above.
+pub const CHROME_ACCENT_BAR: Color32 = ACCENT;
+
 /// Converts a linear-space RGB triple (as returned by
 /// `ecology::Diet::standard_color()`, which is authored for the WGPU
 /// viewport's linear color pipeline) to an sRGB-encoded `Color32` suitable

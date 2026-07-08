@@ -372,6 +372,35 @@ fn chrome_button(
     .on_hover_text(tooltip)
 }
 
+/// The two panel tiers ADR-P5-05 defines (Phase 5, SX-8a/8b) — Viewport is
+/// the third, Primary tier, but it never reaches `chrome_bar` at all (see
+/// `panel_chrome`'s early return for it), so there's no variant for it here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PanelTier {
+    /// Content changes with the current selection: Sidebar (hosts
+    /// Inspector), Neural Viewer, and the P4-R-tier Physiology/Circulation/
+    /// Hormone/Immune/Cell Lineage viewers.
+    Contextual,
+    /// Aggregate/session-wide content, not tied to a single selection:
+    /// Metrics, Event Log, Research Dashboard, Replay Browser, Evolution
+    /// Debugger, and the content-free Placeholder Panel.
+    Secondary,
+}
+
+/// Classifies a panel by `ALL_PANEL_NAMES` name into its ADR-P5-05 tier.
+fn panel_tier(name: &str) -> PanelTier {
+    match name {
+        "Sidebar"
+        | "Neural Viewer"
+        | "Physiology Viewer"
+        | "Circulation Viewer"
+        | "Hormone Viewer"
+        | "Immune Viewer"
+        | "Cell Lineage Viewer" => PanelTier::Contextual,
+        _ => PanelTier::Secondary,
+    }
+}
+
 /// Single chrome-bar renderer, consolidating what were three independent
 /// implementations (`panel_chrome` for docked/untabbed panes,
 /// `WorkbenchBehavior::top_bar_right_ui` for tabbed panes, and
@@ -392,8 +421,24 @@ fn chrome_bar(
     dock_instead_of_detach: bool,
     minimized: Option<&mut bool>,
 ) {
+    let tier = panel_tier(name);
+
     ui.horizontal(|ui| {
         ui.add_space(crate::theme::SPACE_XS);
+
+        // SX-8b: the accent bar is the Contextual tier's structural tell —
+        // a colored rect, not text, so it reads even before the title glyph
+        // does. `hover()` sense since it's decorative, not interactive.
+        if tier == PanelTier::Contextual {
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(3.0, crate::theme::CHROME_HEIGHT - 6.0),
+                egui::Sense::hover(),
+            );
+            ui.painter()
+                .rect_filled(rect, 0.0, crate::theme::CHROME_ACCENT_BAR);
+            ui.add_space(crate::theme::SPACE_XS);
+        }
+
         if let Some(icon) = leading_icon {
             ui.label(
                 egui::RichText::new(icon)
@@ -402,9 +447,14 @@ fn chrome_bar(
             );
         }
         if let Some(title) = title {
+            let title_color = match tier {
+                PanelTier::Contextual => crate::theme::CHROME_TITLE_CONTEXTUAL,
+                PanelTier::Secondary => crate::theme::CHROME_TITLE_SECONDARY,
+            };
             ui.label(
                 egui::RichText::new(title)
                     .strong()
+                    .color(title_color)
                     .size(crate::theme::SIZE_SUBHEADING),
             );
         }
@@ -953,6 +1003,13 @@ pub fn apply_layout_preset(state: &mut WorkbenchState, preset: LayoutPreset) {
             modes.insert("Neural Viewer".to_string(), PanelMode::Closed);
             modes.insert("Research Dashboard".to_string(), PanelMode::Closed);
             modes.insert("Replay Browser".to_string(), PanelMode::Closed);
+            // Phase 5, SX-8b: this preset's own doc comment (below, on
+            // `LayoutPreset::Research`) and §2.4 of the roadmap both say
+            // Evolution Debugger should be closed by default like the other
+            // debug/analysis panels here — it just wasn't, until now. Found
+            // by re-auditing this exact function while implementing the
+            // panel-tier system, not a change made speculatively.
+            modes.insert("Evolution Debugger".to_string(), PanelMode::Closed);
             modes.insert("Physiology Viewer".to_string(), PanelMode::Closed);
             modes.insert("Circulation Viewer".to_string(), PanelMode::Closed);
             modes.insert("Hormone Viewer".to_string(), PanelMode::Closed);
@@ -965,6 +1022,10 @@ pub fn apply_layout_preset(state: &mut WorkbenchState, preset: LayoutPreset) {
             modes.insert("Neural Viewer".to_string(), PanelMode::Closed);
             modes.insert("Research Dashboard".to_string(), PanelMode::Closed);
             modes.insert("Replay Browser".to_string(), PanelMode::Closed);
+            // Phase 5, SX-8b: same fix as `LayoutPreset::Research` above —
+            // Presentation is meant to be the most minimal preset, so it
+            // can't be missing this while Research has it.
+            modes.insert("Evolution Debugger".to_string(), PanelMode::Closed);
             modes.insert("Physiology Viewer".to_string(), PanelMode::Closed);
             modes.insert("Circulation Viewer".to_string(), PanelMode::Closed);
             modes.insert("Hormone Viewer".to_string(), PanelMode::Closed);
@@ -1043,5 +1104,63 @@ pub fn remove_panel_from_tree(tree: &mut egui_tiles::Tree<String>, name: &str) {
     if let Some(tile_id) = tree.tiles.find_pane(&name.to_string()) {
         tree.remove_recursively(tile_id);
         tree.simplify(&egui_tiles::SimplificationOptions::default());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Phase 5, SX-8b: §2.4 of the roadmap found that `LayoutPreset::Research`
+    /// left Evolution Debugger docked by default despite this same function's
+    /// own doc comment claiming it was treated like Research Dashboard/Replay
+    /// Browser (both correctly closed). Proves the fix, not just the comment.
+    #[test]
+    fn research_preset_closes_evolution_debugger() {
+        let mut state = WorkbenchState::default();
+        apply_layout_preset(&mut state, LayoutPreset::Research);
+        assert_eq!(
+            state.panel_modes.get("Evolution Debugger"),
+            Some(&PanelMode::Closed)
+        );
+    }
+
+    /// Presentation is meant to be the most minimal preset (screen-sharing a
+    /// clean simulation view) — it can't leave a debug panel open that the
+    /// default Research preset closes.
+    #[test]
+    fn presentation_preset_closes_evolution_debugger() {
+        let mut state = WorkbenchState::default();
+        apply_layout_preset(&mut state, LayoutPreset::Presentation);
+        assert_eq!(
+            state.panel_modes.get("Evolution Debugger"),
+            Some(&PanelMode::Closed)
+        );
+    }
+
+    /// Debug preset is the one place Evolution Debugger should still default
+    /// to visible — "everything docked" is its whole purpose.
+    #[test]
+    fn debug_preset_leaves_evolution_debugger_docked() {
+        let mut state = WorkbenchState::default();
+        apply_layout_preset(&mut state, LayoutPreset::Debug);
+        assert_eq!(
+            state.panel_modes.get("Evolution Debugger"),
+            Some(&PanelMode::Docked)
+        );
+    }
+
+    /// Phase 5, SX-8a/8b: a spot-check of the tier classification driving
+    /// `chrome_bar`'s accent bar/title color — Sidebar (hosts Inspector) is
+    /// Contextual, Metrics (an aggregate dashboard) is Secondary. Not
+    /// exhaustive over all 14 panels (the classification is a static match,
+    /// not derived logic that could silently drift), just proof the two
+    /// tiers are reachable and distinct.
+    #[test]
+    fn panel_tier_distinguishes_contextual_from_secondary() {
+        assert_eq!(panel_tier("Sidebar"), PanelTier::Contextual);
+        assert_eq!(panel_tier("Neural Viewer"), PanelTier::Contextual);
+        assert_eq!(panel_tier("Metrics"), PanelTier::Secondary);
+        assert_eq!(panel_tier("Evolution Debugger"), PanelTier::Secondary);
     }
 }
