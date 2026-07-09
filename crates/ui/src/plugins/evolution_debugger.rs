@@ -256,7 +256,10 @@ fn development_failure_inspector(
                     .selectable_label(false, format!("Entity {} — 0 effectors", entity.index()))
                     .clicked()
                 {
-                    state.selected_entity = Some(entity);
+                    // Phase 7, W0b: routed through the single selection
+                    // pathway so this behaves like every other entity list
+                    // (recent selections, viewport, context menu).
+                    state.select(entity);
                 }
             }
         });

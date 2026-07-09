@@ -162,11 +162,9 @@ pub fn inspector_ui(
         );
         let mut is_tracked = state.tracked_entity == Some(entity);
         if ui.checkbox(&mut is_tracked, "Track").changed() {
-            if is_tracked {
-                state.tracked_entity = Some(entity);
-            } else if state.tracked_entity == Some(entity) {
-                state.tracked_entity = None;
-            }
+            // Phase 7, W0b: the explicit per-entity Follow toggle, routed
+            // through the single `set_follow` pathway.
+            state.set_follow(is_tracked.then_some(entity));
         }
     });
 
@@ -1011,11 +1009,9 @@ fn render_pellet_summary(
         );
         let mut is_tracked = state.tracked_entity == Some(entity);
         if ui.checkbox(&mut is_tracked, "Track").changed() {
-            if is_tracked {
-                state.tracked_entity = Some(entity);
-            } else if state.tracked_entity == Some(entity) {
-                state.tracked_entity = None;
-            }
+            // Phase 7, W0b: same single Follow pathway as the organism
+            // Inspector's own "Track" checkbox above.
+            state.set_follow(is_tracked.then_some(entity));
         }
     });
 

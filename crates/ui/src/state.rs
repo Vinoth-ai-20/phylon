@@ -212,8 +212,11 @@ pub struct WorkbenchState {
     pub open_dialogs: Vec<String>,
     /// The canonical notification queue. Use `push_toast()` to add entries.
     pub notifications: Vec<Toast>,
-    /// Recently opened/saved file paths, most recent first.
-    pub recent_files: Vec<String>,
+    /// Recently opened/saved items, by category (Phase 7, W0d) — see
+    /// `crate::recent_items`'s module doc comment for the ordering/
+    /// duplicate/cap/persistence policy. Replaces the pre-W0d
+    /// `recent_files: Vec<String>`, which nothing ever populated.
+    pub recent_items: crate::RecentItemsService,
 
     // Event log filter state
     /// Free-text search filter applied to the event log.
@@ -543,7 +546,7 @@ impl Default for WorkbenchState {
 
             open_dialogs: Vec::new(),
             notifications: Vec::new(),
-            recent_files: Vec::new(),
+            recent_items: crate::RecentItemsService::default(),
 
             event_log_search: String::new(),
             event_log_filter: EventLogFilter::All,
@@ -632,21 +635,87 @@ impl WorkbenchState {
         self.selected_entity == Some(entity) || self.secondary_selected.contains(&entity)
     }
 
-    /// Clears both the primary and secondary selection.
+    /// Clears both the primary and secondary selection, and stops
+    /// following whatever was selected — Phase 7, W0b: there is nothing
+    /// left to follow once the selection is cleared, and this is the
+    /// counterpart to [`WorkbenchState::select`] for every caller that
+    /// wants to fully reset selection state in one call rather than
+    /// clearing `tracked_entity` separately (see that method's doc comment
+    /// for why `tracked_entity` has its own dedicated setter otherwise).
     pub fn clear_selection(&mut self) {
         self.selected_entity = None;
         self.secondary_selected.clear();
+        self.tracked_entity = None;
     }
 
     /// Replaces the entire selection with `entities` — the first becomes
     /// the new primary `selected_entity` (so single-entity readers like the
     /// Inspector keep working unchanged), the rest become
     /// `secondary_selected`. Used by marquee-select (M8); an empty iterator
-    /// clears the selection.
+    /// clears the selection. Phase 7, W0b: also opens the Inspector and
+    /// reveals the sidebar when the selection is non-empty, matching
+    /// [`WorkbenchState::select`]'s behavior — every selection entry point
+    /// should produce the same visible result, not just single-entity ones.
     pub fn select_multiple(&mut self, entities: impl IntoIterator<Item = Entity>) {
         let mut iter = entities.into_iter();
         self.selected_entity = iter.next();
         self.secondary_selected = iter.collect();
+        if self.selected_entity.is_some() {
+            self.active_tab = crate::SidebarTab::Inspector;
+            self.sidebar_visible = true;
+        }
+    }
+
+    /// # The single selection pathway (Phase 7, W0b)
+    ///
+    /// Every selection source — viewport click, the context menu's
+    /// "Inspect" action, recent-selection chips, the Evolution Debugger's
+    /// failure list, and any future source (global search, the lineage
+    /// explorer, 3D picking) — should call this rather than setting
+    /// `selected_entity`/`active_tab`/`sidebar_visible` directly. Before
+    /// this milestone, viewport left-click and the context menu's
+    /// "Inspect" button independently implemented overlapping-but-
+    /// different versions of "select and show the Inspector" (see
+    /// `PHASE7_WORKBENCH_ROADMAP.md`'s W0a finding #1) — this method is
+    /// the fix, not a parallel third implementation.
+    ///
+    /// Deliberately never touches `tracked_entity`: selecting something to
+    /// look at it and telling the camera to permanently follow it are two
+    /// different intents (W0a finding #2). Camera-follow is only ever set
+    /// via [`WorkbenchState::set_follow`], called from an explicit Follow
+    /// action (toolbar button, Inspector "Track" checkbox, or the context
+    /// menu's "Track / Follow" item).
+    ///
+    /// TODO(Phase 8): once a real cross-crate event channel exists, this
+    /// should emit a `SelectionChanged { old, new }` event instead of (or
+    /// in addition to) mutating state directly, so consumers other than
+    /// egui widgets (e.g. a future 3D viewport, or an out-of-process
+    /// research tool) can react to selection changes without polling
+    /// `WorkbenchState` every frame. Not implemented now — no event bus
+    /// exists in this crate yet, and inventing one solely for this would
+    /// be exactly the kind of premature architecture this project's own
+    /// discipline avoids. Left as a note for whoever scopes that bus.
+    pub fn select(&mut self, entity: Entity) {
+        self.selected_entity = Some(entity);
+        self.secondary_selected.clear();
+        self.active_tab = crate::SidebarTab::Inspector;
+        self.sidebar_visible = true;
+    }
+
+    /// The single camera-follow pathway (Phase 7, W0b) — the only method
+    /// that should ever set `tracked_entity`. Independent of selection:
+    /// following an entity does not require it to be `selected_entity`
+    /// (the spectator-mode "most interesting organism" logic in
+    /// `crate::render` follows an entity that was never explicitly
+    /// selected at all), and selecting an entity does not start following
+    /// it (see [`WorkbenchState::select`]'s doc comment).
+    ///
+    /// TODO(Phase 8): same note as `select` — a future `FollowChanged {
+    /// old, new }` event would let camera-follow consumers (e.g. a 3D
+    /// camera rig) react without polling. Not implemented now, same
+    /// reasoning: no event bus exists yet to hang it on.
+    pub fn set_follow(&mut self, entity: Option<Entity>) {
+        self.tracked_entity = entity;
     }
 
     /// Push a transient notification. Displayed in the bottom-right toast area.

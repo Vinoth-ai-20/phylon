@@ -5,8 +5,12 @@
 //! `config::PhylonConfig` (which describes one simulation *experiment*'s
 //! setup: tick rate, RNG seed, headless mode) — covering cosmetic,
 //! cross-session UI preferences a person would expect to persist: High
-//! Contrast Mode, the UI scale factor, and whether the first-run onboarding
-//! hints dialog (Phase 5, SX-9a) has ever been shown.
+//! Contrast Mode, the UI scale factor, whether the first-run onboarding
+//! hints dialog (Phase 5, SX-9a) has ever been shown, and (Phase 7, W0d)
+//! recent-items history (`ui::RecentItemsService`) — the last of which is
+//! *not* cosmetic (losing it would defeat the point of "recent"), but
+//! shares this mechanism since it's the same "small state that should
+//! survive a restart" shape.
 //!
 //! ## 2. Why It Happens
 //! Phase 6's audit found no application-preferences persistence mechanism
@@ -44,6 +48,11 @@ pub(crate) struct Preferences {
     /// `WorkbenchState::show_onboarding_hints`, which only tracks whether
     /// it's showing *right now* in the current session.
     pub(crate) onboarding_seen: bool,
+    /// Mirrors `ui::WorkbenchState::recent_items` (Phase 7, W0d) — see
+    /// `ui::recent_items`'s module doc comment for the ordering/duplicate/
+    /// cap/missing-file policy this field's contents are governed by.
+    #[serde(default)]
+    pub(crate) recent_items: ui::RecentItemsService,
 }
 
 impl Default for Preferences {
@@ -52,6 +61,7 @@ impl Default for Preferences {
             high_contrast: false,
             ui_scale: 1.0,
             onboarding_seen: false,
+            recent_items: ui::RecentItemsService::default(),
         }
     }
 }
@@ -123,15 +133,27 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("phylon_prefs_test_{}", std::process::id()));
         let path = dir.join("preferences.ron");
 
-        let prefs = Preferences {
+        let mut prefs = Preferences {
             high_contrast: true,
             ui_scale: 1.5,
             onboarding_seen: true,
+            recent_items: ui::RecentItemsService::default(),
         };
+        prefs
+            .recent_items
+            .record(ui::RecentCategory::Files, "example.bin");
         prefs.save(&path);
 
         let loaded = Preferences::load(&path);
         assert!(loaded.high_contrast);
+        assert_eq!(
+            loaded
+                .recent_items
+                .items(ui::RecentCategory::Files)
+                .collect::<Vec<_>>(),
+            vec!["example.bin"],
+            "recent files must survive a save/load round trip"
+        );
         assert_eq!(loaded.ui_scale, 1.5);
         assert!(loaded.onboarding_seen);
 

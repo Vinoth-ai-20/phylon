@@ -22,6 +22,7 @@ egui_plot  = { workspace = true }
 egui_tiles = { workspace = true }
 rfd        = { workspace = true }
 sensing    = { workspace = true }
+serde      = { workspace = true }
 ecology = { version = "0.1.0", path = "../ecology" }
 evolution = { version = "0.1.0", path = "../evolution" }
 sysinfo = "0.39.3"

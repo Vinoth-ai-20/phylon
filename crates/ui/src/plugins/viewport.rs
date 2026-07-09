@@ -79,9 +79,14 @@ pub fn viewport_ui(
                         .button(format!("{} Inspect", egui_remixicon::icons::SEARCH_LINE))
                         .clicked()
                     {
+                        // Phase 7, W0b: `MenuAction::SelectEntity`'s handler
+                        // now opens the Inspector/sidebar itself (via
+                        // `WorkbenchState::select`), so this button no
+                        // longer needs its own copy of that logic — it was
+                        // a second, slightly different implementation of
+                        // the same "select and inspect" behavior plain
+                        // viewport clicks lacked (see W0a's finding #1).
                         actions.push(MenuAction::SelectEntity(entity));
-                        state.active_tab = crate::SidebarTab::Inspector;
-                        state.sidebar_visible = true;
                         ui.close_menu();
                     }
                     if ui
@@ -175,12 +180,20 @@ pub fn viewport_ui(
                 }
             });
 
-            // Double-click to focus the selected entity
+            // Double-click to focus the entity under the cursor (falling
+            // back to whatever's already selected) — Phase 7, W0b: this
+            // used to set `tracked_entity` directly, silently turning a
+            // "look at this once" gesture into permanent camera-follow.
+            // Now it's a one-shot snap only (`MenuAction::FocusSelection`,
+            // which already existed for the menu-triggered case — see its
+            // own doc comment), matching the milestone's explicit
+            // requirement that double-click focuses once and never enables
+            // persistent tracking. Follow remains a separate, always-
+            // explicit action (toolbar, Inspector, or context menu).
             if interact_response.double_clicked() {
-                if let Some(entity) = state.selected_entity {
-                    state.tracked_entity = Some(entity);
+                if let Some(entity) = state.hovered_entity.or(state.selected_entity) {
+                    state.select(entity);
                     state.spectator_mode = false;
-                } else {
                     actions.push(MenuAction::FocusSelection);
                 }
             }

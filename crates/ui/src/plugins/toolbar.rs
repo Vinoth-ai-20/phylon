@@ -277,20 +277,33 @@ pub fn toolbar_ui(
             {
                 state.spectator_mode = !state.spectator_mode;
                 if !state.spectator_mode {
-                    state.tracked_entity = None;
+                    state.set_follow(None);
                 }
             }
 
-            // Follow selected
-            if state.selected_entity.is_some() {
+            // Follow selected — Phase 7, W0b: a real toggle (was a
+            // one-directional button that could only turn following on)
+            // with a clear active visual state via `selectable_label`, so
+            // it's obvious at a glance whether the camera is currently
+            // following the selected organism, and it can be turned off
+            // from the same control that turned it on.
+            if let Some(selected) = state.selected_entity {
                 ui.separator();
+                let following = state.tracked_entity == Some(selected);
                 if ui
-                    .button(format!("{} Follow", egui_remixicon::icons::FOCUS_LINE))
+                    .selectable_label(
+                        following,
+                        format!("{} Follow", egui_remixicon::icons::FOCUS_LINE),
+                    )
                     .on_hover_text("Follow selected organism (F)")
                     .clicked()
                 {
-                    state.tracked_entity = state.selected_entity;
-                    state.spectator_mode = false;
+                    if following {
+                        state.set_follow(None);
+                    } else {
+                        state.set_follow(Some(selected));
+                        state.spectator_mode = false;
+                    }
                 }
             }
 

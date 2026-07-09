@@ -68,7 +68,7 @@ impl PhylonApp {
                 self.ui.camera_pos = self.ui.camera_pos.lerp(node.position, 0.1);
             } else {
                 // Entity no longer exists (e.g. died), drop tracking
-                self.ui.tracked_entity = None;
+                self.ui.set_follow(None);
             }
         }
 
@@ -1144,7 +1144,7 @@ impl PhylonApp {
             self.ui.camera_pos.y += (interaction.drag_delta.y * scale) / self.ui.camera_zoom;
             // Only detach tracking if it's a genuine drag, not a trackpad micro-movement
             if interaction.drag_delta.length_sq() > 9.0 {
-                self.ui.tracked_entity = None;
+                self.ui.set_follow(None);
             }
         }
 

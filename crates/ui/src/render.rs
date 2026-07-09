@@ -561,7 +561,7 @@ fn tick_spectator(
 
         if let Some(new_target) = best_entity {
             if state.tracked_entity != Some(new_target) {
-                state.tracked_entity = Some(new_target);
+                state.set_follow(Some(new_target));
                 state.last_spectator_switch_time = current_time;
             }
         }

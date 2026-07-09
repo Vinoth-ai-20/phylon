@@ -25,6 +25,11 @@ pub use state::{
     EventLogFilter, PanelMode, PlaybackState, Toast, ToastSeverity, WorkbenchState, Workspace,
 };
 
+/// Reusable recent-items tracking (Phase 7, W0d) — see its own module doc
+/// comment for the ordering/duplicate/cap/persistence policy.
+pub mod recent_items;
+pub use recent_items::{RecentCategory, RecentItemsService};
+
 /// Per-panel UI plugins (sidebar, viewport, metrics, event log, menu, etc.).
 pub mod plugins;
 

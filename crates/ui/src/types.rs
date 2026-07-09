@@ -171,6 +171,13 @@ pub enum MenuAction {
     SaveState,
     /// Load a simulation state from disk.
     LoadState,
+    /// Load a simulation state from a specific, already-known path (Phase
+    /// 7, W0d) — used by the "Open Recent" menu, which (unlike
+    /// `LoadState`) must load the exact entry the user clicked rather than
+    /// opening a fresh file picker. Handled gracefully if the path no
+    /// longer exists (see `crates/ui/src/recent_items.rs`'s missing-file
+    /// policy) — never a panic.
+    LoadStateFromPath(String),
     /// Advance the simulation by one tick while paused.
     StepForward,
     /// Reseed the entire ecosystem

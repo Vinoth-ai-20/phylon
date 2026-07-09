@@ -44,19 +44,55 @@ pub fn menu_ui(
                 ui.close_menu();
             }
 
-            // Recent Files
-            if !state.recent_files.is_empty() {
+            // Recent Files (Phase 7, W0d) — this block is presentation
+            // only: all ordering/duplicate/cap policy lives in
+            // `crate::RecentItemsService` (see its module doc comment).
+            // Previously this pushed a generic `MenuAction::LoadState`
+            // regardless of which entry was clicked (opening a fresh file
+            // picker instead of that entry's own path) — a confirmed,
+            // permanently-dead control, since `recent_files` was also
+            // never populated by anything. Both are fixed here.
+            let recent_files: Vec<String> = state
+                .recent_items
+                .items(crate::RecentCategory::Files)
+                .map(str::to_string)
+                .collect();
+            if !recent_files.is_empty() {
                 ui.separator();
                 ui.menu_button("Open Recent", |ui| {
-                    for path in &state.recent_files.clone() {
+                    for path in &recent_files {
                         let name = std::path::Path::new(path)
                             .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or(path);
-                        if ui.button(name).clicked() {
-                            actions.push(MenuAction::LoadState);
-                            ui.close_menu();
-                        }
+                        let exists = std::path::Path::new(path).exists();
+                        ui.horizontal(|ui| {
+                            if exists {
+                                if ui.button(name).clicked() {
+                                    actions.push(MenuAction::LoadStateFromPath(path.clone()));
+                                    ui.close_menu();
+                                }
+                            } else {
+                                // Missing-file policy (see
+                                // `recent_items`'s module doc comment):
+                                // shown, clearly disabled, never silently
+                                // dropped — removal is always an explicit
+                                // user action, never automatic.
+                                ui.add_enabled(
+                                    false,
+                                    egui::Button::new(format!("{name} (missing)")),
+                                );
+                                if ui
+                                    .small_button("×")
+                                    .on_hover_text("Remove from Recent Files")
+                                    .clicked()
+                                {
+                                    state
+                                        .recent_items
+                                        .remove(crate::RecentCategory::Files, path);
+                                }
+                            }
+                        });
                     }
                 });
             }

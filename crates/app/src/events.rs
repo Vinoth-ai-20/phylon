@@ -35,6 +35,42 @@ use winit::{
 use crate::app::PhylonApp;
 
 impl PhylonApp {
+    /// Shared body of `MenuAction::LoadState` (path chosen via a fresh file
+    /// picker) and `MenuAction::LoadStateFromPath` (path chosen from "Open
+    /// Recent" — Phase 7, W0d) — one implementation instead of two, so
+    /// they can't silently drift apart the way `LoadState`'s handler and
+    /// the old "Open Recent" menu once did (the latter used to just
+    /// re-push `LoadState`, ignoring the specific entry the user clicked).
+    ///
+    /// Missing-file handling: checked here, not assumed — the "Open
+    /// Recent" menu already grays out entries whose file no longer
+    /// exists, but a race (deleted between menu render and click) must
+    /// still be handled gracefully. Never panics; shows a clear toast and
+    /// returns instead.
+    fn load_state_from_path(&mut self, path: std::path::PathBuf) {
+        if !path.exists() {
+            self.ui.push_toast(
+                format!("File no longer exists: {}", path.display()),
+                ui::ToastSeverity::Warning,
+                4.0,
+            );
+            return;
+        }
+        self.ui.recent_items.record(
+            ui::RecentCategory::Files,
+            path.to_string_lossy().to_string(),
+        );
+        self.ui.push_toast("Loading…", ui::ToastSeverity::Info, 5.0);
+        if let Some(tx) = &self.task_tx {
+            let tx = tx.clone();
+            tokio::task::spawn_blocking(move || {
+                let res = storage::StorageManager::load_simulation_state(&path)
+                    .map_err(|e| e.to_string());
+                let _ = tx.send(crate::app::BackgroundTaskResult::LoadComplete(res));
+            });
+        }
+    }
+
     pub(crate) fn handle_menu_actions(&mut self, actions: Vec<ui::MenuAction>) {
         for action in actions {
             match action {
@@ -49,6 +85,13 @@ impl PhylonApp {
                         .set_file_name("autosave.bin")
                         .save_file()
                     {
+                        // Phase 7, W0d: record before the background save
+                        // completes — the point is remembering what the
+                        // user picked, not gating on success.
+                        self.ui.recent_items.record(
+                            ui::RecentCategory::Files,
+                            path.to_string_lossy().to_string(),
+                        );
                         self.ui.push_toast("Saving…", ui::ToastSeverity::Info, 5.0);
                         if let Some(tx) = &self.task_tx {
                             let tx = tx.clone();
@@ -68,7 +111,7 @@ impl PhylonApp {
                         self.world.ecs.despawn(entity);
                         self.ui.selected_entity = None;
                         if self.ui.tracked_entity == Some(entity) {
-                            self.ui.tracked_entity = None;
+                            self.ui.set_follow(None);
                         }
                     }
                 }
@@ -162,17 +205,11 @@ impl PhylonApp {
                         .add_filter("Phylon Save", &["bin"])
                         .pick_file()
                     {
-                        self.ui.push_toast("Loading…", ui::ToastSeverity::Info, 5.0);
-                        if let Some(tx) = &self.task_tx {
-                            let tx = tx.clone();
-                            tokio::task::spawn_blocking(move || {
-                                let res = storage::StorageManager::load_simulation_state(&path)
-                                    .map_err(|e| e.to_string());
-                                let _ =
-                                    tx.send(crate::app::BackgroundTaskResult::LoadComplete(res));
-                            });
-                        }
+                        self.load_state_from_path(path);
                     }
+                }
+                ui::MenuAction::LoadStateFromPath(path) => {
+                    self.load_state_from_path(std::path::PathBuf::from(path));
                 }
                 ui::MenuAction::StepForward => {
                     self.accumulated_time += 1.0;
@@ -203,7 +240,12 @@ impl PhylonApp {
                     }
                 },
                 ui::MenuAction::SelectAll => {
-                    // Just select the first head we find
+                    // Just select the first head we find. Phase 7, W0b:
+                    // routed through `select()` so this behaves like every
+                    // other selection entry point (opens the Inspector,
+                    // doesn't start camera-follow) — it previously set
+                    // `tracked_entity` directly, one more instance of the
+                    // inconsistency W0a's audit found.
                     let mut query = self
                         .world
                         .ecs
@@ -211,15 +253,13 @@ impl PhylonApp {
                     for (entity, node) in query.iter(&self.world.ecs) {
                         if node.segment_type == 0 {
                             // Head
-                            self.ui.selected_entity = Some(entity);
-                            self.ui.tracked_entity = Some(entity);
+                            self.ui.select(entity);
                             break;
                         }
                     }
                 }
                 ui::MenuAction::Deselect => {
-                    self.ui.selected_entity = None;
-                    self.ui.tracked_entity = None;
+                    self.ui.clear_selection();
                 }
                 ui::MenuAction::SelectHeadOf(organism_id) => {
                     let mut query = self
@@ -228,8 +268,7 @@ impl PhylonApp {
                         .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
                     for (entity, node) in query.iter(&self.world.ecs) {
                         if node.segment_type == 0 && node.organism_id == organism_id {
-                            self.ui.selected_entity = Some(entity);
-                            self.ui.tracked_entity = Some(entity);
+                            self.ui.select(entity);
                             break;
                         }
                     }
@@ -267,7 +306,7 @@ impl PhylonApp {
                 ui::MenuAction::CameraHome => {
                     self.ui.camera_pos = common::Vec2::new(0.0, 0.0);
                     self.ui.camera_zoom = 1.0;
-                    self.ui.tracked_entity = None;
+                    self.ui.set_follow(None);
                 }
                 ui::MenuAction::TogglePlayPause => {
                     self.ui.is_paused = !self.ui.is_paused;
@@ -558,17 +597,20 @@ impl PhylonApp {
                         self.ui.selected_entity = None;
                     }
                     if self.ui.tracked_entity == Some(entity) {
-                        self.ui.tracked_entity = None;
+                        self.ui.set_follow(None);
                     }
                     self.ui
                         .push_toast("Entity killed", ui::ToastSeverity::Warning, 2.0);
                 }
                 ui::MenuAction::TrackEntity(entity) => {
-                    self.ui.tracked_entity = Some(entity);
-                    self.ui.selected_entity = Some(entity);
+                    // The context menu's explicit "Track / Follow" command
+                    // (Phase 7, W0b) — selects and starts following in one
+                    // step, since this action's whole purpose is following.
+                    self.ui.select(entity);
+                    self.ui.set_follow(Some(entity));
                 }
                 ui::MenuAction::SelectEntity(entity) => {
-                    self.ui.selected_entity = Some(entity);
+                    self.ui.select(entity);
                 }
                 ui::MenuAction::SelectInRect { min, max } => {
                     // Head nodes only (`segment_type == 0`) — one selection
@@ -619,9 +661,10 @@ impl PhylonApp {
                             break;
                         }
                     }
+                    // Phase 7, W0b: routed through `select()` — plain
+                    // selection, no automatic camera-follow.
                     if let Some(e) = found {
-                        self.ui.selected_entity = Some(e);
-                        self.ui.tracked_entity = Some(e);
+                        self.ui.select(e);
                     }
                 }
                 ui::MenuAction::InvertSelection => {
@@ -630,6 +673,7 @@ impl PhylonApp {
                     let mut found_next = false;
                     let mut first = None;
                     let mut take_next = current.is_none();
+                    let mut next_selection = None;
                     let mut q = self
                         .world
                         .ecs
@@ -640,7 +684,7 @@ impl PhylonApp {
                                 first = Some(e);
                             }
                             if take_next {
-                                self.ui.selected_entity = Some(e);
+                                next_selection = Some(e);
                                 found_next = true;
                                 break;
                             }
@@ -650,7 +694,13 @@ impl PhylonApp {
                         }
                     }
                     if !found_next {
-                        self.ui.selected_entity = first;
+                        next_selection = first;
+                    }
+                    // Phase 7, W0b: routed through `select()`.
+                    if let Some(e) = next_selection {
+                        self.ui.select(e);
+                    } else {
+                        self.ui.clear_selection();
                     }
                 }
 
@@ -765,19 +815,19 @@ impl ApplicationHandler for PhylonApp {
                 match physical_key {
                     PhysicalKey::Code(KeyCode::KeyW) | PhysicalKey::Code(KeyCode::ArrowUp) => {
                         self.ui.camera_pos.y += pan_speed;
-                        self.ui.tracked_entity = None;
+                        self.ui.set_follow(None);
                     }
                     PhysicalKey::Code(KeyCode::KeyS) | PhysicalKey::Code(KeyCode::ArrowDown) => {
                         self.ui.camera_pos.y -= pan_speed;
-                        self.ui.tracked_entity = None;
+                        self.ui.set_follow(None);
                     }
                     PhysicalKey::Code(KeyCode::KeyA) | PhysicalKey::Code(KeyCode::ArrowLeft) => {
                         self.ui.camera_pos.x -= pan_speed;
-                        self.ui.tracked_entity = None;
+                        self.ui.set_follow(None);
                     }
                     PhysicalKey::Code(KeyCode::KeyD) | PhysicalKey::Code(KeyCode::ArrowRight) => {
                         self.ui.camera_pos.x += pan_speed;
-                        self.ui.tracked_entity = None;
+                        self.ui.set_follow(None);
                     }
                     // Zoom with + and -
                     PhysicalKey::Code(KeyCode::Equal) | PhysicalKey::Code(KeyCode::NumpadAdd) => {
@@ -849,9 +899,18 @@ impl ApplicationHandler for PhylonApp {
                         .and_then(|g| g.config.as_ref())
                         .map(|c| (c.width as f32, c.height as f32));
                     if let Some((gpu_w, gpu_h)) = dims {
-                        let selected = self.pick_entity(click_pos, gpu_w, gpu_h);
-                        self.ui.selected_entity = selected;
-                        self.ui.tracked_entity = selected;
+                        // Phase 7, W0b: a plain viewport click selects and
+                        // opens the Inspector, but does not start camera-
+                        // follow (see `ui::WorkbenchState::select`'s doc
+                        // comment) — this was the audit's top finding: the
+                        // most natural gesture didn't reliably show what
+                        // was clicked on, while the less-discoverable
+                        // right-click "Inspect" path did.
+                        if let Some(selected) = self.pick_entity(click_pos, gpu_w, gpu_h) {
+                            self.ui.select(selected);
+                        } else {
+                            self.ui.clear_selection();
+                        }
                     }
                 }
 

@@ -4437,6 +4437,7 @@ dependencies = [
  "research",
  "rfd",
  "sensing",
+ "serde",
  "sysinfo",
  "thiserror 2.0.18",
  "world",

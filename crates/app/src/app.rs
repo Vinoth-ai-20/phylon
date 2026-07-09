@@ -83,9 +83,9 @@ pub(crate) struct PhylonApp {
     pub(crate) sim_config: PhylonConfig,
 
     /// Cross-session UI preferences (Phase 6, Epic J) — High Contrast Mode,
-    /// UI scale, and whether onboarding hints have ever been shown. See
-    /// `crate::preferences`'s module doc comment for why this is separate
-    /// from `sim_config`.
+    /// UI scale, whether onboarding hints have ever been shown, and (Phase
+    /// 7, W0d) recent-items history. See `crate::preferences`'s module doc
+    /// comment for why this is separate from `sim_config`.
     pub(crate) preferences: crate::preferences::Preferences,
 
     /// Central ECS World holding all entities and global resources
@@ -355,6 +355,7 @@ impl PhylonApp {
         let mut ui = ui::WorkbenchState::default();
         ui.high_contrast = preferences.high_contrast;
         ui.ui_scale = preferences.ui_scale;
+        ui.recent_items = preferences.recent_items.clone();
 
         Self {
             sim_config,
@@ -401,6 +402,9 @@ impl PhylonApp {
     pub(crate) fn save_preferences(&mut self) {
         self.preferences.high_contrast = self.ui.high_contrast;
         self.preferences.ui_scale = self.ui.ui_scale;
+        // Phase 7, W0d: recent-items history persists across restarts the
+        // same way high_contrast/ui_scale do.
+        self.preferences.recent_items = self.ui.recent_items.clone();
         self.preferences
             .save(&crate::preferences::preferences_path());
     }

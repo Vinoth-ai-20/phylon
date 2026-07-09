@@ -19,9 +19,11 @@ impl PhylonApp {
             self.world.ecs.despawn(entity);
         }
 
-        // Reset tracking
-        self.ui.selected_entity = None;
-        self.ui.tracked_entity = None;
+        // Reset tracking (Phase 7, W0b: routed through the single
+        // selection pathway, which also clears `secondary_selected` — a
+        // pre-existing gap this fixes for free, since a stale multi-select
+        // referencing just-despawned entities was never cleared here).
+        self.ui.clear_selection();
 
         // Reset time/atmosphere/metrics — without this, a "fresh"
         // simulation kept the old tick count, day-night phase, and Metrics
