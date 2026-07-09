@@ -511,7 +511,7 @@ mod tests {
                 .id();
 
             world.spawn((
-                physics::ParticleNode::new(common::Vec2::new(i as f32 * 10.0, 0.0), 1.0, 0, i),
+                physics::ParticleNode::new(common::Vec3::new(i as f32 * 10.0, 0.0, 0.0), 1.0, 0, i),
                 sensing::SensoryState::new(1),
                 brain,
                 MotorSystem {
@@ -602,7 +602,7 @@ mod tests {
         let mut world = World::new();
         let e = world
             .spawn((
-                physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 1),
+                physics::ParticleNode::new(common::Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
                 sample_chem(80.0), // 80% ATP, above the 50% regen threshold
                 metabolism::Health {
                     current: 50.0,
@@ -621,7 +621,7 @@ mod tests {
         let mut world = World::new();
         let e = world
             .spawn((
-                physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 1),
+                physics::ParticleNode::new(common::Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
                 sample_chem(5.0), // 5% ATP, below the 10% starvation threshold
                 metabolism::Health {
                     current: 50.0,
@@ -640,7 +640,7 @@ mod tests {
         let mut world = World::new();
         let full = world
             .spawn((
-                physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 1),
+                physics::ParticleNode::new(common::Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
                 sample_chem(100.0),
                 metabolism::Health {
                     current: 100.0,
@@ -650,7 +650,7 @@ mod tests {
             .id();
         let empty = world
             .spawn((
-                physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 2),
+                physics::ParticleNode::new(common::Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 2),
                 sample_chem(0.0),
                 metabolism::Health {
                     current: 0.0,

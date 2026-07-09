@@ -423,7 +423,7 @@ impl PhylonApp {
                                         organisms::spawn_organism(
                                             ecs,
                                             &genome,
-                                            self.ui.camera_pos,
+                                            self.ui.camera_pos.extend(0.0),
                                             ecology::Diet::Omnivore,
                                             ecology::EcologicalCategory::None,
                                             0,
@@ -666,7 +666,7 @@ impl PhylonApp {
                             .query::<&physics::ParticleNode>()
                             .get(&self.world.ecs, entity)
                         {
-                            self.ui.camera_pos = node.position;
+                            self.ui.camera_pos = node.position.truncate();
                         }
                     }
                 }

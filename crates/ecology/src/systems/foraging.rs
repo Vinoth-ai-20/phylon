@@ -61,7 +61,7 @@ pub fn foraging_system(
     resource_grids: Res<ResourceSpatialGrids>,
 ) {
     // Collect all nodes per organism to allow eating any segment
-    let mut organism_nodes: std::collections::HashMap<u32, Vec<common::Vec2>> =
+    let mut organism_nodes: std::collections::HashMap<u32, Vec<common::Vec3>> =
         std::collections::HashMap::new();
     for node in node_query.iter() {
         organism_nodes
@@ -79,7 +79,7 @@ pub fn foraging_system(
     // the core node before the exact per-segment distance check narrows it.
     let broadphase_radius = organism_eat_radius + 150.0;
 
-    let mut core_entities: Vec<(Entity, common::Vec2)> = Vec::new();
+    let mut core_entities: Vec<(Entity, common::Vec3)> = Vec::new();
     let mut organism_grid = spatial::UniformGrid::new(FORAGING_CELL_SIZE).unwrap();
     for (entity, _chem, _diet, node) in organism_query.iter() {
         core_entities.push((entity, node.position));

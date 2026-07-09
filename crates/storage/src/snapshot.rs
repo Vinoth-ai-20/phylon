@@ -211,8 +211,11 @@ impl SimulationSnapshot {
 
             nodes.push(SnapshotNode {
                 id,
-                position: node.position.into(),
-                velocity: node.velocity.into(),
+                // `SerializedVec2` stays 2D by design until Epic 8.13's
+                // schema bump (ADR-P8-08) — truncate `z` (always `0.0`
+                // until Epic 8.6) at this save boundary.
+                position: node.position.truncate().into(),
+                velocity: node.velocity.truncate().into(),
                 mass: node.mass,
                 segment_type: node.segment_type,
                 is_fixed: node.is_fixed,
@@ -415,7 +418,7 @@ impl SimulationSnapshot {
         let mut food_query = world.query::<&ecology::FoodPellet>();
         for food in food_query.iter(world) {
             food_pellets.push(SnapshotFood {
-                position: food.position.into(),
+                position: food.position.truncate().into(),
                 energy_value: food.energy_value,
             });
         }
@@ -423,7 +426,7 @@ impl SimulationSnapshot {
         let mut mineral_query = world.query::<&ecology::MineralPellet>();
         for min in mineral_query.iter(world) {
             mineral_pellets.push(SnapshotMineral {
-                position: min.position.into(),
+                position: min.position.truncate().into(),
                 energy_value: min.energy_value,
             });
         }
@@ -431,7 +434,7 @@ impl SimulationSnapshot {
         let mut corpse_query = world.query::<&ecology::Corpse>();
         for corpse in corpse_query.iter(world) {
             corpses.push(SnapshotCorpse {
-                position: corpse.position.into(),
+                position: corpse.position.truncate().into(),
                 energy_value: corpse.energy_value,
                 decay_timer: corpse.decay_timer,
                 max_decay: corpse.max_decay,
@@ -457,10 +460,14 @@ impl SimulationSnapshot {
         let mut id_map = std::collections::HashMap::new();
 
         for node in &self.nodes {
+            let restored_position: common::Vec2 = node.position.clone().into();
+            let restored_velocity: common::Vec2 = node.velocity.clone().into();
             let mut entity_cmds = world.spawn(physics::ParticleNode {
-                position: node.position.clone().into(),
-                velocity: node.velocity.clone().into(),
-                force: common::Vec2::ZERO,
+                // `z` is always `0.0` on restore until Epic 8.6's real 3D
+                // growth redesign — see the save-side truncation above.
+                position: restored_position.extend(0.0),
+                velocity: restored_velocity.extend(0.0),
+                force: common::Vec3::ZERO,
                 mass: node.mass,
                 segment_type: node.segment_type,
                 is_fixed: node.is_fixed,
@@ -602,22 +609,25 @@ impl SimulationSnapshot {
         }
 
         for food in &self.food_pellets {
+            let position: common::Vec2 = food.position.clone().into();
             world.spawn(ecology::FoodPellet {
-                position: food.position.clone().into(),
+                position: position.extend(0.0),
                 energy_value: food.energy_value,
             });
         }
 
         for min in &self.mineral_pellets {
+            let position: common::Vec2 = min.position.clone().into();
             world.spawn(ecology::MineralPellet {
-                position: min.position.clone().into(),
+                position: position.extend(0.0),
                 energy_value: min.energy_value,
             });
         }
 
         for corpse in &self.corpses {
+            let position: common::Vec2 = corpse.position.clone().into();
             world.spawn(ecology::Corpse {
-                position: corpse.position.clone().into(),
+                position: position.extend(0.0),
                 energy_value: corpse.energy_value,
                 decay_timer: corpse.decay_timer,
                 max_decay: corpse.max_decay,
@@ -645,9 +655,9 @@ mod tests {
         let head = world
             .spawn((
                 physics::ParticleNode {
-                    position: common::Vec2::new(1.0, 2.0),
-                    velocity: common::Vec2::ZERO,
-                    force: common::Vec2::ZERO,
+                    position: common::Vec3::new(1.0, 2.0, 0.0),
+                    velocity: common::Vec3::ZERO,
+                    force: common::Vec3::ZERO,
                     mass: 1.0,
                     segment_type: 0,
                     is_fixed: false,
@@ -707,9 +717,9 @@ mod tests {
         let segment = world
             .spawn((
                 physics::ParticleNode {
-                    position: common::Vec2::new(3.0, 4.0),
-                    velocity: common::Vec2::ZERO,
-                    force: common::Vec2::ZERO,
+                    position: common::Vec3::new(3.0, 4.0, 0.0),
+                    velocity: common::Vec3::ZERO,
+                    force: common::Vec3::ZERO,
                     mass: 1.0,
                     segment_type: 1,
                     is_fixed: false,

@@ -1,5 +1,5 @@
 use crate::components::{Generation, GrowthState, LifeStage, OrganismColor, SpawnTick};
-use common::Vec2;
+use common::Vec3;
 
 /// Spawns an organism's zygote based on its genome.
 ///
@@ -10,7 +10,7 @@ use common::Vec2;
 pub fn spawn_organism(
     world: &mut bevy_ecs::world::World,
     genome: &genetics::Genome,
-    start_pos: Vec2,
+    start_pos: Vec3,
     diet: ecology::Diet,
     category: ecology::EcologicalCategory,
     generation: u32,
@@ -107,7 +107,7 @@ pub fn spawn_organism(
             ticks_until_next_bud: 30, // ~0.5 s per segment bud at 60 Hz
             base_bud_interval: 30,
             parent_spine_node: Some(head_node),
-            current_pos: start_pos + Vec2::new(heading.cos(), heading.sin()) * -segment_length,
+            current_pos: start_pos + Vec3::new(heading.cos(), heading.sin(), 0.0) * -segment_length,
             segment_length,
             effectors: Vec::new(),
             is_organism_complete: head_outputs.segment_type == genetics::SegmentType::Tail,
@@ -181,7 +181,7 @@ pub fn spawn_organism(
 /// Phase 5 implementation plan for details.
 pub fn spawn_proto_fish(
     world: &mut bevy_ecs::world::World,
-    pos: Vec2,
+    pos: Vec3,
     diet: ecology::Diet,
     category: ecology::EcologicalCategory,
     generation: u32,
@@ -194,7 +194,7 @@ pub fn spawn_proto_fish(
     let segment_len: f32 = 20.0;
     let fin_spread: f32 = 15.0;
     let heading: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
-    let dir = Vec2::new(heading.cos(), heading.sin());
+    let dir = Vec3::new(heading.cos(), heading.sin(), 0.0);
 
     // ── Spine (5 nodes along −X axis, head at pos, tail to the left) ──────
     // Segment types: Head(0), Torso(1), Torso(1), Torso(1), Tail(3)
@@ -243,7 +243,7 @@ pub fn spawn_proto_fish(
     let fin_root = spine_nodes[2];
     let fin_root_pos = pos + dir * (-2.0 * segment_len);
 
-    let perp = Vec2::new(-dir.y, dir.x);
+    let perp = Vec3::new(-dir.y, dir.x, 0.0);
     let f_up_pos = fin_root_pos + perp * fin_spread;
     let f_dn_pos = fin_root_pos + perp * -fin_spread;
 

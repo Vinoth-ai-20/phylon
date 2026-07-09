@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::Component;
-use common::{EntityId, SimEnergy, SimLength, Vec2};
+use common::{EntityId, SimEnergy, SimLength, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 /// Spatial components of an organism: position, velocity, and collision radius.
@@ -95,8 +95,10 @@ pub struct GrowthState {
     pub base_bud_interval: u64,
     /// The single spine node spawned by the previous gene — to attach the next one to.
     pub parent_spine_node: Option<bevy_ecs::entity::Entity>,
-    /// Position for the next spine node.
-    pub current_pos: Vec2,
+    /// Position for the next spine node. `Vec3` since Phase 8 (ADR-P8-01)
+    /// — `z` stays `0.0` until Epic 8.6's real 3D growth-orientation
+    /// redesign; `heading` below is untouched by that same deferral.
+    pub current_pos: Vec3,
     /// Distance between adjacent spine nodes.
     pub segment_length: f32,
     /// The list of actuated spring effectors built so far.

@@ -322,12 +322,17 @@ pub fn metabolism_system(
     let snapshots: Vec<_> = query
         .iter()
         .map(|(entity, node, chem, age, metabolism)| {
+            // The world-space diffusion field stays a 2D plane by design
+            // (Phase 8, ADR-P8-05 — a naive volumetric extension would be a
+            // ~256x memory/bandwidth increase nothing has measured a need
+            // for), so sampling it truncates the node's 3D position down to
+            // its XY plane — not a bug, a deliberate, documented boundary.
             let local_o2 = cpu_field
                 .as_ref()
-                .map_or(1000.0, |field| field.sample(node.position, 2));
+                .map_or(1000.0, |field| field.sample(node.position.truncate(), 2));
             let local_co2 = cpu_field
                 .as_ref()
-                .map_or(0.0, |field| field.sample(node.position, 3));
+                .map_or(0.0, |field| field.sample(node.position.truncate(), 3));
             (
                 entity,
                 chem.clone(),
@@ -482,7 +487,7 @@ mod tests {
         let mut world = bevy_ecs::world::World::new();
         world.insert_resource(GlobalAtmosphere::default());
         world.spawn((
-            physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 1, 0),
+            physics::ParticleNode::new(common::Vec3::new(0.0, 0.0, 0.0), 1.0, 1, 0),
             ChemicalEconomy::segment_default(),
         ));
         // Must not panic on a query mismatch; ticking should simply skip it.
@@ -504,7 +509,7 @@ mod tests {
         world.insert_resource(GlobalAtmosphere::default());
         for i in 0..n {
             world.spawn((
-                physics::ParticleNode::new(common::Vec2::new(i as f32 * 3.0, 0.0), 1.0, 0, i),
+                physics::ParticleNode::new(common::Vec3::new(i as f32 * 3.0, 0.0, 0.0), 1.0, 0, i),
                 ChemicalEconomy {
                     glucose: 500.0 + i as f32,
                     o2: 300.0,

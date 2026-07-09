@@ -3,7 +3,7 @@
 //! systems that operate on them. No logic changed, only relocated.
 
 use bevy_ecs::prelude::*;
-use common::Vec2;
+use common::Vec3;
 use serde::{Deserialize, Serialize};
 
 /// Indicates the diet of an organism.
@@ -70,8 +70,9 @@ pub enum EcologicalCategory {
 /// A food pellet in the environment (biomass).
 #[derive(Component, Debug, Clone)]
 pub struct FoodPellet {
-    /// World position.
-    pub position: Vec2,
+    /// World position. `Vec3` since Phase 8 (ADR-P8-01) — `z` stays `0.0`
+    /// until Epic 8.6's real 3D growth/foraging redesign.
+    pub position: Vec3,
     /// Energy provided when eaten.
     pub energy_value: f32,
 }
@@ -79,8 +80,8 @@ pub struct FoodPellet {
 /// An inorganic mineral nutrient in the environment.
 #[derive(Component, Debug, Clone)]
 pub struct MineralPellet {
-    /// World position.
-    pub position: Vec2,
+    /// World position. `Vec3` since Phase 8 (ADR-P8-01).
+    pub position: Vec3,
     /// Energy provided when consumed by Producers.
     pub energy_value: f32,
 }
@@ -88,8 +89,8 @@ pub struct MineralPellet {
 /// A dead organism that can be decomposed.
 #[derive(Component, Debug, Clone)]
 pub struct Corpse {
-    /// World position.
-    pub position: Vec2,
+    /// World position. `Vec3` since Phase 8 (ADR-P8-01).
+    pub position: Vec3,
     /// Total energy contained.
     pub energy_value: f32,
     /// Ticks until the corpse automatically decays into a mineral pellet.

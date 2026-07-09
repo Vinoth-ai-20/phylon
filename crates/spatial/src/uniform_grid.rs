@@ -1,7 +1,7 @@
 use crate::index::SpatialIndex;
 use crate::{SpatialError, SpatialResult};
 use bevy_ecs::entity::Entity;
-use common::Vec2;
+use common::{Vec2, Vec3};
 use std::collections::HashMap;
 
 /// # Broad-Phase Uniform Grid Index
@@ -34,19 +34,24 @@ use std::collections::HashMap;
 /// fixed-size bucket table when that growth pattern matters more than exact
 /// per-cell bucketing.
 ///
-/// Inherent methods below are the primary API (unchanged from before this
-/// type also implemented [`SpatialIndex`], so existing callers that don't
-/// import the trait are unaffected); the trait impl at the bottom of this
-/// file just delegates to them, for callers that want to be generic over
-/// which index they hold.
+/// Inherent methods below are the primary API — as of Phase 8 (ADR-P8-01),
+/// they take `Vec3` positions (previously `Vec2`, widened alongside
+/// `physics::ParticleNode`), with a 3rd-axis term folded into `cell_of`'s
+/// cell-key computation. The `SpatialIndex` trait impl at the bottom of
+/// this file stays `Vec2`-based (shared with [`crate::Quadtree`], which
+/// isn't migrated until Phase 8 Epic 8.9) and truncates/pads `z` at that
+/// boundary — confirmed via a workspace-wide search that no live caller
+/// uses this type through the trait, only through these inherent methods
+/// directly, so this boundary is dead-code-safe today, not a behavior
+/// change for anything real.
 pub struct UniformGrid {
     /// Edge length of each grid cell in simulation length units.
     cell_size: f32,
     /// Bucketed entities by cell coordinate.
-    cells: HashMap<(i32, i32), Vec<Entity>>,
+    cells: HashMap<(i32, i32, i32), Vec<Entity>>,
     /// Reverse index: last known position of each registered entity, used to
     /// find its current cell on `update`/`remove` without a linear scan.
-    positions: HashMap<Entity, Vec2>,
+    positions: HashMap<Entity, Vec3>,
 }
 
 impl UniformGrid {
@@ -68,10 +73,11 @@ impl UniformGrid {
         })
     }
 
-    fn cell_of(&self, position: Vec2) -> (i32, i32) {
+    fn cell_of(&self, position: Vec3) -> (i32, i32, i32) {
         (
             (position.x / self.cell_size).floor() as i32,
             (position.y / self.cell_size).floor() as i32,
+            (position.z / self.cell_size).floor() as i32,
         )
     }
 
@@ -86,7 +92,7 @@ impl UniformGrid {
     /// # Errors
     ///
     /// Returns [`SpatialError::DuplicateEntity`] if the entity is already registered.
-    pub fn insert(&mut self, id: Entity, position: Vec2) -> SpatialResult<()> {
+    pub fn insert(&mut self, id: Entity, position: Vec3) -> SpatialResult<()> {
         if self.positions.contains_key(&id) {
             return Err(SpatialError::DuplicateEntity(id));
         }
@@ -101,7 +107,7 @@ impl UniformGrid {
     /// # Errors
     ///
     /// Returns [`SpatialError::UnknownEntity`] if the entity is not registered.
-    pub fn update(&mut self, id: Entity, position: Vec2) -> SpatialResult<()> {
+    pub fn update(&mut self, id: Entity, position: Vec3) -> SpatialResult<()> {
         let Some(old_position) = self.positions.get(&id).copied() else {
             return Err(SpatialError::UnknownEntity(id));
         };
@@ -138,24 +144,26 @@ impl UniformGrid {
     /// Scans the grid cells overlapping the query's bounding box, then
     /// filters candidates by exact distance so results are precise rather
     /// than just "same cell block".
-    pub fn query_radius(&self, center: Vec2, radius: f32) -> Vec<Entity> {
+    pub fn query_radius(&self, center: Vec3, radius: f32) -> Vec<Entity> {
         if radius <= 0.0 {
             return Vec::new();
         }
-        let min_cell = self.cell_of(center - Vec2::splat(radius));
-        let max_cell = self.cell_of(center + Vec2::splat(radius));
+        let min_cell = self.cell_of(center - Vec3::splat(radius));
+        let max_cell = self.cell_of(center + Vec3::splat(radius));
         let radius_sq = radius * radius;
 
         let mut results = Vec::new();
-        for cy in min_cell.1..=max_cell.1 {
-            for cx in min_cell.0..=max_cell.0 {
-                let Some(bucket) = self.cells.get(&(cx, cy)) else {
-                    continue;
-                };
-                for &id in bucket {
-                    if let Some(&pos) = self.positions.get(&id) {
-                        if pos.distance_squared(center) <= radius_sq {
-                            results.push(id);
+        for cz in min_cell.2..=max_cell.2 {
+            for cy in min_cell.1..=max_cell.1 {
+                for cx in min_cell.0..=max_cell.0 {
+                    let Some(bucket) = self.cells.get(&(cx, cy, cz)) else {
+                        continue;
+                    };
+                    for &id in bucket {
+                        if let Some(&pos) = self.positions.get(&id) {
+                            if pos.distance_squared(center) <= radius_sq {
+                                results.push(id);
+                            }
                         }
                     }
                 }
@@ -167,11 +175,11 @@ impl UniformGrid {
 
 impl SpatialIndex for UniformGrid {
     fn insert(&mut self, id: Entity, position: Vec2) -> SpatialResult<()> {
-        UniformGrid::insert(self, id, position)
+        UniformGrid::insert(self, id, position.extend(0.0))
     }
 
     fn update(&mut self, id: Entity, position: Vec2) -> SpatialResult<()> {
-        UniformGrid::update(self, id, position)
+        UniformGrid::update(self, id, position.extend(0.0))
     }
 
     fn remove(&mut self, id: Entity) -> SpatialResult<()> {
@@ -179,7 +187,7 @@ impl SpatialIndex for UniformGrid {
     }
 
     fn query_radius(&self, center: Vec2, radius: f32) -> Vec<Entity> {
-        UniformGrid::query_radius(self, center, radius)
+        UniformGrid::query_radius(self, center.extend(0.0), radius)
     }
 
     fn clear(&mut self) {
@@ -205,7 +213,7 @@ mod tests {
     #[test]
     fn query_radius_on_empty_grid_returns_empty() {
         let grid = UniformGrid::new(16.0).unwrap();
-        let results = grid.query_radius(Vec2::ZERO, 50.0);
+        let results = grid.query_radius(Vec3::ZERO, 50.0);
         assert!(results.is_empty());
     }
 
@@ -214,10 +222,10 @@ mod tests {
         let mut grid = UniformGrid::new(16.0).unwrap();
         let near = Entity::from_raw(1);
         let far = Entity::from_raw(2);
-        grid.insert(near, Vec2::new(5.0, 5.0)).unwrap();
-        grid.insert(far, Vec2::new(500.0, 500.0)).unwrap();
+        grid.insert(near, Vec3::new(5.0, 5.0, 0.0)).unwrap();
+        grid.insert(far, Vec3::new(500.0, 500.0, 0.0)).unwrap();
 
-        let results = grid.query_radius(Vec2::ZERO, 50.0);
+        let results = grid.query_radius(Vec3::ZERO, 50.0);
         assert_eq!(results, vec![near]);
     }
 
@@ -225,9 +233,9 @@ mod tests {
     fn insert_rejects_duplicate_entity() {
         let mut grid = UniformGrid::new(16.0).unwrap();
         let id = Entity::from_raw(1);
-        grid.insert(id, Vec2::ZERO).unwrap();
+        grid.insert(id, Vec3::ZERO).unwrap();
         assert!(matches!(
-            grid.insert(id, Vec2::ZERO),
+            grid.insert(id, Vec3::ZERO),
             Err(SpatialError::DuplicateEntity(_))
         ));
     }
@@ -236,20 +244,23 @@ mod tests {
     fn update_moves_entity_between_cells() {
         let mut grid = UniformGrid::new(16.0).unwrap();
         let id = Entity::from_raw(1);
-        grid.insert(id, Vec2::ZERO).unwrap();
-        grid.update(id, Vec2::new(1000.0, 1000.0)).unwrap();
+        grid.insert(id, Vec3::ZERO).unwrap();
+        grid.update(id, Vec3::new(1000.0, 1000.0, 0.0)).unwrap();
 
-        assert!(grid.query_radius(Vec2::ZERO, 5.0).is_empty());
-        assert_eq!(grid.query_radius(Vec2::new(1000.0, 1000.0), 5.0), vec![id]);
+        assert!(grid.query_radius(Vec3::ZERO, 5.0).is_empty());
+        assert_eq!(
+            grid.query_radius(Vec3::new(1000.0, 1000.0, 0.0), 5.0),
+            vec![id]
+        );
     }
 
     #[test]
     fn remove_drops_entity_from_queries() {
         let mut grid = UniformGrid::new(16.0).unwrap();
         let id = Entity::from_raw(1);
-        grid.insert(id, Vec2::ZERO).unwrap();
+        grid.insert(id, Vec3::ZERO).unwrap();
         grid.remove(id).unwrap();
-        assert!(grid.query_radius(Vec2::ZERO, 5.0).is_empty());
+        assert!(grid.query_radius(Vec3::ZERO, 5.0).is_empty());
         assert!(matches!(
             grid.remove(id),
             Err(SpatialError::UnknownEntity(_))

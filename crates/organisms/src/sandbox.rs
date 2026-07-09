@@ -156,10 +156,11 @@ pub fn generate_hex_mesh(
             let x_offset = if row % 2 != 0 { spacing * 0.5 } else { 0.0 };
             let y_offset = row as f32 * spacing * 0.866; // sqrt(3)/2
 
-            let pos = center
-                + common::Vec2::new(
+            let pos = center.extend(0.0)
+                + common::Vec3::new(
                     col as f32 * spacing + x_offset - (cols as f32 * spacing * 0.5),
                     y_offset - (rows as f32 * spacing * 0.866 * 0.5),
+                    0.0,
                 );
 
             let color = [0.4, 0.4, 0.5]; // Grey-blue for structure

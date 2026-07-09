@@ -35,7 +35,7 @@ fn base_world() -> World {
 #[test]
 fn predation_spawns_a_feeding_effect_at_the_predator_position() {
     let mut world = base_world();
-    let predator_pos = common::Vec2::new(100.0, 100.0);
+    let predator_pos = common::Vec3::new(100.0, 100.0, 0.0);
     world.spawn((
         physics::ParticleNode::new(predator_pos, 1.0, 0, 0),
         sample_chem(50.0, 0.0),
@@ -62,7 +62,7 @@ fn predation_spawns_a_feeding_effect_at_the_predator_position() {
 #[test]
 fn herbivory_spawns_a_grazed_effect_at_the_herbivore_position() {
     let mut world = base_world();
-    let herbivore_pos = common::Vec2::new(-40.0, 20.0);
+    let herbivore_pos = common::Vec3::new(-40.0, 20.0, 0.0);
     world.spawn((
         physics::ParticleNode::new(herbivore_pos, 1.0, 0, 0),
         sample_chem(50.0, 0.0),
@@ -88,12 +88,12 @@ fn herbivory_spawns_a_grazed_effect_at_the_herbivore_position() {
 fn no_effect_when_out_of_range() {
     let mut world = base_world();
     world.spawn((
-        physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 0),
+        physics::ParticleNode::new(common::Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 0),
         sample_chem(50.0, 0.0),
         Diet::Carnivore,
     ));
     world.spawn((
-        physics::ParticleNode::new(common::Vec2::new(1000.0, 1000.0), 1.0, 0, 1),
+        physics::ParticleNode::new(common::Vec3::new(1000.0, 1000.0, 0.0), 1.0, 0, 1),
         sample_chem(50.0, 10.0),
         Diet::Herbivore,
     ));
@@ -185,7 +185,7 @@ fn catastrophe_system_is_deterministic_for_a_given_seed() {
 /// preserved determinism.
 #[test]
 fn food_spawner_system_is_deterministic_for_a_given_seed() {
-    fn run_once() -> Vec<common::Vec2> {
+    fn run_once() -> Vec<common::Vec3> {
         let mut world = World::new();
         world.insert_resource(common::SimRng::from_seed(7));
         world.insert_resource(metabolism::GlobalAtmosphere::default());

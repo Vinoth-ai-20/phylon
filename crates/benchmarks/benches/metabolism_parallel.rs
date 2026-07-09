@@ -15,7 +15,7 @@ fn build_world_with_organisms(n: u32) -> World {
     world.insert_resource(GlobalAtmosphere::default());
     for i in 0..n {
         world.spawn((
-            ParticleNode::new(common::Vec2::new(i as f32 * 3.0, 0.0), 1.0, 0, i),
+            ParticleNode::new(common::Vec3::new(i as f32 * 3.0, 0.0, 0.0), 1.0, 0, i),
             ChemicalEconomy {
                 glucose: 500.0,
                 o2: 300.0,

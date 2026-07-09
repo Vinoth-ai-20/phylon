@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use common::Vec2;
+use common::Vec3;
 
 /// Global tunables for biofilm density protection.
 #[derive(Resource, Debug, Clone)]
@@ -65,7 +65,7 @@ pub fn biofilm_system(
         &mut metabolism::Hydration,
     )>,
 ) {
-    let snapshot: Vec<(Entity, ecology::Diet, Vec2)> = query
+    let snapshot: Vec<(Entity, ecology::Diet, Vec3)> = query
         .iter()
         .map(|(e, d, n, _)| (e, d.clone(), n.position))
         .collect();
@@ -129,14 +129,14 @@ mod tests {
         let center = world
             .spawn((
                 ecology::Diet::Decomposer,
-                physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 1),
+                physics::ParticleNode::new(Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
                 sample_hydration(),
             ))
             .id();
         for i in 0..2 {
             world.spawn((
                 ecology::Diet::Decomposer,
-                physics::ParticleNode::new(Vec2::new(5.0 + i as f32, 0.0), 1.0, 0, i + 2),
+                physics::ParticleNode::new(Vec3::new(5.0 + i as f32, 0.0, 0.0), 1.0, 0, i + 2),
                 sample_hydration(),
             ));
         }
@@ -162,7 +162,7 @@ mod tests {
         let lone = world
             .spawn((
                 ecology::Diet::Decomposer,
-                physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 1),
+                physics::ParticleNode::new(Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
                 sample_hydration(),
             ))
             .id();
@@ -187,13 +187,13 @@ mod tests {
         let lone = world
             .spawn((
                 ecology::Diet::Decomposer,
-                physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 1),
+                physics::ParticleNode::new(Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
                 sample_hydration(),
             ))
             .id();
         world.spawn((
             ecology::Diet::Herbivore,
-            physics::ParticleNode::new(Vec2::new(5.0, 0.0), 1.0, 0, 2),
+            physics::ParticleNode::new(Vec3::new(5.0, 0.0, 0.0), 1.0, 0, 2),
             sample_hydration(),
         ));
 
@@ -220,14 +220,14 @@ mod tests {
         let e1 = world
             .spawn((
                 ecology::Diet::Decomposer,
-                physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 1),
+                physics::ParticleNode::new(Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
                 sample_hydration(),
             ))
             .id();
         let e2 = world
             .spawn((
                 ecology::Diet::Decomposer,
-                physics::ParticleNode::new(Vec2::new(5.0, 0.0), 1.0, 0, 2),
+                physics::ParticleNode::new(Vec3::new(5.0, 0.0, 0.0), 1.0, 0, 2),
                 sample_hydration(),
             ))
             .id();
@@ -240,7 +240,8 @@ mod tests {
         );
 
         // Move e2 far away and re-run.
-        world.get_mut::<physics::ParticleNode>(e2).unwrap().position = Vec2::new(10_000.0, 0.0);
+        world.get_mut::<physics::ParticleNode>(e2).unwrap().position =
+            Vec3::new(10_000.0, 0.0, 0.0);
         world.run_system_once(biofilm_system);
 
         assert_eq!(

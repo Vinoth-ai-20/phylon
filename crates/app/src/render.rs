@@ -73,7 +73,7 @@ impl PhylonApp {
                 .get(&self.world.ecs, tracked)
             {
                 // Smoothly follow the target
-                self.ui.camera_pos = self.ui.camera_pos.lerp(node.position, 0.1);
+                self.ui.camera_pos = self.ui.camera_pos.lerp(node.position.truncate(), 0.1);
             } else {
                 // Entity no longer exists (e.g. died), drop tracking
                 self.ui.set_follow(None);

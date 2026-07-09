@@ -558,4 +558,60 @@ Acceptance checklist per epic = all of the above, plus that epic's own stated "C
 
 ---
 
-*This document is the complete Stage 1-4 planning deliverable. No code has been modified. Implementation (Stage 5 proper — Epic 8.11 onward) requires explicit approval to begin, and Epics 8.2 and 8.6 additionally require explicit sign-off on ADR-P8-03 and ADR-P8-06 respectively before starting, per this document's own stated gates.*
+## 17. Execution Log
+
+### Epic 8.0 — `Vec3` Foundation & Mechanical Position Migration — COMPLETE
+
+**Epic summary.** Widened every simulation-space position/velocity/force field from `common::Vec2` to the newly-introduced `common::Vec3` (Z fixed at `0.0` everywhere), mechanically, in dependency order, with no behavioral or visual change. This is the "2D-embedded-in-3D" intermediate state the roadmap's Executive Summary and ADR-P8-01 call for — later epics (8.1 Camera3d onward) build real 3D on top of this foundation without redesigning it.
+
+**Files changed** (39 files across 11 crates):
+
+- `crates/common/src/lib.rs` — added `pub use glam::Vec3` re-export.
+- `crates/physics/src/lib.rs` — `ParticleNode::{position, velocity, force}` → `Vec3`.
+- `crates/spatial/src/uniform_grid.rs`, `crates/spatial/src/hash.rs` — `UniformGrid`/`SpatialHash` inherent APIs widened to `Vec3` (3D cell-keys/bucket hash); `SpatialIndex` trait and `Quadtree` deliberately left at `Vec2` (confirmed zero live callers via the trait; Quadtree→Octree is Epic 8.9's job).
+- `crates/ecology/src/components.rs` (`FoodPellet`/`MineralPellet`/`Corpse`), `.../fungi.rs`, `.../systems/{catastrophe_system,food_spawner,foraging}.rs`, `.../tests.rs`, `.../disease.rs` — entity positions and call sites migrated; `catastrophe::Hazard::center`/`HazardSpawned` deliberately left at `Vec2` (the hazard field, like the diffusion field, stays a 2D plane per ADR-P8-05 — truncated at the one comparison site instead).
+- `crates/events/src/lib.rs` — `TimedEffect::position`/`TimedEffects::spawn` widened to `Vec3` (a simulation-space spawn/event location, the same category as `ParticleNode.position`, even though not named explicitly in the roadmap's own ECS Evolution table — a small, low-risk gap-fill under the same principle).
+- `crates/organisms/src/components.rs` (`GrowthState::current_pos`), `.../systems.rs`, `.../sandbox.rs`, `.../social.rs`, `.../quorum.rs`, `.../spawning.rs`, `.../life_cycle.rs` — growth/flocking/pack-hunting/biofilm/spawn-position math migrated; `GrowthState::heading` (a scalar angle) deliberately untouched, reserved for Epic 8.6's real orientation redesign.
+- `crates/reproduction/src/lib.rs` — `BirthRequest::position` widened to `Vec3` (same category as `TimedEffect::position`).
+- `crates/sensing/src/lib.rs` — internal vision math (`EntitySnapshot`, `WorldSnapshot`, `VisionSnapshot::last_forward`) deliberately kept at `Vec2` — vision's angle-based FOV cone is genuinely 2D today and isn't part of this epic's scope (a future sensing epic, not 8.0) — every position is truncated to its XY plane at the snapshot-construction boundary instead.
+- `crates/storage/src/snapshot.rs` — save/restore boundary adapters added (`.truncate()` on save, `.extend(0.0)` on restore) around every `SerializedVec2` conversion; `SerializedVec2` itself is intentionally unchanged in shape until Epic 8.13's schema bump (ADR-P8-08).
+- `crates/ui/src/render.rs`, `.../plugins/inspector.rs` — screen-space projection code (`to_screen`/`world_to_minimap` closures, `render_pellet_summary`) truncates `Vec3` world positions to `Vec2` at the render boundary; `camera_pos`/UI-owned state stays `Vec2` throughout, per the crate-graph's existing UI/simulation split.
+- `crates/app/src/{app.rs,events.rs,interventions.rs,motion_diagnostic.rs,render.rs,simulation.rs,systems.rs}` — every spawn/pick/camera-follow/GPU-upload call site updated; the GPU compute boundary (`simulation.rs`'s `to_grid` closure, the post-readback force-reset) needed only two small truncation/widen fixes, confirmed by reading the actual buffer code that the roadmap's §5 "gpu compute buffers" migration step does **not** need to happen in this epic (see Problem Solving note below).
+- `crates/behavior/src/lib.rs`, `crates/benchmarks/benches/{foraging_scaling,metabolism_parallel}.rs` — test/benchmark fixtures updated to construct `Vec3` positions.
+
+**Architecture changes.** None beyond the type migration itself — no new abstractions introduced. Two deliberate, documented boundary decisions (both consistent with ADR-P8-05's "world-space 2D fields stay 2D" precedent):
+
+1. World-space diffusion/hazard fields, and all vision/rendering/UI-screen-space math, stay `Vec2`, with explicit `.truncate()`/`.extend(0.0)` adapters at each boundary crossing.
+2. The `spatial::SpatialIndex` trait and `Quadtree` stay `Vec2`-based (unused by any live caller today), bridged from `UniformGrid`/`SpatialHash`'s new `Vec3` inherent APIs via `.extend(0.0)`.
+
+**Performance impact.** None expected or measured — every position gained one `f32` field (`Z`, always `0.0`); no new allocations, no algorithmic changes. Not benchmarked separately since the roadmap's Epic 8.0 acceptance bar is "no behavior change," not a performance milestone.
+
+**Risks.** Low, as predicted. The one real risk — silently breaking a `*_is_deterministic_for_a_given_seed` test by introducing a Z-dependent code path — did not materialize; every determinism test passed bit-identically, and two independent headless runs at the same seed produced identical entity-index behavior (see Verification below).
+
+**Verification results:**
+
+- `cargo build --workspace --all-targets`: clean.
+- `cargo fmt --all -- --check`: clean (after one `cargo fmt --all` pass to reformat lines widened past the column limit).
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean, zero warnings.
+- `cargo test --workspace`: **334 tests passed, 0 failed**, across every crate (including all `*_is_deterministic_for_a_given_seed` and `*_deterministic_regardless_of_thread_count` tests, and `storage`'s save/load round-trip test).
+- Interactive smoke run: built `phylon.exe`, ran two independent 200-tick headless runs (`research.headless: true`, `max_ticks: 200`, default seed) — both completed without panics and produced identical behavior (same entity index/generation in the one pre-existing, unrelated `B0003` double-despawn warning both times), confirming determinism end-to-end through the real app, not just unit tests. `data/default.ron` was reverted via `git checkout` immediately after.
+- Grepped for unseeded `rand::thread_rng()`/`rand::random()`: none introduced.
+
+**Tests executed:** the full workspace suite (`cargo test --workspace`), 334 tests, 0 failures — no test count regression versus pre-epic (several new test fixtures updated in place, none removed).
+
+**Benchmarks:** none run this epic (no performance-sensitive code path changed); `benchmarks` crate's fixtures were updated only so it continues to compile.
+
+**Documentation updated:** this Execution Log section; no other `docs/` changes were needed (Epic 8.0 has no user-visible behavior to document).
+
+**Known limitations:**
+
+- `heading: f32` remains a 2D angle — organisms still only ever face within the XY plane. This is intentional and explicitly deferred to Epic 8.6.
+- Vision, world-space diffusion/hazard fields, and all screen-space rendering math remain fully 2D, bridged by truncation/extension adapters at their boundaries — these are the exact seams later epics (8.1 camera, a future sensing epic, and the eventual volumetric-diffusion follow-on) will need to cross.
+- The `spatial::SpatialIndex` trait and `Quadtree` were not migrated (confirmed dead via the trait today) — Epic 8.9 (Quadtree→Octree) inherits this gap.
+- `storage`'s on-disk schema (`SerializedVec2`) is unchanged; Z is silently dropped on every save today. This is the explicitly accepted, documented state until Epic 8.13's schema bump (ADR-P8-08) — not a bug.
+
+**Next epic dependencies:** Epic 8.1 (Camera3d) and Epic 8.11 (CI GPU-testing posture, substantially already done via the earlier CI fix this session) can both proceed immediately. Epic 8.2 (rendering rewrite) remains gated on ADR-P8-03 sign-off; Epic 8.6 (real 3D growth/orientation) remains gated on ADR-P8-06 sign-off — neither gate is bypassed by this epic's completion.
+
+---
+
+*This document is the complete Stage 1-4 planning deliverable, now also the Phase 8 execution log (§17) as implementation proceeds epic-by-epic. Epic 8.0 is complete and verified (see above). Epics 8.2 and 8.6 additionally require explicit sign-off on ADR-P8-03 and ADR-P8-06 respectively before starting, per this document's own stated gates.*

@@ -4,7 +4,7 @@
 #![warn(clippy::all)]
 
 use bevy_ecs::prelude::*;
-use common::{SimRng, Vec2};
+use common::{SimRng, Vec3};
 use genetics::Genome;
 use metabolism::ChemicalEconomy;
 use rand::Rng;
@@ -74,8 +74,10 @@ pub struct BirthRequest {
     pub parent_id: Option<bevy_ecs::entity::Entity>,
     /// The genome for the new child.
     pub genome: Genome,
-    /// The position to spawn the child.
-    pub position: Vec2,
+    /// The position to spawn the child. `Vec3` since Phase 8 (ADR-P8-01)
+    /// — a simulation-space spawn location, same migration as
+    /// `events::TimedEffect::position`.
+    pub position: Vec3,
     /// The diet inherited from the parent.
     pub diet: ecology::Diet,
     /// The ecological category inherited from the parent.
@@ -172,11 +174,12 @@ pub fn reproduction_system(
                 // enough for `SpawnOrganismCommand` to connect them with a
                 // short spring (see `BirthRequest::is_budding`).
                 let offset = if is_budding {
-                    Vec2::new(20.0, 0.0)
+                    Vec3::new(20.0, 0.0, 0.0)
                 } else {
-                    Vec2::new(
+                    Vec3::new(
                         (rng.gen::<f32>() - 0.5) * 50.0,
                         (rng.gen::<f32>() - 0.5) * 50.0,
+                        0.0,
                     )
                 };
 
@@ -310,7 +313,7 @@ mod tests {
                 mode,
                 genome: genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0)),
             },
-            physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 1),
+            physics::ParticleNode::new(Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
             ecology::Diet::Herbivore,
             ecology::EcologicalCategory::None,
         ));

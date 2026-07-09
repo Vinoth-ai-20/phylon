@@ -85,8 +85,12 @@ pub fn catastrophe_system(
     // Apply energy drain to organisms in active hazards
     for (mut chem, node, mut corpse_opt) in organisms.iter_mut() {
         let mut in_hazard = false;
+        // The hazard field is a 2D plane by design (ADR-P8-05, same boundary
+        // as metabolism's diffusion-field sampling), so we truncate the
+        // node's 3D position down to its XY plane for this comparison.
+        let node_pos_2d = node.position.truncate();
         for (center, radius) in &active_hazards {
-            if node.position.distance(*center) <= *radius {
+            if node_pos_2d.distance(*center) <= *radius {
                 in_hazard = true;
                 break;
             }

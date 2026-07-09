@@ -773,7 +773,7 @@ impl PhylonApp {
             .ecs
             .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
         for (entity, node) in query.iter(&self.world.ecs) {
-            let dist = (node.position - world_pos).length();
+            let dist = (node.position.truncate() - world_pos).length();
             if dist < best_dist {
                 best_dist = dist;
                 best = Some(entity);
@@ -785,7 +785,7 @@ impl PhylonApp {
             .ecs
             .query::<(bevy_ecs::entity::Entity, &ecology::FoodPellet)>();
         for (entity, pellet) in food_query.iter(&self.world.ecs) {
-            let dist = (pellet.position - world_pos).length();
+            let dist = (pellet.position.truncate() - world_pos).length();
             if dist < best_dist {
                 best_dist = dist;
                 best = Some(entity);
@@ -797,7 +797,7 @@ impl PhylonApp {
             .ecs
             .query::<(bevy_ecs::entity::Entity, &ecology::MineralPellet)>();
         for (entity, mineral) in mineral_query.iter(&self.world.ecs) {
-            let dist = (mineral.position - world_pos).length();
+            let dist = (mineral.position.truncate() - world_pos).length();
             if dist < best_dist {
                 best_dist = dist;
                 best = Some(entity);
@@ -809,7 +809,7 @@ impl PhylonApp {
             .ecs
             .query::<(bevy_ecs::entity::Entity, &ecology::Corpse)>();
         for (entity, corpse) in corpse_query.iter(&self.world.ecs) {
-            let dist = (corpse.position - world_pos).length();
+            let dist = (corpse.position.truncate() - world_pos).length();
             if dist < best_dist {
                 best_dist = dist;
                 best = Some(entity);
@@ -1436,7 +1436,7 @@ pub(crate) fn seed_ecosystem(
             let e = organisms::spawn_organism(
                 world,
                 &ind_genome,
-                common::Vec2::new(px, py),
+                common::Vec3::new(px, py, 0.0),
                 diet.clone(),
                 ecology::EcologicalCategory::None,
                 0,
@@ -1479,7 +1479,7 @@ pub(crate) fn seed_ecosystem(
         let px = rng.gen_range(-1000.0..1000.0);
         let py = rng.gen_range(-1000.0..1000.0);
         world.spawn(ecology::MineralPellet {
-            position: common::Vec2::new(px, py),
+            position: common::Vec3::new(px, py, 0.0),
             energy_value: 50.0,
         });
     }
@@ -1489,7 +1489,7 @@ pub(crate) fn seed_ecosystem(
         let px = rng.gen_range(-1000.0..1000.0);
         let py = rng.gen_range(-1000.0..1000.0);
         world.spawn(ecology::FoodPellet {
-            position: common::Vec2::new(px, py),
+            position: common::Vec3::new(px, py, 0.0),
             energy_value: 50.0,
         });
     }

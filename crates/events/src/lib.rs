@@ -319,8 +319,14 @@ pub enum TimedEffectKind {
 /// tick-based expiry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimedEffect {
-    /// World-space position this effect is anchored to.
-    pub position: common::Vec2,
+    /// World-space position this effect is anchored to. `Vec3` since
+    /// Phase 8 (ADR-P8-01) — this is a simulation-space event location
+    /// (birth/death/predation happened *here*), not a UI-layout concern,
+    /// so it follows the same migration as `physics::ParticleNode` even
+    /// though the roadmap's own ECS Evolution table didn't name this
+    /// struct by name; the underlying principle (simulation-space
+    /// positions become `Vec3`) applies regardless.
+    pub position: common::Vec3,
     /// What kind of effect this is.
     pub kind: TimedEffectKind,
     /// The tick after which this effect is no longer active.
@@ -366,7 +372,7 @@ impl TimedEffects {
     /// `current_tick + duration_ticks`, inclusive.
     pub fn spawn(
         &mut self,
-        position: common::Vec2,
+        position: common::Vec3,
         kind: TimedEffectKind,
         current_tick: u64,
         duration_ticks: u64,
@@ -449,7 +455,7 @@ mod tests {
     fn timed_effects_spawn_is_active_immediately() {
         let mut effects = TimedEffects::default();
         effects.spawn(
-            common::Vec2::new(1.0, 2.0),
+            common::Vec3::new(1.0, 2.0, 0.0),
             TimedEffectKind::FloatingText {
                 text: "Eaten!".to_string(),
                 color: [1.0, 0.0, 0.0],
@@ -465,7 +471,7 @@ mod tests {
     fn timed_effects_expire_removes_only_past_expiry() {
         let mut effects = TimedEffects::default();
         effects.spawn(
-            common::Vec2::ZERO,
+            common::Vec3::ZERO,
             TimedEffectKind::FloatingText {
                 text: "short".to_string(),
                 color: [1.0, 1.0, 1.0],
@@ -474,7 +480,7 @@ mod tests {
             10,
         );
         effects.spawn(
-            common::Vec2::ZERO,
+            common::Vec3::ZERO,
             TimedEffectKind::FloatingText {
                 text: "long".to_string(),
                 color: [1.0, 1.0, 1.0],
@@ -501,7 +507,7 @@ mod tests {
         // `current_tick == expires_at_tick` should already be expired.
         let mut effects = TimedEffects::default();
         effects.spawn(
-            common::Vec2::ZERO,
+            common::Vec3::ZERO,
             TimedEffectKind::FloatingText {
                 text: "x".to_string(),
                 color: [0.0, 0.0, 0.0],

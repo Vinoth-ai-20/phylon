@@ -486,7 +486,7 @@ mod tests {
 
         world.spawn((
             Diet::Herbivore,
-            physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 1),
+            physics::ParticleNode::new(common::Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
             Infection {
                 state: InfectionState::Infectious,
                 ticks_in_state: 0,
@@ -497,7 +497,7 @@ mod tests {
         let target = world
             .spawn((
                 Diet::Herbivore,
-                physics::ParticleNode::new(common::Vec2::new(10.0, 0.0), 1.0, 0, 2),
+                physics::ParticleNode::new(common::Vec3::new(10.0, 0.0, 0.0), 1.0, 0, 2),
                 sample_chem(50.0),
             ))
             .id();
@@ -522,7 +522,7 @@ mod tests {
 
         world.spawn((
             Diet::Herbivore,
-            physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 1),
+            physics::ParticleNode::new(common::Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
             Infection {
                 state: InfectionState::Infectious,
                 ticks_in_state: 0,
@@ -533,7 +533,7 @@ mod tests {
         let target = world
             .spawn((
                 Diet::Herbivore,
-                physics::ParticleNode::new(common::Vec2::new(500.0, 0.0), 1.0, 0, 2),
+                physics::ParticleNode::new(common::Vec3::new(500.0, 0.0, 0.0), 1.0, 0, 2),
                 sample_chem(50.0),
             ))
             .id();
@@ -558,7 +558,7 @@ mod tests {
 
         world.spawn((
             Diet::Herbivore,
-            physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 1),
+            physics::ParticleNode::new(common::Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
             Infection {
                 state: InfectionState::Infectious,
                 ticks_in_state: 0,
@@ -569,7 +569,7 @@ mod tests {
         let target = world
             .spawn((
                 Diet::Carnivore,
-                physics::ParticleNode::new(common::Vec2::new(10.0, 0.0), 1.0, 0, 2),
+                physics::ParticleNode::new(common::Vec3::new(10.0, 0.0, 0.0), 1.0, 0, 2),
                 sample_chem(50.0),
             ))
             .id();
@@ -592,7 +592,7 @@ mod tests {
             world.insert_resource(metabolism::GlobalAtmosphere::default());
             world.spawn((
                 Diet::Herbivore,
-                physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 1),
+                physics::ParticleNode::new(common::Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
                 Infection {
                     state: InfectionState::Infectious,
                     ticks_in_state: 0,
@@ -604,7 +604,7 @@ mod tests {
                 world.spawn((
                     Diet::Herbivore,
                     physics::ParticleNode::new(
-                        common::Vec2::new(i as f32 * 2.0, 0.0),
+                        common::Vec3::new(i as f32 * 2.0, 0.0, 0.0),
                         1.0,
                         0,
                         i + 2,

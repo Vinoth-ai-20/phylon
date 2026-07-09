@@ -52,7 +52,7 @@ fn build_world_with_organisms(n: u32) -> World {
             _ => Diet::Producer,
         };
         world.spawn((
-            ParticleNode::new(common::Vec2::new(x, y), 1.0, 0, i),
+            ParticleNode::new(common::Vec3::new(x, y, 0.0), 1.0, 0, i),
             sample_chem(),
             diet,
         ));

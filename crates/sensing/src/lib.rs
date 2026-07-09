@@ -266,7 +266,7 @@ fn compute_sensing(snap: &EntitySnapshot, world: &WorldSnapshot) -> SensingResul
         // 1. See other organisms (mating, collision avoidance, predation)
         for other_entity in world
             .organism_grid
-            .query_radius(snap.position, vision.range)
+            .query_radius(snap.position.extend(0.0), vision.range)
         {
             let Some(&(other_pos, other_organism_id)) = world.node_positions.get(&other_entity)
             else {
@@ -308,7 +308,7 @@ fn compute_sensing(snap: &EntitySnapshot, world: &WorldSnapshot) -> SensingResul
                     for entity in world
                         .resource_grids
                         .minerals
-                        .query_radius(snap.position, vision.range)
+                        .query_radius(snap.position.extend(0.0), vision.range)
                     {
                         if let Some(&pos) = world.mineral_positions.get(&entity) {
                             if let Some((angle, strength)) = vision_check(pos) {
@@ -321,7 +321,7 @@ fn compute_sensing(snap: &EntitySnapshot, world: &WorldSnapshot) -> SensingResul
                     for entity in world
                         .resource_grids
                         .food
-                        .query_radius(snap.position, vision.range)
+                        .query_radius(snap.position.extend(0.0), vision.range)
                     {
                         if let Some(&pos) = world.food_positions.get(&entity) {
                             if let Some((angle, strength)) = vision_check(pos) {
@@ -334,7 +334,7 @@ fn compute_sensing(snap: &EntitySnapshot, world: &WorldSnapshot) -> SensingResul
                     for entity in world
                         .resource_grids
                         .corpses
-                        .query_radius(snap.position, vision.range)
+                        .query_radius(snap.position.extend(0.0), vision.range)
                     {
                         if let Some(&pos) = world.corpse_positions.get(&entity) {
                             if let Some((angle, strength)) = vision_check(pos) {
@@ -469,22 +469,33 @@ pub fn sensing_system(
     // grids are shared via `ecology::ResourceSpatialGrids` (built once per
     // tick by `build_resource_grids_system`) since `foraging_system` needs
     // the exact same indices — no reason to rebuild them twice.
+    // Vision remains 2D math throughout this module (angle-based FOV
+    // checks) even though the underlying grids/components are `Vec3` since
+    // Phase 8 (ADR-P8-01) — every position is truncated to its XY plane at
+    // this snapshot boundary, mirroring the same pattern used at the
+    // metabolism/catastrophe diffusion-field boundaries.
     let mut organism_grid = spatial::UniformGrid::new(SPATIAL_CELL_SIZE).unwrap();
     let mut node_positions = HashMap::new();
     for (entity, node) in node_query.iter() {
         let _ = organism_grid.insert(entity, node.position);
-        node_positions.insert(entity, (node.position, node.organism_id));
+        node_positions.insert(entity, (node.position.truncate(), node.organism_id));
     }
 
     // Snapshot resource entity positions into plain maps — see this
     // function's doc comment on why the parallel phase can't hold a live
     // `Query`.
-    let food_positions: HashMap<Entity, Vec2> =
-        food_query.iter().map(|(e, f)| (e, f.position)).collect();
-    let mineral_positions: HashMap<Entity, Vec2> =
-        mineral_query.iter().map(|(e, m)| (e, m.position)).collect();
-    let corpse_positions: HashMap<Entity, Vec2> =
-        corpse_query.iter().map(|(e, c)| (e, c.position)).collect();
+    let food_positions: HashMap<Entity, Vec2> = food_query
+        .iter()
+        .map(|(e, f)| (e, f.position.truncate()))
+        .collect();
+    let mineral_positions: HashMap<Entity, Vec2> = mineral_query
+        .iter()
+        .map(|(e, m)| (e, m.position.truncate()))
+        .collect();
+    let corpse_positions: HashMap<Entity, Vec2> = corpse_query
+        .iter()
+        .map(|(e, c)| (e, c.position.truncate()))
+        .collect();
 
     let world_snapshot = WorldSnapshot {
         diet_map: &diet_map,
@@ -506,8 +517,8 @@ pub fn sensing_system(
         .map(
             |(entity, state, node, vision_opt, energy_opt, age_opt, diet_opt)| EntitySnapshot {
                 entity,
-                position: node.position,
-                velocity: node.velocity,
+                position: node.position.truncate(),
+                velocity: node.velocity.truncate(),
                 input_len: state.inputs.len(),
                 vision: vision_opt.map(|v| VisionSnapshot {
                     range: v.range,
@@ -582,7 +593,12 @@ mod tests {
                 ecology::Diet::Herbivore
             };
             world.spawn((
-                physics::ParticleNode::new(common::Vec2::new((i as f32) * 15.0, 0.0), 1.0, 0, i),
+                physics::ParticleNode::new(
+                    common::Vec3::new((i as f32) * 15.0, 0.0, 0.0),
+                    1.0,
+                    0,
+                    i,
+                ),
                 SensoryState::new(7),
                 HeadVision {
                     range: 250.0,

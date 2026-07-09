@@ -10,7 +10,7 @@ use reproduction;
 struct SpawnOrganismCommand {
     parent_id: Option<bevy_ecs::entity::Entity>,
     genome: genetics::Genome,
-    position: common::Vec2,
+    position: common::Vec3,
     diet: ecology::Diet,
     category: ecology::EcologicalCategory,
     /// When true and `parent_id` is present, connects the new organism's
@@ -495,7 +495,7 @@ mod tests {
         infectious: bool,
     ) -> Entity {
         let mut entity = world.spawn((
-            physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 0),
+            physics::ParticleNode::new(common::Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 0),
             metabolism::ChemicalEconomy {
                 glucose: 0.0,
                 o2: 0.0,

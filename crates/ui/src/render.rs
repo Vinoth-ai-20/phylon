@@ -296,7 +296,7 @@ fn track_trajectory_history(state: &mut crate::WorkbenchState, world: &mut world
 
     let mut node_q = world.ecs.query::<&physics::ParticleNode>();
     if let Ok(node) = node_q.get(&world.ecs, entity) {
-        state.trajectory_history.push_back(node.position);
+        state.trajectory_history.push_back(node.position.truncate());
         if state.trajectory_history.len() > crate::state::TRAJECTORY_HISTORY_CAPACITY {
             state.trajectory_history.pop_front();
         }
@@ -753,7 +753,7 @@ fn render_timed_effects(
             (alpha * 255.0) as u8,
         );
         painter.text(
-            to_screen(effect.position),
+            to_screen(effect.position.truncate()),
             egui::Align2::CENTER_BOTTOM,
             text,
             egui::FontId::proportional(14.0),
@@ -834,7 +834,7 @@ fn render_behavior_glyphs(
             ),
         };
 
-        let screen_pos = to_screen(node.position);
+        let screen_pos = to_screen(node.position.truncate());
         painter.text(
             screen_pos - egui::vec2(0.0, 14.0),
             egui::Align2::CENTER_BOTTOM,
@@ -907,7 +907,7 @@ fn render_organism_labels(
         if let Ok((entity, node, diet)) = query.get(&world.ecs, pinned) {
             always_labeled.insert(entity);
             painter.text(
-                to_screen(node.position) - egui::vec2(0.0, 18.0),
+                to_screen(node.position.truncate()) - egui::vec2(0.0, 18.0),
                 egui::Align2::CENTER_BOTTOM,
                 label_for(diet, entity),
                 egui::FontId::proportional(12.0),
@@ -920,12 +920,8 @@ fn render_organism_labels(
         .iter(&world.ecs)
         .filter(|(e, ..)| !always_labeled.contains(e))
         .map(|(e, node, diet)| {
-            (
-                e,
-                node.position,
-                diet.clone(),
-                node.position.distance(state.camera_pos),
-            )
+            let pos_2d = node.position.truncate();
+            (e, pos_2d, diet.clone(), pos_2d.distance(state.camera_pos))
         })
         .collect();
     nearby.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
@@ -1044,7 +1040,7 @@ fn render_physiology_overlay(
             }
         };
 
-        let screen_pos = to_screen(node.position);
+        let screen_pos = to_screen(node.position.truncate());
         let radius = 6.0 + intensity * 14.0;
         let alpha = (60.0 + intensity * 180.0) as u8;
         painter.circle_stroke(
@@ -1237,7 +1233,7 @@ fn render_minimap(
         let color = diet
             .map(crate::theme::chart_color)
             .unwrap_or(crate::theme::DISABLED_FG);
-        painter.circle_filled(world_to_minimap(node.position), 1.5, color);
+        painter.circle_filled(world_to_minimap(node.position.truncate()), 1.5, color);
     }
 
     // Main camera's visible world extent, so the minimap also shows "you are

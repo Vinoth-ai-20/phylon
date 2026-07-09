@@ -105,7 +105,7 @@ pub fn fungal_network_system(
             if to_redistribute > 0.01 {
                 let angle = sim_rng.gen_range(0.0..std::f32::consts::TAU);
                 let dist_out = sim_rng.gen_range(0.0..config.siphon_radius);
-                let offset = common::Vec2::new(angle.cos(), angle.sin()) * dist_out;
+                let offset = common::Vec3::new(angle.cos(), angle.sin(), 0.0) * dist_out;
                 commands.spawn(MineralPellet {
                     position: node.position + offset,
                     energy_value: to_redistribute,
@@ -144,7 +144,7 @@ mod tests {
         world.insert_resource(FungalNetworkConfig::default());
         world.insert_resource(common::SimRng::from_seed(1));
 
-        let corpse_pos = common::Vec2::new(100.0, 0.0);
+        let corpse_pos = common::Vec3::new(100.0, 0.0, 0.0);
         let corpse = world
             .spawn(Corpse {
                 position: corpse_pos,
@@ -161,7 +161,7 @@ mod tests {
         world.spawn((
             Diet::Decomposer,
             sample_chem(),
-            physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 1),
+            physics::ParticleNode::new(common::Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
         ));
 
         world.run_system_once(fungal_network_system);
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn ignores_corpses_within_contact_radius_already_handled_by_foraging() {
-        let corpse_pos = common::Vec2::new(5.0, 0.0); // well within CONTACT_EAT_RADIUS
+        let corpse_pos = common::Vec3::new(5.0, 0.0, 0.0); // well within CONTACT_EAT_RADIUS
         let mut world = World::new();
         world.insert_resource(FungalNetworkConfig::default());
         world.insert_resource(common::SimRng::from_seed(1));
@@ -197,7 +197,7 @@ mod tests {
         world.spawn((
             Diet::Decomposer,
             sample_chem(),
-            physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 1),
+            physics::ParticleNode::new(common::Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
         ));
 
         world.run_system_once(fungal_network_system);
@@ -215,7 +215,7 @@ mod tests {
         });
         world.insert_resource(common::SimRng::from_seed(1));
 
-        let corpse_pos = common::Vec2::new(500.0, 0.0);
+        let corpse_pos = common::Vec3::new(500.0, 0.0, 0.0);
         let corpse = world
             .spawn(Corpse {
                 position: corpse_pos,
@@ -232,7 +232,7 @@ mod tests {
         world.spawn((
             Diet::Decomposer,
             sample_chem(),
-            physics::ParticleNode::new(common::Vec2::new(0.0, 0.0), 1.0, 0, 1),
+            physics::ParticleNode::new(common::Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
         ));
 
         world.run_system_once(fungal_network_system);

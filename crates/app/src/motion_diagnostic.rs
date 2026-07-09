@@ -71,7 +71,7 @@ pub struct SampleAccumulator {
     /// Position at the start of this window, for net (start-to-end)
     /// displacement — distinguishes "traveled somewhere" from "wiggled in
     /// place."
-    window_start_position: Option<common::Vec2>,
+    window_start_position: Option<common::Vec3>,
     /// Sum of `|position_t - position_{t-1}|` across every tick in the
     /// window — total path length traveled, distinct from net displacement.
     total_path_length: f32,
@@ -79,7 +79,7 @@ pub struct SampleAccumulator {
     /// window.
     max_speed: f32,
     /// Last known position, for computing this tick's path-length delta.
-    last_position: Option<common::Vec2>,
+    last_position: Option<common::Vec3>,
 }
 
 /// Cross-tick state for the motion diagnostic — see this module's doc

@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use common::Vec2;
+use common::Vec3;
 
 /// Global tunables for boids-style flocking.
 #[derive(Resource, Debug, Clone)]
@@ -62,7 +62,7 @@ pub fn flocking_system(
     config: Res<FlockingConfig>,
     mut query: Query<(Entity, &ecology::Diet, &mut physics::ParticleNode)>,
 ) {
-    let snapshot: Vec<(Entity, ecology::Diet, Vec2, Vec2)> = query
+    let snapshot: Vec<(Entity, ecology::Diet, Vec3, Vec3)> = query
         .iter()
         .map(|(e, d, n)| (e, d.clone(), n.position, n.velocity))
         .collect();
@@ -76,13 +76,13 @@ pub fn flocking_system(
         let _ = grid.insert(*e, *pos);
     }
 
-    let mut forces: std::collections::HashMap<Entity, Vec2> =
+    let mut forces: std::collections::HashMap<Entity, Vec3> =
         std::collections::HashMap::with_capacity(snapshot.len());
 
     for (e, diet, pos, _vel) in &snapshot {
-        let mut avg_velocity = Vec2::ZERO;
-        let mut avg_position = Vec2::ZERO;
-        let mut separation = Vec2::ZERO;
+        let mut avg_velocity = Vec3::ZERO;
+        let mut avg_position = Vec3::ZERO;
+        let mut separation = Vec3::ZERO;
         let mut neighbor_count = 0u32;
 
         for other in grid.query_radius(*pos, config.radius) {
@@ -178,7 +178,7 @@ pub fn pack_hunting_system(
         Option<&mut behavior::BehaviorState>,
     )>,
 ) {
-    let snapshot: Vec<(Entity, ecology::Diet, Vec2, Option<Entity>)> = query
+    let snapshot: Vec<(Entity, ecology::Diet, Vec3, Option<Entity>)> = query
         .iter()
         .map(|(e, d, n, v, _)| (e, d.clone(), n.position, v.locked_target))
         .collect();
@@ -237,6 +237,7 @@ mod tests {
     use super::*;
     use bevy_ecs::system::RunSystemOnce;
     use bevy_ecs::world::World;
+    use common::Vec2;
 
     fn sample_vision() -> sensing::HeadVision {
         sensing::HeadVision {
@@ -256,13 +257,13 @@ mod tests {
         let left = world
             .spawn((
                 ecology::Diet::Herbivore,
-                physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 1),
+                physics::ParticleNode::new(Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
             ))
             .id();
         let right = world
             .spawn((
                 ecology::Diet::Herbivore,
-                physics::ParticleNode::new(Vec2::new(50.0, 0.0), 1.0, 0, 2),
+                physics::ParticleNode::new(Vec3::new(50.0, 0.0, 0.0), 1.0, 0, 2),
             ))
             .id();
 
@@ -281,18 +282,18 @@ mod tests {
 
         world.spawn((
             ecology::Diet::Herbivore,
-            physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 1),
+            physics::ParticleNode::new(Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
         ));
         world.spawn((
             ecology::Diet::Carnivore,
-            physics::ParticleNode::new(Vec2::new(50.0, 0.0), 1.0, 0, 2),
+            physics::ParticleNode::new(Vec3::new(50.0, 0.0, 0.0), 1.0, 0, 2),
         ));
 
         world.run_system_once(flocking_system);
 
         let mut q = world.query::<&physics::ParticleNode>();
         for node in q.iter(&world) {
-            assert_eq!(node.force, Vec2::ZERO);
+            assert_eq!(node.force, Vec3::ZERO);
         }
     }
 
@@ -305,7 +306,7 @@ mod tests {
 
         world.spawn((
             ecology::Diet::Carnivore,
-            physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 1),
+            physics::ParticleNode::new(Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
             sensing::HeadVision {
                 locked_target: Some(prey),
                 ..sample_vision()
@@ -315,7 +316,7 @@ mod tests {
         let follower = world
             .spawn((
                 ecology::Diet::Carnivore,
-                physics::ParticleNode::new(Vec2::new(50.0, 0.0), 1.0, 0, 2),
+                physics::ParticleNode::new(Vec3::new(50.0, 0.0, 0.0), 1.0, 0, 2),
                 sample_vision(),
                 behavior::BehaviorState::Idle,
             ))
@@ -344,7 +345,7 @@ mod tests {
         let prey = world.spawn(()).id();
         world.spawn((
             ecology::Diet::Carnivore,
-            physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 1),
+            physics::ParticleNode::new(Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
             sensing::HeadVision {
                 locked_target: Some(prey),
                 ..sample_vision()
@@ -354,7 +355,7 @@ mod tests {
         let fleeing = world
             .spawn((
                 ecology::Diet::Carnivore,
-                physics::ParticleNode::new(Vec2::new(50.0, 0.0), 1.0, 0, 2),
+                physics::ParticleNode::new(Vec3::new(50.0, 0.0, 0.0), 1.0, 0, 2),
                 sample_vision(),
                 behavior::BehaviorState::Fleeing,
             ))
@@ -376,7 +377,7 @@ mod tests {
         let prey = world.spawn(()).id();
         world.spawn((
             ecology::Diet::Carnivore,
-            physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 1),
+            physics::ParticleNode::new(Vec3::new(0.0, 0.0, 0.0), 1.0, 0, 1),
             sensing::HeadVision {
                 locked_target: Some(prey),
                 ..sample_vision()
@@ -386,7 +387,7 @@ mod tests {
         let herbivore = world
             .spawn((
                 ecology::Diet::Herbivore,
-                physics::ParticleNode::new(Vec2::new(50.0, 0.0), 1.0, 0, 2),
+                physics::ParticleNode::new(Vec3::new(50.0, 0.0, 0.0), 1.0, 0, 2),
                 sample_vision(),
                 behavior::BehaviorState::Idle,
             ))

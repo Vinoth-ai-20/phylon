@@ -9,7 +9,8 @@
 //!
 //! - **Entity identity**: [`EntityId`], [`ChunkId`], [`Tick`]
 //! - **Simulation unit newtypes**: [`SimLength`], [`SimMass`], [`SimEnergy`], [`SimTime`]
-//! - **Math re-exports**: [`Vec2`], [`IVec2`]
+//! - **Math re-exports**: [`Vec2`] (UI-internal 2D layouts), [`Vec3`]
+//!   (simulation space, Phase 8), [`IVec2`]
 //! - **Error base**: [`PhylonError`] trait and [`PhylonResult`] type alias
 //! - **Determinism**: [`SimRng`], the single seeded source of randomness
 //! - **Tick timing**: [`TickRate`], the single source of truth for the fixed per-tick delta-time
@@ -26,9 +27,21 @@ use serde::{Deserialize, Serialize};
 // Math re-exports
 // ────────────────────────────────────────────────────────────────────────────
 
-/// 2-D floating-point vector — the primary spatial type for all simulation
-/// coordinates, velocities, and forces.
+/// 2-D floating-point vector — used by UI-internal, non-simulation-space
+/// concerns (egui graph-canvas node-link layouts for the Neural/GRN/HOX
+/// Viewer panels, `CameraBookmark`'s pre-Phase-8 shape). As of Phase 8,
+/// simulation-space positions/velocities/forces use [`Vec3`] instead — see
+/// that type's own doc comment and `PHASE8_NATIVE_3D_ENGINE_ROADMAP.md`'s
+/// ADR-P8-01 for why the two are kept deliberately separate rather than
+/// unified under one generic type.
 pub use glam::Vec2;
+
+/// 3-D floating-point vector — the primary spatial type for all simulation
+/// coordinates, velocities, and forces (Phase 8, ADR-P8-01). Introduced
+/// alongside [`Vec2`], not as its replacement — UI-internal 2D layout
+/// concerns (graph-canvas node positions, which have no 3D meaning) stay on
+/// `Vec2` deliberately.
+pub use glam::Vec3;
 
 /// 2-D integer vector — used for chunk grid coordinates and spatial hash keys.
 pub use glam::IVec2;

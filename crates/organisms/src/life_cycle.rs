@@ -169,7 +169,7 @@ pub fn life_stage_system(
             base_bud_interval: RESUMED_BUD_INTERVAL,
             parent_spine_node: Some(last_entity),
             current_pos: last_node.position
-                + common::Vec2::new(heading.cos(), heading.sin()) * -RESUMED_SEGMENT_LENGTH,
+                + common::Vec3::new(heading.cos(), heading.sin(), 0.0) * -RESUMED_SEGMENT_LENGTH,
             segment_length: RESUMED_SEGMENT_LENGTH,
             effectors,
             is_organism_complete: false,
@@ -205,7 +205,7 @@ mod tests {
         let entity = crate::spawn_organism(
             world,
             &genome,
-            common::Vec2::new(0.0, 0.0),
+            common::Vec3::new(0.0, 0.0, 0.0),
             ecology::Diet::Herbivore,
             ecology::EcologicalCategory::None,
             0,
@@ -237,7 +237,7 @@ mod tests {
         let entity = crate::spawn_organism(
             &mut world,
             &genome,
-            common::Vec2::new(0.0, 0.0),
+            common::Vec3::new(0.0, 0.0, 0.0),
             ecology::Diet::Herbivore,
             ecology::EcologicalCategory::None,
             0,
@@ -362,7 +362,7 @@ mod tests {
                     ticks_until_next_bud: 0,
                     base_bud_interval: 30,
                     parent_spine_node: None,
-                    current_pos: common::Vec2::new(0.0, 0.0),
+                    current_pos: common::Vec3::new(0.0, 0.0, 0.0),
                     segment_length: RESUMED_SEGMENT_LENGTH,
                     effectors: Vec::new(),
                     is_organism_complete: false,

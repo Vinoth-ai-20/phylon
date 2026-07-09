@@ -149,7 +149,7 @@ pub fn inspector_ui(
                 state,
                 entity,
                 "Food Pellet",
-                food.position,
+                food.position.truncate(),
                 food.energy_value,
                 None,
             );
@@ -162,7 +162,7 @@ pub fn inspector_ui(
                 state,
                 entity,
                 "Mineral Pellet",
-                mineral.position,
+                mineral.position.truncate(),
                 mineral.energy_value,
                 None,
             );
@@ -175,7 +175,7 @@ pub fn inspector_ui(
                 state,
                 entity,
                 "Corpse",
-                corpse.position,
+                corpse.position.truncate(),
                 corpse.energy_value,
                 Some((corpse.decay_timer, corpse.max_decay)),
             );

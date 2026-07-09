@@ -145,7 +145,7 @@ impl PhylonApp {
                     organisms::spawn_organism(
                         ecs,
                         &genome,
-                        position,
+                        position.extend(0.0),
                         diet,
                         category,
                         0,
@@ -164,7 +164,8 @@ impl PhylonApp {
             };
 
             let entity = self.world.ecs.spawn_empty().id();
-            let mut node = physics::ParticleNode::new(position, 5.0, seg_type, entity.index());
+            let mut node =
+                physics::ParticleNode::new(position.extend(0.0), 5.0, seg_type, entity.index());
             node.is_fixed = preset.traits.fixable;
             self.world.ecs.entity_mut(entity).insert((
                 node,
@@ -216,7 +217,7 @@ impl PhylonApp {
                 organisms::spawn_organism(
                     ecs,
                     &fish_genome,
-                    position,
+                    position.extend(0.0),
                     ecology::Diet::Carnivore,
                     ecology::EcologicalCategory::None,
                     0,

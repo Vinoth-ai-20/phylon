@@ -27,7 +27,7 @@
 #![warn(clippy::all)]
 
 use bevy_ecs::prelude::{Component, Query, Res};
-use common::Vec2;
+use common::Vec3;
 
 /// Errors produced by the physics subsystem.
 #[derive(Debug, thiserror::Error)]
@@ -58,12 +58,15 @@ impl common::PhylonError for PhysicsError {}
 /// $$ P_{t+1} = P_t + V_{t+1} dt $$
 #[derive(Component, Debug, Clone, Default)]
 pub struct ParticleNode {
-    /// Current position in simulation space.
-    pub position: Vec2,
+    /// Current position in simulation space. `Vec3` since Phase 8
+    /// (ADR-P8-01) — prior to Epic 8.6's growth-orientation redesign,
+    /// every organism still grows with `z` fixed at `0.0`, so this is a
+    /// deliberate "2D-embedded-in-3D" intermediate state, not a bug.
+    pub position: Vec3,
     /// Current velocity.
-    pub velocity: Vec2,
+    pub velocity: Vec3,
     /// Accumulated force for this tick (reset after integration).
-    pub force: Vec2,
+    pub force: Vec3,
     /// Mass of this node in simulation mass units.
     pub mass: f32,
     /// Segment type (0=Head, 1=Torso, 2=Muscle, 3=Tail, 4=Fin)
@@ -76,11 +79,11 @@ pub struct ParticleNode {
 
 impl ParticleNode {
     /// Creates a new node at the given position.
-    pub fn new(position: Vec2, mass: f32, segment_type: u32, organism_id: u32) -> Self {
+    pub fn new(position: Vec3, mass: f32, segment_type: u32, organism_id: u32) -> Self {
         Self {
             position,
-            velocity: Vec2::ZERO,
-            force: Vec2::ZERO,
+            velocity: Vec3::ZERO,
+            force: Vec3::ZERO,
             mass,
             segment_type,
             is_fixed: false,
@@ -267,7 +270,7 @@ pub fn physics_integration_system(config: Res<PhysicsConfig>, mut query: Query<&
             let dv = node.velocity * dt;
             node.position += dv;
             // Reset forces for next tick
-            node.force = Vec2::ZERO;
+            node.force = Vec3::ZERO;
 
             // Add a slight global damping to prevent chaotic explosion
             node.velocity *= 0.99;
@@ -281,10 +284,10 @@ mod tests {
 
     #[test]
     fn particle_node_initial_state() {
-        let node = ParticleNode::new(Vec2::new(1.0, 2.0), 3.0, 1, 42);
-        assert_eq!(node.position, Vec2::new(1.0, 2.0));
-        assert_eq!(node.velocity, Vec2::ZERO);
-        assert_eq!(node.force, Vec2::ZERO);
+        let node = ParticleNode::new(Vec3::new(1.0, 2.0, 0.0), 3.0, 1, 42);
+        assert_eq!(node.position, Vec3::new(1.0, 2.0, 0.0));
+        assert_eq!(node.velocity, Vec3::ZERO);
+        assert_eq!(node.force, Vec3::ZERO);
         assert_eq!(node.mass, 3.0);
         assert_eq!(node.segment_type, 1);
         assert!(!node.is_fixed);

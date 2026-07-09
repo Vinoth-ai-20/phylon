@@ -353,7 +353,7 @@ impl PhylonApp {
                 .ecs
                 .query::<(&physics::ParticleNode, &diffusion::SignalEmitter)>();
             for (node, signal) in query_signals.iter(&self.world.ecs) {
-                let (gx, gy, gr) = to_grid(node.position, signal.radius);
+                let (gx, gy, gr) = to_grid(node.position.truncate(), signal.radius);
                 gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
                     grid_pos: [gx, gy],
                     value: signal.value,
@@ -385,7 +385,7 @@ impl PhylonApp {
                 &metabolism::Metabolism,
             )>();
             for (node, _chem, meta) in query_chem.iter(&self.world.ecs) {
-                let (gx, gy, gr) = to_grid(node.position, 15.0);
+                let (gx, gy, gr) = to_grid(node.position.truncate(), 15.0);
                 // Simplistic baseline: plants emit O2, animals consume it.
                 let net_o2 = if meta.is_plant { 1.5 } else { -1.0 };
                 gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
@@ -399,7 +399,7 @@ impl PhylonApp {
             // Layer 3: CO2
             let co2_offset = gpu_emitters.len() as u32;
             for (node, _chem, meta) in query_chem.iter(&self.world.ecs) {
-                let (gx, gy, gr) = to_grid(node.position, 15.0);
+                let (gx, gy, gr) = to_grid(node.position.truncate(), 15.0);
                 // Simplistic baseline: plants consume CO2, animals emit it.
                 let net_co2 = if meta.is_plant { -1.5 } else { 1.0 };
                 gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
@@ -411,7 +411,7 @@ impl PhylonApp {
             // Corpses emit CO2
             let mut query_dead = self.world.ecs.query_filtered::<(&physics::ParticleNode, &metabolism::Metabolism), bevy_ecs::query::With<metabolism::Dead>>();
             for (node, meta) in query_dead.iter(&self.world.ecs) {
-                let (gx, gy, gr) = to_grid(node.position, 20.0);
+                let (gx, gy, gr) = to_grid(node.position.truncate(), 20.0);
                 gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
                     grid_pos: [gx, gy],
                     value: 2.0 * meta.mass, // Corpses release a lot of CO2 as they decay
@@ -439,7 +439,7 @@ impl PhylonApp {
                 if level.concentration <= 0.0 {
                     continue;
                 }
-                let (gx, gy, gr) = to_grid(node.position, 15.0);
+                let (gx, gy, gr) = to_grid(node.position.truncate(), 15.0);
                 gpu_emitters.push(gpu::diffusion_pipeline::GpuEmitter {
                     grid_pos: [gx, gy],
                     value: level.concentration,
@@ -769,7 +769,7 @@ impl PhylonApp {
                 node.velocity.x = updated_nodes[i].velocity[0];
                 node.velocity.y = updated_nodes[i].velocity[1];
                 // Clear forces for next tick
-                node.force = common::Vec2::new(0.0, 0.0);
+                node.force = common::Vec3::new(0.0, 0.0, 0.0);
             }
         }
     }

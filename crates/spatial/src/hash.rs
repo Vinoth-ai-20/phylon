@@ -1,7 +1,7 @@
 use crate::index::SpatialIndex;
 use crate::{SpatialError, SpatialResult};
 use bevy_ecs::entity::Entity;
-use common::Vec2;
+use common::{Vec2, Vec3};
 use std::collections::HashMap;
 
 /// # Fixed-Table Spatial Hash
@@ -37,11 +37,21 @@ use std::collections::HashMap;
 /// touched by the query's cell range is visited exactly once (via a
 /// dedup'd set of bucket indices), so a collision never causes an entity to
 /// be returned twice.
+///
+/// Inherent methods below are the primary API — as of Phase 8 (ADR-P8-01),
+/// they take `Vec3` positions (previously `Vec2`, widened alongside
+/// [`crate::UniformGrid`]), with a 3rd-axis term folded into `cell_of`'s
+/// cell-key computation and `bucket_of`'s hash mix. The `SpatialIndex` trait
+/// impl at the bottom of this file stays `Vec2`-based (shared with
+/// [`crate::Quadtree`], not migrated until Phase 8 Epic 8.9) and
+/// truncates/pads `z` at that boundary — confirmed via a workspace-wide
+/// search that no live caller uses this type through the trait, only
+/// through these inherent methods directly.
 pub struct SpatialHash {
     cell_size: f32,
     table_size: usize,
     buckets: Vec<Vec<Entity>>,
-    positions: HashMap<Entity, Vec2>,
+    positions: HashMap<Entity, Vec3>,
 }
 
 impl SpatialHash {
@@ -51,7 +61,7 @@ impl SpatialHash {
     ///
     /// # Errors
     ///
-    /// Returns [`SpatialError::InvalidConfig`] if `cell_size ≤ 0`.
+    /// Returns [`SpatialError::InvalidConfig`] if `cell_size â‰¤ 0`.
     pub fn new(cell_size: f32, table_size_hint: usize) -> SpatialResult<Self> {
         if cell_size <= 0.0 {
             return Err(SpatialError::InvalidConfig {
@@ -67,20 +77,24 @@ impl SpatialHash {
         })
     }
 
-    fn cell_of(&self, position: Vec2) -> (i32, i32) {
+    fn cell_of(&self, position: Vec3) -> (i32, i32, i32) {
         (
             (position.x / self.cell_size).floor() as i32,
             (position.y / self.cell_size).floor() as i32,
+            (position.z / self.cell_size).floor() as i32,
         )
     }
 
     /// Hashes a cell coordinate to a bucket index. `table_size` is a power
     /// of two, so `% table_size` is equivalent to `& (table_size - 1)` — the
     /// standard fast-path for power-of-two hash tables.
-    fn bucket_of(&self, cell: (i32, i32)) -> usize {
+    fn bucket_of(&self, cell: (i32, i32, i32)) -> usize {
         const P1: i64 = 73_856_093;
         const P2: i64 = 19_349_663;
-        let h = (cell.0 as i64).wrapping_mul(P1) ^ (cell.1 as i64).wrapping_mul(P2);
+        const P3: i64 = 83_492_791;
+        let h = (cell.0 as i64).wrapping_mul(P1)
+            ^ (cell.1 as i64).wrapping_mul(P2)
+            ^ (cell.2 as i64).wrapping_mul(P3);
         (h.unsigned_abs() as usize) & (self.table_size - 1)
     }
 
@@ -103,7 +117,7 @@ impl SpatialHash {
     /// # Errors
     ///
     /// Returns [`SpatialError::DuplicateEntity`] if the entity is already registered.
-    pub fn insert(&mut self, id: Entity, position: Vec2) -> SpatialResult<()> {
+    pub fn insert(&mut self, id: Entity, position: Vec3) -> SpatialResult<()> {
         if self.positions.contains_key(&id) {
             return Err(SpatialError::DuplicateEntity(id));
         }
@@ -118,7 +132,7 @@ impl SpatialHash {
     /// # Errors
     ///
     /// Returns [`SpatialError::UnknownEntity`] if the entity is not registered.
-    pub fn update(&mut self, id: Entity, position: Vec2) -> SpatialResult<()> {
+    pub fn update(&mut self, id: Entity, position: Vec3) -> SpatialResult<()> {
         let Some(old_position) = self.positions.get(&id).copied() else {
             return Err(SpatialError::UnknownEntity(id));
         };
@@ -147,12 +161,12 @@ impl SpatialHash {
     }
 
     /// Returns all entity IDs within `radius` simulation units of `center`.
-    pub fn query_radius(&self, center: Vec2, radius: f32) -> Vec<Entity> {
+    pub fn query_radius(&self, center: Vec3, radius: f32) -> Vec<Entity> {
         if radius <= 0.0 {
             return Vec::new();
         }
-        let min_cell = self.cell_of(center - Vec2::splat(radius));
-        let max_cell = self.cell_of(center + Vec2::splat(radius));
+        let min_cell = self.cell_of(center - Vec3::splat(radius));
+        let max_cell = self.cell_of(center + Vec3::splat(radius));
         let radius_sq = radius * radius;
 
         // Dedup bucket indices before scanning — two distinct cells in the
@@ -161,18 +175,20 @@ impl SpatialHash {
         // returned twice.
         let mut visited_buckets: Vec<usize> = Vec::new();
         let mut results = Vec::new();
-        for cy in min_cell.1..=max_cell.1 {
-            for cx in min_cell.0..=max_cell.0 {
-                let bucket_idx = self.bucket_of((cx, cy));
-                if visited_buckets.contains(&bucket_idx) {
-                    continue;
-                }
-                visited_buckets.push(bucket_idx);
+        for cz in min_cell.2..=max_cell.2 {
+            for cy in min_cell.1..=max_cell.1 {
+                for cx in min_cell.0..=max_cell.0 {
+                    let bucket_idx = self.bucket_of((cx, cy, cz));
+                    if visited_buckets.contains(&bucket_idx) {
+                        continue;
+                    }
+                    visited_buckets.push(bucket_idx);
 
-                for &id in &self.buckets[bucket_idx] {
-                    if let Some(&pos) = self.positions.get(&id) {
-                        if pos.distance_squared(center) <= radius_sq {
-                            results.push(id);
+                    for &id in &self.buckets[bucket_idx] {
+                        if let Some(&pos) = self.positions.get(&id) {
+                            if pos.distance_squared(center) <= radius_sq {
+                                results.push(id);
+                            }
                         }
                     }
                 }
@@ -184,11 +200,11 @@ impl SpatialHash {
 
 impl SpatialIndex for SpatialHash {
     fn insert(&mut self, id: Entity, position: Vec2) -> SpatialResult<()> {
-        SpatialHash::insert(self, id, position)
+        SpatialHash::insert(self, id, position.extend(0.0))
     }
 
     fn update(&mut self, id: Entity, position: Vec2) -> SpatialResult<()> {
-        SpatialHash::update(self, id, position)
+        SpatialHash::update(self, id, position.extend(0.0))
     }
 
     fn remove(&mut self, id: Entity) -> SpatialResult<()> {
@@ -196,7 +212,7 @@ impl SpatialIndex for SpatialHash {
     }
 
     fn query_radius(&self, center: Vec2, radius: f32) -> Vec<Entity> {
-        SpatialHash::query_radius(self, center, radius)
+        SpatialHash::query_radius(self, center.extend(0.0), radius)
     }
 
     fn clear(&mut self) {
@@ -229,7 +245,7 @@ mod tests {
     #[test]
     fn query_radius_on_empty_hash_returns_empty() {
         let hash = SpatialHash::with_cell_size(16.0).unwrap();
-        assert!(hash.query_radius(Vec2::ZERO, 50.0).is_empty());
+        assert!(hash.query_radius(Vec3::ZERO, 50.0).is_empty());
     }
 
     #[test]
@@ -237,10 +253,10 @@ mod tests {
         let mut hash = SpatialHash::with_cell_size(16.0).unwrap();
         let near = Entity::from_raw(1);
         let far = Entity::from_raw(2);
-        hash.insert(near, Vec2::new(5.0, 5.0)).unwrap();
-        hash.insert(far, Vec2::new(5000.0, 5000.0)).unwrap();
+        hash.insert(near, Vec3::new(5.0, 5.0, 0.0)).unwrap();
+        hash.insert(far, Vec3::new(5000.0, 5000.0, 0.0)).unwrap();
 
-        let results = hash.query_radius(Vec2::ZERO, 50.0);
+        let results = hash.query_radius(Vec3::ZERO, 50.0);
         assert_eq!(results, vec![near]);
     }
 
@@ -248,9 +264,9 @@ mod tests {
     fn insert_rejects_duplicate_entity() {
         let mut hash = SpatialHash::with_cell_size(16.0).unwrap();
         let id = Entity::from_raw(1);
-        hash.insert(id, Vec2::ZERO).unwrap();
+        hash.insert(id, Vec3::ZERO).unwrap();
         assert!(matches!(
-            hash.insert(id, Vec2::ZERO),
+            hash.insert(id, Vec3::ZERO),
             Err(SpatialError::DuplicateEntity(_))
         ));
     }
@@ -259,20 +275,23 @@ mod tests {
     fn update_moves_entity_between_buckets() {
         let mut hash = SpatialHash::with_cell_size(16.0).unwrap();
         let id = Entity::from_raw(1);
-        hash.insert(id, Vec2::ZERO).unwrap();
-        hash.update(id, Vec2::new(1000.0, 1000.0)).unwrap();
+        hash.insert(id, Vec3::ZERO).unwrap();
+        hash.update(id, Vec3::new(1000.0, 1000.0, 0.0)).unwrap();
 
-        assert!(hash.query_radius(Vec2::ZERO, 5.0).is_empty());
-        assert_eq!(hash.query_radius(Vec2::new(1000.0, 1000.0), 5.0), vec![id]);
+        assert!(hash.query_radius(Vec3::ZERO, 5.0).is_empty());
+        assert_eq!(
+            hash.query_radius(Vec3::new(1000.0, 1000.0, 0.0), 5.0),
+            vec![id]
+        );
     }
 
     #[test]
     fn remove_drops_entity_from_queries() {
         let mut hash = SpatialHash::with_cell_size(16.0).unwrap();
         let id = Entity::from_raw(1);
-        hash.insert(id, Vec2::ZERO).unwrap();
+        hash.insert(id, Vec3::ZERO).unwrap();
         hash.remove(id).unwrap();
-        assert!(hash.query_radius(Vec2::ZERO, 5.0).is_empty());
+        assert!(hash.query_radius(Vec3::ZERO, 5.0).is_empty());
         assert!(matches!(
             hash.remove(id),
             Err(SpatialError::UnknownEntity(_))
@@ -289,11 +308,11 @@ mod tests {
         for i in 0..200u32 {
             let angle = i as f32 * 0.31;
             let dist = i as f32 * 37.0;
-            let pos = Vec2::new(angle.cos() * dist, angle.sin() * dist);
+            let pos = Vec3::new(angle.cos() * dist, angle.sin() * dist, 0.0);
             hash.insert(Entity::from_raw(i), pos).unwrap();
         }
 
-        let results = hash.query_radius(Vec2::ZERO, 300.0);
+        let results = hash.query_radius(Vec3::ZERO, 300.0);
 
         // No duplicates.
         let mut seen = std::collections::HashSet::new();

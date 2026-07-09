@@ -1,7 +1,7 @@
 use crate::components::{GrowthState, OrganismColor};
 use crate::developmental_graph::DevelopmentalGraph;
 use bevy_ecs::prelude::{Commands, Entity, Query};
-use common::Vec2;
+use common::Vec3;
 use rand::Rng;
 
 /// Base weight-magnitude threshold for wiring a synapse between two nodes
@@ -256,7 +256,7 @@ enum SegmentDecode {
     Apoptotic,
     /// Grow a real segment at `spawn_pos` with these decoded `outputs`.
     Grow {
-        spawn_pos: Vec2,
+        spawn_pos: Vec3,
         outputs: genetics::DevelopmentalOutputs,
     },
 }
@@ -304,7 +304,7 @@ fn decode_next_segment(
     let spawn_pos = if let Some(prev_entity) = state.parent_spine_node {
         if let Ok(parent_node) = node_query.get(prev_entity) {
             parent_node.position
-                + Vec2::new(state.heading.cos(), state.heading.sin()) * -state.segment_length
+                + Vec3::new(state.heading.cos(), state.heading.sin(), 0.0) * -state.segment_length
         } else {
             state.current_pos
         }
@@ -325,7 +325,12 @@ fn decode_next_segment(
     // baseline exactly.
     let environmental_signal = cpu_field
         .as_ref()
-        .map(|field| field.sample(spawn_pos, diffusion::FieldLayer::Morphogen as u32))
+        .map(|field| {
+            field.sample(
+                spawn_pos.truncate(),
+                diffusion::FieldLayer::Morphogen as u32,
+            )
+        })
         .unwrap_or(0.0);
 
     let outputs = genetics::develop_at_position_with_life_stage(
@@ -359,7 +364,7 @@ fn spawn_grown_segment(
     state: &mut GrowthState,
     graph: &mut DevelopmentalGraph,
     atmosphere_ticks: u64,
-    spawn_pos: Vec2,
+    spawn_pos: Vec3,
     outputs: genetics::DevelopmentalOutputs,
 ) {
     use genetics::SegmentType;
@@ -481,8 +486,8 @@ fn spawn_grown_segment(
         let current_position = state.next_segment_index;
 
         let fin_spread = state.segment_length * 0.75;
-        let dir = Vec2::new(state.heading.cos(), state.heading.sin());
-        let perp = Vec2::new(-dir.y, dir.x);
+        let dir = Vec3::new(state.heading.cos(), state.heading.sin(), 0.0);
+        let perp = Vec3::new(-dir.y, dir.x, 0.0);
 
         let f_up_pos = spawn_pos + perp * fin_spread;
         let f_dn_pos = spawn_pos + perp * -fin_spread;
@@ -614,7 +619,7 @@ fn spawn_grown_segment(
 
     // Advance state — current_pos still updated as a fallback reference.
     state.parent_spine_node = Some(spine_node);
-    let offset = Vec2::new(state.heading.cos(), state.heading.sin()) * -state.segment_length;
+    let offset = Vec3::new(state.heading.cos(), state.heading.sin(), 0.0) * -state.segment_length;
     state.current_pos += offset;
     state.next_segment_index += 1;
     state.ticks_until_next_bud = state.base_bud_interval;
@@ -733,8 +738,8 @@ pub fn growth_system(
             SegmentDecode::Apoptotic => {
                 state.next_segment_index += 1;
                 state.ticks_until_next_bud = state.base_bud_interval;
-                let offset =
-                    Vec2::new(state.heading.cos(), state.heading.sin()) * -state.segment_length;
+                let offset = Vec3::new(state.heading.cos(), state.heading.sin(), 0.0)
+                    * -state.segment_length;
                 state.current_pos += offset;
             }
             SegmentDecode::Grow { spawn_pos, outputs } => {
@@ -838,9 +843,10 @@ pub fn producer_growth_system(
             // Pick a random node from the plant body
             let target_node = all_nodes[rng.gen_range(0..all_nodes.len())];
 
-            let offset = common::Vec2::new(
+            let offset = common::Vec3::new(
                 (rng.gen::<f32>() - 0.5) * 20.0,
                 rng.gen::<f32>() * 20.0 + 5.0, // Upward bias
+                0.0,
             );
 
             let new_node_id = commands
@@ -918,7 +924,7 @@ mod tests {
                     ticks_until_next_bud: 0,
                     base_bud_interval: 0,
                     parent_spine_node: None,
-                    current_pos: Vec2::new(0.0, 0.0),
+                    current_pos: Vec3::new(0.0, 0.0, 0.0),
                     segment_length: 20.0,
                     effectors: Vec::new(),
                     is_organism_complete: false,
@@ -1204,7 +1210,12 @@ mod tests {
         });
         let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
         let head = world
-            .spawn(physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 0))
+            .spawn(physics::ParticleNode::new(
+                Vec3::new(0.0, 0.0, 0.0),
+                1.0,
+                0,
+                0,
+            ))
             .id();
         world.entity_mut(head).insert(metabolism::ChemicalEconomy {
             glucose: 1000.0,
@@ -1223,7 +1234,7 @@ mod tests {
                 ticks_until_next_bud: 0,
                 base_bud_interval: 0,
                 parent_spine_node: Some(head),
-                current_pos: Vec2::new(0.0, 0.0),
+                current_pos: Vec3::new(0.0, 0.0, 0.0),
                 segment_length: 20.0,
                 effectors: Vec::new(),
                 is_organism_complete: false,
@@ -1255,7 +1266,12 @@ mod tests {
         // `parent_spine_node`-dependent spring/branch logic has something
         // to attach to, matching how `spawn_organism` seeds this state.
         let head = world
-            .spawn(physics::ParticleNode::new(Vec2::new(0.0, 0.0), 1.0, 0, 0))
+            .spawn(physics::ParticleNode::new(
+                Vec3::new(0.0, 0.0, 0.0),
+                1.0,
+                0,
+                0,
+            ))
             .id();
         world.entity_mut(head).insert(metabolism::ChemicalEconomy {
             glucose: 1000.0,
@@ -1274,7 +1290,7 @@ mod tests {
                 ticks_until_next_bud: 0,
                 base_bud_interval: 0,
                 parent_spine_node: Some(head),
-                current_pos: Vec2::new(0.0, 0.0),
+                current_pos: Vec3::new(0.0, 0.0, 0.0),
                 segment_length: 20.0,
                 effectors: Vec::new(),
                 is_organism_complete: false,
@@ -1587,7 +1603,7 @@ mod tests {
                     ticks_until_next_bud: 0,
                     base_bud_interval: 0,
                     parent_spine_node: None,
-                    current_pos: Vec2::new(0.0, 0.0),
+                    current_pos: Vec3::new(0.0, 0.0, 0.0),
                     segment_length: 20.0,
                     effectors: Vec::new(),
                     is_organism_complete: head_outputs.segment_type == genetics::SegmentType::Tail,
@@ -1698,7 +1714,7 @@ mod tests {
                     ticks_until_next_bud: 0,
                     base_bud_interval: 0,
                     parent_spine_node: None,
-                    current_pos: Vec2::new(0.0, 0.0),
+                    current_pos: Vec3::new(0.0, 0.0, 0.0),
                     segment_length: 20.0,
                     effectors: Vec::new(),
                     is_organism_complete: head_outputs.segment_type == genetics::SegmentType::Tail,
@@ -1759,7 +1775,7 @@ mod tests {
     /// breaking it.
     #[test]
     fn producer_growth_system_is_deterministic_for_a_given_seed() {
-        fn run_once() -> common::Vec2 {
+        fn run_once() -> common::Vec3 {
             let mut world = World::new();
             world.insert_resource(common::SimRng::from_seed(99));
             world.insert_resource(metabolism::GlobalAtmosphere {
@@ -1767,7 +1783,7 @@ mod tests {
                 ..Default::default()
             });
 
-            let head_pos = common::Vec2::new(0.0, 0.0);
+            let head_pos = common::Vec3::new(0.0, 0.0, 0.0);
             world.spawn((
                 ecology::Diet::Producer,
                 metabolism::ChemicalEconomy {

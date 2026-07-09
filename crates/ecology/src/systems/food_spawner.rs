@@ -1,6 +1,5 @@
 use crate::components::{EcologyConfig, FoodPellet};
 use bevy_ecs::prelude::*;
-use common::Vec2;
 use rand::Rng;
 
 /// System that spawns food up to the hard cap.
@@ -35,7 +34,7 @@ pub fn food_spawner_system(
             // Rejection sampling: accept if random value is less than fertility
             if rng.gen::<f32>() * 1.5 < fertility {
                 commands.spawn(FoodPellet {
-                    position: Vec2::new(x, y),
+                    position: common::Vec3::new(x, y, 0.0),
                     energy_value: 50.0,
                 });
                 break; // Successfully spawned 1 pellet
