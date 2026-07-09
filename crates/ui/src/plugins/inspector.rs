@@ -1,3 +1,42 @@
+//! The Inspector panel — the selected/tracked organism's live component
+//! data, presented as a sequence of logical sections rather than one
+//! monolithic view (Phase 7, W0e; extends Phase 5, ADR-P5-04's original
+//! "fold standalone panels into Inspector" decision). Each section below
+//! is already a self-contained `(ctx, ui, state, world, actions) -> ()`
+//! render step operating on its own slice of the entity's components —
+//! the same shape `physiology_viewer_ui`/`circulation_viewer_ui`/
+//! `hormone_viewer_ui`/`immune_viewer_ui`/`lineage_viewer_ui` already use
+//! as real, separately-defined functions reused verbatim here. The
+//! sections that are still inline in `inspector_ui` (Identity, Physiology
+//! summary, Genetics, Neural, Morphology, Behavior, Ecology,
+//! Relationships/History, Body Plan) are conceptually the same kind of
+//! independent widget, just not yet extracted to their own functions/
+//! files — a future repository-modernization pass (not this milestone)
+//! could give each its own `fn foo_section_ui(...)` in its own module,
+//! mirroring the pattern the already-extracted viewers demonstrate. W0e
+//! documents this as the identified decomposition, not the same "one
+//! large file" candidate a mechanical split would treat it as, per this
+//! phase's own "split only when it improves architecture" rule.
+//!
+//! ## Section inventory (render order)
+//! 1. Recent Selections (`render_recent_selections`) — already its own function.
+//! 2. Identity — head-level facts (species, generation, age, birth tick, parent).
+//! 3. Physiology — energy/health/hydration/temperature summary, plus 4 nested,
+//!    already-independent sections (Per-Segment Detail, Circulation, Hormones,
+//!    Immune Response — each a real, separate `*_viewer_ui` function).
+//! 4. Genetics — genome identity, CPPN sizes, mutation count, Export Genome action.
+//! 5. Evolution / History — already its own function (`lineage_viewer_ui`).
+//! 6. Neural — brain topology size and a live activation/weight preview.
+//! 7. Morphology — transform/velocity (Phase 7, W0e: trimmed of 4 rows that
+//!    were permanently "Not Available" — see removal notes inline below).
+//! 8. Behavior — current behavior state/goal/target (Phase 7, W0e: trimmed
+//!    of 2 permanently-"Not Available" rows).
+//! 9. Ecology — diet, trophic level, species population.
+//! 10. Relationships / History — nearby organisms, trajectory summary.
+//! 11. Body Plan (`render_body_plan`) — already its own function; the real
+//!     segment tree (see Morphology's note on why a duplicate summary of
+//!     this was removed, not kept).
+
 use crate::types::*;
 use crate::WorkbenchState;
 
@@ -209,9 +248,20 @@ pub fn inspector_ui(
                             Some(label) => crate::widgets::kv_row_mono(ui, "SpeciesId", label),
                             None => crate::widgets::kv_row(ui, "SpeciesId", "Not Available"),
                         }
-                        crate::widgets::kv_row(ui, "GenomeId", "Not Available");
-                        crate::widgets::kv_row(ui, "EntityName", "Not Available");
-
+                        // Phase 7, W0e (Category A — remove immediately):
+                        // a "GenomeId" row lived here permanently hardcoded
+                        // to "Not Available", duplicating the real,
+                        // working "GenomeId" row the Genetics section
+                        // already shows a few sections down — the exact
+                        // fake-vs-real redundancy SX-4d's own fix already
+                        // addressed for "SpeciesId" above, just missed
+                        // here. Removed rather than fixed in place, since
+                        // Genetics is the correct owner of genome facts.
+                        // "EntityName" removed too (Category B — no
+                        // EntityName concept exists anywhere in this
+                        // codebase; organisms aren't named. Not replaced
+                        // with a placeholder — reintroduce with real data
+                        // if that concept is ever built).
                         let mut gen_q = world.ecs.query::<&organisms::Generation>();
                         if let Ok(gen) = gen_q.get(&world.ecs, entity) {
                             crate::widgets::kv_row_mono(ui, "Generation", &gen.0.to_string());
@@ -594,6 +644,16 @@ pub fn inspector_ui(
                 });
 
             // --- MORPHOLOGY ---
+            // Phase 7, W0e: this section previously also carried 4 rows
+            // permanently hardcoded to "Not Available" — "BodyPlan" and
+            // "SegmentTree" (Category A: not just dead, actively
+            // misleading, since a real, working segment tree is rendered
+            // a few sections below in "Body Plan" — this section falsely
+            // implied no such data existed at all) and "SensorArray"/
+            // "MuscleSystem" (Category A: no backing data source, plainly
+            // wrong to leave in). All 4 removed, not replaced with a
+            // placeholder — see this file's module doc comment for the
+            // full removal rationale.
             egui::CollapsingHeader::new(format!(
                 "{} Morphology",
                 egui_remixicon::icons::SHAPE_LINE
@@ -633,15 +693,15 @@ pub fn inspector_ui(
                                 crate::widgets::kv_row(ui, "Velocity", "Not Available");
                             }
                         }
-
-                        crate::widgets::kv_row(ui, "BodyPlan", "Not Available");
-                        crate::widgets::kv_row(ui, "SegmentTree", "Not Available");
-                        crate::widgets::kv_row(ui, "SensorArray", "Not Available");
-                        crate::widgets::kv_row(ui, "MuscleSystem", "Not Available");
                     });
             });
 
             // --- BEHAVIOR ---
+            // Phase 7, W0e (Category B): "ActionState"/"MemoryState" rows
+            // permanently hardcoded to "Not Available" were removed — no
+            // such concepts exist in `behavior`'s component set today.
+            // Not replaced with a placeholder; reintroduce with real data
+            // if/when those concepts are actually built.
             egui::CollapsingHeader::new(format!("{} Behavior", egui_remixicon::icons::RUN_LINE))
                 .default_open(true)
                 .show(ui, |ui| {
@@ -675,9 +735,6 @@ pub fn inspector_ui(
                                 crate::widgets::kv_row(ui, "CurrentGoal", "Not Available");
                                 crate::widgets::kv_row(ui, "CurrentTarget", "Not Available");
                             }
-
-                            crate::widgets::kv_row(ui, "ActionState", "Not Available");
-                            crate::widgets::kv_row(ui, "MemoryState", "Not Available");
                         });
                 });
 

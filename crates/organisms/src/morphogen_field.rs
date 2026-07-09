@@ -10,7 +10,7 @@
 //! relax an *existing, conserved or externally-anchored* quantity between
 //! segments. A developmental morphogen has no such source — the source is
 //! growth itself. Each newly-grown segment is seeded at
-//! [`MORPHOGEN_SEED_CONCENTRATION`] (the "reaction"/emission term), then this
+//! `MORPHOGEN_SEED_CONCENTRATION` (the "reaction"/emission term), then this
 //! system both diffuses that value toward its neighbors along the Body Graph
 //! edges *and* decays it every tick (the term neither `transport_system` nor
 //! `endocrine_diffusion_system` needs, since neither models a signal that

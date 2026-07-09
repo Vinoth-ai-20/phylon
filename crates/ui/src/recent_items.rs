@@ -20,7 +20,8 @@
 //! - **Duplicate handling**: never duplicated. Recording an already-present
 //!   path removes the old entry before reinserting at the front, rather
 //!   than allowing two entries for the same path.
-//! - **Maximum history size**: [`RecentItemsList::MAX_ITEMS`]. Oldest
+//! - **Maximum history size**: `RecentItemsList::MAX_ITEMS` (private —
+//!   internal implementation detail, not a public link target). Oldest
 //!   entries are silently dropped past this cap — normal LRU eviction, not
 //!   an error condition.
 //! - **Missing-file behavior**: this module does zero filesystem I/O and

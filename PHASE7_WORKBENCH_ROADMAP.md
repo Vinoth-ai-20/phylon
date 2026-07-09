@@ -282,7 +282,39 @@ The user approved W0b and directed 4 small follow-ups before moving to W0c, on t
 
 **Remaining limitations, disclosed**: the manual verification list (open multiple files, reopen, delete one from disk, restart, verify ordering/dedup/persistence/graceful-missing-handling) was verified by tracing the code paths directly plus the smoke test above, **not** by an actual human/automated click-through — same disclosed limitation as W0b, for the same reason (no GUI-input-automation harness exists in this repo for this native window). Recommend manually running through the scenario list before treating this as fully closed. `Replays`/`Experiments`/`Exports`/`WorkspaceLayouts` categories exist in the type system but have no real producer yet — intentionally not built now, per "don't expand scope into a project-management system."
 
-**W0d is now closed**, pending the user's manual review.
+**W0d is now closed permanently.** Proceeding to W0e.
+
+### Epic W0, Milestone W0e — Inspector interaction-flow read-through
+
+**What was done**: read `crates/ui/src/plugins/inspector.rs` in full (1034 lines, only spot-checked in Phase A) for information architecture and redundant controls.
+
+**Correction to a claim made during W0b**: W0b's follow-up-task-3 note said `crate::utils::draw_segment_tree` appeared to be dead code (no call site found by grep at the time). Direct reading during W0e found this was wrong — it's called from `render_body_plan` (line ~976 pre-edit), which is wired to the Inspector's "Body Plan" section. Corrected here rather than left standing.
+
+**Findings, classified per the user's direction**:
+- **Ordering**: sensible overall (Identity → Physiology → Genetics → Evolution/History → Neural → Morphology → Behavior → Ecology → Relationships/History → Body Plan). Two debatable placements (Ecology's position; Evolution/History collapsed-by-default between two open-by-default sections) — left unchanged (Category C: workflow refinement, not a correctness issue).
+- **Category A (remove immediately — objectively incorrect, duplicated, or contradicted elsewhere)**: a permanently-`"Not Available"` `GenomeId` row in Identity, duplicating the real one Genetics already shows a few sections down (the exact fake-vs-real pattern SX-4d's own fix addressed for `SpeciesId`, missed here); permanently-`"Not Available"` `BodyPlan` and `SegmentTree` rows in Morphology — actively misleading, since a real, working segment tree renders a few sections below in "Body Plan"; permanently-`"Not Available"` `SensorArray`/`MuscleSystem` rows in Morphology, no backing data source. All 5 rows removed.
+- **Category B (remove until implemented — no backing data model, no placeholder substituted)**: `EntityName` (Identity — no such concept exists anywhere in this codebase), `ActionState`/`MemoryState` (Behavior — no such concepts in `behavior`'s component set). All 3 removed, not replaced with "Coming Soon" or any other placeholder text, per explicit instruction.
+- **Category C (left unchanged — workflow refinements, not correctness issues)**: Ecology's section placement, Evolution/History's placement, and the "Go to Head" button showing even when already at the head.
+
+**Information architecture observations**: the Inspector already reads as a sequence of independent sections, not one undifferentiated form — 5 of them (`render_recent_selections`, `physiology_viewer_ui`, `circulation_viewer_ui`, `hormone_viewer_ui`, `immune_viewer_ui`, `lineage_viewer_ui`, `render_body_plan`) are *already* separately-defined functions reused verbatim (per ADR-P5-04's original decision), each following the same `(ctx, ui, state, world, actions)` shape. The remaining 8 sections (Identity, Physiology-summary, Genetics, Neural, Morphology, Behavior, Ecology, Relationships/History) are inline in `inspector_ui` but conceptually the same kind of independent widget — each queries its own component slice and renders independently of the others. Documented directly in the file's new module doc comment (a full section inventory in render order), so this structure is explicit rather than left to be re-discovered by the next reader.
+
+**Future widget decomposition plan** (identified now, not performed — per explicit instruction not to physically split files in W0e): a future repository-modernization pass could extract each of the 8 still-inline sections into its own `fn foo_section_ui(ctx, ui, state, world, actions)` in its own module, exactly mirroring the pattern the 7 already-extracted functions demonstrate — this is not a hypothetical shape, it's the shape half the file already uses. This would shrink `inspector_ui` itself to an orchestration function (open a `CollapsingHeader`, call the section function) matching what `render_body_plan`'s own call site already looks like. Sequencing note for whenever this is picked up: do it as part of Epic W5 (Code Modernization) or a dedicated `ui`-crate-wide pass, not silently inside a future W0-numbered milestone, since W0's charter is interaction/workflow fixes, not file organization.
+
+**Files changed**: `crates/ui/src/plugins/inspector.rs` only.
+
+**Verification**: `cargo build --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `cargo test --workspace` — all clean, 0 failures across all 28 crates. No behavioral logic changed (only dead-row removal and doc comments), so no new tests were needed or added.
+
+**Rows removed**: 8 total — `GenomeId` (Identity), `EntityName` (Identity), `BodyPlan`, `SegmentTree`, `SensorArray`, `MuscleSystem` (Morphology), `ActionState`, `MemoryState` (Behavior).
+
+**Duplicated logic eliminated**: the `GenomeId` fake/real duplication (Identity vs. Genetics) and the `SegmentTree` fake/real duplication (Morphology's dead row vs. Body Plan's real, working tree).
+
+**Remaining limitations**: this was a read-through-and-trim milestone; it did not verify the Inspector's remaining, real rows are all still individually correct (that would be a much larger content-accuracy audit, out of scope here). The future widget-decomposition plan above is documentation only — no code was restructured.
+
+**W0e is now closed.** Awaiting review before W0f.
+
+---
+
+## 7. Architecture Decision Records
 
 **ADR-W0-01 — Unified selection/follow pathway; direct mutation of selection state is prohibited.**
 
@@ -296,6 +328,40 @@ The user approved W0b and directed 4 small follow-ups before moving to W0c, on t
 - **Reason**: a researcher's mental model is "I clicked an organism, therefore I am now looking at it" — that has to be true regardless of which of the many equivalent gestures (click, right-click → Inspect, a recent-selection chip, a future search result) they used. A single method is the only way to guarantee that as new selection sources are added (global search, lineage explorer, future 3D picking) they cannot reintroduce the same inconsistency, because there is no second place left to implement "select" differently.
 - **Consequences**: any future PR that adds a new way to select an organism, or writes `.selected_entity =`/`.tracked_entity =` directly outside `state.rs`, should be treated as a defect against this ADR, not a style nitpick. `WorkbenchState::select`/`set_follow`'s own doc comments restate this rule at the point of use.
 - **Future-trigger**: if/when a real cross-crate event bus is introduced (see the `TODO(Phase 8)` notes on both methods), `select`/`set_follow` become the natural emission points for `SelectionChanged`/`FollowChanged` events — this ADR's "single pathway" property is exactly what makes that later change a one-place edit instead of another repository-wide sweep.
+
+**ADR-W0-02 — Recent Items Service.**
+
+- **Context**: before Phase 7, W0d, "recent files" tracking was a `Vec<String>` field on `WorkbenchState` that nothing in the codebase ever wrote to — the "Open Recent" submenu could therefore never render (its emptiness check always passed), and even a hypothetical populated entry would have opened a generic file picker instead of that entry's own path, since the click handler just re-pushed the same `MenuAction::LoadState` regardless of which entry was clicked. Two independent bugs from one piece of un-owned state.
+- **Decision**: introduce `crates/ui/src/recent_items.rs`'s `RecentItemsService` as the single owner of recent-items policy, generic over a `RecentCategory` so this shape is reusable rather than re-invented per feature.
+
+  ```text
+  Application  (crates/app — records what the user actually opened/saved,
+       ↓        e.g. SaveState/LoadState/LoadStateFromPath handlers)
+  RecentItemsService  (crates/ui — ordering, dedup, cap; the only
+       ↓                place that knows the policy)
+  Preferences  (crates/app — RON persistence; treats the service as an
+       ↓        opaque, serializable field, same as high_contrast/ui_scale)
+  Menu Presentation  (crates/ui/plugins/menu.rs — reads the service,
+                       checks the filesystem, renders; owns no policy)
+  ```
+
+  This makes it immediately obvious where policy lives (the service, one box in the diagram) versus where it's just displayed (the menu, the last box, which does filesystem existence-checking for *display* purposes but never decides ordering/dedup/eviction).
+
+- **Responsibilities** (`RecentItemsService`, exhaustive):
+  - Recording an item as just-used (`record`) — enforces MRU ordering, move-to-front deduplication, and the 10-item cap.
+  - Explicit removal (`remove`) — the only way an entry disappears from history.
+  - Reading a category's current list (`items`, `is_empty`) in MRU order.
+  - Being serializable as an opaque blob for `Preferences` to persist — it does not know *how* or *when* it's saved.
+- **Explicit non-responsibilities** (binding — a permanent rule, not a one-time design note):
+  - **No filesystem access of any kind.** The service never calls `Path::exists`, never reads, never writes a tracked file. It stores strings; it does not validate them.
+  - **No automatic pruning.** A path staying in history after its file is deleted is correct behavior for this layer — "was recently used" is a historical fact that doesn't become false just because the file later vanished. Removal is always a caller's explicit decision.
+  - **No UI rendering, no egui dependency.** `crates/ui/src/recent_items.rs` has no `egui::` reference anywhere in it.
+  - **This filesystem-validation/presentation split is a permanent architectural rule, not specific to Recent Files**: any future consumer (Replays, Experiments, Exports, WorkspaceLayouts, or anything else built on this service) must keep existence-checking in its own application/presentation code, never pushed down into the service. If a future change needs the service to "know" whether a path is valid, that is a sign the abstraction is being misused, not a sign the service needs a new method.
+- **Extension points**: adding a category is exactly one line — a new `RecentCategory` variant. Wiring a real producer for it (e.g. recording on replay-bundle open) is ordinary application code in whichever crate owns that action, calling `record`/`items` exactly like `events.rs` does for `Files` today. No change to `RecentItemsList`, `RecentItemsService`, or their persistence shape is ever required to add a category.
+- **Future categories** (named now, not built): `Replays`, `Experiments`, `Exports`, `WorkspaceLayouts` — see `RecentCategory`'s own doc comment for the reasoning (pairs naturally with Epic W3's layout-persistence work for `WorkspaceLayouts` specifically).
+- **Interaction with Preferences**: `Preferences::recent_items: ui::RecentItemsService` is a plain field, saved/loaded via the exact same RON round-trip as `high_contrast`/`ui_scale`/`onboarding_seen` — `#[serde(default)]` so a preferences file predating this field still loads. `Preferences` does not interpret the service's contents in any way; it is purely a persistence carrier, matching the diagram's middle-to-lower arrow.
+- **Interaction with the UI**: `menu.rs`'s "Open Recent" block calls `state.recent_items.items(Files)` to get the list, then — and only then, in the presentation layer — checks `Path::new(path).exists()` per entry to decide whether to render it as a clickable button or a disabled "(missing)" row with an explicit remove control. The service is never asked "is this still valid"; it doesn't have an opinion.
+- **Consequences**: any future PR that adds filesystem existence-checking, auto-pruning, or egui code inside `recent_items.rs` should be treated as a violation of this ADR. Any future PR that adds a new recent-items-like feature as a bespoke `Vec<String>` field instead of a new `RecentCategory` should be treated the same way.
 
 ---
 
