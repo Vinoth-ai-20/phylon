@@ -312,6 +312,66 @@ The user approved W0b and directed 4 small follow-ups before moving to W0c, on t
 
 **W0e is now closed.** Awaiting review before W0f.
 
+### Epic W0, Milestone W0f — Event Communication Architecture Audit (audit only, no implementation)
+
+Per the user's direction, this audits the *complete* event-communication architecture, not just toasts, and classifies every significant application event into one of four groups. **No code changes in this milestone** — implementation is deliberately deferred until this audit is reviewed.
+
+#### Mechanisms surveyed (all real, all read directly, not assumed)
+
+- **`analytics::NarrationLog`** — a 100-entry ring buffer, read by the Event Log panel (`crates/ui/src/plugins/event_log.rs`), written via `push_event`.
+- **Toasts** (`ui::state::Toast`/`push_toast`/`ToastSeverity`) — ephemeral, bottom-right, auto-expiring, session-only, never logged anywhere else.
+- **`events::PhylonEvent`** (bevy-native `Events<T>`) — exactly 4 variants: `OrganismBorn`, `OrganismDied`, `ReproductionEvent`, `ExperimentCheckpoint`.
+- **`events::EventBus`** — a crossbeam-channel wrapper tied to `scheduler::SimulationScheduler`. Confirmed genuinely unused in the live app (consistent with Epic A's removal of `SimulationScheduler` from `PhylonApp`) — a real, if narrow, dead-code finding, distinct from `PhylonEvent` itself (which *is* live via bevy's own `Events<T>`, a separate delivery path the same file documents).
+- **`events::TimedEffects`/`TimedEffectKind::FloatingText`** — world-anchored, tick-expiring visual bursts, rendered by `ui::render::render_timed_effects` (confirmed real and wired, at `render.rs:689`).
+- **`storage::replay::ReplayLog`/`ReplayAction`** — a persistent, tick-indexed record of god-mode interventions (spawn/hazard/etc.), inspectable via the static Replay Browser, saveable/loadable as a `.phylon-replay` bundle.
+- **`evolution::LineageTracker`/`SpeciesRegistry`** — persistent structural records, queried on demand (by the Inspector, Lineage panel, Metrics), not narrated as discrete events themselves.
+- **CSV/JSON export functions** (lineages/events/organisms/metrics) — on-demand, user-triggered, persistent artifacts.
+
+#### 2 stale doc-comment claims found and corrected
+
+1. `crates/events/src/lib.rs`'s module doc comment states *"nothing in the running application actually publishes or drains a `PhylonEvent`."* **False, confirmed by direct reading**: `OrganismBorn`/`OrganismDied`/`ReproductionEvent` are published via `world.send_event`/`EventWriter` (`crates/app/src/systems.rs`) and consumed by `interaction_event_log_system` today. The claim conflates `PhylonEvent` (live) with `EventBus` (genuinely dead) — the same file distinguishes these two delivery paths elsewhere in its own text, but the summary sentence doesn't.
+2. Same file: *"drawing these onto the viewport is Epic 8's job"* (re: `TimedEffects` rendering). **False** — `render_timed_effects` is real and rendering `FloatingText` bursts today, for both births and every death cause (Phase 5, SX-1e).
+
+These were documentation-staleness findings, originally out of scope for W0f's own audit — but finding #1 also contained a genuinely broken intra-doc link (`` [`FieldType::Disease`] ``, referencing a type that doesn't exist in this crate — likely a leftover from an earlier draft, since the real variant is `DeathCause::Disease`), surfaced by a `cargo doc` warning after this milestone landed. Fixed directly: the module doc comment's "Current wiring caveat" section now states the corrected finding #1 (PhylonEvent is live, only `EventBus` and `ExperimentCheckpoint` are the real dead surfaces) instead of the stale blanket claim, and the broken link is gone. Re-verified: `cargo doc --workspace --no-deps` clean (0 warnings), plus the full `build`/`clippy -D warnings`/`fmt`/`test` cycle, all clean, 0 failures across 28 crates.
+
+#### Full event classification
+
+**Group 1 — Silent** (no user-facing signal, and that's the correct choice today):
+- Routine per-tick metabolic state changes (ATP/glucose/O2/CO2 deltas) — continuous quantities, not discrete events; correctly never narrated.
+- *Gap, not yet an event at all*: **species extinction** (a species' last living member dying) has no detection mechanism anywhere in `evolution::SpeciesRegistry`/`LineageTracker` — it doesn't fire silently, it simply doesn't exist as a detectable occurrence yet. Flagged as a candidate for Group 3 (Session notification) once/if built — not implemented here.
+- *Gap, not yet an event at all*: **new species founded** (`SpeciesRegistry::classify` founding a new species) has no consumer logging it. Same disposition as extinction — a real gap, not a decision to keep it silent.
+
+**Group 2 — Local visual feedback** (world-anchored, transient, no session-wide record):
+- `OrganismBorn` (the common, non-milestone case) → "Born!" floating text at the birth position. *Who sees it*: anyone looking at that part of the viewport, right now. *Where*: world-space, at the organism's position. *Duration*: `BIRTH_EFFECT_DURATION_TICKS` (a fixed, tick-based fade). *Event Log*: no. *Interrupt*: no. *Exportable*: no — purely ephemeral.
+- `OrganismDied`, any of the 7 causes → cause-colored floating text (Phase 5, SX-1e closed the original gap where only `Predation` got one). Same 6 answers as above, with the color/text keyed to `DeathCause` (`death_effect_text_and_color`).
+
+**Group 3 — Session notification** (Event Log entry and/or toast; session-scoped; not part of the exportable research record):
+- `OrganismDied { cause: Predation }` → `NarrationLog` "Predation" entry. *Who*: anyone with the Event Log panel open, this session. *Where*: Event Log panel. *Duration*: until evicted past the 100-entry cap. *Event Log*: yes (this **is** the Event Log entry). *Interrupt*: no. *Exportable*: **currently yes, incidentally** — `NarrationLog` entries are exportable via the Events CSV export, which is itself a Group-4-shaped capability riding on Group-3-classified data (flagged below as a boundary case, not a bug).
+- `ReproductionEvent` milestone (every 5th generation) → `NarrationLog` "Lineage" entry. Same 6 answers as above.
+- `ecology::catastrophe::HazardSpawned` → `NarrationLog` "Hazard" entry. Same 6 answers as above. *Gap*: no Group-2 (local visual) signal at the hazard's own spawn moment beyond its own ambient/persistent field rendering — arguably fine (the hazard field itself is the ongoing visual), noted for completeness.
+- All toast-only, user-action confirmations: Save/Load progress + result, Genome import/export, Replay bundle load (success/failure), CSV/JSON export (lineages/events/organisms/metrics) success/failure, screenshot/chart-PNG save success/failure, Entity killed, multi-select count, copy entity ID, panel closed, recording save. *Who*: the user who just took the action. *Where*: bottom-right toast stack. *Duration*: 2–5 seconds (varies per call site — `ToastSeverity`-adjacent, not currently a single constant). *Event Log*: no, correctly — these are UI-action confirmations, not simulation history a researcher would want to replay later. *Interrupt*: no (non-modal, non-blocking). *Exportable*: no, correctly — ephemeral by design.
+- **Gap/asymmetry**: non-predation deaths (Starvation/Disease/Senescence/GodMode/Injury/Environment/Unknown) get Group 2 (floating text) but **not** a Group 3 Event Log entry — an intentional frequency-based choice per `interaction_event_log_system`'s own doc comment ("logging every one would flood `NarrationLog`"), not an oversight. Flagged because a researcher specifically studying disease dynamics might reasonably want disease deaths (not starvation) to be Event-Log-worthy — a possible future refinement, not decided here.
+
+**Group 4 — Persistent research event** (durable, exportable, part of the scientific record):
+- God-mode interventions (Spawn Proto-Fish, Spawn Preset, Spawn Manual Hazard, and similar) — already recorded in `storage::replay::ReplayLog` (tick-indexed, saveable as a `.phylon-replay` bundle) the moment they happen. **Gap/asymmetry**: the *live* feedback for these is only a Group-3 toast — a researcher performing an intervention that's already being written into the durable experimental record gets no indication that's happening; the persistence tier and the live-feedback tier are inconsistent with each other today.
+- `PhylonEvent::ExperimentCheckpoint` — designed (a researcher-defined timeline checkpoint, explicitly for "later analysis") but **never actually published or consumed by anything** in the current codebase (grepped: only defined in `events::lib.rs`, no call site). The same "designed but not integrated" gap `ReproductionEvent` had before Phase 5, SX-3a fixed it — not fixed here, flagged for whoever picks it up.
+- Lineage/species/mutation-count data — already queryable and exportable via the Lineages/Organisms CSV exports; correctly *not* narrated as discrete real-time events (it's structural state, sampled on demand, not a stream of occurrences).
+
+#### Architectural observation (the actual goal of this audit)
+
+The 4 groups already exist as real, distinct mechanisms in the codebase (`TimedEffects` = Group 2, `NarrationLog`+toasts = Group 3, `ReplayLog`/CSV export = Group 4) — this audit did not have to invent a taxonomy from nothing, it mostly had to *name* a structure that was already implicit in 3 independently-built systems. The actual incoherence is at the boundaries:
+- Group 3 and Group 4 currently overlap awkwardly for interventions (toast-only live feedback for an action that's simultaneously being written to the durable replay record).
+- Group 1 (silent) currently includes real gaps (extinction, speciation) that were never decided to be silent — they're silent because no one built the detection, not because someone decided a researcher shouldn't see them.
+- `NarrationLog`'s CSV-exportability blurs the Group 3/4 line — a "session notification" data structure is, in practice, already partially a research artifact.
+
+**This is presented as findings, not a redesign proposal** — per the explicit instruction not to implement until this audit is reviewed.
+
+**Files changed**: none. This is a read-only milestone.
+
+**Verification**: N/A — no code touched.
+
+**W0f (audit) is complete.** Awaiting review before any implementation is scoped from it.
+
 ---
 
 ## 7. Architecture Decision Records

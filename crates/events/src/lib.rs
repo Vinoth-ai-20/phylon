@@ -8,21 +8,23 @@
 //! (analytics, storage, UI) consume events without modifying the simulation
 //! world.
 //!
-//! ## Current wiring caveat
+//! ## Current wiring caveat (corrected, Phase 7 W0f — see
+//! `PHASE7_WORKBENCH_ROADMAP.md`'s event-architecture audit)
 //!
 //! `scheduler::SimulationScheduler` does own an [`EventBus`] instance as
 //! described above, but the live `app` binary's actual per-tick driver
 //! (`PhylonApp::update_simulation`) calls simulation systems directly via
 //! `bevy_ecs::system::RunSystemOnce` rather than ticking through
-//! `SimulationScheduler` — so today, nothing in the running application
-//! actually publishes or drains a [`PhylonEvent`]. Real cross-system
-//! communication currently happens through bevy_ecs's own native
-//! `Event`/`EventWriter`/`EventReader` machinery instead (e.g.
-//! `reproduction::BirthRequest`). Some [`PhylonEvent`] variants — notably
-//! [`FieldType::Disease`], reflecting the not-yet-implemented disease/
-//! pathogen system — describe intended future mechanics rather than
-//! anything a system emits today. Treat this crate as a designed-but-not-
-//! yet-integrated interface, not a description of the live event flow.
+//! `SimulationScheduler` — so [`EventBus`] itself is genuinely unused by
+//! the running application. **[`PhylonEvent`] itself is not dead**,
+//! though, contrary to what this paragraph used to claim: `OrganismBorn`,
+//! `OrganismDied`, and `ReproductionEvent` are published via bevy_ecs's
+//! own native `Event`/`EventWriter`/`EventReader` machinery (a second,
+//! simpler delivery path alongside [`EventBus`], described above) and
+//! consumed today by `crates/app/src/systems.rs`'s
+//! `interaction_event_log_system`. Only [`ExperimentCheckpoint`](PhylonEvent::ExperimentCheckpoint)
+//! remains defined but never actually published or consumed by anything —
+//! a real, disclosed gap, not a description of every variant.
 //!
 //! ## Design
 //!
