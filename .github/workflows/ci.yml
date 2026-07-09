@@ -27,6 +27,23 @@ jobs:
       - name: Cache cargo registry and build artefacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Install software GPU drivers (Mesa lavapipe/llvmpipe) for headless wgpu tests
+        # `ubuntu-latest` GitHub-hosted runners have no real GPU, and prior to
+        # this step nothing installed a software Vulkan/GL fallback either —
+        # `wgpu::Instance::request_adapter` returns `None` on a bare runner,
+        # which panics any test that creates a real headless GPU device
+        # (e.g. `gpu::diffusion_pipeline`'s tests, which deliberately exercise
+        # a real wgpu device/dispatch/readback rather than mocking one — see
+        # that module's own test doc comments). This was previously an
+        # undocumented, unpinned assumption; installing Mesa's software
+        # Vulkan driver (lavapipe) and software GL driver (llvmpipe)
+        # explicitly here makes headless GPU tests reproducible instead of
+        # depending on whatever happened to be preinstalled on the runner
+        # image.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libgl1-mesa-dri libglx-mesa0 libegl1 vulkan-tools
+
       - name: Determinism guardrail — no unseeded RNG in simulation crates
         # Every stochastic decision must derive from the single seeded
         # `common::SimRng` resource (see its doc comment), never a fresh
