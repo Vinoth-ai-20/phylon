@@ -362,7 +362,7 @@ fn render_trajectory_trail(
         );
         painter.line_segment(
             [to_screen(*a), to_screen(*b_pos)],
-            egui::Stroke::new(2.0, color),
+            egui::Stroke::new(2.0_f32, color),
         );
     }
 }
@@ -669,7 +669,7 @@ fn render_vision_cones(
         painter.add(egui::Shape::closed_line(
             points,
             egui::Stroke::new(
-                2.0,
+                2.0_f32,
                 egui::Color32::from_rgba_premultiplied(0, 255, 255, 200),
             ),
         ));
@@ -1050,7 +1050,7 @@ fn render_physiology_overlay(
         painter.circle_stroke(
             screen_pos,
             radius,
-            egui::Stroke::new(2.0, color.gamma_multiply(alpha as f32 / 255.0)),
+            egui::Stroke::new(2.0_f32, color.gamma_multiply(alpha as f32 / 255.0)),
         );
     }
 }
@@ -1105,7 +1105,7 @@ fn render_scale_grid(
     let mut painter = ctx.layer_painter(egui::LayerId::background());
     painter.set_clip_rect(viewport_rect);
     let stroke = egui::Stroke::new(
-        1.0,
+        1.0_f32,
         egui::Color32::from_rgba_premultiplied(255, 255, 255, 18),
     );
 
@@ -1165,7 +1165,7 @@ fn render_world_boundary(
     painter.add(egui::Shape::closed_line(
         corners.to_vec(),
         egui::Stroke::new(
-            2.0,
+            2.0_f32,
             egui::Color32::from_rgba_premultiplied(255, 200, 0, 220),
         ),
     ));
@@ -1222,7 +1222,7 @@ fn render_minimap(
         crate::theme::RADIUS_TIGHT,
         egui::Color32::from_rgba_premultiplied(0, 0, 0, 140),
         egui::Stroke::new(
-            1.0,
+            1.0_f32,
             egui::Color32::from_rgba_premultiplied(255, 255, 255, 100),
         ),
     );
@@ -1259,6 +1259,6 @@ fn render_minimap(
     painter.rect_stroke(
         frustum.intersect(minimap_rect),
         0.0,
-        egui::Stroke::new(1.0, crate::theme::ACCENT),
+        egui::Stroke::new(1.0_f32, crate::theme::ACCENT),
     );
 }

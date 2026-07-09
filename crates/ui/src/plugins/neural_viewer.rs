@@ -369,7 +369,7 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain, view: &mut crate::state
             positions[idx],
             node_radius,
             color,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(20)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(20)),
             NodeShape::Circle,
         );
 
@@ -572,7 +572,7 @@ fn draw_cppn_graph(
             positions[idx],
             node_radius,
             color,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(20)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(20)),
             NodeShape::Square,
         );
     }

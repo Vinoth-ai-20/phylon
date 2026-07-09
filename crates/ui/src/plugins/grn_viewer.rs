@@ -169,7 +169,7 @@ fn draw_grn_graph(
             positions[i],
             node_radius,
             fill,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(200)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(200)),
             crate::graph_canvas::NodeShape::Circle,
         );
         painter.text(

@@ -230,7 +230,7 @@ pub fn viewport_ui(
                             let distance = (to_world(start) - to_world(current)).length();
                             ui.painter().line_segment(
                                 [start, current],
-                                egui::Stroke::new(2.0, crate::theme::ACCENT),
+                                egui::Stroke::new(2.0_f32, crate::theme::ACCENT),
                             );
                             ui.painter().text(
                                 current,
@@ -245,7 +245,7 @@ pub fn viewport_ui(
                                 sel_rect,
                                 0.0,
                                 egui::Color32::from_white_alpha(20),
-                                egui::Stroke::new(1.0, egui::Color32::from_white_alpha(180)),
+                                egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(180)),
                             );
                         }
                     }
@@ -282,7 +282,7 @@ pub fn viewport_ui(
                 let (screen_start, screen_end) = (to_screen(start), to_screen(end));
                 ui.painter().line_segment(
                     [screen_start, screen_end],
-                    egui::Stroke::new(2.0, crate::theme::ACCENT),
+                    egui::Stroke::new(2.0_f32, crate::theme::ACCENT),
                 );
                 ui.painter().text(
                     screen_end,

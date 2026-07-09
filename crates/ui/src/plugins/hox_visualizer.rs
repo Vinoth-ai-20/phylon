@@ -124,7 +124,7 @@ fn body_preview_strip(
                 crate::theme::DISABLED_FG
             };
             ui.painter()
-                .rect_stroke(rect, 2.0, egui::Stroke::new(1.5, stroke_color));
+                .rect_stroke(rect, 2.0, egui::Stroke::new(1.5_f32, stroke_color));
 
             response.clone().on_hover_text(format!(
                 "Position {index}: {:?}{}",

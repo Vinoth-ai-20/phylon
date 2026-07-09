@@ -378,8 +378,8 @@ pub fn apply_style(ctx: &egui::Context, high_contrast: bool) {
         // fix. The default active-state stroke was low-contrast against
         // Phylon's near-black chrome; this makes it `FOCUS_RING`-colored and
         // thick enough to actually notice.
-        style.visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0, FOCUS_RING);
-        style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, FOCUS_RING);
+        style.visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0_f32, FOCUS_RING);
+        style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, FOCUS_RING);
 
         // High Contrast Mode (Phase 2, M18): brightens body/button text and
         // widget borders app-wide. Scoped to these few style fields rather
@@ -391,9 +391,9 @@ pub fn apply_style(ctx: &egui::Context, high_contrast: bool) {
         if high_contrast {
             style.visuals.override_text_color = Some(egui::Color32::WHITE);
             style.visuals.widgets.noninteractive.bg_stroke =
-                egui::Stroke::new(1.0, egui::Color32::from_gray(200));
+                egui::Stroke::new(1.0_f32, egui::Color32::from_gray(200));
             style.visuals.widgets.inactive.bg_stroke =
-                egui::Stroke::new(1.0, egui::Color32::from_gray(160));
+                egui::Stroke::new(1.0_f32, egui::Color32::from_gray(160));
         } else {
             style.visuals.override_text_color = None;
             style.visuals.widgets.noninteractive.bg_stroke =
