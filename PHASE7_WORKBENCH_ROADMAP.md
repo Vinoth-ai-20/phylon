@@ -395,6 +395,34 @@ The 4 groups already exist as real, distinct mechanisms in the codebase (`TimedE
 
 **W3a is complete.** Awaiting review before W3b.
 
+### Epic W3, Milestone W3b — Workspace Management (named layout presets)
+
+**Re-audit before implementation**: read `crates/ui/src/state.rs`'s `Workspace` enum and `crates/ui/src/layout.rs`'s `LayoutPreset`/`apply_layout_preset`/`docs/design/layout.md` directly, rather than assuming either the roadmap's or W0a's prior description was still accurate.
+
+- **`Workspace` (10 variants: Ecology/Biology/Evolution/Neural/Genetics/Rendering/Analytics/Performance/Debug/Settings)** — confirmed, via exhaustive `grep` (not sampled), exactly 2 references in the entire workspace, both inside `state.rs` itself (the field declaration and its `Default` construction). Zero readers anywhere — no UI surfaces it, no system branches on it. Also confirmed its variant names don't line up with the roadmap's actual requested preset set (Research/Analytics/Evolution/Teaching/Presentation/Debug) — it's a different, abandoned taxonomy from an earlier design pass, not a draft of the same one.
+- **`LayoutPreset` (3 variants: Research/Presentation/Debug)** — confirmed real, live, exercised from two menu locations, documented in `docs/design/layout.md`, and already routes through `apply_layout_preset` → the single `rebuild_tree_from_modes` builder → `state.panel_modes`/`state.layout_shares`, the exact two fields W3a just wired into `Preferences`. Verified each existing preset's actual differentiation by reading `apply_layout_preset`'s match arms directly (not assuming the doc comments were accurate): Research closes Neural Viewer + 8 analysis/debug panels; Presentation additionally closes Sidebar and floats Metrics; Debug leaves everything docked except Placeholder Panel. All three genuinely distinct, confirmed by reading, not by trusting the docstrings alone (Phase 5, SX-8b had already found and fixed one docstring/behavior mismatch here).
+
+**Decision**: `LayoutPreset` becomes the sole named-workspace model. `Workspace`/`active_workspace` are deleted outright, not repurposed — a second taxonomy covering the same concept would violate the same "single pathway" principle `ADR-W0-01` established for selection state, and `Workspace`'s own variant set doesn't map onto the real preset names needed anyway.
+
+**Architectural changes**:
+- `crates/ui/src/state.rs`: deleted `Workspace` enum and `WorkbenchState::active_workspace` field entirely (confirmed zero external references before removal).
+- `crates/ui/src/layout.rs`: `LayoutPreset` extended from 3 to 6 variants (`Research`, `Analytics`, `Evolution`, `Teaching`, `Presentation`, `Debug`), each with a doc comment stating specifically what it adds/removes relative to `Research` — not just a label. Added `LayoutPreset::ALL` (the one list both menus now iterate over) and `LayoutPreset::label()`. `apply_layout_preset` gained 3 new match arms; the function's own signature, its single caller pattern, and `rebuild_tree_from_modes` as the sole tree builder are all unchanged — no second layout-construction pathway was introduced.
+- `crates/ui/src/plugins/menu.rs`: both the View menu and Windows menu's "Layout Presets" submenus (previously two independently-hardcoded 3-button blocks — a real duplication W0a's audit had already flagged) now loop over `LayoutPreset::ALL`, so a 7th preset in the future is a one-line addition to the array, not 2 more duplicated blocks.
+- `docs/design/layout.md`: "Layout presets" section rewritten to describe all 6, plus a note recording why `Workspace` was deleted rather than reused.
+
+**Preset differentiation** (the actual design work, not just enum plumbing):
+- **Analytics** = Research + Research Dashboard + Cell Lineage Viewer docked, Neural Viewer closed — cross-experiment/population analysis, not organism internals.
+- **Evolution** = Research + Evolution Debugger + Cell Lineage Viewer docked (Neural Viewer already was) — within-run generational/genetic analysis; Research Dashboard closed (that's Analytics's job).
+- **Teaching** = minimal like Presentation, but Sidebar stays docked (show an organism's Inspector card live) and Metrics stays docked, not floating (anchored during a live explanation instead of a window to manage).
+
+**Files changed**: `crates/ui/src/state.rs`, `crates/ui/src/lib.rs`, `crates/ui/src/layout.rs`, `crates/ui/src/plugins/menu.rs`, `docs/design/layout.md`.
+
+**Verification**: `cargo build --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `cargo test --workspace` — all clean, 0 failures across all 28 crates. `ui` crate: 12→18 tests — `LayoutPreset::ALL` contains every variant exactly once (guards against the array silently drifting from the enum as variants are added); Analytics's and Evolution's differentiators asserted directly against `apply_layout_preset`'s actual output; a dedicated `teaching_and_presentation_presets_differ` test proving the two aren't a renamed copy of each other (the specific risk the user's own review named). Ran the real windowed binary for an 8-second smoke test — clean, no panics.
+
+**Remaining limitations, disclosed**: the 3 new presets' actual panel selections are a design judgment call (documented with stated reasoning above), not derived from any user research — reasonable defaults, not claimed to be validated against real researcher/instructor workflows. Switching presets interactively in the running app (clicking each of the 6 menu entries and visually confirming the resulting layout) was not manually verified — covered by direct unit tests against `apply_layout_preset`'s output plus a crash-free smoke run, same disclosed-limitation pattern as prior W0 milestones.
+
+**W3b is complete.** Awaiting review before W3c.
+
 ---
 
 ## 7. Architecture Decision Records

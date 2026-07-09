@@ -23,7 +23,7 @@ pub mod layout;
 pub mod state;
 pub use state::{
     default_panel_modes, EventLogFilter, PanelMode, PlaybackState, Toast, ToastSeverity,
-    WorkbenchState, Workspace,
+    WorkbenchState,
 };
 
 /// Reusable recent-items tracking (Phase 7, W0d) — see its own module doc

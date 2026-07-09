@@ -32,13 +32,16 @@ Split ratios themselves get min/max share constraints so a panel can be shrunk b
 
 ## Layout presets
 
-Three named presets, each a fixed `PanelMode` + share configuration, selectable from the Windows menu:
+Six named presets (Phase 7, W3b — expanded from the original three), each a fixed `PanelMode` + share configuration, selectable from the View and Windows menus (`LayoutPreset::ALL`, one shared list both menus iterate over):
 
-- **Research** (default) — Sidebar + Viewport + Neural Viewer docked, Metrics/Event Log tabbed at the bottom. The current default layout.
-- **Presentation** — Sidebar and Neural Viewer closed, Viewport maximized, Metrics floating (for screen-sharing a clean simulation view).
+- **Research** (default) — Sidebar + Viewport + Neural Viewer docked, Metrics/Event Log tabbed at the bottom. The general-purpose default layout.
+- **Analytics** — Research, plus Research Dashboard (cross-experiment comparison) and Cell Lineage Viewer (population/lineage analytics) docked; Neural Viewer closed. For comparing runs/populations, not inspecting one organism's internals.
+- **Evolution** — Research, plus Evolution Debugger and Cell Lineage Viewer docked (Neural Viewer already is); Research Dashboard closed. For within-run generational/genetic analysis, as distinct from Analytics's cross-experiment focus.
+- **Teaching** — Sidebar + Viewport + Metrics/Event Log docked; everything else closed. Distinct from Presentation: Sidebar stays docked (so an instructor can click an organism and show its Inspector card live) and Metrics stays docked, not floating (anchored during a live explanation, not a movable window to manage).
+- **Presentation** — Sidebar and Neural Viewer closed, Viewport maximized, Metrics floating (for screen-sharing/recording a clean simulation view with nothing to actively reference).
 - **Debug** — everything docked and visible, including panels a researcher might normally close.
 
-A **Restore Defaults** action resets to the Research preset via `apply_layout_preset`, which (Milestone 9) now supports all three named presets rather than only the one original default.
+A **Restore Defaults** action resets to the Research preset via `apply_layout_preset` — the single function every preset (and Restore Defaults) routes through; no preset has its own parallel tree-construction path. `ui::state::Workspace` — an entirely separate, never-wired 10-variant enum from an earlier design pass (`Ecology`/`Biology`/`Evolution`/`Neural`/`Genetics`/`Rendering`/`Analytics`/`Performance`/`Debug`/`Settings`, set once at `WorkbenchState` construction and never read again) — was deleted rather than repurposed as a second "named workspace" concept: its variant names didn't match the real preset set above, and `LayoutPreset` was already the live, exercised mechanism.
 
 **New panel (Phase 2, M4/M5): "Research Dashboard"** — lists/compares experiment reports from `data/experiments/`. Closed by default in all three presets (same treatment as "Placeholder Panel"); open it from the Windows menu. Shares the root row alongside Sidebar/Neural Viewer/Placeholder Panel — added with zero changes to the docking model itself, the same forward-compatibility slot `docs/design/layout.md`'s Placeholder Panel was built to prove out.
 

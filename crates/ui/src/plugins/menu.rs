@@ -325,23 +325,16 @@ pub fn menu_ui(
             }
             ui.separator();
             ui.menu_button("Layout Presets", |ui| {
-                if ui.button("Research (default)").clicked() {
-                    crate::layout::apply_layout_preset(
-                        state,
-                        crate::layout::LayoutPreset::Research,
-                    );
-                    ui.close_menu();
-                }
-                if ui.button("Presentation").clicked() {
-                    crate::layout::apply_layout_preset(
-                        state,
-                        crate::layout::LayoutPreset::Presentation,
-                    );
-                    ui.close_menu();
-                }
-                if ui.button("Debug").clicked() {
-                    crate::layout::apply_layout_preset(state, crate::layout::LayoutPreset::Debug);
-                    ui.close_menu();
+                // Phase 7, W3b: one list (`LayoutPreset::ALL`) instead of a
+                // hardcoded button per preset, duplicated here and in the
+                // Windows menu below — adding a 7th preset in the future is
+                // now a one-line change to `LayoutPreset::ALL`, not two
+                // more duplicated button blocks.
+                for preset in crate::layout::LayoutPreset::ALL {
+                    if ui.button(preset.label()).clicked() {
+                        crate::layout::apply_layout_preset(state, preset);
+                        ui.close_menu();
+                    }
                 }
             });
             if ui.button("Restore Defaults").clicked() {
@@ -531,23 +524,16 @@ pub fn menu_ui(
 
             ui.separator();
             ui.menu_button("Layout Presets", |ui| {
-                if ui.button("Research (default)").clicked() {
-                    crate::layout::apply_layout_preset(
-                        state,
-                        crate::layout::LayoutPreset::Research,
-                    );
-                    ui.close_menu();
-                }
-                if ui.button("Presentation").clicked() {
-                    crate::layout::apply_layout_preset(
-                        state,
-                        crate::layout::LayoutPreset::Presentation,
-                    );
-                    ui.close_menu();
-                }
-                if ui.button("Debug").clicked() {
-                    crate::layout::apply_layout_preset(state, crate::layout::LayoutPreset::Debug);
-                    ui.close_menu();
+                // Phase 7, W3b: one list (`LayoutPreset::ALL`) instead of a
+                // hardcoded button per preset, duplicated here and in the
+                // Windows menu below — adding a 7th preset in the future is
+                // now a one-line change to `LayoutPreset::ALL`, not two
+                // more duplicated button blocks.
+                for preset in crate::layout::LayoutPreset::ALL {
+                    if ui.button(preset.label()).clicked() {
+                        crate::layout::apply_layout_preset(state, preset);
+                        ui.close_menu();
+                    }
                 }
             });
             if ui.button("Restore Defaults").clicked() {

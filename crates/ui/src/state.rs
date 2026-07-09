@@ -1,32 +1,6 @@
 use bevy_ecs::entity::Entity;
 use egui_tiles::Tree;
 
-/// Identifies the active workspace layout in the egui_tiles tree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Workspace {
-    /// Ecology view — organism populations and interactions.
-    #[default]
-    Ecology,
-    /// Biology view — cellular physiology and metabolism.
-    Biology,
-    /// Evolution view — generational and mutation analytics.
-    Evolution,
-    /// Neural view — brain/CTRNN analysis.
-    Neural,
-    /// Genetics view — genome and CPPN graphs.
-    Genetics,
-    /// Rendering view — graphics and debug overlays.
-    Rendering,
-    /// Analytics view — time-series charts.
-    Analytics,
-    /// Performance view — framerate and ECS profiling.
-    Performance,
-    /// Debug view — raw ECS component inspection.
-    Debug,
-    /// Settings view — application configuration.
-    Settings,
-}
-
 /// A transient notification message rendered as a toast card.
 #[derive(Debug, Clone)]
 pub struct Toast {
@@ -63,8 +37,6 @@ pub enum PlaybackState {
 
 /// Central state for the entire Workbench UI.
 pub struct WorkbenchState {
-    /// The active top-level workspace (Ecology, Biology, Neural, etc.).
-    pub active_workspace: Workspace,
     /// The entity currently selected by the user, if any — the "primary"
     /// selection. Every pre-Phase-2 call site keeps reading/writing this
     /// field exactly as before; it is unchanged by the addition of
@@ -505,7 +477,6 @@ impl Default for WorkbenchState {
         };
 
         Self {
-            active_workspace: Workspace::Ecology,
             selected_entity: None,
             secondary_selected: std::collections::HashSet::new(),
             hovered_entity: None,

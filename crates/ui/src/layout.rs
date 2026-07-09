@@ -975,19 +975,71 @@ fn collect_shares(
     }
 }
 
-/// A named, fixed `PanelMode` configuration selectable from the Windows menu
-/// — see `docs/design/layout.md`'s Layout Presets section.
+/// A named, fixed `PanelMode` configuration selectable from the Windows/View
+/// menus — see `docs/design/layout.md`'s Layout Presets section. Phase 7,
+/// W3b: this is the codebase's one and only "named workspace" model — see
+/// this milestone's own architectural note (`PHASE7_WORKBENCH_ROADMAP.md`)
+/// for why the previously-separate, entirely-unused `ui::state::Workspace`
+/// enum was deleted rather than repurposed as a second one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutPreset {
     /// Sidebar + Viewport + Neural Viewer docked, Metrics/Event Log tabbed
-    /// at the bottom. The default layout.
+    /// at the bottom. The default, general-purpose layout.
     Research,
+    /// Sidebar + Viewport + Metrics/Event Log docked, plus Research
+    /// Dashboard (cross-experiment comparison) and Cell Lineage Viewer
+    /// (population/lineage analytics) — the two panels this preset adds
+    /// relative to Research. Neural Viewer closed: organism-level brain
+    /// detail isn't this preset's focus. For comparing runs/populations,
+    /// not inspecting one organism's internals.
+    Analytics,
+    /// Sidebar + Viewport + Metrics/Event Log docked, plus Evolution
+    /// Debugger, Cell Lineage Viewer, and Neural Viewer (genome/brain
+    /// structure across generations) — the panels this preset adds
+    /// relative to Research. Research Dashboard closed: this preset is
+    /// about within-run generational/genetic change, not cross-experiment
+    /// comparison (that's Analytics's job).
+    Evolution,
+    /// Sidebar + Viewport + Metrics/Event Log docked; everything else
+    /// closed. Distinct from Presentation: Sidebar stays docked (so an
+    /// instructor can click an organism and show its Inspector card
+    /// live) and Metrics stays *docked*, not floating (anchored in the
+    /// layout during a live explanation, not a movable overlay window).
+    Teaching,
     /// Sidebar and Neural Viewer closed, Viewport maximized, Metrics
-    /// floating — for screen-sharing a clean simulation view.
+    /// floating — for screen-sharing/recording a clean simulation view
+    /// with no panels an instructor needs to actively reference.
     Presentation,
     /// Everything docked and visible, including panels a researcher might
     /// normally leave closed.
     Debug,
+}
+
+impl LayoutPreset {
+    /// Every preset, in menu-display order — the single list both the View
+    /// and Windows menus iterate over (Phase 7, W3b), so adding a 7th
+    /// preset in the future is a one-line change here, not two duplicated
+    /// button blocks.
+    pub const ALL: [LayoutPreset; 6] = [
+        LayoutPreset::Research,
+        LayoutPreset::Analytics,
+        LayoutPreset::Evolution,
+        LayoutPreset::Teaching,
+        LayoutPreset::Presentation,
+        LayoutPreset::Debug,
+    ];
+
+    /// Display label for menus.
+    pub fn label(self) -> &'static str {
+        match self {
+            LayoutPreset::Research => "Research (default)",
+            LayoutPreset::Analytics => "Analytics",
+            LayoutPreset::Evolution => "Evolution",
+            LayoutPreset::Teaching => "Teaching",
+            LayoutPreset::Presentation => "Presentation",
+            LayoutPreset::Debug => "Debug",
+        }
+    }
 }
 
 /// Apply a named layout preset: set every panel's `PanelMode`, clear any
@@ -1009,6 +1061,51 @@ pub fn apply_layout_preset(state: &mut WorkbenchState, preset: LayoutPreset) {
             // debug/analysis panels here — it just wasn't, until now. Found
             // by re-auditing this exact function while implementing the
             // panel-tier system, not a change made speculatively.
+            modes.insert("Evolution Debugger".to_string(), PanelMode::Closed);
+            modes.insert("Physiology Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Circulation Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Hormone Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Immune Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Cell Lineage Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Placeholder Panel".to_string(), PanelMode::Closed);
+        }
+        LayoutPreset::Analytics => {
+            // Adds Research Dashboard + Cell Lineage Viewer relative to
+            // Research (cross-experiment/population analytics); Neural
+            // Viewer stays closed since organism-level brain detail isn't
+            // this preset's focus.
+            modes.insert("Neural Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Replay Browser".to_string(), PanelMode::Closed);
+            modes.insert("Evolution Debugger".to_string(), PanelMode::Closed);
+            modes.insert("Physiology Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Circulation Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Hormone Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Immune Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Placeholder Panel".to_string(), PanelMode::Closed);
+        }
+        LayoutPreset::Evolution => {
+            // Adds Evolution Debugger + Cell Lineage Viewer + Neural Viewer
+            // relative to Research (genome/brain structure across
+            // generations); Research Dashboard stays closed since this
+            // preset is about within-run generational change, not
+            // cross-experiment comparison (that's Analytics's job).
+            modes.insert("Research Dashboard".to_string(), PanelMode::Closed);
+            modes.insert("Replay Browser".to_string(), PanelMode::Closed);
+            modes.insert("Physiology Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Circulation Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Hormone Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Immune Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Placeholder Panel".to_string(), PanelMode::Closed);
+        }
+        LayoutPreset::Teaching => {
+            // Deliberately minimal like Presentation, but Sidebar stays
+            // docked (an instructor can click an organism and show its
+            // Inspector card live) and Metrics stays docked rather than
+            // floating (anchored in the layout during a live explanation,
+            // not a movable overlay window the instructor has to manage).
+            modes.insert("Neural Viewer".to_string(), PanelMode::Closed);
+            modes.insert("Research Dashboard".to_string(), PanelMode::Closed);
+            modes.insert("Replay Browser".to_string(), PanelMode::Closed);
             modes.insert("Evolution Debugger".to_string(), PanelMode::Closed);
             modes.insert("Physiology Viewer".to_string(), PanelMode::Closed);
             modes.insert("Circulation Viewer".to_string(), PanelMode::Closed);
@@ -1147,6 +1244,113 @@ mod tests {
         assert_eq!(
             state.panel_modes.get("Evolution Debugger"),
             Some(&PanelMode::Docked)
+        );
+    }
+
+    /// Phase 7, W3b: `LayoutPreset::ALL` must actually list every variant
+    /// (a hand-maintained array can silently fall out of sync with the enum
+    /// as variants are added) — this is the direct proof, not just a count.
+    #[test]
+    fn layout_preset_all_contains_every_variant_exactly_once() {
+        let all = LayoutPreset::ALL;
+        for preset in [
+            LayoutPreset::Research,
+            LayoutPreset::Analytics,
+            LayoutPreset::Evolution,
+            LayoutPreset::Teaching,
+            LayoutPreset::Presentation,
+            LayoutPreset::Debug,
+        ] {
+            assert_eq!(
+                all.iter().filter(|&&p| p == preset).count(),
+                1,
+                "{preset:?} must appear in LayoutPreset::ALL exactly once"
+            );
+        }
+    }
+
+    /// Analytics's actual differentiator vs. Research: Research Dashboard
+    /// and Cell Lineage Viewer open, Neural Viewer closed.
+    #[test]
+    fn analytics_preset_opens_research_dashboard_and_lineage_but_not_neural_viewer() {
+        let mut state = WorkbenchState::default();
+        apply_layout_preset(&mut state, LayoutPreset::Analytics);
+        assert_eq!(
+            state.panel_modes.get("Research Dashboard"),
+            Some(&PanelMode::Docked)
+        );
+        assert_eq!(
+            state.panel_modes.get("Cell Lineage Viewer"),
+            Some(&PanelMode::Docked)
+        );
+        assert_eq!(
+            state.panel_modes.get("Neural Viewer"),
+            Some(&PanelMode::Closed)
+        );
+    }
+
+    /// Evolution's actual differentiator vs. Research: Evolution Debugger,
+    /// Cell Lineage Viewer, and Neural Viewer open; Research Dashboard
+    /// closed (that's Analytics's job, not this preset's).
+    #[test]
+    fn evolution_preset_opens_debugger_lineage_and_neural_viewer_but_not_research_dashboard() {
+        let mut state = WorkbenchState::default();
+        apply_layout_preset(&mut state, LayoutPreset::Evolution);
+        assert_eq!(
+            state.panel_modes.get("Evolution Debugger"),
+            Some(&PanelMode::Docked)
+        );
+        assert_eq!(
+            state.panel_modes.get("Cell Lineage Viewer"),
+            Some(&PanelMode::Docked)
+        );
+        assert_eq!(
+            state.panel_modes.get("Neural Viewer"),
+            Some(&PanelMode::Docked)
+        );
+        assert_eq!(
+            state.panel_modes.get("Research Dashboard"),
+            Some(&PanelMode::Closed)
+        );
+    }
+
+    /// Teaching's actual differentiator vs. Presentation: Sidebar stays
+    /// docked (not closed) and Metrics stays docked (not floating) — both
+    /// exist so an instructor can reference organism detail and the
+    /// metrics panel without extra window management mid-explanation.
+    #[test]
+    fn teaching_preset_keeps_sidebar_docked_and_metrics_docked_not_floating() {
+        let mut state = WorkbenchState::default();
+        apply_layout_preset(&mut state, LayoutPreset::Teaching);
+        assert_eq!(
+            state.panel_modes.get("Sidebar"),
+            Some(&PanelMode::Docked),
+            "Teaching must keep Sidebar docked, unlike Presentation"
+        );
+        assert_eq!(
+            state.panel_modes.get("Metrics"),
+            Some(&PanelMode::Docked),
+            "Teaching must keep Metrics docked, not floating like Presentation"
+        );
+    }
+
+    /// Confirms Teaching and Presentation are genuinely different presets,
+    /// not a renamed copy of each other — the specific risk called out by
+    /// this milestone's own review ("verify every existing preset and
+    /// document what differentiates them").
+    #[test]
+    fn teaching_and_presentation_presets_differ() {
+        let mut teaching = WorkbenchState::default();
+        apply_layout_preset(&mut teaching, LayoutPreset::Teaching);
+        let mut presentation = WorkbenchState::default();
+        apply_layout_preset(&mut presentation, LayoutPreset::Presentation);
+        assert_ne!(
+            teaching.panel_modes.get("Sidebar"),
+            presentation.panel_modes.get("Sidebar")
+        );
+        assert_ne!(
+            teaching.panel_modes.get("Metrics"),
+            presentation.panel_modes.get("Metrics")
         );
     }
 
