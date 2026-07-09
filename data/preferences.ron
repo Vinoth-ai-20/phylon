@@ -5,4 +5,26 @@
     recent_items: (
         lists: {},
     ),
+    panel_modes: {
+        "Sidebar": Docked,
+        "Replay Browser": Closed,
+        "Metrics": Docked,
+        "Cell Lineage Viewer": Closed,
+        "Evolution Debugger": Closed,
+        "Immune Viewer": Closed,
+        "Event Log": Docked,
+        "Physiology Viewer": Closed,
+        "Neural Viewer": Closed,
+        "Circulation Viewer": Closed,
+        "Viewport": Docked,
+        "Placeholder Panel": Closed,
+        "Hormone Viewer": Closed,
+        "Research Dashboard": Closed,
+    },
+    layout_shares: {
+        "MainColumn": 3.0,
+        "Viewport": 3.0,
+        "BottomTabs": 1.0,
+        "Sidebar": 1.0,
+    },
 )

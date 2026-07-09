@@ -453,7 +453,12 @@ pub enum EventLogFilter {
 }
 
 /// Visibility mode for a named workspace panel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+///
+/// Phase 7, W3a: derives `Serialize`/`Deserialize` so `panel_modes` can be
+/// persisted as part of `app::preferences::Preferences` — layout survives
+/// an app restart the same way `high_contrast`/`ui_scale`/`recent_items`
+/// already do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum PanelMode {
     /// The panel is embedded in the egui_tiles docking tree.
     #[default]

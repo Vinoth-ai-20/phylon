@@ -6,10 +6,12 @@
 //! setup: tick rate, RNG seed, headless mode) — covering cosmetic,
 //! cross-session UI preferences a person would expect to persist: High
 //! Contrast Mode, the UI scale factor, whether the first-run onboarding
-//! hints dialog (Phase 5, SX-9a) has ever been shown, and (Phase 7, W0d)
-//! recent-items history (`ui::RecentItemsService`) — the last of which is
-//! *not* cosmetic (losing it would defeat the point of "recent"), but
-//! shares this mechanism since it's the same "small state that should
+//! hints dialog (Phase 5, SX-9a) has ever been shown, (Phase 7, W0d)
+//! recent-items history (`ui::RecentItemsService`), and (Phase 7, W3a) the
+//! docked/floating/closed layout of every named panel plus each dragged
+//! split ratio — none of the last three are purely cosmetic (losing them
+//! defeats the point of "recent" or "where I left my workspace"), but all
+//! share this mechanism since it's the same "small state that should
 //! survive a restart" shape.
 //!
 //! ## 2. Why It Happens
@@ -53,6 +55,25 @@ pub(crate) struct Preferences {
     /// cap/missing-file policy this field's contents are governed by.
     #[serde(default)]
     pub(crate) recent_items: ui::RecentItemsService,
+    /// Mirrors `ui::WorkbenchState::panel_modes` (Phase 7, W3a) — which
+    /// named panels are Docked/Floating/Closed. `#[serde(default = ...)]`
+    /// (not a bare `#[serde(default)]`) so a preferences file predating
+    /// this field, or one written before a panel existed, falls back to
+    /// `ui::default_panel_modes()` rather than an empty map — an empty
+    /// map would make `layout::rebuild_tree_from_modes` treat every
+    /// missing entry as `Docked` (its own per-key fallback), which is
+    /// wrong for the several panels (Neural Viewer, Research Dashboard,
+    /// etc.) that default to `Closed`.
+    #[serde(default = "ui::default_panel_modes")]
+    pub(crate) panel_modes: std::collections::HashMap<String, ui::PanelMode>,
+    /// Mirrors `ui::WorkbenchState::layout_shares` (Phase 7, W3a) — each
+    /// dragged split ratio, keyed the same way `layout::extract_shares`
+    /// already keys them. An empty map here is always a safe, sensible
+    /// default (no dragged ratio recorded yet, so hardcoded defaults
+    /// apply) — a bare `#[serde(default)]` is correct, unlike
+    /// `panel_modes` above.
+    #[serde(default)]
+    pub(crate) layout_shares: std::collections::HashMap<String, f32>,
 }
 
 impl Default for Preferences {
@@ -62,6 +83,8 @@ impl Default for Preferences {
             ui_scale: 1.0,
             onboarding_seen: false,
             recent_items: ui::RecentItemsService::default(),
+            panel_modes: ui::default_panel_modes(),
+            layout_shares: std::collections::HashMap::new(),
         }
     }
 }
@@ -133,11 +156,18 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("phylon_prefs_test_{}", std::process::id()));
         let path = dir.join("preferences.ron");
 
+        let mut panel_modes = ui::default_panel_modes();
+        panel_modes.insert("Metrics".to_string(), ui::PanelMode::Floating);
+        let mut layout_shares = std::collections::HashMap::new();
+        layout_shares.insert("Sidebar".to_string(), 0.42);
+
         let mut prefs = Preferences {
             high_contrast: true,
             ui_scale: 1.5,
             onboarding_seen: true,
             recent_items: ui::RecentItemsService::default(),
+            panel_modes,
+            layout_shares,
         };
         prefs
             .recent_items
@@ -156,6 +186,44 @@ mod tests {
         );
         assert_eq!(loaded.ui_scale, 1.5);
         assert!(loaded.onboarding_seen);
+        assert_eq!(
+            loaded.panel_modes.get("Metrics"),
+            Some(&ui::PanelMode::Floating),
+            "panel layout must survive a save/load round trip"
+        );
+        assert_eq!(
+            loaded.layout_shares.get("Sidebar"),
+            Some(&0.42),
+            "split ratios must survive a save/load round trip"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_preferences_file_predating_layout_fields_falls_back_to_default_panel_modes() {
+        // Phase 7, W3a: a preferences file saved before this milestone has
+        // no `panel_modes`/`layout_shares` keys at all. `panel_modes` must
+        // fall back to `ui::default_panel_modes()` (Neural Viewer etc.
+        // Closed), not an empty map (which `rebuild_tree_from_modes` would
+        // treat as "every panel Docked" via its own per-key fallback).
+        let dir =
+            std::env::temp_dir().join(format!("phylon_prefs_predate_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("preferences.ron");
+        std::fs::write(
+            &path,
+            "(high_contrast: false, ui_scale: 1.0, onboarding_seen: false)",
+        )
+        .unwrap();
+
+        let loaded = Preferences::load(&path);
+        assert_eq!(
+            loaded.panel_modes.get("Neural Viewer"),
+            Some(&ui::PanelMode::Closed),
+            "must fall back to default_panel_modes(), not an empty map"
+        );
+        assert!(loaded.layout_shares.is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

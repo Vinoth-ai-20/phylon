@@ -83,9 +83,10 @@ pub(crate) struct PhylonApp {
     pub(crate) sim_config: PhylonConfig,
 
     /// Cross-session UI preferences (Phase 6, Epic J) — High Contrast Mode,
-    /// UI scale, whether onboarding hints have ever been shown, and (Phase
-    /// 7, W0d) recent-items history. See `crate::preferences`'s module doc
-    /// comment for why this is separate from `sim_config`.
+    /// UI scale, whether onboarding hints have ever been shown, (Phase 7,
+    /// W0d) recent-items history, and (Phase 7, W3a) panel layout. See
+    /// `crate::preferences`'s module doc comment for why this is separate
+    /// from `sim_config`.
     pub(crate) preferences: crate::preferences::Preferences,
 
     /// Central ECS World holding all entities and global resources
@@ -356,6 +357,15 @@ impl PhylonApp {
         ui.high_contrast = preferences.high_contrast;
         ui.ui_scale = preferences.ui_scale;
         ui.recent_items = preferences.recent_items.clone();
+        // Phase 7, W3a: restore the persisted panel layout in place of
+        // `WorkbenchState::default()`'s own hardcoded starting tree, then
+        // rebuild `dock_tree` from it — `rebuild_tree_from_modes` is the
+        // sole authoritative tree builder (see `layout.rs`'s own doc
+        // comment), so restoring layout is exactly "call it again with the
+        // restored inputs," not a second, parallel tree-construction path.
+        ui.panel_modes = preferences.panel_modes.clone();
+        ui.layout_shares = preferences.layout_shares.clone();
+        ui::layout::rebuild_tree_from_modes(&mut ui.dock_tree, &ui.panel_modes, &ui.layout_shares);
 
         Self {
             sim_config,
@@ -405,6 +415,12 @@ impl PhylonApp {
         // Phase 7, W0d: recent-items history persists across restarts the
         // same way high_contrast/ui_scale do.
         self.preferences.recent_items = self.ui.recent_items.clone();
+        // Phase 7, W3a: panel layout persists the same way. `layout_shares`
+        // is already kept current every frame by `ui::render`'s
+        // `extract_shares` (reads the live tree's actual split ratios), so
+        // this is just copying its current value, not computing anything.
+        self.preferences.panel_modes = self.ui.panel_modes.clone();
+        self.preferences.layout_shares = self.ui.layout_shares.clone();
         self.preferences
             .save(&crate::preferences::preferences_path());
     }

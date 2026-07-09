@@ -22,7 +22,8 @@ pub mod layout;
 /// Workbench UI state (dock tree, panel visibility, playback, toasts).
 pub mod state;
 pub use state::{
-    EventLogFilter, PanelMode, PlaybackState, Toast, ToastSeverity, WorkbenchState, Workspace,
+    default_panel_modes, EventLogFilter, PanelMode, PlaybackState, Toast, ToastSeverity,
+    WorkbenchState, Workspace,
 };
 
 /// Reusable recent-items tracking (Phase 7, W0d) — see its own module doc
