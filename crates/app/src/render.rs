@@ -25,6 +25,12 @@ use anyhow::Result;
 
 use crate::app::PhylonApp;
 
+/// Organism visual-instance builders (Phase 7, W2a) — the "what to draw"
+/// half of this file's per-node/per-spring loops. See its own module doc
+/// comment for the extraction discipline.
+mod organism_visuals;
+use organism_visuals::BoneKind;
+
 impl PhylonApp {
     /// # Main Frame Renderer and Time Integrator
     ///
@@ -455,25 +461,12 @@ impl PhylonApp {
             // nothing drawn above 40% — absence is the encoding for the
             // common healthy case, matching SX-1b's Idle precedent.
             if let Some(health) = health {
-                let fraction = if health.max > 0.0 {
-                    (health.current / health.max).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                if fraction < 0.40 {
-                    let token = if fraction < 0.15 {
-                        ui::theme::BAD
-                    } else {
-                        ui::theme::WARN
-                    };
-                    let [r, g, b, _] = token.to_normalized_gamma_f32();
-                    debug_instances.push(rendering::DebugInstance {
-                        pos_a: [node.position.x, node.position.y],
-                        pos_b: [node.position.x, node.position.y],
-                        color: [r, g, b, 0.6],
-                        radius: 10.0 * (self.ui.node_radius / 5.0),
-                        segment_type: 99,
-                    });
+                if let Some(instance) = organism_visuals::health_ring_instance(
+                    health,
+                    [node.position.x, node.position.y],
+                    self.ui.node_radius,
+                ) {
+                    debug_instances.push(instance);
                 }
             }
 
@@ -495,83 +488,26 @@ impl PhylonApp {
                         0.0
                     }
                 });
-                let is_critical = avg_severity > 0.70 || health_fraction < 0.15;
-
-                let (color, alpha, radius) = match infection.state {
-                    ecology::disease::InfectionState::Incubating => {
-                        // Faintest, smallest — biologically asymptomatic, but
-                        // not literally invisible (this milestone's own brief
-                        // asks that it be distinguishable at a glance).
-                        ([0.6, 0.6, 0.65], 0.25, 4.0)
-                    }
-                    ecology::disease::InfectionState::Infectious if is_critical => {
-                        // Critical: an intensified version of Infectious, not
-                        // a separately-tracked simulation state — escalates
-                        // toward `theme::BAD`'s hue.
-                        let [r, g, b, _] = ui::theme::BAD.to_normalized_gamma_f32();
-                        ([r, g, b], 0.85, 9.0)
-                    }
-                    ecology::disease::InfectionState::Infectious => {
-                        let purple = ecology::Diet::Decomposer.standard_color();
-                        (purple, 0.4 + avg_severity * 0.4, 5.0 + avg_severity * 3.0)
-                    }
-                    ecology::disease::InfectionState::Recovered => {
-                        // Permanent "survived and immune" marker — solid,
-                        // small, not severity-scaled (there's no ongoing
-                        // severity for a recovered organism).
-                        let [r, g, b, _] = ui::theme::GOOD.to_normalized_gamma_f32();
-                        ([r, g, b], 0.5, 4.0)
-                    }
-                };
-                let offset = 12.0 * (self.ui.node_radius / 5.0);
-                debug_instances.push(rendering::DebugInstance {
-                    pos_a: [node.position.x - offset, node.position.y - offset],
-                    pos_b: [node.position.x - offset, node.position.y - offset],
-                    color: [color[0], color[1], color[2], alpha],
-                    radius,
-                    segment_type: 99,
-                });
+                debug_instances.push(organism_visuals::disease_badge_instance(
+                    infection,
+                    avg_severity,
+                    health_fraction,
+                    [node.position.x, node.position.y],
+                    self.ui.node_radius,
+                ));
             }
 
             if should_draw_debug {
-                debug_instances.push(rendering::DebugInstance {
-                    pos_a: [node.position.x, node.position.y],
-                    pos_b: [node.position.x, node.position.y],
-                    color: match node.segment_type {
-                        0 => [1.000, 1.000, 1.000, 1.0], // Head - Absolute White #FFFFFF
-                        2 => [1.000, 0.033, 0.133, 1.0], // Muscle - Actuation Pink #FF3366
-                        3 => [1.000, 0.319, 0.000, 1.0], // Tail - Terminal Orange #FF9900
-                        4 => [0.000, 0.784, 1.000, 1.0], // Fin - Passive Cyan #00E5FF
-                        5 => [1.000, 0.000, 0.400, 1.0], // Vascular - Circulatory Magenta #FF0066
-                        6 => [0.600, 0.200, 1.000, 1.0], // Ganglion - Neural Violet #9933FF
-                        7 => [1.000, 0.843, 0.000, 1.0], // Germinal - Germ-line Gold #FFD700
-                        _ => [0.000, 0.784, 1.000, 1.0], // Torso - Passive Cyan #00E5FF
-                    },
-                    radius: if node.segment_type == 4 {
-                        3.0 * (self.ui.node_radius / 5.0)
-                    } else {
-                        self.ui.node_radius
-                    },
-                    segment_type: node.segment_type,
-                });
+                debug_instances.push(organism_visuals::segment_debug_dot_instance(
+                    node,
+                    self.ui.node_radius,
+                ));
 
-                // Draw category ring around head
                 if let Some(cat) = category {
-                    let ring_color = match cat {
-                        ecology::EcologicalCategory::Keystone => Some([1.0, 0.84, 0.0, 1.0]), // Gold
-                        ecology::EcologicalCategory::Indicator => Some([0.0, 1.0, 1.0, 1.0]), // Cyan
-                        ecology::EcologicalCategory::Endemic => Some([0.0, 0.5, 0.5, 1.0]), // Teal
-                        ecology::EcologicalCategory::Invasive => Some([1.0, 0.0, 1.0, 1.0]), // Magenta
-                        _ => None,
-                    };
-                    if let Some(col) = ring_color {
-                        debug_instances.push(rendering::DebugInstance {
-                            pos_a: [node.position.x, node.position.y],
-                            pos_b: [node.position.x, node.position.y],
-                            color: [col[0], col[1], col[2], 0.3], // Semi-transparent
-                            radius: 12.0 * (self.ui.node_radius / 5.0), // Larger radius
-                            segment_type: 99,
-                        });
+                    if let Some(instance) =
+                        organism_visuals::category_ring_instance(cat, node, self.ui.node_radius)
+                    {
+                        debug_instances.push(instance);
                     }
                 }
             }
@@ -706,14 +642,11 @@ impl PhylonApp {
                 node_positions.get(&spring.node_b),
             ) {
                 if org_a != org_b {
-                    let [r, g, b, _] = ui::theme::ACCENT.to_normalized_gamma_f32();
-                    debug_instances.push(rendering::DebugInstance {
-                        pos_a: pa,
-                        pos_b: pb,
-                        color: [r, g, b, 0.55],
-                        radius: 5.0 * (self.ui.skin_thickness / 3.0),
-                        segment_type: 99,
-                    });
+                    debug_instances.push(organism_visuals::colony_link_instance(
+                        pa,
+                        pb,
+                        self.ui.skin_thickness,
+                    ));
                 }
             }
 
@@ -724,38 +657,24 @@ impl PhylonApp {
                 .as_ref()
                 .is_some_and(|comp| comp.contains(&spring.node_a) && comp.contains(&spring.node_b));
 
-            let mut highlight_radius = 8.0 * (self.ui.skin_thickness / 3.0);
-            if spring.is_fin == 1 {
-                highlight_radius = 4.0 * (self.ui.skin_thickness / 3.0);
-            }
-            if spring.constraint_type == physics::ConstraintType::Passive && spring.is_fin == 0 {
-                highlight_radius = 4.0 * (self.ui.skin_thickness / 3.0);
-            }
-            if spring.constraint_type == physics::ConstraintType::Elastic {
-                highlight_radius = 6.0 * (self.ui.skin_thickness / 3.0);
-            }
-
             if let (Some(&pa), Some(&pb)) = (
                 node_positions.get(&spring.node_a),
                 node_positions.get(&spring.node_b),
             ) {
-                if is_in_hovered {
-                    hover_bones.push(rendering::SdfBoneInstance {
-                        pos_a: pa,
-                        pos_b: pb,
-                        radius: highlight_radius,
-                        color: [0.0, 1.0, 0.0],
-                        health: 1.0,
-                    });
+                let (hover, selected) = organism_visuals::bone_highlight_instances(
+                    pa,
+                    pb,
+                    spring.is_fin == 1,
+                    spring.constraint_type,
+                    self.ui.skin_thickness,
+                    is_in_hovered,
+                    is_in_selected,
+                );
+                if let Some(instance) = hover {
+                    hover_bones.push(instance);
                 }
-                if is_in_selected {
-                    selected_bones.push(rendering::SdfBoneInstance {
-                        pos_a: pa,
-                        pos_b: pb,
-                        radius: highlight_radius,
-                        color: [1.0, 1.0, 1.0],
-                        health: 1.0,
-                    });
+                if let Some(instance) = selected {
+                    selected_bones.push(instance);
                 }
             }
 
@@ -765,117 +684,49 @@ impl PhylonApp {
                 !self.ui.debug_structural || (selected_component.is_some() && !is_in_selected);
 
             // Skip springs that have no associated organism color (e.g. broken/detached).
-            if spring.constraint_type == physics::ConstraintType::Passive && spring.is_fin == 0 {
-                // Passive tail bones: thin and dimmed
-                if let (Some(&pa), Some(&pb)) = (
-                    node_positions.get(&spring.node_a),
-                    node_positions.get(&spring.node_b),
-                ) {
-                    let color = opt_color
-                        .map(|c| {
-                            let c = c.0;
-                            [c[0] * 0.6, c[1] * 0.6, c[2] * 0.6]
-                        })
-                        .unwrap_or([0.4, 0.4, 0.4]);
-                    let health = entity_health_fraction
-                        .get(&spring.node_a)
-                        .copied()
-                        .unwrap_or(1.0)
-                        * spotlight_factor(spring.node_a);
-
-                    if should_draw_sdf && bone_visible(pa, pb) {
-                        sdf_bones.push(rendering::SdfBoneInstance {
-                            pos_a: pa,
-                            pos_b: pb,
-                            radius: 4.0 * (self.ui.skin_thickness / 3.0) * growth_scale,
-                            color,
-                            health,
-                        });
-                    }
-                    if should_draw_debug {
-                        debug_instances.push(rendering::DebugInstance {
-                            pos_a: pa,
-                            pos_b: pb,
-                            color: [0.246, 0.287, 0.434, 0.4],
-                            radius: self.ui.bone_line_thickness,
-                            segment_type: 99,
-                        });
-                    }
-                }
-                continue;
-            }
-
-            if spring.constraint_type == physics::ConstraintType::Elastic {
-                // Elastic muscle bones: medium weight
-                if let (Some(&pa), Some(&pb)) = (
-                    node_positions.get(&spring.node_a),
-                    node_positions.get(&spring.node_b),
-                ) {
-                    let color = opt_color.map(|c| c.0).unwrap_or([0.5, 0.5, 0.8]);
-                    let health = entity_health_fraction
-                        .get(&spring.node_a)
-                        .copied()
-                        .unwrap_or(1.0)
-                        * spotlight_factor(spring.node_a);
-                    if should_draw_sdf && bone_visible(pa, pb) {
-                        sdf_bones.push(rendering::SdfBoneInstance {
-                            pos_a: pa,
-                            pos_b: pb,
-                            radius: 6.0 * (self.ui.skin_thickness / 3.0) * growth_scale,
-                            color,
-                            health,
-                        });
-                    }
-                    if should_draw_debug {
-                        debug_instances.push(rendering::DebugInstance {
-                            pos_a: pa,
-                            pos_b: pb,
-                            color: [0.246, 0.287, 0.434, 0.4],
-                            radius: self.ui.bone_line_thickness,
-                            segment_type: 99,
-                        });
-                    }
-                }
-                continue;
-            }
-
-            if spring.constraint_type != physics::ConstraintType::Rigid
-                && spring.constraint_type != physics::ConstraintType::Rotational
+            let bone_kind = if spring.constraint_type == physics::ConstraintType::Passive
+                && spring.is_fin == 0
             {
+                BoneKind::PassiveTail
+            } else if spring.constraint_type == physics::ConstraintType::Elastic {
+                BoneKind::ElasticMuscle
+            } else if spring.constraint_type == physics::ConstraintType::Rigid
+                || spring.constraint_type == physics::ConstraintType::Rotational
+            {
+                BoneKind::RigidOrRotational {
+                    is_fin: spring.is_fin == 1,
+                }
+            } else {
                 continue;
-            }
+            };
+
             if let (Some(&pa), Some(&pb)) = (
                 node_positions.get(&spring.node_a),
                 node_positions.get(&spring.node_b),
             ) {
-                // Determine bone thickness
-                let radius = (if spring.is_fin == 1 { 4.0 } else { 8.0 })
-                    * (self.ui.skin_thickness / 3.0)
-                    * growth_scale;
-
-                let color = opt_color.map(|c| c.0).unwrap_or([0.8, 0.8, 0.8]);
-                let health = entity_health_fraction
+                let health_fraction = entity_health_fraction
                     .get(&spring.node_a)
                     .copied()
-                    .unwrap_or(1.0)
-                    * spotlight_factor(spring.node_a);
-                if should_draw_sdf && bone_visible(pa, pb) {
-                    sdf_bones.push(rendering::SdfBoneInstance {
-                        pos_a: pa,
-                        pos_b: pb,
-                        radius,
-                        color,
-                        health,
-                    });
+                    .unwrap_or(1.0);
+                let (sdf, debug) = organism_visuals::bone_visual_instances(
+                    bone_kind,
+                    pa,
+                    pb,
+                    opt_color.map(|c| c.0),
+                    health_fraction,
+                    spotlight_factor(spring.node_a),
+                    growth_scale,
+                    self.ui.skin_thickness,
+                    self.ui.bone_line_thickness,
+                    should_draw_sdf,
+                    should_draw_debug,
+                    bone_visible(pa, pb),
+                );
+                if let Some(instance) = sdf {
+                    sdf_bones.push(instance);
                 }
-                if should_draw_debug {
-                    debug_instances.push(rendering::DebugInstance {
-                        pos_a: pa,
-                        pos_b: pb,
-                        color: [0.246, 0.287, 0.434, 0.4],
-                        radius: self.ui.bone_line_thickness,
-                        segment_type: 99,
-                    });
+                if let Some(instance) = debug {
+                    debug_instances.push(instance);
                 }
             }
         }
@@ -894,48 +745,32 @@ impl PhylonApp {
                 self.ui.debug_structural && (selected_component.is_none() || is_in_selected);
             let should_draw_sdf =
                 !self.ui.debug_structural || (selected_component.is_some() && !is_in_selected);
+            let is_hovered = hovered_component
+                .as_ref()
+                .is_some_and(|c| c.contains(&entity));
 
-            if should_draw_debug {
-                debug_instances.push(rendering::DebugInstance {
-                    pos_a: pos,
-                    pos_b: pos,
-                    color: [1.000, 0.665, 0.078, 1.0], // #FFD54F
-                    radius: 2.5,
-                    segment_type: 0,
-                });
+            let instances = organism_visuals::pellet_like_instances(
+                pos,
+                [1.000, 0.665, 0.078, 1.0], // #FFD54F
+                [1.000, 0.665, 0.078],
+                2.5,
+                should_draw_debug,
+                should_draw_sdf,
+                bone_visible(pos, pos),
+                is_hovered,
+                is_in_selected,
+            );
+            if let Some(instance) = instances.debug {
+                debug_instances.push(instance);
             }
-            if should_draw_sdf && bone_visible(pos, pos) {
-                sdf_bones.push(rendering::SdfBoneInstance {
-                    pos_a: pos,
-                    pos_b: pos,
-                    radius: 2.5,
-                    color: [1.000, 0.665, 0.078], // #FFD54F
-                    health: 1.0,
-                });
+            if let Some(instance) = instances.sdf {
+                sdf_bones.push(instance);
             }
-            if hovered_component
-                .as_ref()
-                .is_some_and(|c| c.contains(&entity))
-            {
-                hover_bones.push(rendering::SdfBoneInstance {
-                    pos_a: pos,
-                    pos_b: pos,
-                    radius: 2.5,
-                    color: [0.0, 1.0, 0.0],
-                    health: 1.0,
-                });
+            if let Some(instance) = instances.hover {
+                hover_bones.push(instance);
             }
-            if selected_component
-                .as_ref()
-                .is_some_and(|c| c.contains(&entity))
-            {
-                selected_bones.push(rendering::SdfBoneInstance {
-                    pos_a: pos,
-                    pos_b: pos,
-                    radius: 2.5,
-                    color: [1.0, 1.0, 1.0],
-                    health: 1.0,
-                });
+            if let Some(instance) = instances.selected {
+                selected_bones.push(instance);
             }
         }
 
@@ -953,48 +788,32 @@ impl PhylonApp {
                 self.ui.debug_structural && (selected_component.is_none() || is_in_selected);
             let should_draw_sdf =
                 !self.ui.debug_structural || (selected_component.is_some() && !is_in_selected);
+            let is_hovered = hovered_component
+                .as_ref()
+                .is_some_and(|c| c.contains(&entity));
 
-            if should_draw_debug {
-                debug_instances.push(rendering::DebugInstance {
-                    pos_a: pos,
-                    pos_b: pos,
-                    color: [0.397, 0.539, 0.584, 1.0], // #A9C2C9
-                    radius: 2.0,
-                    segment_type: 0,
-                });
+            let instances = organism_visuals::pellet_like_instances(
+                pos,
+                [0.397, 0.539, 0.584, 1.0], // #A9C2C9
+                [0.397, 0.539, 0.584],
+                2.0,
+                should_draw_debug,
+                should_draw_sdf,
+                bone_visible(pos, pos),
+                is_hovered,
+                is_in_selected,
+            );
+            if let Some(instance) = instances.debug {
+                debug_instances.push(instance);
             }
-            if should_draw_sdf && bone_visible(pos, pos) {
-                sdf_bones.push(rendering::SdfBoneInstance {
-                    pos_a: pos,
-                    pos_b: pos,
-                    radius: 2.0,
-                    color: [0.397, 0.539, 0.584], // #A9C2C9
-                    health: 1.0,
-                });
+            if let Some(instance) = instances.sdf {
+                sdf_bones.push(instance);
             }
-            if hovered_component
-                .as_ref()
-                .is_some_and(|c| c.contains(&entity))
-            {
-                hover_bones.push(rendering::SdfBoneInstance {
-                    pos_a: pos,
-                    pos_b: pos,
-                    radius: 2.0,
-                    color: [0.0, 1.0, 0.0],
-                    health: 1.0,
-                });
+            if let Some(instance) = instances.hover {
+                hover_bones.push(instance);
             }
-            if selected_component
-                .as_ref()
-                .is_some_and(|c| c.contains(&entity))
-            {
-                selected_bones.push(rendering::SdfBoneInstance {
-                    pos_a: pos,
-                    pos_b: pos,
-                    radius: 2.0,
-                    color: [1.0, 1.0, 1.0],
-                    health: 1.0,
-                });
+            if let Some(instance) = instances.selected {
+                selected_bones.push(instance);
             }
         }
 
@@ -1012,48 +831,32 @@ impl PhylonApp {
                 self.ui.debug_structural && (selected_component.is_none() || is_in_selected);
             let should_draw_sdf =
                 !self.ui.debug_structural || (selected_component.is_some() && !is_in_selected);
+            let is_hovered = hovered_component
+                .as_ref()
+                .is_some_and(|c| c.contains(&entity));
 
-            if should_draw_debug {
-                debug_instances.push(rendering::DebugInstance {
-                    pos_a: pos,
-                    pos_b: pos,
-                    color: [0.153, 0.136, 0.156, 1.0], // #6D676E
-                    radius: 4.0,
-                    segment_type: 0,
-                });
+            let instances = organism_visuals::pellet_like_instances(
+                pos,
+                [0.153, 0.136, 0.156, 1.0], // #6D676E
+                [0.153, 0.136, 0.156],
+                4.0,
+                should_draw_debug,
+                should_draw_sdf,
+                bone_visible(pos, pos),
+                is_hovered,
+                is_in_selected,
+            );
+            if let Some(instance) = instances.debug {
+                debug_instances.push(instance);
             }
-            if should_draw_sdf && bone_visible(pos, pos) {
-                sdf_bones.push(rendering::SdfBoneInstance {
-                    pos_a: pos,
-                    pos_b: pos,
-                    radius: 4.0,
-                    color: [0.153, 0.136, 0.156], // #6D676E
-                    health: 1.0,
-                });
+            if let Some(instance) = instances.sdf {
+                sdf_bones.push(instance);
             }
-            if hovered_component
-                .as_ref()
-                .is_some_and(|c| c.contains(&entity))
-            {
-                hover_bones.push(rendering::SdfBoneInstance {
-                    pos_a: pos,
-                    pos_b: pos,
-                    radius: 4.0,
-                    color: [0.0, 1.0, 0.0],
-                    health: 1.0,
-                });
+            if let Some(instance) = instances.hover {
+                hover_bones.push(instance);
             }
-            if selected_component
-                .as_ref()
-                .is_some_and(|c| c.contains(&entity))
-            {
-                selected_bones.push(rendering::SdfBoneInstance {
-                    pos_a: pos,
-                    pos_b: pos,
-                    radius: 4.0,
-                    color: [1.0, 1.0, 1.0],
-                    health: 1.0,
-                });
+            if let Some(instance) = instances.selected {
+                selected_bones.push(instance);
             }
         }
 

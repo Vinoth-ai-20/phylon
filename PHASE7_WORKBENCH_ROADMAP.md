@@ -462,6 +462,55 @@ The 4 groups already exist as real, distinct mechanisms in the codebase (`TimedE
 
 **W3c is complete.** Awaiting review before the next milestone.
 
+### Epic W2, Milestone W2a — Extract "what to draw" decision logic from `render.rs`'s per-node/per-spring loops
+
+**Scope, per the user's own framing**: architectural separation only — not rendering optimization, not rendering modernization. No visual, behavioral, or performance change is in scope; every threshold, color, gating condition, and literal moves verbatim.
+
+**Audit before implementation**: read all of `crates/app/src/render.rs` (1616 lines) directly rather than assuming its shape from the roadmap's own prior description. Confirmed: the entire file is one `PhylonApp::render` method with zero internal `fn` decomposition — every visual feature (health ring, disease badge, segment debug dot, category ring, colony link, hover/selection bone highlight, and 3 near-duplicate main skin/bone tiers) computed its color/alpha/radius and pushed a `rendering::DebugInstance`/`rendering::SdfBoneInstance` inline, in the same statement, with no separated "decide" step. Also confirmed (relevant to W2b, not touched this milestone) the food/mineral/corpse blocks are structurally identical modulo 4 literals + component type, and (relevant to W2c, not touched this milestone) `neural_viewer.rs`/`grn_viewer.rs`'s graph draw loops share real pan/zoom/hit-test code (`graph_canvas.rs`) but diverge more than expected in node shape, layout algorithm, and "liveness" indicator mechanism — flagged for that milestone's own scoping, not acted on here.
+
+Also confirmed: `rendering::DebugInstance`/`rendering::SdfBoneInstance` already live in the separate `rendering` crate and are already shared across every entity kind (organisms, food, minerals, corpses) — this milestone required no instance-type changes, only extracting the decision logic that constructs them.
+
+**Decision — one new sibling module, pure builder functions**: `crates/app/src/render/organism_visuals.rs` (a file-with-sibling-directory submodule of `render.rs`, Rust 2018+ style — no `mod.rs` needed) holds one function per visual feature, each taking already-looked-up data (a component reference, a resolved position, a resolved scalar) and returning the instance(s) to push. No function in this module queries `World` or reads `PhylonApp` fields directly — `render.rs`'s loops keep doing all data-gathering (unchanged) and now call a builder, then push whatever it returns.
+
+- `health_ring_instance`, `disease_badge_instance`, `segment_debug_dot_instance`, `category_ring_instance` — one function per node-loop feature, each verbatim-extracted.
+- `colony_link_instance`, `bone_highlight_instances` (returns `(hover, selected)`, either optionally `None`) — the spring-loop features outside the main skin/bone fork.
+- `BoneKind` enum (`PassiveTail | ElasticMuscle | RigidOrRotational { is_fin }`) + `bone_visual_instances` — the passive/elastic/rigid-or-rotational 3-branch fork folded into one function parameterized by `BoneKind`, since those three branches are as near-duplicate as W2b's food/mineral/corpse trio and this is the same defect pattern in the same loop. This went slightly beyond the roadmap's literal W2a wording (which names health/disease/growth/category/colony/spotlight but not the bone-tier fork specifically) — flagged to the user before implementation; approved to include.
+
+**Architectural changes**:
+- New `crates/app/src/render/organism_visuals.rs` (pure builder functions, listed above).
+- `crates/app/src/render.rs`: added `mod organism_visuals;`; the per-node loop (previously ~150 lines of inline color/threshold logic) now gathers data and calls 4 builder functions; the per-spring loop's colony-link check, hover/selection highlight, and 3-branch main-tier fork now call `colony_link_instance`/`bone_highlight_instances`/`bone_visual_instances` respectively. The file's overall structure (one `render` method, same query order, same closures for `bone_visible`/`spotlight_factor`/`selected_component`/`hovered_component`) is otherwise unchanged — W2d's own note ("only split `render.rs` further if it improves architecture at that point") means no other reorganization was attempted here.
+
+**Files changed**: `crates/app/src/render/organism_visuals.rs` (new), `crates/app/src/render.rs`.
+
+**Verification**: `cargo build --workspace --all-targets`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` — all clean, 0 failures across all 28 crates. (Two clippy lints were surfaced and fixed during this pass, both in the new module: `bool::then(|| ...)` → `then_some(...)` ×4, and an `if is_fin { X } else if constraint_type == Passive { X }` identical-blocks lint fixed by combining the condition with `||` — confirmed logically identical to the original inline code, not a behavior change.) Ran the real windowed binary for an 8-second smoke test — clean, no panics; this run showed only the known cosmetic `wgpu_hal` present-mode/validation-layer warnings, no `bevy_ecs` B0003 noise this time (a population-dependent warning, not a regression).
+
+**Remaining limitations, disclosed**: this milestone is decision-logic extraction only — it does not touch `render.rs`'s per-frame data-gathering (the `HashMap`/closure setup before the loops), which W2a's own roadmap wording scoped out, nor does it address W2b (food/mineral/corpse dedup) or W2c (neural/GRN graph-canvas consolidation), both still pending as their own milestones. Visual output was not diffed pixel-by-pixel against pre-milestone screenshots (no screenshot-regression harness exists in this repo, same disclosed limitation as every prior milestone) — confidence that behavior is unchanged rests on the extraction being verbatim (confirmed by direct before/after reading of every moved literal) plus the crash-free smoke run, not an automated visual diff.
+
+**W2a is complete.** Awaiting review before W2b.
+
+**Manual visual regression pass (per the user's request before considering W2a permanently closed)**: since no screenshot-regression harness exists in this repo, `git stash` was used to build the pre-W2a binary alongside the post-W2a one, both launched with identical wait timing and the same fixed `rng_seed` (`data/default.ron`'s seed is a constant, not randomized per launch), each captured via the keyboard-only Ctrl+Shift+S screenshot shortcut (no mouse/dialog needed, so this was scriptable rather than manual clicking). Both screenshots show the same visual language — organism blob colors/shapes, the `Grazed!`/`Hunted!`/`Infected!` floating-text feedback, minimap, and status-bar zones (including the `Diseased:` counter) — no corruption, no crashes. A byte-exact pixel diff wasn't achievable (the sim is wall-clock-driven, not frame-stepped, so the two runs land on different tick counts/positions even with an identical seed — inherent to the app, not a limitation of this check), and the specific debug-tier overlays this milestone touched (health/category rings) weren't independently isolated (`debug_structural` is a mouse-driven menu/sidebar toggle, not a keyboard shortcut, so it wasn't reachable through blind keystroke automation, and those small rings blend into the dense organism mass at normal zoom). The strongest evidence for those specific features remains the verbatim line-by-line extraction already performed during implementation.
+
+### Epic W2, Milestone W2b — Deduplicate food/mineral/corpse rendering
+
+**Scope, per the user's own framing**: continues the same architectural-separation discipline as W2a — no visual, behavioral, or performance change.
+
+**Audit** (already completed as part of W2a's combined audit pass, re-confirmed by direct reading before this milestone's implementation): the three blocks (food, mineral, corpse — then at `render.rs` lines ~734–909) were byte-for-byte identical except the component type queried and 4 literals per kind: debug color (`[f32;4]`), debug radius, sdf color (`[f32;3]`), sdf radius — and radius was itself shared across all 4 emission sites (debug/sdf/hover/selected) within each kind, not just debug/sdf.
+
+**Decision**: one new function, `organism_visuals::pellet_like_instances(pos, debug_color, sdf_color, radius, should_draw_debug, should_draw_sdf, bone_visible, is_hovered, is_selected) -> PelletInstances` (a small struct with 4 `Option` fields — debug/sdf/hover/selected), replacing all three blocks' bodies. The three call sites in `render.rs` keep their own `bevy_ecs` queries (component types genuinely differ — `FoodPellet`/`MineralPellet`/`Corpse` — so the query loops themselves can't be generalized, only the per-entity body), each now computing its own `is_in_selected`/`is_hovered`/`should_draw_debug`/`should_draw_sdf`/`bone_visible(pos,pos)` (unchanged logic) and calling the shared builder with its own 4 literals.
+
+**Architectural changes**:
+
+- `crates/app/src/render/organism_visuals.rs`: added `PelletInstances` struct and `pellet_like_instances`.
+- `crates/app/src/render.rs`: all three blocks (food/mineral/corpse) reduced from ~55 lines of duplicated inline instance-construction each to ~25 lines each (query + call + 4 `if let Some`s pushing into the existing `Vec`s).
+
+**Files changed**: `crates/app/src/render/organism_visuals.rs`, `crates/app/src/render.rs`.
+
+**Verification**: `cargo build --workspace --all-targets`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` — all clean, 0 failures across all 28 crates, no new clippy lints this pass. Ran the real windowed binary for an 8-second smoke test — clean, no panics, only the known cosmetic `bevy_ecs` B0003 warning.
+
+**Remaining limitations, disclosed**: same as W2a — no screenshot-regression harness exists, so this milestone's own visual behavior wasn't independently re-verified beyond the crash-free smoke run and the verbatim-extraction discipline (every literal/condition confirmed unchanged by direct before/after reading). W2c (neural/GRN graph-canvas consolidation) and W2d (reassessing whether `render.rs` needs further splitting) remain pending as their own milestones.
+
+**W2b is complete.** Awaiting review before W2c.
+
 ---
 
 ## 7. Architecture Decision Records
