@@ -52,3 +52,7 @@ pub mod status_bar;
 pub mod toolbar;
 /// Central simulation viewport.
 pub mod viewport;
+/// Workspace Manager overlay — save/rename/duplicate/delete/export/import
+/// user-defined panel layouts, reset a built-in preset back to its
+/// canonical shape (Phase 7, W3c).
+pub mod workspace_manager;

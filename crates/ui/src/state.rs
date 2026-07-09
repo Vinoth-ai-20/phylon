@@ -359,6 +359,42 @@ pub struct WorkbenchState {
     /// overlays (Phase 5, SX-7b) — pure display preference, not simulation
     /// data, so it lives here rather than in `analytics::MetricsState`.
     pub metrics_options: MetricsSeriesOptions,
+
+    /// User-saved workspaces plus which workspace (built-in or saved) is
+    /// currently active (Phase 7, W3c) — see `crate::workspace`'s module
+    /// doc comment. `panel_modes`/`layout_shares` above remain the actual
+    /// rendered shape; this is metadata layered on top (which named
+    /// workspace, if any, produced that shape), never a second copy of it.
+    pub workspaces: crate::workspace::WorkspaceService,
+
+    /// Whether the Workspace Manager window (Phase 7, W3c) is open.
+    pub show_workspace_manager: bool,
+    /// The Workspace Manager's transient text-input flow, if any (saving a
+    /// new workspace, renaming one, or duplicating one) — one field
+    /// driving all three flows rather than three separate optional
+    /// strings, since only one can be active at a time.
+    pub workspace_name_dialog: WorkspaceNameDialog,
+    /// The Workspace Manager's name text field, reused across all 3 flows
+    /// `workspace_name_dialog` can be in.
+    pub workspace_name_input: String,
+}
+
+/// See `WorkbenchState::workspace_name_dialog`'s doc comment.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum WorkspaceNameDialog {
+    /// No name-input flow is active.
+    #[default]
+    Closed,
+    /// Saving the current live layout as a new workspace.
+    SavingNew,
+    /// Renaming an existing saved workspace, named here by its current
+    /// (pre-rename) name.
+    Renaming(String),
+    /// Duplicating an existing workspace (built-in or saved) named by
+    /// `crate::workspace::ActiveWorkspace`, since a built-in's "name" is a
+    /// `LayoutPreset` variant, not a plain string the way a saved
+    /// workspace's is.
+    Duplicating(crate::workspace::ActiveWorkspace),
 }
 
 /// Pan/zoom transform for one Neural Viewer graph canvas.
@@ -555,6 +591,10 @@ impl Default for WorkbenchState {
             timeline_step: 0,
             layout_shares: std::collections::HashMap::new(),
             metrics_options: MetricsSeriesOptions::default(),
+            workspaces: crate::workspace::WorkspaceService::default(),
+            show_workspace_manager: false,
+            workspace_name_dialog: WorkspaceNameDialog::default(),
+            workspace_name_input: String::new(),
             active_tab: crate::SidebarTab::Inspector,
             lineage_view: crate::LineageView::Ancestry,
             lineage_search: String::new(),

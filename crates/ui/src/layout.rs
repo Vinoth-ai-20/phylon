@@ -981,7 +981,7 @@ fn collect_shares(
 /// this milestone's own architectural note (`PHASE7_WORKBENCH_ROADMAP.md`)
 /// for why the previously-separate, entirely-unused `ui::state::Workspace`
 /// enum was deleted rather than repurposed as a second one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LayoutPreset {
     /// Sidebar + Viewport + Neural Viewer docked, Metrics/Event Log tabbed
     /// at the bottom. The default, general-purpose layout.
@@ -1042,10 +1042,15 @@ impl LayoutPreset {
     }
 }
 
-/// Apply a named layout preset: set every panel's `PanelMode`, clear any
-/// stale persisted split ratios (a preset is a deliberate reset, not a drag),
-/// and rebuild the tree.
-pub fn apply_layout_preset(state: &mut WorkbenchState, preset: LayoutPreset) {
+/// Computes a built-in preset's canonical `WorkspaceLayout` — pure data, no
+/// `WorkbenchState` touched. Phase 7, W3c: extracted out of
+/// `apply_layout_preset` so a built-in preset's layout can be captured,
+/// duplicated into a saved workspace, or reset back to, without requiring
+/// a live `WorkbenchState` to compute it — see
+/// `crate::workspace`'s "unified storage model" doc comment for why this
+/// function, not a second data shape, is how built-ins participate in
+/// workspace lifecycle operations.
+pub fn built_in_layout(preset: LayoutPreset) -> crate::workspace::WorkspaceLayout {
     let mut modes = std::collections::HashMap::new();
     for &name in ALL_PANEL_NAMES {
         modes.insert(name.to_string(), PanelMode::Docked);
@@ -1141,13 +1146,29 @@ pub fn apply_layout_preset(state: &mut WorkbenchState, preset: LayoutPreset) {
         }
     }
 
-    state.panel_modes = modes;
-    state.layout_shares.clear();
+    crate::workspace::WorkspaceLayout {
+        panel_modes: modes,
+        layout_shares: std::collections::HashMap::new(),
+    }
+}
+
+/// Apply a named built-in layout preset: compute its canonical layout
+/// (`built_in_layout`), apply it (clearing any stale persisted split
+/// ratios — a preset is a deliberate reset, not a drag), rebuild the tree,
+/// and mark it the active workspace (Phase 7, W3c) so it can be restored
+/// on next launch and reset back to on demand.
+pub fn apply_layout_preset(state: &mut WorkbenchState, preset: LayoutPreset) {
+    let layout = built_in_layout(preset);
+    state.panel_modes = layout.panel_modes;
+    state.layout_shares = std::collections::HashMap::new();
     rebuild_tree_from_modes(
         &mut state.dock_tree,
         &state.panel_modes,
         &state.layout_shares,
     );
+    state
+        .workspaces
+        .set_active(crate::workspace::ActiveWorkspace::BuiltIn(preset));
 }
 
 /// Reset the entire workspace to its default (Research) layout. Used by both

@@ -211,6 +211,93 @@ impl PhylonApp {
                 ui::MenuAction::LoadStateFromPath(path) => {
                     self.load_state_from_path(std::path::PathBuf::from(path));
                 }
+                ui::MenuAction::ExportWorkspace(name) => {
+                    if let Some(layout) = self.ui.workspaces.get(&name) {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Phylon Workspace", &["ron"])
+                            .set_file_name(format!("{name}.ron"))
+                            .save_file()
+                        {
+                            let exported = ui::ExportedWorkspace {
+                                name: name.clone(),
+                                layout: layout.clone(),
+                            };
+                            match ron::ser::to_string_pretty(
+                                &exported,
+                                ron::ser::PrettyConfig::default(),
+                            ) {
+                                Ok(text) => {
+                                    if std::fs::write(&path, text).is_ok() {
+                                        self.ui.push_toast(
+                                            format!("Workspace \"{name}\" exported"),
+                                            ui::ToastSeverity::Success,
+                                            3.0,
+                                        );
+                                    } else {
+                                        self.ui.push_toast(
+                                            "Failed to write workspace file",
+                                            ui::ToastSeverity::Error,
+                                            4.0,
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    self.ui.push_toast(
+                                        format!("Failed to serialize workspace: {e}"),
+                                        ui::ToastSeverity::Error,
+                                        4.0,
+                                    );
+                                }
+                            }
+                        }
+                    } else {
+                        self.ui.push_toast(
+                            format!("Workspace \"{name}\" not found"),
+                            ui::ToastSeverity::Warning,
+                            3.0,
+                        );
+                    }
+                }
+                ui::MenuAction::ImportWorkspace => {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Phylon Workspace", &["ron"])
+                        .pick_file()
+                    {
+                        match std::fs::read_to_string(&path) {
+                            Ok(text) => match ron::de::from_str::<ui::ExportedWorkspace>(&text) {
+                                Ok(exported) => {
+                                    // Phase 7, W3c: never trust an imported
+                                    // layout as-is — `sanitized()` is the
+                                    // mandatory step before this data ever
+                                    // reaches `rebuild_tree_from_modes`.
+                                    let sanitized = exported.layout.sanitized();
+                                    let unique_name =
+                                        self.ui.workspaces.unique_name(&exported.name);
+                                    self.ui.workspaces.save(unique_name.clone(), sanitized);
+                                    self.ui.push_toast(
+                                        format!("Imported workspace \"{unique_name}\""),
+                                        ui::ToastSeverity::Success,
+                                        3.0,
+                                    );
+                                }
+                                Err(e) => {
+                                    self.ui.push_toast(
+                                        format!("Invalid workspace file: {e}"),
+                                        ui::ToastSeverity::Error,
+                                        4.0,
+                                    );
+                                }
+                            },
+                            Err(e) => {
+                                self.ui.push_toast(
+                                    format!("Failed to read workspace file: {e}"),
+                                    ui::ToastSeverity::Error,
+                                    4.0,
+                                );
+                            }
+                        }
+                    }
+                }
                 ui::MenuAction::StepForward => {
                     self.accumulated_time += 1.0;
                 }

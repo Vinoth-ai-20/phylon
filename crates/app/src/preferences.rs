@@ -74,6 +74,13 @@ pub(crate) struct Preferences {
     /// `panel_modes` above.
     #[serde(default)]
     pub(crate) layout_shares: std::collections::HashMap<String, f32>,
+    /// Mirrors `ui::WorkbenchState::workspaces` (Phase 7, W3c) — every
+    /// user-saved workspace plus which one (built-in or saved) was last
+    /// active. See `ui::workspace`'s module doc comment for the unified
+    /// storage model this persists verbatim (it's already the "opaque,
+    /// serializable blob" `Preferences` doesn't interpret).
+    #[serde(default)]
+    pub(crate) workspaces: ui::WorkspaceService,
 }
 
 impl Default for Preferences {
@@ -85,6 +92,7 @@ impl Default for Preferences {
             recent_items: ui::RecentItemsService::default(),
             panel_modes: ui::default_panel_modes(),
             layout_shares: std::collections::HashMap::new(),
+            workspaces: ui::WorkspaceService::default(),
         }
     }
 }
@@ -161,6 +169,15 @@ mod tests {
         let mut layout_shares = std::collections::HashMap::new();
         layout_shares.insert("Sidebar".to_string(), 0.42);
 
+        let mut workspaces = ui::WorkspaceService::default();
+        workspaces.save(
+            "My Workspace",
+            ui::WorkspaceLayout {
+                panel_modes: ui::default_panel_modes(),
+                layout_shares: std::collections::HashMap::new(),
+            },
+        );
+
         let mut prefs = Preferences {
             high_contrast: true,
             ui_scale: 1.5,
@@ -168,6 +185,7 @@ mod tests {
             recent_items: ui::RecentItemsService::default(),
             panel_modes,
             layout_shares,
+            workspaces,
         };
         prefs
             .recent_items
@@ -195,6 +213,10 @@ mod tests {
             loaded.layout_shares.get("Sidebar"),
             Some(&0.42),
             "split ratios must survive a save/load round trip"
+        );
+        assert!(
+            loaded.workspaces.get("My Workspace").is_some(),
+            "saved workspaces must survive a save/load round trip"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

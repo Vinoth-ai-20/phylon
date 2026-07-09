@@ -228,6 +228,9 @@ pub fn render_ui(
     // ── Command Palette overlay (Phase 2, M15) ──────────────────────────────
     crate::plugins::command_palette::command_palette_ui(ctx, state, &mut actions);
 
+    // ── Workspace Manager overlay (Phase 7, W3c) ────────────────────────────
+    crate::plugins::workspace_manager::workspace_manager_ui(ctx, state, &mut actions);
+
     // ── Toast notifications overlay ─────────────────────────────────────────
     render_toasts(ctx, state);
 

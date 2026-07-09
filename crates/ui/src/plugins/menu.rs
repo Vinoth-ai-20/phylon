@@ -341,6 +341,15 @@ pub fn menu_ui(
                 crate::layout::apply_default_layout(state);
                 ui.close_menu();
             }
+            // Phase 7, W3c: opens the Workspace Manager overlay
+            // (`plugins::workspace_manager`) — save/rename/duplicate/
+            // delete/export/import/reset, all in one place rather than
+            // growing this menu with a lifecycle-operation submenu per
+            // saved workspace.
+            if ui.button("Manage Workspaces…").clicked() {
+                state.show_workspace_manager = true;
+                ui.close_menu();
+            }
         });
 
         // ── SELECTION ─────────────────────────────────────────────────────
@@ -538,6 +547,15 @@ pub fn menu_ui(
             });
             if ui.button("Restore Defaults").clicked() {
                 crate::layout::apply_default_layout(state);
+                ui.close_menu();
+            }
+            // Phase 7, W3c: opens the Workspace Manager overlay
+            // (`plugins::workspace_manager`) — save/rename/duplicate/
+            // delete/export/import/reset, all in one place rather than
+            // growing this menu with a lifecycle-operation submenu per
+            // saved workspace.
+            if ui.button("Manage Workspaces…").clicked() {
+                state.show_workspace_manager = true;
                 ui.close_menu();
             }
         });

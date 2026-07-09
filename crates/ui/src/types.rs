@@ -178,6 +178,17 @@ pub enum MenuAction {
     /// longer exists (see `crates/ui/src/recent_items.rs`'s missing-file
     /// policy) — never a panic.
     LoadStateFromPath(String),
+    /// Export a named saved workspace to a `.ron` file (Phase 7, W3c) — the
+    /// only workspace-lifecycle operation that needs `app`-crate file I/O;
+    /// every other lifecycle operation (save/rename/duplicate/delete/
+    /// apply/reset) only touches `WorkbenchState` and is called directly,
+    /// no `MenuAction` round-trip, matching `layout::apply_layout_preset`'s
+    /// existing precedent.
+    ExportWorkspace(String),
+    /// Import a workspace from a `.ron` file (Phase 7, W3c). The imported
+    /// layout is sanitized before being added as a saved workspace — see
+    /// `ui::workspace::WorkspaceLayout::sanitized`'s doc comment.
+    ImportWorkspace,
     /// Advance the simulation by one tick while paused.
     StepForward,
     /// Reseed the entire ecosystem

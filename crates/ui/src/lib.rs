@@ -23,13 +23,19 @@ pub mod layout;
 pub mod state;
 pub use state::{
     default_panel_modes, EventLogFilter, PanelMode, PlaybackState, Toast, ToastSeverity,
-    WorkbenchState,
+    WorkbenchState, WorkspaceNameDialog,
 };
 
 /// Reusable recent-items tracking (Phase 7, W0d) — see its own module doc
 /// comment for the ordering/duplicate/cap/persistence policy.
 pub mod recent_items;
 pub use recent_items::{RecentCategory, RecentItemsService};
+
+/// Workspace lifecycle management (Phase 7, W3c) — see its own module doc
+/// comment for the unified built-in/user-saved storage model and the
+/// "never a second layout-construction pathway" discipline.
+pub mod workspace;
+pub use workspace::{ActiveWorkspace, ExportedWorkspace, WorkspaceLayout, WorkspaceService};
 
 /// Per-panel UI plugins (sidebar, viewport, metrics, event log, menu, etc.).
 pub mod plugins;

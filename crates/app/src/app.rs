@@ -366,6 +366,10 @@ impl PhylonApp {
         ui.panel_modes = preferences.panel_modes.clone();
         ui.layout_shares = preferences.layout_shares.clone();
         ui::layout::rebuild_tree_from_modes(&mut ui.dock_tree, &ui.panel_modes, &ui.layout_shares);
+        // Phase 7, W3c: restore saved workspaces + which one was last
+        // active. Purely metadata layered on top of the shape already
+        // restored above — see `ui::workspace`'s module doc comment.
+        ui.workspaces = preferences.workspaces.clone();
 
         Self {
             sim_config,
@@ -421,6 +425,9 @@ impl PhylonApp {
         // this is just copying its current value, not computing anything.
         self.preferences.panel_modes = self.ui.panel_modes.clone();
         self.preferences.layout_shares = self.ui.layout_shares.clone();
+        // Phase 7, W3c: saved workspaces + active-workspace identity
+        // persist the same way.
+        self.preferences.workspaces = self.ui.workspaces.clone();
         self.preferences
             .save(&crate::preferences::preferences_path());
     }
