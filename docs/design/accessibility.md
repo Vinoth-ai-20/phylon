@@ -16,6 +16,21 @@ Phylon's core visual language leans on 5 hue-coded diet categories, repeated in 
 
 **Fixed, Phase 6 Epic J (Milestone J5).** This was flagged-not-fixed through Milestone 12 and the whole of Phase 5, since changing `Diet::standard_color()` changes the simulation's visual identity outside the `ui` crate boundary, not just a chrome color, and needed its own explicit sign-off. Measured (not guessed) via a throwaway Machado et al. (2009) deuteranopia simulation matrix applied to the real palette (`crates/ecology/examples/deuteranopia_check.rs`, deleted after use, per this project's "measure honestly, then delete" convention): the first hypothesis — shifting Omnivore's hue *toward* orange/red-adjacent tones — was tested and found to make the collision **worse** (converges harder with Carnivore's red under the transform), not better. Shifting instead toward a fully saturated, high-lightness bright yellow (`#FFDE00`, vs. the original amber `#FFB703`) measurably improved simulated-color separation from Carnivore (+43%), Producer (+35%), and Decomposer (+8%), at the cost of a small reduction vs. Herbivore (-7% — still an enormous margin; Herbivore's blue is nowhere near the yellow/red/green cluster this palette's real risk lives in). `Diet::Omnivore`'s `standard_color()` now returns `[1.0, 0.737972, 0.0]` (linear-space, `#FFDE00` sRGB) instead of `[1.0, 0.482, 0.0]` (`#FFB703`).
 
+## Tritanopia risk (Herbivore/Decomposer) — measured, Phase 7 W4c: not a real collision
+
+The Phase 7 audit flagged an **unverified** risk (not confirmed, not dismissed): Herbivore and Decomposer's `standard_color()` values share a near-identical linear-space blue channel (0.776 vs 0.789), a plausible tritanopia (blue-yellow deficiency) collision — but explicitly not measured at the time it was flagged, per this project's "measure before changing" discipline (the same rule that shaped the Deuteranopia fix above).
+
+**Measured, not assumed.** Applied a Machado, Oliveira & Fernandes (2009) tritanopia simulation matrix directly to `standard_color()`'s real linear-space RGB values (correctly *not* re-decoding them as sRGB — the function's own doc comment states they're already linear), then compared all 10 diet-color pairs by CIE Lab distance (ΔE), both under normal vision and under the simulated deficiency:
+
+| Pair | Normal ΔE | Tritanopia ΔE |
+| --- | --- | --- |
+| Herbivore vs. Decomposer (the flagged pair) | 90.5 | **69.5** |
+| Producer vs. Herbivore | 68.7 | 23.5 (largest relative drop, still separable) |
+| Omnivore vs. Decomposer | 163.7 | 47.5 |
+| (all other pairs) | 91–164 | 48–139 |
+
+**Finding: not a real collision.** Herbivore/Decomposer's shared blue channel does not produce a tritanopia collision — their simulated-tritanopia distance (69.5) stays far above the range where two of this palette's genuinely-confusable pairs would sit (for comparison, Phase 6's real, fixed Deuteranopia collision was between two colors converging to `#B5C154`/`#E4E939`, a difference small enough to read as "the same yellow-olive" at a glance). No pair in this palette collapses under simulated tritanopia the way Carnivore/Omnivore did under deuteranopia — the closest pair (Producer/Herbivore) still separates by a wide margin. **No color change is justified by this measurement** — `Diet::standard_color()` is unchanged. This closes the flagged-but-unverified risk as measured-and-dismissed, the same honest outcome Phase 6's own Deuteranopia check reached for the Producer/Carnivore pair it *originally* suspected before measuring the real collision elsewhere.
+
 ## Minimum text size
 
 `SIZE_SMALL` was raised from 11px to 12px (see [`typography.md`](typography.md)) — 11px is below a comfortable floor for an 8-hour continuous research session. `SIZE_MICRO` (11px) is retained only for the status bar's system zone, a deliberate, narrow exception, not a floor being ignored elsewhere.

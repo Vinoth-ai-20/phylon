@@ -124,13 +124,8 @@ fn draw_grn_graph(
     }
 
     let height = 260.0;
-    let (response, painter) = ui.allocate_painter(
-        egui::vec2(ui.available_width(), height),
-        egui::Sense::click_and_drag(),
-    );
-    crate::graph_canvas::handle_pan_zoom(ui, &response, view);
-    let rect = response.rect;
-    painter.rect_filled(rect, egui::Rounding::same(4.0), CANVAS_BG);
+    let (response, painter, rect) =
+        crate::graph_canvas::begin_graph_canvas(ui, height, CANVAS_BG, view);
 
     let n = network.nodes.len();
     let radius = (rect.width().min(rect.height()) / 2.0 - 24.0).max(10.0);
@@ -147,17 +142,14 @@ fn draw_grn_graph(
         if edge.source >= positions.len() || edge.target >= positions.len() {
             continue;
         }
-        let strength = (edge.weight.abs() / 3.0).min(1.0);
-        let alpha = (80.0 + 140.0 * strength) as u8;
-        let base = if edge.weight >= 0.0 {
-            EDGE_ACTIVATOR_BASE
-        } else {
-            EDGE_REPRESSOR_BASE
-        };
-        let color = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha);
+        let (color, width) = crate::graph_canvas::weighted_edge_stroke(
+            edge.weight,
+            EDGE_ACTIVATOR_BASE,
+            EDGE_REPRESSOR_BASE,
+        );
         painter.line_segment(
             [positions[edge.source], positions[edge.target]],
-            egui::Stroke::new(0.5 + 2.0 * strength, color),
+            egui::Stroke::new(width, color),
         );
     }
 
@@ -172,11 +164,13 @@ fn draw_grn_graph(
             (base.g() as f32 * expression) as u8,
             (base.b() as f32 * expression) as u8,
         );
-        painter.circle_filled(positions[i], node_radius, fill);
-        painter.circle_stroke(
+        crate::graph_canvas::draw_node(
+            &painter,
             positions[i],
             node_radius,
+            fill,
             egui::Stroke::new(1.0, egui::Color32::from_gray(200)),
+            crate::graph_canvas::NodeShape::Circle,
         );
         painter.text(
             positions[i] + egui::vec2(0.0, node_radius + 10.0),

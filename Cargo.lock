@@ -442,6 +442,8 @@ dependencies = [
  "common",
  "config",
  "criterion",
+ "ecology",
+ "events",
  "metabolism",
  "physics",
  "rayon",
@@ -3509,7 +3511,6 @@ dependencies = [
  "common",
  "config",
  "ron",
- "scheduler",
  "serde",
  "thiserror 2.0.18",
 ]

@@ -50,6 +50,8 @@ pub struct ShortcutManager {
     pub spawn: KeyboardShortcut,
     /// Toggle the Command Palette (Phase 2, M15).
     pub command_palette: KeyboardShortcut,
+    /// Toggle Global Search (Phase 7, W6a).
+    pub global_search: KeyboardShortcut,
 }
 
 impl Default for ShortcutManager {
@@ -76,6 +78,7 @@ impl Default for ShortcutManager {
             deselect: KeyboardShortcut::new(Modifiers::NONE, Key::Escape),
             spawn: KeyboardShortcut::new(Modifiers::CTRL, Key::P),
             command_palette: KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::P),
+            global_search: KeyboardShortcut::new(Modifiers::CTRL, Key::F),
         }
     }
 }
@@ -97,6 +100,9 @@ impl ShortcutManager {
         // ordering rule as take_screenshot/toggle_recording below).
         if ctx.input_mut(|i| i.consume_shortcut(&self.command_palette)) {
             actions.push(MenuAction::ToggleCommandPalette);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&self.global_search)) {
+            actions.push(MenuAction::ToggleGlobalSearch);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&self.take_screenshot)) {
             actions.push(MenuAction::TakeScreenshot);

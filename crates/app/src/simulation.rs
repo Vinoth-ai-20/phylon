@@ -521,6 +521,230 @@ impl PhylonApp {
         (physics_duration_ms, diffusion_duration_ms)
     }
 
+    /// # Per-Frame Simulation Cadence and Telemetry (Phase 7, W2d)
+    ///
+    /// Advances the fixed-timestep accumulator by this frame's real elapsed
+    /// wall-clock time, runs as many ticks (via [`Self::update_simulation`])
+    /// as the tick-count/wall-clock budget allows, and records this frame's
+    /// performance/demographic telemetry (population census, memory, and —
+    /// if the Metrics panel is visible — a GPU profiling readback).
+    ///
+    /// Extracted verbatim from `render()`'s prior inline body (Phase 7,
+    /// W2d's re-audit): every local this used to produce (`ticks_to_run`,
+    /// both duration_ms values, population counts, env samples) was
+    /// confirmed unreferenced anywhere else in `render()` before this
+    /// extraction — it is a fully self-contained "advance simulation and
+    /// record what happened" step, called once per redraw, before any
+    /// drawing. `render()` itself keeps its own camera-tracking step
+    /// (unrelated to simulation cadence) and calls this method right after.
+    pub(crate) fn advance_simulation_for_frame(&mut self) {
+        let dt = self.world.ecs.resource::<common::TickRate>().dt();
+
+        // Advance the accumulator by real elapsed wall-clock time (not by a
+        // fixed per-redraw amount), so the tick rate tracks real time even
+        // when frame time fluctuates or stalls.
+        let now = std::time::Instant::now();
+        let real_frame_dt = (now - self.last_frame_instant).as_secs_f32();
+        self.last_frame_instant = now;
+
+        // Guard against huge jumps (e.g. window was minimized/dragged) so we
+        // don't try to catch up on minutes of missed simulation at once.
+        let real_frame_dt = real_frame_dt.min(0.25);
+
+        // Only step simulation if we're in the simulation state and not paused
+        if self.app_state == ui::AppState::Simulation && !self.ui.is_paused {
+            self.accumulated_time += (real_frame_dt / dt) * self.simulation_speed;
+        }
+
+        let mut physics_duration_ms = 0.0;
+        let mut diffusion_duration_ms = 0.0;
+
+        let ticks_this_frame = self.accumulated_time.floor() as u32;
+        let ticks_to_run = ticks_this_frame.min(self.max_ticks_per_frame);
+        self.accumulated_time -= ticks_this_frame as f32;
+
+        // Wall-clock time budget: on top of the tick-count cap above, stop
+        // running queued ticks once we've spent too long simulating this
+        // frame. Without this, an overloaded simulation (tick cost > DT)
+        // keeps trying to run up to `max_ticks_per_frame` ticks every frame
+        // regardless of how long each one takes — e.g. 50 ticks at 20ms each
+        // is a full second per rendered frame (~1 FPS). With the budget, the
+        // simulation visibly falls behind real time under sustained load
+        // instead of freezing the whole app; unrun ticks are credited back
+        // to `accumulated_time` so they're retried next frame, not lost.
+        const MAX_TICK_TIME_BUDGET: std::time::Duration = std::time::Duration::from_millis(20);
+        let tick_budget_start = std::time::Instant::now();
+        let mut ticks_run = 0u32;
+        for _ in 0..ticks_to_run {
+            let (phys_ms, diff_ms) = self.update_simulation();
+            physics_duration_ms += phys_ms;
+            diffusion_duration_ms += diff_ms;
+            ticks_run += 1;
+            if tick_budget_start.elapsed() > MAX_TICK_TIME_BUDGET {
+                break;
+            }
+        }
+        if ticks_run < ticks_to_run {
+            self.accumulated_time += (ticks_to_run - ticks_run) as f32;
+        }
+        let ticks_to_run = ticks_run;
+
+        // The timestamp-query readback below is a blocking `device.poll(Wait)`
+        // purely for the profiling display — skip it entirely when the
+        // Metrics panel isn't visible so we don't pay a GPU stall every frame
+        // for numbers nobody's looking at.
+        if ticks_to_run > 0 && self.ui.metrics_visible {
+            if let Some(gpu) = self.gpu.as_ref() {
+                if let (Some(qs), Some(rb), Some(readback)) =
+                    (&gpu.query_set, &gpu.resolve_buffer, &gpu.readback_buffer)
+                {
+                    let mut encoder =
+                        gpu.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("Timestamps"),
+                            });
+                    encoder.resolve_query_set(qs, 0..4, rb, 0);
+                    encoder.copy_buffer_to_buffer(rb, 0, readback, 0, 32);
+                    gpu.queue.submit(Some(encoder.finish()));
+
+                    let slice = readback.slice(..);
+                    slice.map_async(wgpu::MapMode::Read, |_| {});
+                    gpu.device.poll(wgpu::Maintain::Wait);
+
+                    let data = slice.get_mapped_range();
+                    let byte_slice = data.as_ref();
+                    let mut timestamps = [0u64; 4];
+                    for i in 0..4 {
+                        let mut bytes = [0u8; 8];
+                        bytes.copy_from_slice(&byte_slice[i * 8..(i + 1) * 8]);
+                        timestamps[i] = u64::from_ne_bytes(bytes);
+                    }
+                    let period = gpu.queue.get_timestamp_period();
+
+                    // Override the CPU accumulated timings with the GPU timings (multiplied by ticks to reflect total frame cost)
+                    if timestamps[1] > timestamps[0] {
+                        let tick_ms =
+                            (timestamps[1] - timestamps[0]) as f64 * period as f64 / 1_000_000.0;
+                        physics_duration_ms = tick_ms * ticks_to_run as f64;
+                    }
+                    if timestamps[3] > timestamps[2] {
+                        let tick_ms =
+                            (timestamps[3] - timestamps[2]) as f64 * period as f64 / 1_000_000.0;
+                        diffusion_duration_ms = tick_ms * ticks_to_run as f64;
+                    }
+
+                    drop(data);
+                    readback.unmap();
+                }
+            }
+        }
+
+        if let Some(diffusion_compute) = self.diffusion_compute.as_mut() {
+            if let Some(gpu) = self.gpu.as_ref() {
+                if let Some(field_data) = diffusion_compute.try_read_field(&gpu.device) {
+                    let mut cpu_field = self.world.ecs.resource_mut::<diffusion::CpuFieldState>();
+                    cpu_field.data = field_data;
+                }
+            }
+        }
+
+        // Record analytics. `smoothed_fps`/`smoothed_tps`/`sim_time` (updated
+        // by `record_frame`/`record_env_perf` below) are always kept current
+        // since the always-visible status bar reads them — but the ~4 full-
+        // population ECS scans that feed the Metrics panel's demographic
+        // history plots are skipped when that panel isn't visible (same
+        // rationale as the GPU timestamp-query gating above): nobody's
+        // looking at the graphs, and at high entity counts these scans
+        // aren't free.
+        let mut counts = analytics::PopulationCounts::default();
+        if self.ui.metrics_visible {
+            let mut diet_query = self.world.ecs.query::<&ecology::Diet>();
+            for diet in diet_query.iter(&self.world.ecs) {
+                match diet {
+                    ecology::Diet::Producer => counts.producers += 1,
+                    ecology::Diet::Herbivore => counts.herbivores += 1,
+                    ecology::Diet::Carnivore => counts.carnivores += 1,
+                    ecology::Diet::Omnivore => counts.omnivores += 1,
+                    ecology::Diet::Decomposer => counts.decomposers += 1,
+                }
+            }
+
+            let mut food_query = self.world.ecs.query::<&ecology::FoodPellet>();
+            counts.food_pellets = food_query.iter(&self.world.ecs).count();
+
+            let mut mineral_query = self.world.ecs.query::<&ecology::MineralPellet>();
+            counts.minerals = mineral_query.iter(&self.world.ecs).count();
+
+            let mut corpse_query = self.world.ecs.query::<&ecology::Corpse>();
+            counts.corpses = corpse_query.iter(&self.world.ecs).count();
+        }
+
+        let mut env_sunlight = 0.0;
+        let mut env_o2 = 0.0;
+        let mut env_co2 = 0.0;
+        let mut env_temp = 22.0;
+        if let Some(atmosphere) = self
+            .world
+            .ecs
+            .get_resource::<metabolism::GlobalAtmosphere>()
+        {
+            env_sunlight = atmosphere.sunlight;
+            env_o2 = atmosphere.o2;
+            env_co2 = atmosphere.co2;
+            env_temp = atmosphere.temp;
+        }
+
+        if let Some(mut metrics) = self.world.ecs.get_resource_mut::<analytics::MetricsState>() {
+            let sim_dt = (ticks_to_run as f64) * f64::from(dt);
+            let real_dt = f64::from(real_frame_dt);
+            metrics.record_frame(counts, sim_dt, real_dt);
+
+            // Calculate TPS
+            let tps = if real_dt > 0.0 {
+                (ticks_to_run as f64) / real_dt
+            } else {
+                0.0
+            };
+
+            // Get memory (cached to avoid extreme lag)
+            thread_local! {
+                static SYS: std::cell::RefCell<sysinfo::System> = std::cell::RefCell::new(sysinfo::System::new_all());
+            }
+            let memory_mb = SYS.with(|sys_cell| {
+                let mut sys = sys_cell.borrow_mut();
+                if let Ok(pid) = sysinfo::get_current_pid() {
+                    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+                    if let Some(process) = sys.process(pid) {
+                        return (process.memory() / 1024 / 1024) as f64;
+                    }
+                }
+                0.0
+            });
+
+            metrics.record_env_perf(
+                tps,
+                memory_mb,
+                env_sunlight as f64,
+                env_o2 as f64,
+                env_co2 as f64,
+                env_temp as f64,
+            );
+
+            if ticks_to_run > 0 {
+                metrics.compute_profiles = vec![
+                    analytics::PassTiming {
+                        name: "Physics (Compute & PBD)".to_string(),
+                        duration_ms: physics_duration_ms,
+                    },
+                    analytics::PassTiming {
+                        name: "Diffusion Field".to_string(),
+                        duration_ms: diffusion_duration_ms,
+                    },
+                ];
+            }
+        }
+    }
+
     /// Collects the physics GPU readback dispatched last tick (if any) and
     /// writes the updated positions/velocities into the ECS. A brief
     /// `device.poll(Wait)` is still required to actually collect the mapped

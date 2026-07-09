@@ -38,4 +38,4 @@ Not strictly spacing, but governed by the same "one named tier, not an arbitrary
 | `RADIUS_STD` | 8px | Floating windows, toasts, context menus |
 | `RADIUS_LOOSE` | 12px | Dialogs/modals |
 
-Each radius tier has a paired shadow/elevation constant, so "how much does this float above the surface" is as tokenized as "how rounded are its corners."
+**Correction (Phase 7, W4b)**: this section previously claimed each radius tier has a paired shadow/elevation constant. Re-checked directly against `theme.rs`: no such constants exist — elevation currently relies entirely on egui's own default window shadow (`egui::Style`'s built-in `Shadow`, never overridden by `apply_style`), not a per-tier custom token. Correcting the claim here rather than adding three shadow constants nothing would apply, which would just be unused surface invented to match a doc that was wrong in the first place. If per-tier shadow customization is wanted later, that's a visual-design decision requiring a real before/after comparison — out of this milestone's tokenization-only scope.

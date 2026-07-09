@@ -10,6 +10,8 @@ config     = { workspace = true }
 scheduler  = { workspace = true }
 metabolism = { workspace = true }
 physics    = { workspace = true }
+ecology    = { workspace = true }
+events     = { workspace = true }
 bevy_ecs   = { workspace = true }
 rayon      = { workspace = true }
 
@@ -22,4 +24,8 @@ harness = false
 
 [[bench]]
 name = "metabolism_parallel"
+harness = false
+
+[[bench]]
+name = "foraging_scaling"
 harness = false

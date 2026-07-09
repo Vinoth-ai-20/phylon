@@ -102,6 +102,10 @@ pub struct WorkbenchState {
     pub show_command_palette: bool,
     /// The Command Palette's current search text.
     pub command_palette_query: String,
+    /// Whether the Global Search overlay is open (Phase 7, W6a).
+    pub show_global_search: bool,
+    /// Global Search's current search text.
+    pub global_search_query: String,
     /// `Some(prior panel_modes)` while Focus Mode (Phase 2, M16) is active,
     /// restored on exit — `None` means Focus Mode is off. A toggle, not a
     /// fourth `LayoutPreset`, since (unlike the 3 named presets, which are
@@ -526,6 +530,8 @@ impl Default for WorkbenchState {
             bookmarks: Vec::new(),
             show_command_palette: false,
             command_palette_query: String::new(),
+            show_global_search: false,
+            global_search_query: String::new(),
             focus_mode_previous: None,
             show_minimap: true,
             spotlight_mode: false,
@@ -732,6 +738,17 @@ impl WorkbenchState {
     /// reasoning: no event bus exists yet to hang it on.
     pub fn set_follow(&mut self, entity: Option<Entity>) {
         self.tracked_entity = entity;
+    }
+
+    /// Multiplies `camera_zoom` by `factor` and clamps it back into the
+    /// standing `[0.1, 10.0]` range — the zoom-then-clamp step every camera
+    /// zoom input (menu actions, keyboard +/-, mouse wheel, touchpad pinch)
+    /// applied identically and independently before this extraction (Phase
+    /// 7, W5c). At most one zoom operation happens per input event in every
+    /// caller, so clamping immediately here is behaviorally identical to a
+    /// caller that used to defer the clamp to after its own single call.
+    pub fn zoom_by(&mut self, factor: f32) {
+        self.camera_zoom = (self.camera_zoom * factor).clamp(0.1, 10.0);
     }
 
     /// Push a transient notification. Displayed in the bottom-right toast area.

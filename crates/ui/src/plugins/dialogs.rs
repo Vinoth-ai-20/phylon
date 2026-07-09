@@ -57,7 +57,7 @@ fn documentation_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) 
         .open(&mut state.show_docs)
         .resizable(true)
         .collapsible(true)
-        .default_size(egui::vec2(500.0, 400.0))
+        .default_size(crate::theme::DIALOG_SIZE)
         .show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.heading("Architecture Overview");
@@ -210,7 +210,7 @@ fn onboarding_hints_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchStat
             onboarding_row(
                 ui,
                 egui_remixicon::icons::ARROW_UP_S_LINE,
-                egui::Color32::from_rgb(230, 140, 30),
+                crate::theme::ACTIVITY_GLYPH,
                 "A glyph above an organism shows what it's doing right now — hunting, fleeing, foraging, mating, or sleeping. No glyph means idle.",
             );
             onboarding_row(

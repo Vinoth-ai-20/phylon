@@ -37,6 +37,26 @@ pub const PANEL_PADDING: f32 = SPACE_SM;
 /// every non-Viewport panel.
 pub const CHROME_HEIGHT: f32 = 22.0;
 
+// ─── Dialog / toast geometry (Phase 7, W4a) ────────────────────────────────
+//
+// Previously hardcoded literals in `plugins::dialogs`/`render::render_toasts`
+// (§2.6's audit finding) — tokenized here so a future dialog/toast doesn't
+// have to guess whether to match these by re-typing the same numbers.
+
+/// Default size for a standard modal dialog (e.g. the onboarding dialog).
+pub const DIALOG_SIZE: egui::Vec2 = egui::vec2(500.0, 400.0);
+
+/// Fixed size of one toast card.
+pub const TOAST_SIZE: egui::Vec2 = egui::vec2(280.0, 44.0);
+/// Vertical distance between stacked toast cards.
+pub const TOAST_STACK_OFFSET: f32 = 60.0;
+/// Base vertical inset of the bottom-most toast from the window edge.
+pub const TOAST_BOTTOM_MARGIN: f32 = 10.0;
+/// Horizontal inset of every toast from the window's right edge.
+pub const TOAST_RIGHT_MARGIN: f32 = 16.0;
+/// Toast card border stroke width.
+pub const TOAST_STROKE_WIDTH: f32 = 1.5;
+
 // ─── Radius / elevation (docs/design/spacing.md) ───────────────────────────
 
 /// Corner radius for tooltips and graph canvases (Neural Viewer, Metrics
@@ -142,6 +162,20 @@ pub const DISABLED_BG: Color32 = Color32::from_rgb(40, 40, 44);
 /// Visible keyboard-focus outline color — egui's default focus ring is
 /// low-contrast against Phylon's near-black chrome.
 pub const FOCUS_RING: Color32 = ACCENT;
+
+/// Explicit full-bright text color for a label drawn on a colored/opaque
+/// card background (e.g. a toast's message) where egui's default text color
+/// isn't guaranteed to contrast — previously a bare `Color32::WHITE` literal
+/// (Phase 7, §2.6's audit finding).
+pub const TEXT_PRIMARY: Color32 = Color32::WHITE;
+
+/// The onboarding dialog's "a glyph above an organism" icon color — an
+/// illustrative orange distinct from every semantic (`GOOD`/`WARN`/`BAD`)
+/// and diet token, previously a bare literal (Phase 7, §2.6's audit
+/// finding). Not `LOG_HAZARD`/`WARN` despite similar hue — this is a UI
+/// chrome/onboarding color, unrelated to either's semantic meaning, and
+/// unifying them would be a coincidence-driven merge, not a real one.
+pub const ACTIVITY_GLYPH: Color32 = Color32::from_rgb(230, 140, 30);
 
 // ─── Panel visual-hierarchy tiers (docs/design/layout.md, ADR-P5-05) ───────
 //

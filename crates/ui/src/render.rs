@@ -231,6 +231,9 @@ pub fn render_ui(
     // ── Workspace Manager overlay (Phase 7, W3c) ────────────────────────────
     crate::plugins::workspace_manager::workspace_manager_ui(ctx, state, &mut actions);
 
+    // ── Global Search overlay (Phase 7, W6a) ────────────────────────────────
+    crate::plugins::global_search::global_search_ui(ctx, world, state);
+
     // ── Toast notifications overlay ─────────────────────────────────────────
     render_toasts(ctx, state);
 
@@ -465,19 +468,26 @@ fn render_toasts(ctx: &egui::Context, state: &crate::WorkbenchState) {
 
     let total = visible.len();
     for (idx, toast) in visible.into_iter().enumerate() {
-        let offset_y = -(idx as f32) * 60.0 - 10.0;
+        let offset_y =
+            -(idx as f32) * crate::theme::TOAST_STACK_OFFSET - crate::theme::TOAST_BOTTOM_MARGIN;
         let (bg_color, border_color) = toast_colors(toast.severity);
 
         egui::Window::new(format!("__toast_{}", idx))
             .title_bar(false)
             .resizable(false)
             .collapsible(false)
-            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-16.0, offset_y))
-            .fixed_size(egui::vec2(280.0, 44.0))
+            .anchor(
+                egui::Align2::RIGHT_BOTTOM,
+                egui::vec2(-crate::theme::TOAST_RIGHT_MARGIN, offset_y),
+            )
+            .fixed_size(crate::theme::TOAST_SIZE)
             .frame(
                 egui::Frame::none()
                     .fill(bg_color)
-                    .stroke(egui::Stroke::new(1.5, border_color))
+                    .stroke(egui::Stroke::new(
+                        crate::theme::TOAST_STROKE_WIDTH,
+                        border_color,
+                    ))
                     .rounding(egui::Rounding::same(crate::theme::RADIUS_STD))
                     .inner_margin(egui::Margin::symmetric(
                         crate::theme::SPACE_SM,
@@ -489,7 +499,7 @@ fn render_toasts(ctx: &egui::Context, state: &crate::WorkbenchState) {
                     ui.label(egui::RichText::new(toast_icon(toast.severity)).color(border_color));
                     ui.label(
                         egui::RichText::new(&toast.message)
-                            .color(egui::Color32::WHITE)
+                            .color(crate::theme::TEXT_PRIMARY)
                             .size(crate::theme::SIZE_BODY),
                     );
                 });

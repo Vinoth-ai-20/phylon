@@ -383,12 +383,10 @@ impl PhylonApp {
                     self.ui.show_onboarding_hints = true;
                 }
                 ui::MenuAction::CameraZoomIn => {
-                    self.ui.camera_zoom *= 1.1;
-                    self.ui.camera_zoom = self.ui.camera_zoom.clamp(0.1, 10.0);
+                    self.ui.zoom_by(1.1);
                 }
                 ui::MenuAction::CameraZoomOut => {
-                    self.ui.camera_zoom /= 1.1;
-                    self.ui.camera_zoom = self.ui.camera_zoom.clamp(0.1, 10.0);
+                    self.ui.zoom_by(1.0 / 1.1);
                 }
                 ui::MenuAction::CameraHome => {
                     self.ui.camera_pos = common::Vec2::new(0.0, 0.0);
@@ -648,6 +646,10 @@ impl PhylonApp {
                 ui::MenuAction::ToggleCommandPalette => {
                     self.ui.show_command_palette = !self.ui.show_command_palette;
                     self.ui.command_palette_query.clear();
+                }
+                ui::MenuAction::ToggleGlobalSearch => {
+                    self.ui.show_global_search = !self.ui.show_global_search;
+                    self.ui.global_search_query.clear();
                 }
                 ui::MenuAction::FocusSelection => {
                     // Phase 6, Epic J: previously a stub. Distinct from
@@ -918,13 +920,11 @@ impl ApplicationHandler for PhylonApp {
                     }
                     // Zoom with + and -
                     PhysicalKey::Code(KeyCode::Equal) | PhysicalKey::Code(KeyCode::NumpadAdd) => {
-                        self.ui.camera_zoom *= 1.1;
-                        self.ui.camera_zoom = self.ui.camera_zoom.clamp(0.1, 10.0);
+                        self.ui.zoom_by(1.1);
                     }
                     PhysicalKey::Code(KeyCode::Minus)
                     | PhysicalKey::Code(KeyCode::NumpadSubtract) => {
-                        self.ui.camera_zoom /= 1.1;
-                        self.ui.camera_zoom = self.ui.camera_zoom.clamp(0.1, 10.0);
+                        self.ui.zoom_by(1.0 / 1.1);
                     }
                     _ => {}
                 }
@@ -945,9 +945,9 @@ impl ApplicationHandler for PhylonApp {
                         if self.ui.modifiers.ctrl {
                             // Zoom with Ctrl + Scroll
                             if y > 0.0 {
-                                self.ui.camera_zoom *= 1.1;
+                                self.ui.zoom_by(1.1);
                             } else if y < 0.0 {
-                                self.ui.camera_zoom /= 1.1;
+                                self.ui.zoom_by(1.0 / 1.1);
                             }
                         } else {
                             // Pan
@@ -960,7 +960,7 @@ impl ApplicationHandler for PhylonApp {
                             // Zoom
                             let zoom_factor = 1.0 + (p.y as f32 * 0.01);
                             if zoom_factor > 0.0 {
-                                self.ui.camera_zoom *= zoom_factor;
+                                self.ui.zoom_by(zoom_factor);
                             }
                         } else {
                             // Touchpad two-finger swipe: pan
@@ -969,7 +969,6 @@ impl ApplicationHandler for PhylonApp {
                         }
                     }
                 }
-                self.ui.camera_zoom = self.ui.camera_zoom.clamp(0.1, 10.0);
             }
 
             WindowEvent::RedrawRequested => {

@@ -57,6 +57,112 @@ pub struct GpuContext {
     pub(crate) readback_buffer: Option<wgpu::Buffer>,
 }
 
+/// The wgpu adapter/device/queue plus the 4 GPU compute pipelines and
+/// optional timestamp-query resources — everything `init_gpu` (windowed)
+/// and `init_gpu_headless` both construct identically. Extracted (Phase 7,
+/// W5b) since the only real differences between the two call sites were a
+/// handful of knobs (surface compatibility, device label, base feature
+/// set, error messages), not the construction logic itself.
+struct GpuCore {
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    physics_compute: gpu::physics_pipeline::PhysicsComputePipeline,
+    diffusion_compute: gpu::diffusion_pipeline::DiffusionComputePipeline,
+    splat_compute: rendering::SplatComputePipeline,
+    brain_compute: gpu::brain_pipeline::BrainComputePipeline,
+    query_set: Option<wgpu::QuerySet>,
+    resolve_buffer: Option<wgpu::Buffer>,
+    readback_buffer: Option<wgpu::Buffer>,
+}
+
+/// Requests an adapter/device (opting into `TIMESTAMP_QUERY`/
+/// `TIMESTAMP_QUERY_INSIDE_ENCODERS` when the adapter supports both, same
+/// as before this extraction) and builds the 4 compute pipelines plus the
+/// timestamp query-set/buffers if timestamp queries are available.
+/// Verbatim extraction of the logic `init_gpu`/`init_gpu_headless`
+/// previously duplicated — no behavior changed, only named and shared.
+fn request_gpu_core(
+    instance: &wgpu::Instance,
+    compatible_surface: Option<&wgpu::Surface>,
+    base_features: wgpu::Features,
+    device_label: &'static str,
+    adapter_error: &'static str,
+    device_error: &'static str,
+) -> Result<GpuCore> {
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface,
+        force_fallback_adapter: false,
+    }))
+    .context(adapter_error)?;
+
+    let mut required_features = base_features;
+    let mut has_timestamp_query = false;
+    if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
+        && adapter
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
+    {
+        required_features |= wgpu::Features::TIMESTAMP_QUERY;
+        required_features |= wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+        has_timestamp_query = true;
+    }
+
+    let (device, queue) = pollster::block_on(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            label: Some(device_label),
+            required_features,
+            required_limits: wgpu::Limits::default(),
+            memory_hints: wgpu::MemoryHints::default(),
+        },
+        None,
+    ))
+    .context(device_error)?;
+
+    let physics_compute = gpu::physics_pipeline::PhysicsComputePipeline::new(&device);
+    let diffusion_compute =
+        gpu::diffusion_pipeline::DiffusionComputePipeline::new(&device, 256, 256);
+    let splat_compute = rendering::SplatComputePipeline::new(&device, 256, 256);
+    let brain_compute = gpu::brain_pipeline::BrainComputePipeline::new(&device);
+
+    let (query_set, resolve_buffer, readback_buffer) = if has_timestamp_query {
+        let qs = device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("GpuTimestamps"),
+            count: 4,
+            ty: wgpu::QueryType::Timestamp,
+        });
+        let rb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ResolveBuffer"),
+            size: 8 * 4,
+            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ReadbackBuffer"),
+            size: 8 * 4,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        (Some(qs), Some(rb), Some(readback))
+    } else {
+        (None, None, None)
+    };
+
+    Ok(GpuCore {
+        adapter,
+        device,
+        queue,
+        physics_compute,
+        diffusion_compute,
+        splat_compute,
+        brain_compute,
+        query_set,
+        resolve_buffer,
+        readback_buffer,
+    })
+}
+
 // PhylonUIState was removed in favor of ui::WorkbenchState.
 
 /// # Phylon Application Orchestrator
@@ -128,7 +234,6 @@ pub(crate) struct PhylonApp {
     pub(crate) app_state: ui::AppState,
 
     /// Maximum number of simulation ticks fired per frame.
-    #[allow(dead_code)]
     pub(crate) max_ticks_per_frame: u32,
 
     /// Total simulation time in seconds.
@@ -146,7 +251,6 @@ pub(crate) struct PhylonApp {
     pub(crate) last_frame_instant: std::time::Instant,
 
     /// Storage manager for snapshots and database logs
-    #[allow(dead_code)]
     pub(crate) storage: storage::StorageManager,
 
     /// Channel for receiving background task results (like async save/load)
@@ -458,35 +562,25 @@ impl PhylonApp {
             .create_surface(window.clone())
             .context("failed to create wgpu surface")?;
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .context("no suitable GPU adapter found")?;
-
-        let mut required_features = wgpu::Features::FLOAT32_FILTERABLE;
-        let mut has_timestamp_query = false;
-        if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
-            && adapter
-                .features()
-                .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
-        {
-            required_features |= wgpu::Features::TIMESTAMP_QUERY;
-            required_features |= wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
-            has_timestamp_query = true;
-        }
-
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("PhylonDevice"),
-                required_features,
-                required_limits: wgpu::Limits::default(),
-                memory_hints: wgpu::MemoryHints::default(),
-            },
-            None,
-        ))
-        .context("failed to create wgpu device")?;
+        let GpuCore {
+            adapter,
+            device,
+            queue,
+            physics_compute,
+            diffusion_compute,
+            splat_compute,
+            brain_compute,
+            query_set,
+            resolve_buffer,
+            readback_buffer,
+        } = request_gpu_core(
+            &instance,
+            Some(&surface),
+            wgpu::Features::FLOAT32_FILTERABLE,
+            "PhylonDevice",
+            "no suitable GPU adapter found",
+            "failed to create wgpu device",
+        )?;
 
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
@@ -528,11 +622,6 @@ impl PhylonApp {
             size.height.max(1),
         );
         let field_renderer = rendering::FieldRenderer::new(&device, surface_format);
-        let physics_compute = gpu::physics_pipeline::PhysicsComputePipeline::new(&device);
-        let diffusion_compute =
-            gpu::diffusion_pipeline::DiffusionComputePipeline::new(&device, 256, 256);
-        let splat_compute = rendering::SplatComputePipeline::new(&device, 256, 256);
-        let brain_compute = gpu::brain_pipeline::BrainComputePipeline::new(&device);
 
         let egui_context = egui::Context::default();
         let mut fonts = egui::FontDefinitions::default();
@@ -553,29 +642,6 @@ impl PhylonApp {
             Some(2048),
         );
         let egui_renderer = egui_wgpu::Renderer::new(&device, surface_format, None, 1, false);
-
-        let (query_set, resolve_buffer, readback_buffer) = if has_timestamp_query {
-            let qs = device.create_query_set(&wgpu::QuerySetDescriptor {
-                label: Some("GpuTimestamps"),
-                count: 4,
-                ty: wgpu::QueryType::Timestamp,
-            });
-            let rb = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("ResolveBuffer"),
-                size: 8 * 4,
-                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            });
-            let readback = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("ReadbackBuffer"),
-                size: 8 * 4,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
-            (Some(qs), Some(rb), Some(readback))
-        } else {
-            (None, None, None)
-        };
 
         self.gpu = Some(GpuContext {
             surface: Some(surface),
@@ -609,64 +675,25 @@ impl PhylonApp {
             ..Default::default()
         });
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-        .context("no suitable GPU adapter found for headless mode")?;
-
-        let mut required_features = wgpu::Features::empty();
-        let mut has_timestamp_query = false;
-        if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
-            && adapter
-                .features()
-                .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
-        {
-            required_features |= wgpu::Features::TIMESTAMP_QUERY;
-            required_features |= wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
-            has_timestamp_query = true;
-        }
-
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("PhylonDevice_Headless"),
-                required_features,
-                required_limits: wgpu::Limits::default(),
-                memory_hints: wgpu::MemoryHints::default(),
-            },
+        let GpuCore {
+            device,
+            queue,
+            physics_compute,
+            diffusion_compute,
+            splat_compute,
+            brain_compute,
+            query_set,
+            resolve_buffer,
+            readback_buffer,
+            ..
+        } = request_gpu_core(
+            &instance,
             None,
-        ))
-        .context("failed to create wgpu device for headless")?;
-
-        let physics_compute = gpu::physics_pipeline::PhysicsComputePipeline::new(&device);
-        let diffusion_compute =
-            gpu::diffusion_pipeline::DiffusionComputePipeline::new(&device, 256, 256);
-        let splat_compute = rendering::SplatComputePipeline::new(&device, 256, 256);
-        let brain_compute = gpu::brain_pipeline::BrainComputePipeline::new(&device);
-
-        let (query_set, resolve_buffer, readback_buffer) = if has_timestamp_query {
-            let qs = device.create_query_set(&wgpu::QuerySetDescriptor {
-                label: Some("GpuTimestamps"),
-                count: 4,
-                ty: wgpu::QueryType::Timestamp,
-            });
-            let rb = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("ResolveBuffer"),
-                size: 8 * 4,
-                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            });
-            let readback = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("ReadbackBuffer"),
-                size: 8 * 4,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
-            (Some(qs), Some(rb), Some(readback))
-        } else {
-            (None, None, None)
-        };
+            wgpu::Features::empty(),
+            "PhylonDevice_Headless",
+            "no suitable GPU adapter found for headless mode",
+            "failed to create wgpu device for headless",
+        )?;
 
         self.gpu = Some(GpuContext {
             surface: None,

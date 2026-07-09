@@ -10,6 +10,9 @@ pub mod event_log;
 /// Evolution Debugger panel — cross-organism mutation diff and a
 /// development-failure inspector (Phase 3, M12).
 pub mod evolution_debugger;
+/// Global Search overlay — fuzzy-searchable list of every currently-alive
+/// organism, by diet or `{Idx, Gen}` (Phase 7, W6a).
+pub mod global_search;
 /// GRN Viewer panel — regulatory network graph, developmental-step time
 /// playback, and mutation-vs-parent comparison (Phase 3, M11).
 pub mod grn_viewer;

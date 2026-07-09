@@ -18,17 +18,16 @@ This model already generalizes to new panel types without redesign: adding a nam
 
 ## Minimum sizes &amp; split constraints
 
-Every panel must have a documented minimum size below which it clips content gracefully (scrolls) rather than overlapping a neighbor:
+**Correction (Phase 7, W4d)**: this section previously presented a table of per-panel minimum sizes (Sidebar 240px, Viewport 320×240, Neural Viewer 240px, Metrics/Event Log 160px) and claimed split ratios get min/max share constraints. Re-checked directly against `layout.rs`: egui_tiles only supports **one single global minimum**, not a per-panel one — `layout.rs`'s own doc comment on `min_size()` states this explicitly, and the actual hardcoded value is `160.0`, applied uniformly to every split. The per-panel numbers above were aspirational targets this one global floor was meant to eventually back, not individually enforced minimums as the table implied. No min/max share-constraint code (no `min_share`/`max_share`/clamp) exists anywhere in `layout.rs` — shares are stored and applied via `set_share` with no bounds.
 
-| Panel | Minimum width/height |
-|---|---|
-| Sidebar | 240px wide |
-| Viewport | 320px wide, 240px tall |
-| Neural Viewer | 240px wide |
-| Metrics / Event Log (bottom tabs) | 160px tall |
-| Floating windows | 280px wide (existing `min_width`), 200px tall when not minimized |
+What's actually true today:
 
-Split ratios themselves get min/max share constraints so a panel can be shrunk but never fully squeezed out by an accidental drag.
+| Constraint | Value | Enforced by |
+|---|---|---|
+| Global split minimum (all docked panels) | 160px | `layout.rs`'s `min_size()`, applied uniformly — not per-panel |
+| Floating windows | 280px wide (`min_width`), 200px tall when not minimized | `layout.rs`'s floating-window constructor |
+
+Per-panel minimums and split min/max share bounds remain a real, un-implemented follow-up — tracked here as a gap, not silently dropped.
 
 ## Layout presets
 

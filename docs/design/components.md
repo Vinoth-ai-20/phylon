@@ -41,33 +41,36 @@ Every reusable UI primitive in Phylon, documented before it's built or consolida
 - **Purpose:** icon + label + value cluster in a status bar zone.
 - **Variants:** info (simulation state), population (diet/resource counts), system (memory/engine/camera, mostly hover-revealed).
 - **States:** default, hover-reveal (system zone only — expands on hover rather than being always-visible).
-- **Tokens:** `SIZE_MICRO`/`SIZE_SMALL`, per-zone background tint.
-- **Accessibility:** text meets the 12px floor (`SIZE_SMALL`); the one exception, `SIZE_MICRO` (11px), is reserved for the system zone specifically, a deliberate choice not an oversight.
+- **Tokens:** `SIZE_SMALL`.
+- **Accessibility:** text meets the 12px floor (`SIZE_SMALL`).
 - **Owner:** `crates/ui/src/widgets.rs`.
 - **Dependencies:** `theme.rs`.
-- **Consolidates:** ad hoc `ui.label(format!(...))` calls in `status_bar.rs`, currently eleven distinct facts in one undifferentiated row.
+- **Consolidates:** the entity_count/tick/fps/tps/playback/overlay/selection/cursor-position facts in `status_bar.rs`, which now call this shared function.
+- **Correction (Phase 7, W4d)**: this entry previously claimed `SIZE_MICRO`/`SIZE_SMALL` tokens and a per-zone background tint. Re-checked directly against `status_bar.rs`: `SIZE_MICRO` is never used there (it's used in `render.rs`'s viewport scale-grid readout and `toolbar.rs`'s camera-position readout — unrelated to this component), and no `Frame::fill`/background-tint code exists per zone. Also, the Population zone's diet-breakdown (P/H/C/O/D) and Food/Minerals/Corpses counts, and the entire System zone, do not yet call `status_chip` — they still use the ad hoc `tight_row`/`mono` pattern this component was meant to replace. Corrected to reflect only what's actually consolidated today; migrating the remaining call sites is unfinished work, not a documentation gap.
 
 ## `labeled_icon_tab`
 
 - **Purpose:** sidebar activity-bar entry.
 - **Variants:** icon-only (pinned/collapsed rail), icon+label (expanded rail — the default, fixing the audit's discoverability finding).
 - **States:** default, active, hover.
-- **Tokens:** `ICON_LG`, `ACCENT` (active-state underline/fill).
+- **Tokens:** `ICON_LG`/`ICON_MD`.
 - **Accessibility:** hover tooltip present in both variants, even when the label is already visible — redundant labeling costs nothing and helps anyone skimming quickly.
 - **Owner:** `crates/ui/src/plugins/sidebar.rs` (stays local — only one caller).
 - **Dependencies:** `theme.rs`.
 - **Consolidates:** `activity_bar_ui`'s current icon-only buttons, which rely entirely on hover-tooltip discovery today.
+- **Correction (Phase 7, W4d)**: this entry previously claimed `ACCENT` drives the active-tab underline/fill. Re-checked directly against `sidebar.rs`: `theme::ACCENT` is never referenced there, and no `style.visuals.selection` override exists anywhere in `ui/src` — active-tab highlighting relies entirely on egui's default `SelectableLabel` selection color, not this token. Tying the active state to `ACCENT` is unimplemented follow-up work, not a shipped behavior.
 
-## `EmptyState` / `LoadingState` / `ErrorState`
+## `EmptyState` / `ErrorState`
 
 - **Purpose:** centered placeholder content for a panel with nothing to show.
-- **Variants:** empty (no selection), loading (data not ready), error (failed query).
+- **Variants:** empty (no selection), error (failed query).
 - **States:** — (each variant is its own visual state).
 - **Tokens:** `SPACE_XXXL` (vertical centering offset), `SIZE_BODY`, `WARN`/`BAD` for the error variant.
 - **Accessibility:** text explains what to do next ("Select an organism to view its brain"), not just that something is missing ("No organism selected" alone is the current, weaker pattern).
-- **Owner:** `crates/ui/src/widgets.rs`.
+- **Owner:** `crates/ui/src/widgets.rs` (`empty_state`/`error_state`).
 - **Dependencies:** `theme.rs`.
 - **Consolidates:** ad hoc centered-label patterns scattered in `inspector.rs` and `neural_viewer.rs` today.
+- **Correction (Phase 7, W4d)**: this entry previously named a third `LoadingState` variant. Re-checked directly against `widgets.rs`: only `empty_state`/`error_state` exist — no "loading, data not ready" function or call site exists anywhere in the crate. Dropped from the catalog rather than left as an aspirational claim; add it back here if a panel actually needs a loading state in the future.
 
 ## `draw_segment_tree` (Inspector "Body Plan")
 

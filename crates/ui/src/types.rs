@@ -311,6 +311,8 @@ pub enum MenuAction {
     },
     /// Toggle the Command Palette overlay (Phase 2, M15).
     ToggleCommandPalette,
+    /// Toggle the Global Search overlay (Phase 7, W6a).
+    ToggleGlobalSearch,
 
     // Overlay — canonical command routed through HeatmapState
     /// Set the active simulation overlay (updates HeatmapState ECS resource).

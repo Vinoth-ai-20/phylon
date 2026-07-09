@@ -11,8 +11,14 @@ use crate::types::*;
 
 // `apply_view`/`handle_pan_zoom`/`hit_test_node` moved to `crate::graph_canvas`
 // (Phase 3, M11) so the GRN Viewer panel can reuse the same pan/zoom/hit-test
-// math instead of duplicating it.
-use crate::graph_canvas::{apply_view, handle_pan_zoom, hit_test_node};
+// math instead of duplicating it. `begin_graph_canvas`/`draw_node`/
+// `weighted_edge_stroke`/`hit_test_edge` (Phase 7, W2c) are the
+// layout-independent rendering pieces this file, GRN Viewer, and future
+// graph viewers all share — see `graph_canvas`'s module doc comment.
+use crate::graph_canvas::{
+    apply_view, begin_graph_canvas, draw_node, hit_test_edge, hit_test_node, weighted_edge_stroke,
+    NodeShape,
+};
 
 // Node/synapse colors are shared between the CTRNN (phenotype) and CPPN
 // (genotype) canvases below — named here once rather than repeating the same
@@ -254,40 +260,6 @@ fn graph_header(ui: &mut egui::Ui, title: &str, view: &mut crate::state::GraphVi
     );
 }
 
-/// Shortest distance from `p` to the line segment `a`–`b`.
-fn dist_to_segment(p: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
-    let ab = b - a;
-    let len_sq = ab.length_sq();
-    if len_sq <= f32::EPSILON {
-        return p.distance(a);
-    }
-    let t = ((p - a).dot(ab) / len_sq).clamp(0.0, 1.0);
-    let closest = a + ab * t;
-    p.distance(closest)
-}
-
-/// Nearest edge (by index into `edges`) to `pointer`, within a small
-/// hit-test tolerance of the segment.
-fn hit_test_edge(
-    pointer: egui::Pos2,
-    positions: &[egui::Pos2],
-    edges: &[(usize, usize)],
-) -> Option<usize> {
-    const TOLERANCE: f32 = 4.0;
-    edges
-        .iter()
-        .enumerate()
-        .filter_map(|(i, &(src, dst))| {
-            if src >= positions.len() || dst >= positions.len() {
-                return None;
-            }
-            let d = dist_to_segment(pointer, positions[src], positions[dst]);
-            (d <= TOLERANCE).then_some((i, d))
-        })
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(i, _)| i)
-}
-
 /// Draws a CTRNN brain graph: nodes as circles positioned by column (input /
 /// hidden / output) and index-within-column, synapses as lines colored by
 /// weight sign and shaded by magnitude. Hovering a node or synapse shows its
@@ -303,13 +275,7 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain, view: &mut crate::state
     }
 
     let height = 240.0_f32.max(b.nodes.len() as f32 * 4.0).min(480.0);
-    let (response, painter) = ui.allocate_painter(
-        egui::vec2(ui.available_width(), height),
-        egui::Sense::click_and_drag(),
-    );
-    handle_pan_zoom(ui, &response, view);
-    let rect = response.rect;
-    painter.rect_filled(rect, egui::Rounding::same(4.0), CTRNN_CANVAS_BG);
+    let (response, painter, rect) = begin_graph_canvas(ui, height, CTRNN_CANVAS_BG, view);
 
     // Classify each node index into a column: 0 = input, 1 = hidden, 2 = output.
     let input_count = b.input_count.min(b.nodes.len());
@@ -382,17 +348,11 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain, view: &mut crate::state
         if source >= positions.len() || target >= positions.len() {
             continue;
         }
-        let strength = syn.weight.abs().min(3.0) / 3.0;
-        let alpha = (80.0 + 140.0 * strength) as u8;
-        let base = if syn.weight >= 0.0 {
-            SYNAPSE_EXCITATORY_BASE
-        } else {
-            SYNAPSE_INHIBITORY_BASE
-        };
-        let color = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha);
+        let (color, width) =
+            weighted_edge_stroke(syn.weight, SYNAPSE_EXCITATORY_BASE, SYNAPSE_INHIBITORY_BASE);
         painter.line_segment(
             [positions[source], positions[target]],
-            egui::Stroke::new(0.5 + 2.0 * strength, color),
+            egui::Stroke::new(width, color),
         );
     }
 
@@ -404,11 +364,13 @@ fn draw_brain_graph(ui: &mut egui::Ui, b: &brain::Brain, view: &mut crate::state
             2 => NODE_OUTPUT,
             _ => NODE_HIDDEN,
         };
-        painter.circle_filled(positions[idx], node_radius, color);
-        painter.circle_stroke(
+        draw_node(
+            &painter,
             positions[idx],
             node_radius,
+            color,
             egui::Stroke::new(1.0, egui::Color32::from_gray(20)),
+            NodeShape::Circle,
         );
 
         // Fill level indicator: a smaller inner dot brightness-scaled by the
@@ -515,17 +477,11 @@ fn draw_cppn_graph(
     }
 
     let height = 200.0_f32.max(cppn.nodes.len() as f32 * 4.0).min(360.0);
-    let (response, painter) = ui.allocate_painter(
-        egui::vec2(ui.available_width(), height),
-        egui::Sense::click_and_drag(),
-    );
-    handle_pan_zoom(ui, &response, view);
-    let rect = response.rect;
     // A distinct blue-tinted background (vs. the CTRNN graph's neutral
     // near-black) plus square nodes below is the CTRNN/CPPN visual
     // differentiation this milestone adds beyond the plain text header —
     // this is the *genotype* (evolved blueprint), not the running network.
-    painter.rect_filled(rect, egui::Rounding::same(4.0), CPPN_CANVAS_BG);
+    let (response, painter, rect) = begin_graph_canvas(ui, height, CPPN_CANVAS_BG, view);
 
     // Group node indices by layer, preserving genome order within a layer.
     let max_layer = cppn.nodes.iter().map(|n| n.layer).max().unwrap_or(0);
@@ -590,17 +546,14 @@ fn draw_cppn_graph(
         if !conn.enabled || conn.source >= positions.len() || conn.target >= positions.len() {
             continue;
         }
-        let strength = conn.weight.abs().min(3.0) / 3.0;
-        let alpha = (80.0 + 140.0 * strength) as u8;
-        let base = if conn.weight >= 0.0 {
-            SYNAPSE_EXCITATORY_BASE
-        } else {
-            SYNAPSE_INHIBITORY_BASE
-        };
-        let color = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha);
+        let (color, width) = weighted_edge_stroke(
+            conn.weight,
+            SYNAPSE_EXCITATORY_BASE,
+            SYNAPSE_INHIBITORY_BASE,
+        );
         painter.line_segment(
             [positions[conn.source], positions[conn.target]],
-            egui::Stroke::new(0.5 + 2.0 * strength, color),
+            egui::Stroke::new(width, color),
         );
     }
 
@@ -614,15 +567,13 @@ fn draw_cppn_graph(
             l if l == max_layer => NODE_OUTPUT,
             _ => NODE_HIDDEN,
         };
-        let square = egui::Rect::from_center_size(
+        draw_node(
+            &painter,
             positions[idx],
-            egui::vec2(node_radius * 2.0, node_radius * 2.0),
-        );
-        painter.rect_filled(square, egui::Rounding::same(1.0), color);
-        painter.rect_stroke(
-            square,
-            egui::Rounding::same(1.0),
+            node_radius,
+            color,
             egui::Stroke::new(1.0, egui::Color32::from_gray(20)),
+            NodeShape::Square,
         );
     }
 

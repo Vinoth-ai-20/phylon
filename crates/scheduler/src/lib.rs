@@ -27,6 +27,25 @@
 //! In Phase 0 the scheduler operates as a bare tick counter with timing.
 //! System dispatch callbacks are registered as boxed closures. In Phase 1+
 //! this will be upgraded to `bevy_ecs`-style system graphs.
+//!
+//! ## Current status (Phase 7, W1a — decided, not silently dropped)
+//!
+//! **Not used by the live app.** `app::simulation::update_simulation` drives
+//! every real tick directly (Phase 6, Epic A removed the `SimulationScheduler`
+//! `app` previously constructed here, since nothing ever advanced it — see
+//! `app/src/main.rs`'s own top doc comment). This crate is retained
+//! deliberately, not as dead weight, for two real, still-exercised
+//! consumers: `benchmarks`' `scheduler_throughput` criterion benchmark, and
+//! `tests`' `scheduler_integrates_with_event_bus` integration test — both
+//! measure/exercise this scheduler's own tick-accumulator and event-bus
+//! integration in isolation, independent of whether the live app uses it.
+//! `research`'s previously-declared dependency on this crate was unused
+//! (confirmed by an exhaustive grep — zero references) and has been
+//! removed. If a future milestone needs a real `bevy_ecs`-system-graph
+//! scheduler again, this crate's design principles above remain a valid
+//! starting point — but reviving it as the live app's driver is a decision
+//! for that milestone to make explicitly, not an assumption this comment
+//! makes for it.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]

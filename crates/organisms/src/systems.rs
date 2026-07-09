@@ -97,6 +97,532 @@ fn assign_hidden_node_regions(
         .collect()
 }
 
+/// Phase 1 of `growth_system` (Phase 7, W5a): once an organism's body is
+/// fully grown, wires its CTRNN brain — input/hidden/output nodes,
+/// Braitenberg fin wiring, CPPN-evolved biases/weights/regions — and
+/// removes `GrowthState`, marking growth complete. Verbatim extraction of
+/// `growth_system`'s original inline `if is_finished` block; no logic
+/// changed, only named and separated from the segment-growth phases below.
+#[allow(clippy::too_many_arguments)]
+fn wire_brain_for_completed_organism(
+    commands: &mut Commands,
+    entity: Entity,
+    state: &GrowthState,
+    graph: &DevelopmentalGraph,
+    spring_query: &Query<&physics::Spring>,
+    chem_query: &Query<&metabolism::ChemicalEconomy>,
+    expressed_brain_cppn: &genetics::Cppn,
+) {
+    // 6 standard inputs + 1 Signal input + 1 Hazard input + 1 Pacemaker
+    let input_count = 9;
+    // effectors + 1 SignalEmitter output
+    let output_count = state.effectors.len() + 1;
+
+    let hidden_count = 4;
+    let total_nodes = input_count + hidden_count + output_count;
+
+    let mut nodes = Vec::new();
+    let mut synapses = Vec::new();
+
+    for i in 0..total_nodes {
+        let mut bias = 0.0;
+        let mut time_constant = 0.5;
+        let mut activation = 1; // Tanh
+
+        if i < input_count {
+            time_constant = 1.0;
+            activation = 7; // Linear
+        } else {
+            // Evolve node properties via Brain CPPN
+            if !expressed_brain_cppn.nodes.is_empty() {
+                let w_inputs = [
+                    (i as f32) / (total_nodes as f32),
+                    (i as f32) / (total_nodes as f32),
+                ];
+                let w_outputs = expressed_brain_cppn.evaluate(&w_inputs);
+                if w_outputs.len() >= 3 {
+                    bias = w_outputs[1] * 1.5;
+                    // Time constant must be strictly positive and low enough to allow fast 2 Hz oscillations.
+                    time_constant = w_outputs[2].abs().clamp(0.1, 2.0);
+                }
+            }
+        }
+
+        nodes.push(brain::CtrnnNode {
+            state: 0.0,
+            time_constant,
+            bias,
+            activation,
+            first_synapse: 0,
+            synapse_count: 0,
+        });
+    }
+
+    // Find fins for Braitenberg wiring
+    let mut left_fin_idx = None;
+    let mut right_fin_idx = None;
+    for (out_idx, &effector_entity) in state.effectors.iter().enumerate() {
+        if let Ok(spring) = spring_query.get(effector_entity) {
+            if spring.is_fin == 1 {
+                if left_fin_idx.is_none() {
+                    left_fin_idx = Some(input_count + hidden_count + out_idx);
+                } else if right_fin_idx.is_none() {
+                    right_fin_idx = Some(input_count + hidden_count + out_idx);
+                }
+            }
+        }
+    }
+
+    // Phase 6, Epic C (N1c): every node's neural region, parallel
+    // to `nodes`. Built here (not left to `Brain::new`'s own
+    // default) so the wiring loop below can consult it while
+    // deciding which synapses to keep, and so the exact same
+    // vector becomes the constructed `Brain`'s `node_regions`
+    // afterward. See `assign_hidden_node_regions`'s own doc
+    // comment for the actual Ganglion-anchoring logic — extracted
+    // as its own function so it's unit-testable against a
+    // hand-built `DevelopmentalGraph` fixture, independent of
+    // genome/CPPN decoding (mirroring N1b's `should_wire_synapse`
+    // extraction for the same reason).
+    let node_regions = assign_hidden_node_regions(graph, input_count, hidden_count, total_nodes);
+
+    for i in 0..total_nodes {
+        // Connections can only target hidden and output nodes (not inputs)
+        for j in input_count..total_nodes {
+            let mut weight = 0.0;
+
+            // Neocortex: Evolved CPPN Weights
+            if !expressed_brain_cppn.nodes.is_empty() {
+                let w_inputs = [
+                    (i as f32) / (total_nodes as f32),
+                    (j as f32) / (total_nodes as f32),
+                ];
+                let w_outputs = expressed_brain_cppn.evaluate(&w_inputs);
+                if !w_outputs.is_empty() {
+                    weight += w_outputs[0] * 1.5;
+                }
+            }
+
+            let same_region = node_regions[i] == node_regions[j];
+            if should_wire_synapse(weight, same_region) {
+                synapses.push(brain::CtrnnSynapse {
+                    source: i as u32,
+                    target: j as u32,
+                    weight,
+                    _padding: 0,
+                });
+            }
+        }
+    }
+
+    let initial_atp = chem_query.get(entity).map(|c| c.atp).unwrap_or(0.0);
+
+    let mut brain = brain::Brain::new(
+        brain::BrainId(0),
+        nodes,
+        synapses,
+        input_count,
+        output_count,
+    );
+    // `Brain::new` already defaults every node to `RegionId::Central`
+    // (N1a), so this is a no-op today — written explicitly so N1c's
+    // real Ganglion-detected `node_regions` (computed above, for the
+    // wiring loop's own use) propagates into the constructed `Brain`
+    // once that milestone replaces the all-`Central` vector above
+    // with real detection, without needing a second change here.
+    brain.node_regions = node_regions;
+
+    commands.entity(entity).insert((
+        brain,
+        brain::Neuromodulators::new(initial_atp),
+        sensing::SensoryState::new(input_count),
+        behavior::MotorSystem {
+            effectors: state.effectors.clone(),
+        },
+        diffusion::SignalEmitter::default(),
+    ));
+    commands.entity(entity).remove::<GrowthState>();
+}
+
+/// The decoded outcome for the next body position `growth_system` is about
+/// to grow — either it should be pruned (apoptotic, per Phase 3 M8's
+/// DEF-002 rule) or grown at `spawn_pos` with the decoded `outputs`.
+/// Phase 2 of `growth_system` (Phase 7, W5a) — verbatim extraction of the
+/// original inline decode step, so decode and apoptosis-checking are named
+/// and testable independent of the spawn machinery in
+/// [`spawn_grown_segment`].
+enum SegmentDecode {
+    /// Apoptotic — this position is pruned, never spawned.
+    Apoptotic,
+    /// Grow a real segment at `spawn_pos` with these decoded `outputs`.
+    Grow {
+        spawn_pos: Vec2,
+        outputs: genetics::DevelopmentalOutputs,
+    },
+}
+
+/// Decodes `state`'s next body position via the regulatory network, folding
+/// in life-stage, intra-organism (`morphogen_query`), and inter-organism/
+/// environmental (`cpu_field`) signals exactly as `growth_system`'s
+/// original inline code did — see the original inline comments (preserved
+/// below) for why each signal is additive into the same channel.
+fn decode_next_segment(
+    state: &GrowthState,
+    life_stage_signal: f32,
+    node_query: &Query<&physics::ParticleNode>,
+    morphogen_query: &Query<&crate::morphogen_field::MorphogenLevel>,
+    cpu_field: &Option<bevy_ecs::prelude::Res<diffusion::CpuFieldState>>,
+    expressed_regulatory_cppn: &genetics::Cppn,
+) -> SegmentDecode {
+    // ── Grow the next body position ───────────────────────────────────────
+    // Decoded via the regulatory network, not read from a stored gene —
+    // the same `develop_at_position` call handles every position,
+    // including the head node `spawning::spawn_organism` already built
+    // (Phase 3 M4; see ADR-P3-02).
+    //
+    // Phase 6, Epic D (D1a): the growing tip's own current
+    // `morphogen_field::MorphogenLevel` (seeded at spawn, spread and
+    // decayed each tick by `morphogen_diffusion_system`) is folded into
+    // the exact same additive signal `develop_at_position_with_life_stage`
+    // already uses for `life_stage_signal` — re-auditing `genetics`
+    // before this milestone found that function already implements the
+    // "extra scalar folded into every gene's external input, 0.0
+    // reproduces the original" seam D1a's own sub-roadmap proposed
+    // building from scratch, so no new `genetics`-crate parameter is
+    // added here.
+    let field_signal = state
+        .parent_spine_node
+        .and_then(|tip| morphogen_query.get(tip).ok())
+        .map(|level| level.concentration)
+        .unwrap_or(0.0);
+
+    // ── Where the next segment will actually form ───────────────────────
+    // Computed here (rather than after the decode, as before D1b) purely
+    // because Epic D, D1b's environmental signal needs a world position
+    // to sample *before* calling `develop_at_position_with_life_stage`
+    // — the formula itself is unchanged from pre-D1b.
+    let spawn_pos = if let Some(prev_entity) = state.parent_spine_node {
+        if let Ok(parent_node) = node_query.get(prev_entity) {
+            parent_node.position
+                + Vec2::new(state.heading.cos(), state.heading.sin()) * -state.segment_length
+        } else {
+            state.current_pos
+        }
+    } else {
+        state.current_pos
+    };
+
+    // Phase 6, Epic D (D1b, ADR-D1-01's inter-organism/environmental
+    // half): samples the world-space GPU diffusion field's Morphogen
+    // layer at the position the next segment is about to form at.
+    // Unlike `field_signal` (this organism's own intra-organism
+    // signal), this can carry a contribution from *other* developing
+    // organisms nearby — the actual inter-organism coupling
+    // ADR-P3-03's reversal trigger named. Folded into the same
+    // additive channel as `life_stage_signal`/`field_signal` for the
+    // same reason D1a gave: that channel already exists, is already
+    // tested, and 0.0 (no nearby signal) reproduces the pre-D1
+    // baseline exactly.
+    let environmental_signal = cpu_field
+        .as_ref()
+        .map(|field| field.sample(spawn_pos, diffusion::FieldLayer::Morphogen as u32))
+        .unwrap_or(0.0);
+
+    let outputs = genetics::develop_at_position_with_life_stage(
+        expressed_regulatory_cppn,
+        state.next_segment_index,
+        crate::MAX_SEGMENTS,
+        life_stage_signal + field_signal + environmental_signal,
+    );
+
+    // Phase 3 M8 (DEF-002): a position marked for apoptosis is pruned
+    // before organogenesis — it is never spawned, as if it had never
+    // formed (germ-line-protected positions can never reach this
+    // branch; see `genetics::decode_apoptosis`).
+    if outputs.apoptosis {
+        SegmentDecode::Apoptotic
+    } else {
+        SegmentDecode::Grow { spawn_pos, outputs }
+    }
+}
+
+/// Phase 3 of `growth_system` (Phase 7, W5a): given a non-apoptotic decode,
+/// compiles and spawns the new spine segment (`ParticleNode` + connecting
+/// `Spring`), sprouts a bilateral fin pair if the decode branches, and
+/// advances `state`/`graph` bookkeeping. Verbatim extraction of
+/// `growth_system`'s original inline body following the apoptosis check —
+/// no logic changed.
+#[allow(clippy::too_many_arguments)]
+fn spawn_grown_segment(
+    commands: &mut Commands,
+    entity: Entity,
+    state: &mut GrowthState,
+    graph: &mut DevelopmentalGraph,
+    atmosphere_ticks: u64,
+    spawn_pos: Vec2,
+    outputs: genetics::DevelopmentalOutputs,
+) {
+    use genetics::SegmentType;
+    use physics::{ParticleNode, Spring};
+
+    // Phase 3 M6: the decode-to-physics mapping lives in
+    // `developmental_graph::compile_segment` now — independently
+    // testable, and reusable by future research panels — rather than
+    // inline match arms here.
+    let compiled = crate::compile_segment(outputs.segment_type);
+    let seg_u32 = compiled.particle_segment_type;
+    let stiffness = compiled.stiffness;
+
+    // Phase 4, P4-F2: every body segment gets its own small physiology
+    // pool, not just the head — `metabolism::ChemicalEconomy` is reused
+    // verbatim (not a new type) at a deliberately smaller scale (see
+    // `ChemicalEconomy::segment_default`'s doc comment). This is
+    // additive: `metabolism_system`'s query also requires `&Age`/
+    // `&Metabolism`, which no non-head segment carries, so this cannot
+    // change any existing organism-level metabolism/reproduction/
+    // foraging behavior — confirmed by this crate's full test suite
+    // still passing unmodified.
+    let spine_node = commands
+        .spawn((
+            ParticleNode::new(spawn_pos, 1.0, seg_u32, entity.index()),
+            OrganismColor(outputs.pigment),
+            metabolism::ChemicalEconomy::segment_default(),
+            // Phase 4, P4-F4: every non-head segment also gets a
+            // `HormoneLevel` — `organisms::endocrine_diffusion_system`
+            // relaxes it toward its structural parent's channel
+            // reading each tick (see that system's doc comment).
+            brain::HormoneLevel::default(),
+            // Phase 4, P4-F5: every non-head segment also gets its own
+            // infection severity/immune resistance —
+            // `organisms::segment_infection_system` spreads the
+            // organism-wide `Infection` (if any) out into these.
+            ecology::disease::SegmentInfection::healthy(),
+            ecology::disease::SegmentImmunity::baseline(),
+            // Phase 5, SX-2d: reuses the existing `SpawnTick` component
+            // (previously only attached to an organism's head at
+            // creation, `organisms::spawning`) rather than adding a new
+            // type — `crates/app/src/render.rs` reads this to fade/scale
+            // a just-formed segment in over a short fixed window.
+            crate::components::SpawnTick(atmosphere_ticks),
+            // Phase 6, Epic D (D1a): every newly-grown segment starts as
+            // the organism's new growing tip — see `morphogen_field`'s
+            // doc comment for why this is the emission/"reaction" term
+            // `morphogen_diffusion_system` then spreads and decays.
+            crate::morphogen_field::MorphogenLevel {
+                concentration: crate::morphogen_field::MORPHOGEN_SEED_CONCENTRATION,
+            },
+        ))
+        .id();
+
+    // Body Graph (Phase 3, M6; persistent as of Phase 4, ADR-P4-01):
+    // this spine node's parent is always the most recently pushed
+    // non-branch node — i.e. the last spine node, which is exactly
+    // `graph.nodes.len() - 1` immediately before this push, since
+    // branch nodes (below) never become anyone's structural parent.
+    let parent_graph_index = graph.nodes.len().checked_sub(1);
+    let current_position = state.next_segment_index;
+    graph.push(
+        outputs.segment_type,
+        outputs,
+        parent_graph_index,
+        false,
+        current_position,
+        Some(spine_node),
+    );
+
+    // ── Connect to previous spine node with a Rigid bone ─────────────────
+    if let Some(prev) = state.parent_spine_node {
+        let constraint_type = compiled.constraint_type;
+
+        let s = commands
+            .spawn((
+                Spring {
+                    node_a: prev,
+                    node_b: spine_node,
+                    constraint_type,
+                    rest_length: state.segment_length,
+                    base_length: state.segment_length,
+                    stiffness,
+                    damping: 0.5,
+                    // Spine bones are NEVER actuated — only Elastic (Muscle) connections
+                    // drive locomotion through the muscle_actuation shader.
+                    // Rigid and Passive bones must have amplitude=0 or the PBD
+                    // correction injects ~19 units/s per iteration per tick when
+                    // rest_length oscillates, causing runaway fly-off.
+                    actuation_amplitude: match constraint_type {
+                        physics::ConstraintType::Elastic => outputs.actuation_amplitude,
+                        _ => 0.0, // Rigid / Passive spine bones never actuate
+                    },
+                    actuation_phase: outputs.actuation_phase,
+                    breaking_strain: 2.0,
+                    is_fin: 0,
+                },
+                OrganismColor(outputs.pigment),
+            ))
+            .id();
+
+        if constraint_type == physics::ConstraintType::Elastic
+            || constraint_type == physics::ConstraintType::Rotational
+        {
+            state.effectors.push(s);
+        }
+    }
+
+    // ── Branch: sprout bilateral fin pair if the decode's branch output
+    // fires. Only Torso and Muscle segments can branch (not Head or Tail).
+    let branch_eligible = crate::can_branch(outputs.segment_type);
+    if let Some(prev_spine) = state
+        .parent_spine_node
+        .filter(|_| branch_eligible && outputs.branches)
+    {
+        // This branch's parent is the spine node just pushed above —
+        // its index is the graph's current last entry.
+        let spine_graph_index = graph.nodes.len() - 1;
+        let current_position = state.next_segment_index;
+
+        let fin_spread = state.segment_length * 0.75;
+        let dir = Vec2::new(state.heading.cos(), state.heading.sin());
+        let perp = Vec2::new(-dir.y, dir.x);
+
+        let f_up_pos = spawn_pos + perp * fin_spread;
+        let f_dn_pos = spawn_pos + perp * -fin_spread;
+
+        let f_up = commands
+            .spawn((
+                ParticleNode::new(f_up_pos, 0.5, 4, entity.index()),
+                OrganismColor(outputs.pigment),
+                metabolism::ChemicalEconomy::segment_default(),
+                brain::HormoneLevel::default(),
+                ecology::disease::SegmentInfection::healthy(),
+                ecology::disease::SegmentImmunity::baseline(),
+                crate::components::SpawnTick(atmosphere_ticks),
+                crate::morphogen_field::MorphogenLevel {
+                    concentration: crate::morphogen_field::MORPHOGEN_SEED_CONCENTRATION,
+                },
+            ))
+            .id();
+        let f_dn = commands
+            .spawn((
+                ParticleNode::new(f_dn_pos, 0.5, 4, entity.index()),
+                OrganismColor(outputs.pigment),
+                metabolism::ChemicalEconomy::segment_default(),
+                brain::HormoneLevel::default(),
+                ecology::disease::SegmentInfection::healthy(),
+                ecology::disease::SegmentImmunity::baseline(),
+                crate::components::SpawnTick(atmosphere_ticks),
+                crate::morphogen_field::MorphogenLevel {
+                    concentration: crate::morphogen_field::MORPHOGEN_SEED_CONCENTRATION,
+                },
+            ))
+            .id();
+
+        graph.push(
+            SegmentType::Fin,
+            outputs,
+            Some(spine_graph_index),
+            true,
+            current_position,
+            Some(f_up),
+        );
+        graph.push(
+            SegmentType::Fin,
+            outputs,
+            Some(spine_graph_index),
+            true,
+            current_position,
+            Some(f_dn),
+        );
+
+        // Attach fins via Rigid hinges to the spine
+        commands.spawn((
+            Spring {
+                node_a: spine_node,
+                node_b: f_up,
+                constraint_type: physics::ConstraintType::Rigid,
+                rest_length: fin_spread,
+                base_length: fin_spread,
+                stiffness: 20.0,
+                damping: 0.5,
+                actuation_amplitude: 0.0,
+                actuation_phase: 0.0,
+                breaking_strain: 2.0,
+                is_fin: 1,
+            },
+            OrganismColor(outputs.pigment),
+        ));
+        commands.spawn((
+            Spring {
+                node_a: spine_node,
+                node_b: f_dn,
+                constraint_type: physics::ConstraintType::Rigid,
+                rest_length: fin_spread,
+                base_length: fin_spread,
+                stiffness: 20.0,
+                damping: 0.5,
+                actuation_amplitude: 0.0,
+                actuation_phase: 0.0,
+                breaking_strain: 2.0,
+                is_fin: 1,
+            },
+            OrganismColor(outputs.pigment),
+        ));
+
+        // Attach Elastic muscle to the previous spine node
+        let muscle_rest_len =
+            (state.segment_length * state.segment_length + fin_spread * fin_spread).sqrt();
+
+        let sf_up = commands
+            .spawn((
+                Spring {
+                    node_a: prev_spine,
+                    node_b: f_up,
+                    constraint_type: physics::ConstraintType::Elastic,
+                    rest_length: muscle_rest_len,
+                    base_length: muscle_rest_len,
+                    stiffness: 25.0,
+                    damping: 0.9,
+                    actuation_amplitude: outputs.actuation_amplitude,
+                    actuation_phase: 0.0,
+                    breaking_strain: 2.0,
+                    is_fin: 0,
+                },
+                OrganismColor(outputs.pigment),
+            ))
+            .id();
+        state.effectors.push(sf_up);
+
+        let sf_dn = commands
+            .spawn((
+                Spring {
+                    node_a: prev_spine,
+                    node_b: f_dn,
+                    constraint_type: physics::ConstraintType::Elastic,
+                    rest_length: muscle_rest_len,
+                    base_length: muscle_rest_len,
+                    stiffness: 25.0,
+                    damping: 0.9,
+                    actuation_amplitude: outputs.actuation_amplitude,
+                    actuation_phase: std::f32::consts::PI, // Opposing phase → flap
+                    breaking_strain: 2.0,
+                    is_fin: 0,
+                },
+                OrganismColor(outputs.pigment),
+            ))
+            .id();
+        state.effectors.push(sf_dn);
+    }
+
+    // Advance state — current_pos still updated as a fallback reference.
+    state.parent_spine_node = Some(spine_node);
+    let offset = Vec2::new(state.heading.cos(), state.heading.sin()) * -state.segment_length;
+    state.current_pos += offset;
+    state.next_segment_index += 1;
+    state.ticks_until_next_bud = state.base_bud_interval;
+    if outputs.segment_type == SegmentType::Tail {
+        state.is_organism_complete = true;
+    }
+}
+
 /// # Embryonic Growth & Morphogenesis System
 ///
 /// ## 1. What Happens
@@ -141,9 +667,6 @@ pub fn growth_system(
     // baseline a real run has before the GPU's first successful readback.
     cpu_field: Option<bevy_ecs::prelude::Res<diffusion::CpuFieldState>>,
 ) {
-    use genetics::SegmentType;
-    use physics::{ParticleNode, Spring};
-
     for (entity, mut state, mut graph, life_stage) in query.iter_mut() {
         // Phase 4, P4-L1: an organism without a `LifeStage` component (there
         // shouldn't be any post-P4-L1, but this keeps the query total rather
@@ -175,471 +698,56 @@ pub fn growth_system(
         }
 
         if is_finished {
-            // ── Wire the brain once the body is fully grown ──────────────────
-            // 6 standard inputs + 1 Signal input + 1 Hazard input + 1 Pacemaker
-            let input_count = 9;
-            // effectors + 1 SignalEmitter output
-            let output_count = state.effectors.len() + 1;
-
-            let hidden_count = 4;
-            let total_nodes = input_count + hidden_count + output_count;
-
-            let mut nodes = Vec::new();
-            let mut synapses = Vec::new();
-
-            for i in 0..total_nodes {
-                let mut bias = 0.0;
-                let mut time_constant = 0.5;
-                let mut activation = 1; // Tanh
-
-                if i < input_count {
-                    time_constant = 1.0;
-                    activation = 7; // Linear
-                } else {
-                    // Evolve node properties via Brain CPPN
-                    if !expressed_brain_cppn.nodes.is_empty() {
-                        let w_inputs = [
-                            (i as f32) / (total_nodes as f32),
-                            (i as f32) / (total_nodes as f32),
-                        ];
-                        let w_outputs = expressed_brain_cppn.evaluate(&w_inputs);
-                        if w_outputs.len() >= 3 {
-                            bias = w_outputs[1] * 1.5;
-                            // Time constant must be strictly positive and low enough to allow fast 2 Hz oscillations.
-                            time_constant = w_outputs[2].abs().clamp(0.1, 2.0);
-                        }
-                    }
-                }
-
-                nodes.push(brain::CtrnnNode {
-                    state: 0.0,
-                    time_constant,
-                    bias,
-                    activation,
-                    first_synapse: 0,
-                    synapse_count: 0,
-                });
-            }
-
-            // Find fins for Braitenberg wiring
-            let mut left_fin_idx = None;
-            let mut right_fin_idx = None;
-            for (out_idx, &effector_entity) in state.effectors.iter().enumerate() {
-                if let Ok(spring) = spring_query.get(effector_entity) {
-                    if spring.is_fin == 1 {
-                        if left_fin_idx.is_none() {
-                            left_fin_idx = Some(input_count + hidden_count + out_idx);
-                        } else if right_fin_idx.is_none() {
-                            right_fin_idx = Some(input_count + hidden_count + out_idx);
-                        }
-                    }
-                }
-            }
-
-            // Phase 6, Epic C (N1c): every node's neural region, parallel
-            // to `nodes`. Built here (not left to `Brain::new`'s own
-            // default) so the wiring loop below can consult it while
-            // deciding which synapses to keep, and so the exact same
-            // vector becomes the constructed `Brain`'s `node_regions`
-            // afterward. See `assign_hidden_node_regions`'s own doc
-            // comment for the actual Ganglion-anchoring logic — extracted
-            // as its own function so it's unit-testable against a
-            // hand-built `DevelopmentalGraph` fixture, independent of
-            // genome/CPPN decoding (mirroring N1b's `should_wire_synapse`
-            // extraction for the same reason).
-            let node_regions =
-                assign_hidden_node_regions(&graph, input_count, hidden_count, total_nodes);
-
-            for i in 0..total_nodes {
-                // Connections can only target hidden and output nodes (not inputs)
-                for j in input_count..total_nodes {
-                    let mut weight = 0.0;
-
-                    // Neocortex: Evolved CPPN Weights
-                    if !expressed_brain_cppn.nodes.is_empty() {
-                        let w_inputs = [
-                            (i as f32) / (total_nodes as f32),
-                            (j as f32) / (total_nodes as f32),
-                        ];
-                        let w_outputs = expressed_brain_cppn.evaluate(&w_inputs);
-                        if !w_outputs.is_empty() {
-                            weight += w_outputs[0] * 1.5;
-                        }
-                    }
-
-                    let same_region = node_regions[i] == node_regions[j];
-                    if should_wire_synapse(weight, same_region) {
-                        synapses.push(brain::CtrnnSynapse {
-                            source: i as u32,
-                            target: j as u32,
-                            weight,
-                            _padding: 0,
-                        });
-                    }
-                }
-            }
-
-            let initial_atp = chem_query.get(entity).map(|c| c.atp).unwrap_or(0.0);
-
-            let mut brain = brain::Brain::new(
-                brain::BrainId(0),
-                nodes,
-                synapses,
-                input_count,
-                output_count,
+            wire_brain_for_completed_organism(
+                &mut commands,
+                entity,
+                &state,
+                &graph,
+                &spring_query,
+                &chem_query,
+                &expressed_brain_cppn,
             );
-            // `Brain::new` already defaults every node to `RegionId::Central`
-            // (N1a), so this is a no-op today — written explicitly so N1c's
-            // real Ganglion-detected `node_regions` (computed above, for the
-            // wiring loop's own use) propagates into the constructed `Brain`
-            // once that milestone replaces the all-`Central` vector above
-            // with real detection, without needing a second change here.
-            brain.node_regions = node_regions;
-
-            commands.entity(entity).insert((
-                brain,
-                brain::Neuromodulators::new(initial_atp),
-                sensing::SensoryState::new(input_count),
-                behavior::MotorSystem {
-                    effectors: state.effectors.clone(),
-                },
-                diffusion::SignalEmitter::default(),
-            ));
-            commands.entity(entity).remove::<GrowthState>();
             continue;
         }
 
-        // ── Grow the next body position ───────────────────────────────────────
-        // Decoded via the regulatory network, not read from a stored gene —
-        // the same `develop_at_position` call handles every position,
-        // including the head node `spawning::spawn_organism` already built
-        // (Phase 3 M4; see ADR-P3-02).
-        //
-        // Phase 6, Epic D (D1a): the growing tip's own current
-        // `morphogen_field::MorphogenLevel` (seeded at spawn, spread and
-        // decayed each tick by `morphogen_diffusion_system`) is folded into
-        // the exact same additive signal `develop_at_position_with_life_stage`
-        // already uses for `life_stage_signal` — re-auditing `genetics`
-        // before this milestone found that function already implements the
-        // "extra scalar folded into every gene's external input, 0.0
-        // reproduces the original" seam D1a's own sub-roadmap proposed
-        // building from scratch, so no new `genetics`-crate parameter is
-        // added here.
-        let field_signal = state
-            .parent_spine_node
-            .and_then(|tip| morphogen_query.get(tip).ok())
-            .map(|level| level.concentration)
-            .unwrap_or(0.0);
-
-        // ── Where the next segment will actually form ───────────────────────
-        // Computed here (rather than after the decode, as before D1b) purely
-        // because Epic D, D1b's environmental signal needs a world position
-        // to sample *before* calling `develop_at_position_with_life_stage`
-        // — the formula itself is unchanged from pre-D1b.
-        let spawn_pos = if let Some(prev_entity) = state.parent_spine_node {
-            if let Ok(parent_node) = node_query.get(prev_entity) {
-                parent_node.position
-                    + Vec2::new(state.heading.cos(), state.heading.sin()) * -state.segment_length
-            } else {
-                state.current_pos
-            }
-        } else {
-            state.current_pos
-        };
-
-        // Phase 6, Epic D (D1b, ADR-D1-01's inter-organism/environmental
-        // half): samples the world-space GPU diffusion field's Morphogen
-        // layer at the position the next segment is about to form at.
-        // Unlike `field_signal` (this organism's own intra-organism
-        // signal), this can carry a contribution from *other* developing
-        // organisms nearby — the actual inter-organism coupling
-        // ADR-P3-03's reversal trigger named. Folded into the same
-        // additive channel as `life_stage_signal`/`field_signal` for the
-        // same reason D1a gave: that channel already exists, is already
-        // tested, and 0.0 (no nearby signal) reproduces the pre-D1
-        // baseline exactly.
-        let environmental_signal = cpu_field
-            .as_ref()
-            .map(|field| field.sample(spawn_pos, diffusion::FieldLayer::Morphogen as u32))
-            .unwrap_or(0.0);
-
-        let outputs = genetics::develop_at_position_with_life_stage(
+        // Phase 7, W5a: decode + apoptosis-check (sub-phase 2) and, if not
+        // pruned, segment growth/spawn (sub-phase 3) — see each function's
+        // own doc comment; this loop body is now purely a dispatcher.
+        match decode_next_segment(
+            &state,
+            life_stage_signal,
+            &node_query,
+            &morphogen_query,
+            &cpu_field,
             &expressed_regulatory_cppn,
-            state.next_segment_index,
-            crate::MAX_SEGMENTS,
-            life_stage_signal + field_signal + environmental_signal,
-        );
-
-        // Phase 3 M8 (DEF-002): a position marked for apoptosis is pruned
-        // before organogenesis — it is never spawned, as if it had never
-        // formed (germ-line-protected positions can never reach this
-        // branch; see `genetics::decode_apoptosis`). Bookkeeping mirrors
-        // the normal "advance state" step at the end of a tick, minus
-        // spawning and minus updating `parent_spine_node`/`graph`, so the
-        // next real segment attaches directly to the last real one — no
-        // visible gap, the position simply never existed.
-        if outputs.apoptosis {
-            state.next_segment_index += 1;
-            state.ticks_until_next_bud = state.base_bud_interval;
-            let offset =
-                Vec2::new(state.heading.cos(), state.heading.sin()) * -state.segment_length;
-            state.current_pos += offset;
-            continue;
-        }
-
-        // Phase 3 M6: the decode-to-physics mapping lives in
-        // `developmental_graph::compile_segment` now — independently
-        // testable, and reusable by future research panels — rather than
-        // inline match arms here.
-        let compiled = crate::compile_segment(outputs.segment_type);
-        let seg_u32 = compiled.particle_segment_type;
-        let stiffness = compiled.stiffness;
-
-        // Phase 4, P4-F2: every body segment gets its own small physiology
-        // pool, not just the head — `metabolism::ChemicalEconomy` is reused
-        // verbatim (not a new type) at a deliberately smaller scale (see
-        // `ChemicalEconomy::segment_default`'s doc comment). This is
-        // additive: `metabolism_system`'s query also requires `&Age`/
-        // `&Metabolism`, which no non-head segment carries, so this cannot
-        // change any existing organism-level metabolism/reproduction/
-        // foraging behavior — confirmed by this crate's full test suite
-        // still passing unmodified.
-        let spine_node = commands
-            .spawn((
-                ParticleNode::new(spawn_pos, 1.0, seg_u32, entity.index()),
-                OrganismColor(outputs.pigment),
-                metabolism::ChemicalEconomy::segment_default(),
-                // Phase 4, P4-F4: every non-head segment also gets a
-                // `HormoneLevel` — `organisms::endocrine_diffusion_system`
-                // relaxes it toward its structural parent's channel
-                // reading each tick (see that system's doc comment).
-                brain::HormoneLevel::default(),
-                // Phase 4, P4-F5: every non-head segment also gets its own
-                // infection severity/immune resistance —
-                // `organisms::segment_infection_system` spreads the
-                // organism-wide `Infection` (if any) out into these.
-                ecology::disease::SegmentInfection::healthy(),
-                ecology::disease::SegmentImmunity::baseline(),
-                // Phase 5, SX-2d: reuses the existing `SpawnTick` component
-                // (previously only attached to an organism's head at
-                // creation, `organisms::spawning`) rather than adding a new
-                // type — `crates/app/src/render.rs` reads this to fade/scale
-                // a just-formed segment in over a short fixed window.
-                crate::components::SpawnTick(atmosphere.ticks),
-                // Phase 6, Epic D (D1a): every newly-grown segment starts as
-                // the organism's new growing tip — see `morphogen_field`'s
-                // doc comment for why this is the emission/"reaction" term
-                // `morphogen_diffusion_system` then spreads and decays.
-                crate::morphogen_field::MorphogenLevel {
-                    concentration: crate::morphogen_field::MORPHOGEN_SEED_CONCENTRATION,
-                },
-            ))
-            .id();
-
-        // Body Graph (Phase 3, M6; persistent as of Phase 4, ADR-P4-01):
-        // this spine node's parent is always the most recently pushed
-        // non-branch node — i.e. the last spine node, which is exactly
-        // `graph.nodes.len() - 1` immediately before this push, since
-        // branch nodes (below) never become anyone's structural parent.
-        let parent_graph_index = graph.nodes.len().checked_sub(1);
-        let current_position = state.next_segment_index;
-        graph.push(
-            outputs.segment_type,
-            outputs,
-            parent_graph_index,
-            false,
-            current_position,
-            Some(spine_node),
-        );
-
-        // ── Connect to previous spine node with a Rigid bone ─────────────────
-        if let Some(prev) = state.parent_spine_node {
-            let constraint_type = compiled.constraint_type;
-
-            let s = commands
-                .spawn((
-                    Spring {
-                        node_a: prev,
-                        node_b: spine_node,
-                        constraint_type,
-                        rest_length: state.segment_length,
-                        base_length: state.segment_length,
-                        stiffness,
-                        damping: 0.5,
-                        // Spine bones are NEVER actuated — only Elastic (Muscle) connections
-                        // drive locomotion through the muscle_actuation shader.
-                        // Rigid and Passive bones must have amplitude=0 or the PBD
-                        // correction injects ~19 units/s per iteration per tick when
-                        // rest_length oscillates, causing runaway fly-off.
-                        actuation_amplitude: match constraint_type {
-                            physics::ConstraintType::Elastic => outputs.actuation_amplitude,
-                            _ => 0.0, // Rigid / Passive spine bones never actuate
-                        },
-                        actuation_phase: outputs.actuation_phase,
-                        breaking_strain: 2.0,
-                        is_fin: 0,
-                    },
-                    OrganismColor(outputs.pigment),
-                ))
-                .id();
-
-            if constraint_type == physics::ConstraintType::Elastic
-                || constraint_type == physics::ConstraintType::Rotational
-            {
-                state.effectors.push(s);
+        ) {
+            // Phase 3 M8 (DEF-002): a position marked for apoptosis is
+            // pruned before organogenesis — it is never spawned, as if it
+            // had never formed (germ-line-protected positions can never
+            // reach this branch; see `genetics::decode_apoptosis`).
+            // Bookkeeping mirrors the normal "advance state" step at the
+            // end of a tick, minus spawning and minus updating
+            // `parent_spine_node`/`graph`, so the next real segment
+            // attaches directly to the last real one — no visible gap,
+            // the position simply never existed.
+            SegmentDecode::Apoptotic => {
+                state.next_segment_index += 1;
+                state.ticks_until_next_bud = state.base_bud_interval;
+                let offset =
+                    Vec2::new(state.heading.cos(), state.heading.sin()) * -state.segment_length;
+                state.current_pos += offset;
             }
-        }
-
-        // ── Branch: sprout bilateral fin pair if the decode's branch output
-        // fires. Only Torso and Muscle segments can branch (not Head or Tail).
-        let branch_eligible = crate::can_branch(outputs.segment_type);
-        if branch_eligible && outputs.branches && state.parent_spine_node.is_some() {
-            // This branch's parent is the spine node just pushed above —
-            // its index is the graph's current last entry.
-            let spine_graph_index = graph.nodes.len() - 1;
-            let current_position = state.next_segment_index;
-
-            let fin_spread = state.segment_length * 0.75;
-            let dir = Vec2::new(state.heading.cos(), state.heading.sin());
-            let perp = Vec2::new(-dir.y, dir.x);
-
-            let f_up_pos = spawn_pos + perp * fin_spread;
-            let f_dn_pos = spawn_pos + perp * -fin_spread;
-
-            let f_up = commands
-                .spawn((
-                    ParticleNode::new(f_up_pos, 0.5, 4, entity.index()),
-                    OrganismColor(outputs.pigment),
-                    metabolism::ChemicalEconomy::segment_default(),
-                    brain::HormoneLevel::default(),
-                    ecology::disease::SegmentInfection::healthy(),
-                    ecology::disease::SegmentImmunity::baseline(),
-                    crate::components::SpawnTick(atmosphere.ticks),
-                    crate::morphogen_field::MorphogenLevel {
-                        concentration: crate::morphogen_field::MORPHOGEN_SEED_CONCENTRATION,
-                    },
-                ))
-                .id();
-            let f_dn = commands
-                .spawn((
-                    ParticleNode::new(f_dn_pos, 0.5, 4, entity.index()),
-                    OrganismColor(outputs.pigment),
-                    metabolism::ChemicalEconomy::segment_default(),
-                    brain::HormoneLevel::default(),
-                    ecology::disease::SegmentInfection::healthy(),
-                    ecology::disease::SegmentImmunity::baseline(),
-                    crate::components::SpawnTick(atmosphere.ticks),
-                    crate::morphogen_field::MorphogenLevel {
-                        concentration: crate::morphogen_field::MORPHOGEN_SEED_CONCENTRATION,
-                    },
-                ))
-                .id();
-
-            graph.push(
-                SegmentType::Fin,
-                outputs,
-                Some(spine_graph_index),
-                true,
-                current_position,
-                Some(f_up),
-            );
-            graph.push(
-                SegmentType::Fin,
-                outputs,
-                Some(spine_graph_index),
-                true,
-                current_position,
-                Some(f_dn),
-            );
-
-            // Attach fins via Rigid hinges to the spine
-            commands.spawn((
-                Spring {
-                    node_a: spine_node,
-                    node_b: f_up,
-                    constraint_type: physics::ConstraintType::Rigid,
-                    rest_length: fin_spread,
-                    base_length: fin_spread,
-                    stiffness: 20.0,
-                    damping: 0.5,
-                    actuation_amplitude: 0.0,
-                    actuation_phase: 0.0,
-                    breaking_strain: 2.0,
-                    is_fin: 1,
-                },
-                OrganismColor(outputs.pigment),
-            ));
-            commands.spawn((
-                Spring {
-                    node_a: spine_node,
-                    node_b: f_dn,
-                    constraint_type: physics::ConstraintType::Rigid,
-                    rest_length: fin_spread,
-                    base_length: fin_spread,
-                    stiffness: 20.0,
-                    damping: 0.5,
-                    actuation_amplitude: 0.0,
-                    actuation_phase: 0.0,
-                    breaking_strain: 2.0,
-                    is_fin: 1,
-                },
-                OrganismColor(outputs.pigment),
-            ));
-
-            // Attach Elastic muscle to the previous spine node
-            let prev_spine = state.parent_spine_node.unwrap();
-            let muscle_rest_len =
-                (state.segment_length * state.segment_length + fin_spread * fin_spread).sqrt();
-
-            let sf_up = commands
-                .spawn((
-                    Spring {
-                        node_a: prev_spine,
-                        node_b: f_up,
-                        constraint_type: physics::ConstraintType::Elastic,
-                        rest_length: muscle_rest_len,
-                        base_length: muscle_rest_len,
-                        stiffness: 25.0,
-                        damping: 0.9,
-                        actuation_amplitude: outputs.actuation_amplitude,
-                        actuation_phase: 0.0,
-                        breaking_strain: 2.0,
-                        is_fin: 0,
-                    },
-                    OrganismColor(outputs.pigment),
-                ))
-                .id();
-            state.effectors.push(sf_up);
-
-            let sf_dn = commands
-                .spawn((
-                    Spring {
-                        node_a: prev_spine,
-                        node_b: f_dn,
-                        constraint_type: physics::ConstraintType::Elastic,
-                        rest_length: muscle_rest_len,
-                        base_length: muscle_rest_len,
-                        stiffness: 25.0,
-                        damping: 0.9,
-                        actuation_amplitude: outputs.actuation_amplitude,
-                        actuation_phase: std::f32::consts::PI, // Opposing phase → flap
-                        breaking_strain: 2.0,
-                        is_fin: 0,
-                    },
-                    OrganismColor(outputs.pigment),
-                ))
-                .id();
-            state.effectors.push(sf_dn);
-        }
-
-        // Advance state — current_pos still updated as a fallback reference.
-        state.parent_spine_node = Some(spine_node);
-        let offset = Vec2::new(state.heading.cos(), state.heading.sin()) * -state.segment_length;
-        state.current_pos += offset;
-        state.next_segment_index += 1;
-        state.ticks_until_next_bud = state.base_bud_interval;
-        if outputs.segment_type == SegmentType::Tail {
-            state.is_organism_complete = true;
+            SegmentDecode::Grow { spawn_pos, outputs } => {
+                spawn_grown_segment(
+                    &mut commands,
+                    entity,
+                    &mut state,
+                    &mut graph,
+                    atmosphere.ticks,
+                    spawn_pos,
+                    outputs,
+                );
+            }
         }
     }
 }
