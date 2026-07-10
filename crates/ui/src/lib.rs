@@ -21,8 +21,8 @@ pub mod shortcuts;
 /// UI state types and enums.
 pub mod types;
 pub use types::{
-    ActiveHeatmap, AppState, BottomTab, CameraBookmark, CanvasInteraction, HeatmapState,
-    LineageView, MarqueeMode, MenuAction, ReplayBrowserSummary, SidebarTab, UiError,
+    ActiveHeatmap, AppState, BottomTab, CameraBookmark, CanvasInteraction, ClipPlaneState,
+    HeatmapState, LineageView, MarqueeMode, MenuAction, ReplayBrowserSummary, SidebarTab, UiError,
 };
 
 pub mod layout;

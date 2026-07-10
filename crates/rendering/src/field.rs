@@ -25,27 +25,33 @@ pub struct GpuSplat {
 }
 
 /// Configuration for the field rendering colormap.
+///
+/// Phase 8, Epic 8.5 (ADR-P8-05): the field is now sampled as a genuine
+/// `Camera3d`-driven plane-slice — `inv_view_proj` lets the fragment shader
+/// unproject each screen pixel into a world-space ray and intersect it with
+/// the field's world-space `Z = slice_z` plane, replacing the previous flat
+/// `camera_pos`/`camera_zoom`/`screen_size` orthographic approximation
+/// (which assumed a top-down camera and drifted out of registration with
+/// the organism renderer under any camera tilt).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FieldConfig {
+    /// Inverse view-projection matrix — see this struct's doc comment.
+    pub inv_view_proj: [[f32; 4]; 4],
     /// Minimum value to map to the start of the colormap.
     pub min_val: f32,
     /// Maximum value to map to the end of the colormap.
     pub max_val: f32,
-    /// Camera position (x, y).
-    pub camera_pos: [f32; 2],
-    /// Camera zoom level.
-    pub camera_zoom: f32,
-    /// Padding to align screen_size to 8 bytes (as required by WGSL `vec2<f32>`).
-    pub _pad0: u32,
-    /// Screen dimensions (width, height).
-    pub screen_size: [f32; 2],
+    /// World-space height of the field's sampling plane — `0.0` today,
+    /// matching the single Z=0 field layer ADR-P8-05 keeps for Phase 8 (no
+    /// multi-height-band data exists yet to slice through).
+    pub slice_z: f32,
     /// Colormap index.
     pub colormap: u32,
-    /// Padding.
-    pub _pad: u32,
     /// Simulation World Bounds (width, height)
     pub world_bounds: [f32; 2],
+    /// Padding to a 16-byte multiple.
+    pub _pad: [f32; 2],
 }
 /// # Diffusion Field Renderer
 ///

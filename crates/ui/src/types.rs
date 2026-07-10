@@ -465,3 +465,30 @@ impl Default for HeatmapState {
         }
     }
 }
+
+/// UI-owned clipping-plane state (Phase 8, Epic 8.5, ADR-P8-05) — a
+/// horizontal world-space `Z`-plane the organism renderer clips fragments
+/// against, letting the user slice into a dense population to see inside
+/// it. Plain UI state (like `HeatmapState`) rather than a `rendering` type,
+/// since `ui` doesn't depend on `rendering` — `app`'s render loop converts
+/// this into `rendering::ClipPlane` at the one call site that needs it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClipPlaneState {
+    /// Whether the clip test is active.
+    pub enabled: bool,
+    /// World-space `Z` height of the plane.
+    pub height: f32,
+    /// If `true`, geometry *above* `height` is kept; if `false`, geometry
+    /// *below* it is kept.
+    pub keep_above: bool,
+}
+
+impl Default for ClipPlaneState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            height: 0.0,
+            keep_above: true,
+        }
+    }
+}

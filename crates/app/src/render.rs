@@ -224,15 +224,6 @@ impl PhylonApp {
             }
         }
 
-        // Epic 8.1 transitional bridge (ADR-P8-02): `SdfSkinRenderer`,
-        // `DebugRenderer`, and `FieldRenderer` aren't migrated to
-        // `Camera3d` until Epic 8.2 — cached once per frame (after this
-        // frame's interaction-driven camera updates above, so the render
-        // below isn't one frame stale) rather than recomputed at each call
-        // site.
-        let camera_pos_2d = self.ui.camera_pos_2d();
-        let camera_zoom_2d = self.ui.camera_zoom_2d();
-
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -296,6 +287,20 @@ impl PhylonApp {
         // which is what made the heatmap appear misaligned/tiled well
         // outside the actual world bounds.
         const WORLD_BOUNDS: f32 = 1500.0;
+
+        // Hoisted above the heatmap/field section (Epic 8.5) so
+        // `FieldConfig`'s plane-slice sampler can reuse the same
+        // `Camera3d`/`view_proj` every other renderer already uses, instead
+        // of the flat `camera_pos_2d`/`camera_zoom_2d` bridge this shader
+        // previously depended on.
+        let aspect = if screen_h > 0.0 {
+            screen_w / screen_h
+        } else {
+            1.0
+        };
+        let camera = self.ui.camera();
+        let view_proj = camera.view_proj(aspect);
+        let inv_view_proj = view_proj.inverse();
 
         // For Glucose/ATP, min/max are recomputed fresh below from this
         // frame's actual values (rather than using `heatmap_state`'s stored
@@ -373,15 +378,13 @@ impl PhylonApp {
             field_renderer.update_config(
                 &gpu.queue,
                 rendering::FieldConfig {
+                    inv_view_proj: inv_view_proj.to_cols_array_2d(),
                     min_val: dynamic_min,
                     max_val: dynamic_max,
-                    camera_pos: [camera_pos_2d.x, camera_pos_2d.y],
-                    camera_zoom: camera_zoom_2d,
-                    _pad0: 0,
-                    screen_size: [screen_w, screen_h],
+                    slice_z: 0.0,
                     colormap: heatmap_state.colormap,
-                    _pad: 0,
                     world_bounds: [WORLD_BOUNDS, WORLD_BOUNDS],
+                    _pad: [0.0; 2],
                 },
             );
 
@@ -398,15 +401,13 @@ impl PhylonApp {
             field_renderer.update_config(
                 &gpu.queue,
                 rendering::FieldConfig {
+                    inv_view_proj: inv_view_proj.to_cols_array_2d(),
                     min_val: 0.0,
                     max_val: -1.0, // Ensures range < 0.0001, alpha = 0.0
-                    camera_pos: [camera_pos_2d.x, camera_pos_2d.y],
-                    camera_zoom: camera_zoom_2d,
-                    _pad0: 0,
-                    screen_size: [screen_w, screen_h],
+                    slice_z: 0.0,
                     colormap: heatmap_state.colormap,
-                    _pad: 0,
                     world_bounds: [WORLD_BOUNDS, WORLD_BOUNDS],
+                    _pad: [0.0; 2],
                 },
             );
             if let Some(diffusion) = self.diffusion_compute.as_ref() {
@@ -426,9 +427,6 @@ impl PhylonApp {
         gpu.queue.submit(std::iter::once(encoder.finish()));
 
         let (view_w, view_h) = (screen_w, screen_h);
-        let aspect = if view_h > 0.0 { view_w / view_h } else { 1.0 };
-        let camera = self.ui.camera();
-        let view_proj = camera.view_proj(aspect);
         // The depth attachment must exactly match the color attachment's
         // (`target_view`, the full swapchain texture) extent — `view_w`/
         // `view_h` is the cropped *viewport* rect (used correctly above for
@@ -446,6 +444,7 @@ impl PhylonApp {
         // Always run if there are bones.
         if !capsule_instances.is_empty() {
             if let Some(organism_renderer) = self.organism_renderer.as_mut() {
+                let clip_plane = self.ui.clip_plane;
                 organism_renderer.render(
                     &gpu.device,
                     &gpu.queue,
@@ -454,6 +453,11 @@ impl PhylonApp {
                     surface_size,
                     view_proj,
                     camera.position,
+                    rendering::ClipPlane {
+                        enabled: clip_plane.enabled,
+                        height: clip_plane.height,
+                        keep_above: clip_plane.keep_above,
+                    },
                     sunlight,
                     WORLD_BOUNDS,
                     central_rect_px,

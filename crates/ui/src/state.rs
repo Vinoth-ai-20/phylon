@@ -185,6 +185,9 @@ pub struct WorkbenchState {
     pub skin_thickness: f32,
     /// Radius used when drawing structural nodes.
     pub node_radius: f32,
+    /// Horizontal clipping-plane state (Phase 8, Epic 8.5) — lets the user
+    /// slice into a dense population to see inside it.
+    pub clip_plane: crate::ClipPlaneState,
 
     // Input
     /// Current keyboard modifier state (ctrl/shift/alt/etc.).
@@ -566,6 +569,7 @@ impl Default for WorkbenchState {
             bone_line_thickness: 1.0,
             skin_thickness: 3.0,
             node_radius: 5.0,
+            clip_plane: crate::ClipPlaneState::default(),
 
             modifiers: egui::Modifiers::default(),
 

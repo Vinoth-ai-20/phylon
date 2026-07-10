@@ -24,6 +24,10 @@ struct Camera {
     view_proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
     _pad0: f32,
+    // Clipping-plane state (Phase 8, Epic 8.5): x = world-space Z height,
+    // y = 1.0 if enabled (0.0 disables the test), z = +1.0 to keep
+    // fragments above the plane or -1.0 to keep those below, w unused.
+    clip_params: vec4<f32>,
 }
 
 struct Light {
@@ -184,8 +188,22 @@ fn sample_shadow(world_position: vec3<f32>) -> f32 {
     return textureSampleCompare(shadow_map, shadow_sampler, uv, light_ndc.z);
 }
 
+// Discards fragments on the clipped side of the horizontal Z-plane
+// (Phase 8, Epic 8.5) — a no-op when `camera.clip_params.y` (enabled) is 0.
+fn clip_test(world_position: vec3<f32>) {
+    if (camera.clip_params.y > 0.5) {
+        let height = camera.clip_params.x;
+        let side = camera.clip_params.z;
+        if (side * (world_position.z - height) < 0.0) {
+            discard;
+        }
+    }
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    clip_test(in.world_position);
+
     let n = normalize(in.world_normal);
     let v = normalize(camera.camera_pos - in.world_position);
     let l = normalize(-light.sun_dir);
@@ -233,5 +251,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_highlight(in: VertexOutput) -> @location(0) vec4<f32> {
+    clip_test(in.world_position);
     return highlight_color.color;
 }

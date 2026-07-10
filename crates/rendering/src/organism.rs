@@ -60,6 +60,55 @@ struct GpuCamera {
     view_proj: [[f32; 4]; 4],
     camera_pos: [f32; 3],
     _pad0: f32,
+    /// Clipping-plane state (Phase 8, Epic 8.5, ADR-P8-05's "clipping-plane
+    /// gizmo + shader clip test"): `x` = world-space height of a horizontal
+    /// `Z`-plane, `y` = `1.0` if the clip test is enabled (`0.0` disables
+    /// it, matching `capsule.wgsl`'s `fs_main`/`fs_highlight` check), `z` =
+    /// `+1.0` to keep fragments *above* the plane or `-1.0` to keep those
+    /// *below* it, `w` unused. Packed into `Camera` (not a separate bind
+    /// group) since every fragment invocation that shades already reads
+    /// this uniform, and a 4th group would exceed the 3 this module's
+    /// shared `PipelineLayout` already declares.
+    clip_params: [f32; 4],
+}
+
+/// Horizontal world-space clipping-plane state (Phase 8, Epic 8.5, ADR-P8-05)
+/// — lets the user slice through organism geometry to see inside a dense
+/// population. See `GpuCamera::clip_params`'s doc comment for the packed
+/// GPU representation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClipPlane {
+    /// Whether the clip test is active.
+    pub enabled: bool,
+    /// World-space `Z` height of the plane.
+    pub height: f32,
+    /// If `true`, fragments *above* `height` are kept (those below are
+    /// clipped); if `false`, the opposite.
+    pub keep_above: bool,
+}
+
+impl ClipPlane {
+    /// No clipping — every fragment is kept.
+    pub const DISABLED: Self = Self {
+        enabled: false,
+        height: 0.0,
+        keep_above: true,
+    };
+
+    fn to_params(self) -> [f32; 4] {
+        [
+            self.height,
+            if self.enabled { 1.0 } else { 0.0 },
+            if self.keep_above { 1.0 } else { -1.0 },
+            0.0,
+        ]
+    }
+}
+
+impl Default for ClipPlane {
+    fn default() -> Self {
+        Self::DISABLED
+    }
 }
 
 #[repr(C)]
@@ -162,6 +211,7 @@ impl OrganismRenderer {
                 view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
                 camera_pos: [0.0; 3],
                 _pad0: 0.0,
+                clip_params: [0.0, 0.0, 1.0, 0.0],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -572,11 +622,13 @@ impl OrganismRenderer {
     /// Writes this frame's camera/light uniforms — shared by `render` and
     /// `render_highlight` since both draw into the same frame's depth
     /// buffer with the same view.
+    #[allow(clippy::too_many_arguments)]
     fn update_uniforms(
         &self,
         queue: &wgpu::Queue,
         view_proj: glam::Mat4,
         camera_pos: glam::Vec3,
+        clip: ClipPlane,
         light_view_proj: glam::Mat4,
         sun_dir: glam::Vec3,
         sunlight: f32,
@@ -588,6 +640,7 @@ impl OrganismRenderer {
                 view_proj: view_proj.to_cols_array_2d(),
                 camera_pos: camera_pos.into(),
                 _pad0: 0.0,
+                clip_params: clip.to_params(),
             }),
         );
         queue.write_buffer(
@@ -639,6 +692,7 @@ impl OrganismRenderer {
         screen_size: [f32; 2],
         view_proj: glam::Mat4,
         camera_pos: glam::Vec3,
+        clip: ClipPlane,
         sunlight: f32,
         world_half_extent: f32,
         viewport: Option<[u32; 4]>,
@@ -650,6 +704,7 @@ impl OrganismRenderer {
             queue,
             view_proj,
             camera_pos,
+            clip,
             light_view_proj,
             sun_dir,
             sunlight,

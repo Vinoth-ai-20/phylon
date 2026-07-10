@@ -15,16 +15,17 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
     return out;
 }
 
+// Phase 8, Epic 8.5 (ADR-P8-05): `inv_view_proj` drives a genuine
+// `Camera3d`-plane-slice unproject (see `fs_main`), replacing the previous
+// flat `camera_pos`/`camera_zoom`/`screen_size` orthographic approximation.
 struct FieldConfig {
+    inv_view_proj: mat4x4<f32>,
     min_val: f32,
     max_val: f32,
-    camera_pos: vec2<f32>,
-    camera_zoom: f32,
-    _pad0: u32,
-    screen_size: vec2<f32>,
+    slice_z: f32,
     colormap: u32,
-    _pad1: u32,
     world_bounds: vec2<f32>,
+    _pad: vec2<f32>,
 }
 
 @group(0) @binding(0) var t_field: texture_2d<f32>;
@@ -101,18 +102,32 @@ fn turbo(t: f32) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // 1. Clip space coordinates [-1, 1]
-    let clip_x = in.uv.x * 2.0 - 1.0;
-    let clip_y = in.uv.y * 2.0 - 1.0;
+    // 1. Clip space coordinates [-1, 1] — `in.uv` was already derived from
+    // the same flip `clip_position.y` uses (see `vs_main`), so this is
+    // exactly this fragment's real NDC xy.
+    let ndc = vec2<f32>(in.uv.x * 2.0 - 1.0, in.uv.y * 2.0 - 1.0);
 
-    // 2. Map clip space back to world space
-    let world_x = clip_x * (config.screen_size.x * 0.5) / config.camera_zoom + config.camera_pos.x;
-    let world_y = clip_y * (config.screen_size.y * 0.5) / config.camera_zoom + config.camera_pos.y;
+    // 2. Unproject two points on this pixel's ray (near/far in wgpu's
+    // `0..1` clip-space depth range) and intersect it with the field's
+    // world-space `Z = slice_z` plane — the plane-slice equivalent of
+    // `Camera3d::screen_to_ray` + a plane intersection (ADR-P8-05), done in
+    // the shader since it can't call the Rust method directly.
+    let near = config.inv_view_proj * vec4<f32>(ndc, 0.0, 1.0);
+    let far = config.inv_view_proj * vec4<f32>(ndc, 1.0, 1.0);
+    let near_world = near.xyz / near.w;
+    let far_world = far.xyz / far.w;
+    let ray_dir = far_world - near_world;
+
+    var world_xy = near_world.xy;
+    if (abs(ray_dir.z) > 1e-6) {
+        let t = (config.slice_z - near_world.z) / ray_dir.z;
+        world_xy = (near_world + ray_dir * t).xy;
+    }
 
     // 3. Map world space back to the simulation grid space [0..1]
-    let grid_u = (world_x / config.world_bounds.x) * 0.5 + 0.5;
-    let grid_v = (-world_y / config.world_bounds.y) * 0.5 + 0.5;
-    
+    let grid_u = (world_xy.x / config.world_bounds.x) * 0.5 + 0.5;
+    let grid_v = (-world_xy.y / config.world_bounds.y) * 0.5 + 0.5;
+
     let sample_uv = vec2<f32>(grid_u, grid_v);
 
     let val = textureSample(t_field, s_field, sample_uv).r;

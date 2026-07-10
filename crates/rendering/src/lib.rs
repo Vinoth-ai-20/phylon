@@ -48,7 +48,7 @@ pub mod capsule_mesh;
 /// replaces the retired `SdfSkinRenderer` (2-pass SDF metaball technique;
 /// see git history prior to this epic for that implementation).
 pub mod organism;
-pub use organism::{CapsuleInstance, OrganismRenderer};
+pub use organism::{CapsuleInstance, ClipPlane, OrganismRenderer};
 
 /// Ray-vs-capsule picking (Phase 8, Epic 8.4) — replaces flat, Z=0-plane-
 /// based nearest-point picking with a real 3D ray cast against the exact

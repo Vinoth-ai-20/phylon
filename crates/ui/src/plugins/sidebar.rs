@@ -806,6 +806,28 @@ fn tuning_panel(ui: &mut egui::Ui, state: &mut crate::WorkbenchState, world: &mu
         });
 
     egui::CollapsingHeader::new(format!(
+        "{} Clipping Plane",
+        egui_remixicon::icons::SCISSORS_LINE
+    ))
+    .default_open(false)
+    .show(ui, |ui| {
+        // Phase 8, Epic 8.5 (ADR-P8-05) — a horizontal world-space Z-plane
+        // the organism renderer clips fragments against, letting the user
+        // slice into a dense population to see inside it.
+        ui.checkbox(&mut state.clip_plane.enabled, "Enabled");
+        ui.add_enabled_ui(state.clip_plane.enabled, |ui| {
+            ui.add(
+                egui::Slider::new(&mut state.clip_plane.height, -20.0..=20.0).text("Height (Z)"),
+            );
+            ui.horizontal(|ui| {
+                ui.label("Keep:");
+                ui.selectable_value(&mut state.clip_plane.keep_above, true, "Above");
+                ui.selectable_value(&mut state.clip_plane.keep_above, false, "Below");
+            });
+        });
+    });
+
+    egui::CollapsingHeader::new(format!(
         "{} Simulation",
         egui_remixicon::icons::SETTINGS_LINE
     ))
