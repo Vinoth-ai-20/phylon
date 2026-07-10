@@ -733,10 +733,18 @@ impl PhylonApp {
         }
     }
 
-    /// Converts a physical-pixel screen coordinate to world space and finds the
-    /// nearest `ParticleNode` within a pick radius.
+    /// Converts a physical-pixel screen coordinate to a world-space ray and
+    /// finds the nearest entity it hits, by true ray-vs-capsule (Phase 8,
+    /// Epic 8.4) intersection against the exact radius the renderer draws
+    /// each entity at — replacing the previous flat technique (unproject to
+    /// the `Z = 0` plane, then 2D nearest-point-within-a-fudge-radius),
+    /// which was blind to camera tilt and to each entity's actual on-screen
+    /// size. "Nearest" here means nearest *along the ray* (smallest hit
+    /// `t`), i.e. depth-correct — the frontmost entity under the cursor,
+    /// not merely the one whose point happens to be closest to the Z=0
+    /// unprojection.
     ///
-    /// Returns `None` if no node is close enough, or if GPU surface is not ready.
+    /// Returns `None` if nothing is hit, or if GPU surface is not ready.
     pub(crate) fn pick_entity(
         &mut self,
         screen_pos: common::Vec2,
@@ -752,18 +760,12 @@ impl PhylonApp {
         let local_pos = common::Vec2::new(screen_pos.x - vx, screen_pos.y - vy);
         let viewport_size = common::Vec2::new(vw, vh);
 
-        // Real unproject (Phase 8, ADR-P8-02) — the third of the 3
-        // duplicated screen↔world transforms the Phase 8 audit found, now
-        // going through `Camera3d::screen_to_ray` + the shared Z=0 plane
-        // intersection instead of its own hand-derived ortho inverse.
         let camera = self.ui.camera();
         let (origin, dir) = camera.screen_to_ray(local_pos, viewport_size);
-        let world_pos = ui::camera::ray_intersect_z0(origin, dir)?;
-
-        let pick_radius = 30.0 / self.ui.camera_zoom_2d();
+        let node_radius = self.ui.node_radius;
 
         let mut best: Option<bevy_ecs::entity::Entity> = None;
-        let mut best_dist = pick_radius;
+        let mut best_t = f32::INFINITY;
 
         // query() requires &mut World in bevy_ecs 0.14
         let mut query = self
@@ -771,10 +773,13 @@ impl PhylonApp {
             .ecs
             .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
         for (entity, node) in query.iter(&self.world.ecs) {
-            let dist = (node.position.truncate() - world_pos).length();
-            if dist < best_dist {
-                best_dist = dist;
-                best = Some(entity);
+            if let Some(t) =
+                rendering::ray_capsule_hit(origin, dir, node.position, node.position, node_radius)
+            {
+                if t < best_t {
+                    best_t = t;
+                    best = Some(entity);
+                }
             }
         }
 
@@ -783,10 +788,17 @@ impl PhylonApp {
             .ecs
             .query::<(bevy_ecs::entity::Entity, &ecology::FoodPellet)>();
         for (entity, pellet) in food_query.iter(&self.world.ecs) {
-            let dist = (pellet.position.truncate() - world_pos).length();
-            if dist < best_dist {
-                best_dist = dist;
-                best = Some(entity);
+            if let Some(t) = rendering::ray_capsule_hit(
+                origin,
+                dir,
+                pellet.position,
+                pellet.position,
+                crate::render::organism_visuals::FOOD_PELLET_RADIUS,
+            ) {
+                if t < best_t {
+                    best_t = t;
+                    best = Some(entity);
+                }
             }
         }
 
@@ -795,10 +807,17 @@ impl PhylonApp {
             .ecs
             .query::<(bevy_ecs::entity::Entity, &ecology::MineralPellet)>();
         for (entity, mineral) in mineral_query.iter(&self.world.ecs) {
-            let dist = (mineral.position.truncate() - world_pos).length();
-            if dist < best_dist {
-                best_dist = dist;
-                best = Some(entity);
+            if let Some(t) = rendering::ray_capsule_hit(
+                origin,
+                dir,
+                mineral.position,
+                mineral.position,
+                crate::render::organism_visuals::MINERAL_PELLET_RADIUS,
+            ) {
+                if t < best_t {
+                    best_t = t;
+                    best = Some(entity);
+                }
             }
         }
 
@@ -807,10 +826,17 @@ impl PhylonApp {
             .ecs
             .query::<(bevy_ecs::entity::Entity, &ecology::Corpse)>();
         for (entity, corpse) in corpse_query.iter(&self.world.ecs) {
-            let dist = (corpse.position.truncate() - world_pos).length();
-            if dist < best_dist {
-                best_dist = dist;
-                best = Some(entity);
+            if let Some(t) = rendering::ray_capsule_hit(
+                origin,
+                dir,
+                corpse.position,
+                corpse.position,
+                crate::render::organism_visuals::CORPSE_RADIUS,
+            ) {
+                if t < best_t {
+                    best_t = t;
+                    best = Some(entity);
+                }
             }
         }
 

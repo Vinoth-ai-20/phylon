@@ -169,19 +169,41 @@ pub fn toolbar_ui(
 
         ui.separator();
 
-        // Measure tool (Phase 2, M11) — toggling clears any in-progress
-        // marquee-select drag interaction by construction, since the two
-        // share one click-drag gesture in `viewport.rs`, branching on this
-        // flag.
+        // Lasso-select (Phase 8, Epic 8.4) — mutually exclusive with
+        // Measure below and the default box-select, since all three share
+        // one click-drag gesture in `viewport.rs`, branching on
+        // `state.marquee_mode`.
         if ui
             .selectable_label(
-                state.measure_mode,
+                state.marquee_mode == crate::MarqueeMode::Lasso,
+                egui_remixicon::icons::SHAPE_LINE.to_string(),
+            )
+            .on_hover_text("Lasso-select (drag in the viewport)")
+            .clicked()
+        {
+            state.marquee_mode = if state.marquee_mode == crate::MarqueeMode::Lasso {
+                crate::MarqueeMode::Select
+            } else {
+                crate::MarqueeMode::Lasso
+            };
+        }
+
+        // Measure tool (Phase 2, M11) — toggling switches away from
+        // box-select/lasso by construction, since all three share one
+        // click-drag gesture in `viewport.rs`, branching on this mode.
+        if ui
+            .selectable_label(
+                state.marquee_mode == crate::MarqueeMode::Measure,
                 egui_remixicon::icons::RULER_LINE.to_string(),
             )
             .on_hover_text("Measure distance (drag in the viewport)")
             .clicked()
         {
-            state.measure_mode = !state.measure_mode;
+            state.marquee_mode = if state.marquee_mode == crate::MarqueeMode::Measure {
+                crate::MarqueeMode::Select
+            } else {
+                crate::MarqueeMode::Measure
+            };
         }
 
         ui.separator();

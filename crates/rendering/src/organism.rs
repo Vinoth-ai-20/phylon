@@ -65,11 +65,20 @@ struct GpuCamera {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct GpuLight {
+    /// The directional light's view-projection matrix (Epic 8.3) — used
+    /// both to render the shadow map (`vs_shadow`) and to sample it back
+    /// (`fs_main`'s `sample_shadow`). First field so `sun_dir`/`sunlight`
+    /// naturally pack into the remaining 16-byte slot after it with no
+    /// explicit padding (mirrors `GpuCamera`'s own layout reasoning).
+    light_view_proj: [[f32; 4]; 4],
     sun_dir: [f32; 3],
     sunlight: f32,
 }
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// Shadow map resolution — untuned-but-reasonable, same status as every
+/// other not-yet-measured constant introduced this phase.
+const SHADOW_MAP_SIZE: u32 = 2048;
 
 /// # Mesh-Based Capsule Organism Renderer
 ///
@@ -91,11 +100,18 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// instance from `pos_a`/`pos_b`/`radius` (no per-instance rotation stored).
 /// A real depth buffer (`Depth32Float`) is owned by this renderer — the
 /// first depth-consuming pass anywhere in the codebase (ADR-P8-03). Shading
-/// is single-light Cook-Torrance PBR (`capsule.wgsl`'s fragment shader) — no
-/// shadows yet (Epic 8.3's job).
+/// is single-light Cook-Torrance PBR (`capsule.wgsl`'s fragment shader),
+/// modulated by a directional shadow map (Epic 8.3): every frame first
+/// renders a depth-only pass of the same instances from the light's point
+/// of view (`shadow_texture`), then the main pass samples it back to
+/// determine which fragments are in shadow. One shared `PipelineLayout`
+/// (camera/light, highlight color, shadow map — 3 groups) backs all three
+/// pipelines (main, highlight, shadow-writing), so no pipeline layout is
+/// duplicated across them.
 pub struct OrganismRenderer {
     pipeline: wgpu::RenderPipeline,
     highlight_pipeline: wgpu::RenderPipeline,
+    shadow_pipeline: wgpu::RenderPipeline,
 
     camera_buffer: wgpu::Buffer,
     light_buffer: wgpu::Buffer,
@@ -103,6 +119,16 @@ pub struct OrganismRenderer {
 
     highlight_color_buffer: wgpu::Buffer,
     highlight_color_bind_group: wgpu::BindGroup,
+
+    // Never resized (fixed `SHADOW_MAP_SIZE`) and never read directly after
+    // construction — kept only so the texture (and thus `shadow_view`,
+    // which borrows from it internally) stays alive for the renderer's
+    // lifetime, the same ownership relationship `depth_texture`/`depth_view`
+    // already have.
+    #[allow(dead_code)]
+    shadow_texture: wgpu::Texture,
+    shadow_view: wgpu::TextureView,
+    shadow_bind_group: wgpu::BindGroup,
 
     mesh_vertex_buffer: wgpu::Buffer,
     mesh_index_buffer: wgpu::Buffer,
@@ -142,6 +168,7 @@ impl OrganismRenderer {
         let light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("OrganismLightBuffer"),
             contents: bytemuck::bytes_of(&GpuLight {
+                light_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
                 sun_dir: [0.4, -0.3, -0.85],
                 sunlight: 1.0,
             }),
@@ -163,7 +190,9 @@ impl OrganismRenderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    // `vs_shadow` reads `light.light_view_proj`; `fs_main`
+                    // reads all three fields.
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -216,14 +245,88 @@ impl OrganismRenderer {
             }],
         });
 
+        // Shadow map (Epic 8.3) — a fixed-size depth-only texture,
+        // rendered from the directional light's point of view each frame
+        // and sampled back by the main pass's fragment shader. Unlike the
+        // main scene's depth texture, this never resizes with the window.
+        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("OrganismShadowTexture"),
+            size: wgpu::Extent3d {
+                width: SHADOW_MAP_SIZE,
+                height: SHADOW_MAP_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("OrganismShadowSampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            // A comparison sampler with linear filtering gives cheap,
+            // standard bilinear-filtered PCF (one `textureSampleCompare`
+            // tap, hardware-interpolated) — "basic shadow mapping," not a
+            // multi-tap PCF kernel this epic doesn't call for.
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
+        let shadow_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("OrganismShadowBGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+            ],
+        });
+        let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("OrganismShadowBindGroup"),
+            layout: &shadow_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&shadow_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
+            ],
+        });
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("CapsuleShader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("capsule.wgsl").into()),
         });
 
+        // One shared layout (camera/light, highlight color, shadow map)
+        // backs all three pipelines below — none of `capsule.wgsl`'s entry
+        // points needs every group, but declaring one consistent layout
+        // (rather than a bespoke subset per pipeline) means every pipeline
+        // binds the same 3 groups uniformly at draw time, and no pipeline
+        // layout is duplicated (Epic 8.3's own architecture rule).
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("OrganismPipelineLayout"),
-            bind_group_layouts: &[&camera_bgl],
+            bind_group_layouts: &[&camera_bgl, &highlight_color_bgl, &shadow_bgl],
             push_constant_ranges: &[],
         });
         let depth_stencil_state = wgpu::DepthStencilState {
@@ -274,15 +377,12 @@ impl OrganismRenderer {
         // module's own architecture note in the roadmap) — draw only the
         // *back* faces of a slightly inflated capsule, depth-tested against
         // (not writing into) the main pass's already-populated depth
-        // buffer, so the outline only shows past the main silhouette.
-        let highlight_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("OrganismHighlightPipelineLayout"),
-            bind_group_layouts: &[&camera_bgl, &highlight_color_bgl],
-            push_constant_ranges: &[],
-        });
+        // buffer, so the outline only shows past the main silhouette. Reuses
+        // the same shared 3-group `pipeline_layout` as `pipeline` — group 2
+        // (shadow map) is bound but unread by `fs_highlight`.
         let highlight_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("OrganismHighlightPipeline"),
-            layout: Some(&highlight_layout),
+            layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "vs_main",
@@ -314,6 +414,55 @@ impl OrganismRenderer {
             cache: None,
         });
 
+        // Shadow pass: depth-only, writes into `shadow_texture` from the
+        // light's point of view. A small constant + slope-scaled depth bias
+        // mitigates shadow-acne self-shadowing artifacts on the capsule's
+        // curved surface; both are cheap, standard, untuned starting values
+        // (this epic's "measure before optimizing" rule applies to visual
+        // acne/peter-panning correction if the interactive pass finds it
+        // wrong, not to guessing a better constant up front).
+        // Its own minimal layout (group 0 only) — `vs_shadow` reads nothing
+        // from groups 1/2, and critically must NOT declare group 2 (the
+        // shadow map itself): binding `shadow_bind_group` in this same pass
+        // while its depth attachment writes into that same texture is a
+        // self-referential read+write wgpu correctly rejects.
+        let shadow_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("OrganismShadowPipelineLayout"),
+                bind_group_layouts: &[&camera_bgl],
+                push_constant_ranges: &[],
+            });
+        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("OrganismShadowPipeline"),
+            layout: Some(&shadow_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_shadow",
+                buffers: &vertex_buffers,
+                compilation_options: Default::default(),
+            },
+            fragment: None,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: 2,
+                    slope_scale: 2.0,
+                    clamp: 0.0,
+                },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         let (mesh_vertices, mesh_indices) = build_capsule_mesh();
         let mesh_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("CapsuleMeshVertexBuffer"),
@@ -332,11 +481,15 @@ impl OrganismRenderer {
         Self {
             pipeline,
             highlight_pipeline,
+            shadow_pipeline,
             camera_buffer,
             light_buffer,
             camera_bind_group,
             highlight_color_buffer,
             highlight_color_bind_group,
+            shadow_texture,
+            shadow_view,
+            shadow_bind_group,
             mesh_vertex_buffer,
             mesh_index_buffer,
             mesh_index_count,
@@ -386,6 +539,14 @@ impl OrganismRenderer {
         self.current_height = height;
     }
 
+    /// Exposes this renderer's depth buffer view so other passes (e.g.
+    /// `DebugRenderer`'s camera-facing billboards, Epic 8.3) can depth-test
+    /// against the same scene depth without owning a redundant depth
+    /// texture of their own.
+    pub fn depth_view(&self) -> &wgpu::TextureView {
+        &self.depth_view
+    }
+
     fn ensure_instance_buffer<'a>(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -416,6 +577,7 @@ impl OrganismRenderer {
         queue: &wgpu::Queue,
         view_proj: glam::Mat4,
         camera_pos: glam::Vec3,
+        light_view_proj: glam::Mat4,
         sun_dir: glam::Vec3,
         sunlight: f32,
     ) {
@@ -432,10 +594,33 @@ impl OrganismRenderer {
             &self.light_buffer,
             0,
             bytemuck::bytes_of(&GpuLight {
+                light_view_proj: light_view_proj.to_cols_array_2d(),
                 sun_dir: sun_dir.into(),
                 sunlight,
             }),
         );
+    }
+
+    /// Computes the directional light's view-projection matrix for the
+    /// shadow pass: an orthographic frustum (directional lights have no
+    /// meaningful perspective/position) that comfortably bounds the whole
+    /// simulated world, looking along the fixed `sun_dir`.
+    ///
+    /// `world_half_extent` is the caller's own world-bounds constant (e.g.
+    /// `app/render.rs`'s `WORLD_BOUNDS`) — passed in rather than duplicated,
+    /// so this module never invents its own notion of "how big is the
+    /// world."
+    fn compute_light_view_proj(sun_dir: glam::Vec3, world_half_extent: f32) -> glam::Mat4 {
+        let light_distance = world_half_extent * 2.5;
+        let eye = -sun_dir * light_distance;
+        let view = glam::Mat4::look_to_rh(eye, sun_dir, glam::Vec3::Y);
+        // Slightly larger than the world itself so bones near the boundary
+        // don't clip out of the shadow frustum.
+        let half = world_half_extent * 1.15;
+        let near = 0.1;
+        let far = light_distance * 2.0;
+        let proj = glam::Mat4::orthographic_rh(-half, half, -half, half, near, far);
+        proj * view
     }
 
     /// Renders the lit, depth-correct organism capsules for this frame.
@@ -455,20 +640,63 @@ impl OrganismRenderer {
         view_proj: glam::Mat4,
         camera_pos: glam::Vec3,
         sunlight: f32,
+        world_half_extent: f32,
         viewport: Option<[u32; 4]>,
     ) {
         self.resize(device, screen_size[0] as u32, screen_size[1] as u32);
+        let sun_dir = glam::Vec3::new(0.4, -0.3, -0.85).normalize();
+        let light_view_proj = Self::compute_light_view_proj(sun_dir, world_half_extent);
         self.update_uniforms(
             queue,
             view_proj,
             camera_pos,
-            glam::Vec3::new(0.4, -0.3, -0.85).normalize(),
+            light_view_proj,
+            sun_dir,
             sunlight,
         );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("OrganismEncoder"),
         });
+
+        // Instance buffer is uploaded once here and reused by both the
+        // shadow pass and the main pass below (same bones, same frame).
+        let instance_buffer = (!instances.is_empty()).then(|| {
+            Self::ensure_instance_buffer(
+                device,
+                queue,
+                &mut self.instance_buffer,
+                &mut self.instance_capacity,
+                "CapsuleInstanceBuffer",
+                instances,
+            )
+        });
+
+        // Shadow pass: depth-only render of the same instances from the
+        // light's point of view, before the main color+depth pass.
+        if let Some(instance_buffer) = instance_buffer {
+            let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("OrganismShadowPass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.shadow_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            shadow_pass.set_pipeline(&self.shadow_pipeline);
+            shadow_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            shadow_pass.set_vertex_buffer(0, self.mesh_vertex_buffer.slice(..));
+            shadow_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+            shadow_pass
+                .set_index_buffer(self.mesh_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            shadow_pass.draw_indexed(0..self.mesh_index_count, 0, 0..instances.len() as u32);
+        }
 
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -500,17 +728,11 @@ impl OrganismRenderer {
                 }
             }
 
-            if !instances.is_empty() {
-                let instance_buffer = Self::ensure_instance_buffer(
-                    device,
-                    queue,
-                    &mut self.instance_buffer,
-                    &mut self.instance_capacity,
-                    "CapsuleInstanceBuffer",
-                    instances,
-                );
+            if let Some(instance_buffer) = instance_buffer {
                 rpass.set_pipeline(&self.pipeline);
                 rpass.set_bind_group(0, &self.camera_bind_group, &[]);
+                rpass.set_bind_group(1, &self.highlight_color_bind_group, &[]);
+                rpass.set_bind_group(2, &self.shadow_bind_group, &[]);
                 rpass.set_vertex_buffer(0, self.mesh_vertex_buffer.slice(..));
                 rpass.set_vertex_buffer(1, instance_buffer.slice(..));
                 rpass.set_index_buffer(self.mesh_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
@@ -535,24 +757,16 @@ impl OrganismRenderer {
         instances: &[CapsuleInstance],
         color: [f32; 4],
         screen_size: [f32; 2],
-        view_proj: glam::Mat4,
-        camera_pos: glam::Vec3,
-        sunlight: f32,
         viewport: Option<[u32; 4]>,
     ) {
         if instances.is_empty() {
             return;
         }
-        // Assume size/uniforms already synchronized by the preceding
-        // `render` call this frame — only the highlight color changes here.
+        // Camera and light uniforms (including `light_view_proj`, which the
+        // light doesn't move within a frame) were already written by the
+        // preceding `render()` call this same frame — only the highlight
+        // color changes here.
         let _ = screen_size;
-        self.update_uniforms(
-            queue,
-            view_proj,
-            camera_pos,
-            glam::Vec3::new(0.4, -0.3, -0.85).normalize(),
-            sunlight,
-        );
         queue.write_buffer(
             &self.highlight_color_buffer,
             0,
@@ -604,6 +818,7 @@ impl OrganismRenderer {
             rpass.set_pipeline(&self.highlight_pipeline);
             rpass.set_bind_group(0, &self.camera_bind_group, &[]);
             rpass.set_bind_group(1, &self.highlight_color_bind_group, &[]);
+            rpass.set_bind_group(2, &self.shadow_bind_group, &[]);
             rpass.set_vertex_buffer(0, self.mesh_vertex_buffer.slice(..));
             rpass.set_vertex_buffer(1, instance_buffer.slice(..));
             rpass.set_index_buffer(self.mesh_index_buffer.slice(..), wgpu::IndexFormat::Uint16);

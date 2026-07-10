@@ -11,12 +11,22 @@
 //! or behavioral change) — every threshold, color, and gating condition
 //! moves unchanged.
 
+/// Pellet-like entity radii (Phase 7 W2b's `pellet_like_instances` call
+/// sites) — named and shared (Phase 8, Epic 8.4) so ray-vs-capsule picking
+/// hit-tests against exactly the same radius the renderer draws, rather
+/// than a second, independently-tuned literal.
+pub(crate) const FOOD_PELLET_RADIUS: f32 = 2.5;
+/// See [`FOOD_PELLET_RADIUS`].
+pub(crate) const MINERAL_PELLET_RADIUS: f32 = 2.0;
+/// See [`FOOD_PELLET_RADIUS`].
+pub(crate) const CORPSE_RADIUS: f32 = 4.0;
+
 /// Low-health ring — primary tier, always visible (not gated behind
 /// `debug_structural`). `None` above 40% health, matching the prior
 /// inline behavior where nothing is drawn for the common healthy case.
 pub(crate) fn health_ring_instance(
     health: &metabolism::Health,
-    pos: [f32; 2],
+    pos: [f32; 3],
     node_radius: f32,
 ) -> Option<rendering::DebugInstance> {
     let fraction = if health.max > 0.0 {
@@ -50,7 +60,7 @@ pub(crate) fn disease_badge_instance(
     infection: &ecology::disease::Infection,
     avg_severity: f32,
     health_fraction: f32,
-    pos: [f32; 2],
+    pos: [f32; 3],
     node_radius: f32,
 ) -> rendering::DebugInstance {
     let is_critical = avg_severity > 0.70 || health_fraction < 0.15;
@@ -71,9 +81,10 @@ pub(crate) fn disease_badge_instance(
         }
     };
     let offset = 12.0 * (node_radius / 5.0);
+    let offset_pos = [pos[0] - offset, pos[1] - offset, pos[2]];
     rendering::DebugInstance {
-        pos_a: [pos[0] - offset, pos[1] - offset],
-        pos_b: [pos[0] - offset, pos[1] - offset],
+        pos_a: offset_pos,
+        pos_b: offset_pos,
         color: [color[0], color[1], color[2], alpha],
         radius,
         segment_type: 99,
@@ -86,9 +97,10 @@ pub(crate) fn segment_debug_dot_instance(
     node: &physics::ParticleNode,
     node_radius: f32,
 ) -> rendering::DebugInstance {
+    let pos: [f32; 3] = node.position.into();
     rendering::DebugInstance {
-        pos_a: [node.position.x, node.position.y],
-        pos_b: [node.position.x, node.position.y],
+        pos_a: pos,
+        pos_b: pos,
         color: match node.segment_type {
             0 => [1.000, 1.000, 1.000, 1.0], // Head - Absolute White #FFFFFF
             2 => [1.000, 0.033, 0.133, 1.0], // Muscle - Actuation Pink #FF3366
@@ -124,9 +136,10 @@ pub(crate) fn category_ring_instance(
         _ => None,
     };
     let col = ring_color?;
+    let pos: [f32; 3] = node.position.into();
     Some(rendering::DebugInstance {
-        pos_a: [node.position.x, node.position.y],
-        pos_b: [node.position.x, node.position.y],
+        pos_a: pos,
+        pos_b: pos,
         color: [col[0], col[1], col[2], 0.3],
         radius: 12.0 * (node_radius / 5.0),
         segment_type: 99,
@@ -137,8 +150,8 @@ pub(crate) fn category_ring_instance(
 /// organisms. Population-wide, always visible (caller only invokes this
 /// when `org_a != org_b`).
 pub(crate) fn colony_link_instance(
-    pos_a: [f32; 2],
-    pos_b: [f32; 2],
+    pos_a: [f32; 3],
+    pos_b: [f32; 3],
     skin_thickness: f32,
 ) -> rendering::DebugInstance {
     let [r, g, b, _] = ui::theme::ACCENT.to_normalized_gamma_f32();
@@ -221,8 +234,6 @@ pub(crate) enum BoneKind {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bone_visual_instances(
     kind: BoneKind,
-    pos_a: [f32; 2],
-    pos_b: [f32; 2],
     pos_a3: [f32; 3],
     pos_b3: [f32; 3],
     opt_color: Option<[f32; 3]>,
@@ -265,8 +276,8 @@ pub(crate) fn bone_visual_instances(
         health,
     });
     let debug = should_draw_debug.then_some(rendering::DebugInstance {
-        pos_a,
-        pos_b,
+        pos_a: pos_a3,
+        pos_b: pos_b3,
         color: [0.246, 0.287, 0.434, 0.4],
         radius: bone_line_thickness,
         segment_type: 99,
@@ -290,7 +301,6 @@ pub(crate) struct PelletInstances {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pellet_like_instances(
-    pos: [f32; 2],
     pos3: [f32; 3],
     debug_color: [f32; 4],
     sdf_color: [f32; 3],
@@ -302,8 +312,8 @@ pub(crate) fn pellet_like_instances(
     is_selected: bool,
 ) -> PelletInstances {
     let debug = should_draw_debug.then_some(rendering::DebugInstance {
-        pos_a: pos,
-        pos_b: pos,
+        pos_a: pos3,
+        pos_b: pos3,
         color: debug_color,
         radius,
         segment_type: 0,

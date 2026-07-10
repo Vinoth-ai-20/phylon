@@ -27,8 +27,10 @@ use crate::app::PhylonApp;
 
 /// Organism visual-instance builders (Phase 7, W2a) — the "what to draw"
 /// half of this file's per-node/per-spring loops. See its own module doc
-/// comment for the extraction discipline.
-mod organism_visuals;
+/// comment for the extraction discipline. `pub(crate)` (Phase 8, Epic 8.4)
+/// so `app.rs`'s `pick_entity` can reuse its pellet-radius constants for
+/// ray-vs-capsule picking, rather than duplicating those literals.
+pub(crate) mod organism_visuals;
 /// Per-frame world-instance gathering (Phase 7, W2d) — the per-node/per-
 /// spring/per-pellet orchestration that calls `organism_visuals`'s
 /// builders, extracted out of `render()` itself. See its own module doc
@@ -453,6 +455,7 @@ impl PhylonApp {
                     view_proj,
                     camera.position,
                     sunlight,
+                    WORLD_BOUNDS,
                     central_rect_px,
                 );
             }
@@ -466,16 +469,24 @@ impl PhylonApp {
         // obscure) the Priority-1 selection/hover outline wherever they
         // overlapped — a direct violation of "higher-priority signals must
         // always remain readable." Selection/hover now always paints last.
+        // Debug badges (Epic 8.3): camera-facing billboards, depth-tested
+        // against `OrganismRenderer`'s shared depth buffer — only rendered
+        // once that renderer exists (it owns the only depth buffer in the
+        // frame).
         if !debug_instances.is_empty() {
-            if let Some(debug_renderer) = self.debug_renderer.as_mut() {
+            if let (Some(debug_renderer), Some(organism_renderer)) = (
+                self.debug_renderer.as_mut(),
+                self.organism_renderer.as_ref(),
+            ) {
                 debug_renderer.render(
                     &gpu.device,
                     &gpu.queue,
                     &view,
                     &debug_instances,
-                    [view_w, view_h],
-                    camera_pos_2d,
-                    camera_zoom_2d,
+                    organism_renderer.depth_view(),
+                    view_proj,
+                    camera.right(),
+                    camera.up(),
                     central_rect_px,
                 );
             }
@@ -490,9 +501,6 @@ impl PhylonApp {
                     &hover_bones,
                     [0.0, 1.0, 0.0, 1.0],
                     surface_size,
-                    view_proj,
-                    camera.position,
-                    sunlight,
                     central_rect_px,
                 );
             }
@@ -525,9 +533,6 @@ impl PhylonApp {
                     &selected_bones,
                     [1.0, 1.0, 1.0, pulse],
                     surface_size,
-                    view_proj,
-                    camera.position,
-                    sunlight,
                     central_rect_px,
                 );
             }

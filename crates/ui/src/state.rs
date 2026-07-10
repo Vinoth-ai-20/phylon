@@ -86,11 +86,15 @@ pub struct WorkbenchState {
     /// this) that was previously entirely absent; the status bar showed
     /// only the *camera's* position, never the cursor's.
     pub cursor_world_pos: Option<common::Vec2>,
-    /// Whether the viewport's click-drag currently measures distance
-    /// (Phase 2, M11) instead of marquee-selecting — mutually exclusive
-    /// with M8's marquee-select on the same drag gesture, toggled from the
-    /// toolbar.
-    pub measure_mode: bool,
+    /// Which gesture the viewport's left-button click-drag currently
+    /// performs (Phase 2 M8/M11; Phase 8 Epic 8.4 added `Lasso`) — replaces
+    /// the previous `measure_mode: bool`, toggled from the toolbar.
+    pub marquee_mode: crate::MarqueeMode,
+    /// Screen-space points accumulated during an in-progress lasso-select
+    /// drag (Phase 8, Epic 8.4), appended to while dragging in
+    /// `MarqueeMode::Lasso`, drained into a `MenuAction::SelectInLasso` and
+    /// cleared on `drag_stopped_by`.
+    pub lasso_points: Vec<egui::Pos2>,
     /// The last completed measurement: `(start, end, distance)` in world
     /// units, persisted (not just shown during the drag) until the next
     /// measurement or a mode toggle clears it.
@@ -528,7 +532,8 @@ impl Default for WorkbenchState {
             previous_selected_entity: None,
             marquee_drag_start: None,
             cursor_world_pos: None,
-            measure_mode: false,
+            marquee_mode: crate::MarqueeMode::Select,
+            lasso_points: Vec::new(),
             measure_result: None,
             bookmarks: Vec::new(),
             show_command_palette: false,

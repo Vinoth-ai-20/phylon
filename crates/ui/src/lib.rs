@@ -22,7 +22,7 @@ pub mod shortcuts;
 pub mod types;
 pub use types::{
     ActiveHeatmap, AppState, BottomTab, CameraBookmark, CanvasInteraction, HeatmapState,
-    LineageView, MenuAction, ReplayBrowserSummary, SidebarTab, UiError,
+    LineageView, MarqueeMode, MenuAction, ReplayBrowserSummary, SidebarTab, UiError,
 };
 
 pub mod layout;

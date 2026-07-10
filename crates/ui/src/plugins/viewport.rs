@@ -220,70 +220,98 @@ pub fn viewport_ui(
                 }
             }
 
-            let screen_center = rect.center();
             let ppp = ctx.pixels_per_point();
-            let camera_pos = state.camera_pos_2d();
-            let camera_zoom = state.camera_zoom_2d();
+            let viewport_size_px = common::Vec2::new(rect.width() * ppp, rect.height() * ppp);
+            let to_local_px = |p: egui::Pos2| {
+                common::Vec2::new((p.x - rect.min.x) * ppp, (p.y - rect.min.y) * ppp)
+            };
             // Real unproject (ADR-P8-02) — the second of the 3 duplicated
             // screen↔world transforms the Phase 8 audit found, now going
             // through `Camera3d::screen_to_ray` + the shared Z=0 plane
             // intersection instead of its own hand-derived ortho inverse.
             let to_world = |p: egui::Pos2| {
-                let screen_pos =
-                    common::Vec2::new((p.x - rect.min.x) * ppp, (p.y - rect.min.y) * ppp);
-                let viewport_size = common::Vec2::new(rect.width() * ppp, rect.height() * ppp);
-                let (origin, dir) = camera.screen_to_ray(screen_pos, viewport_size);
+                let (origin, dir) = camera.screen_to_ray(to_local_px(p), viewport_size_px);
                 crate::camera::ray_intersect_z0(origin, dir)
                     .unwrap_or_else(|| camera.position.truncate())
             };
-            // World→screen projection (the inverse direction) has no
-            // equivalent single `Camera3d` method — the Z=0 plane is a
-            // simulation-space convention the camera itself doesn't know
-            // about (see `ray_intersect_z0`'s doc comment) — so this stays
-            // the same flat formula as before, fed by the `camera_pos_2d`/
-            // `camera_zoom_2d` bridge (Epic 8.1 scope; Epic 8.2 replaces
-            // this whole panel with true 3D rendering).
+            // World→screen projection (the inverse direction) — now a real
+            // `Camera3d::world_to_screen` projection (Phase 8, Epic 8.4;
+            // previously a flat approximation fed by the `camera_pos_2d`/
+            // `camera_zoom_2d` bridge, before that method existed), local to
+            // this viewport's rect rather than the raw screen.
             let to_screen = |p: common::Vec2| {
-                egui::pos2(
-                    screen_center.x + (p.x - camera_pos.x) * camera_zoom / ppp,
-                    screen_center.y - (p.y - camera_pos.y) * camera_zoom / ppp,
-                )
+                camera
+                    .world_to_screen(p.extend(0.0), viewport_size_px)
+                    .map(|s| egui::pos2(s.x / ppp + rect.min.x, s.y / ppp + rect.min.y))
+                    .unwrap_or(rect.center())
             };
 
-            // Marquee-select (Phase 2, M8) / Measure (Phase 2, M11) share one
-            // click-drag gesture, branching on `state.measure_mode` (toggled
-            // from the toolbar) — the drag start is tracked explicitly in
-            // `state` (set on `drag_started_by`, cleared on
-            // `drag_stopped_by`) rather than relying on
-            // `interact_pointer_pos()` staying valid past the exact frame
-            // the drag ends.
+            // Box-select (Phase 2, M8) / Lasso-select (Phase 8, Epic 8.4) /
+            // Measure (Phase 2, M11) share one click-drag gesture, branching
+            // on `state.marquee_mode` (toggled from the toolbar) — the drag
+            // start is tracked explicitly in `state` (set on
+            // `drag_started_by`, cleared on `drag_stopped_by`) rather than
+            // relying on `interact_pointer_pos()` staying valid past the
+            // exact frame the drag ends.
             if interact_response.drag_started_by(egui::PointerButton::Primary) {
                 state.marquee_drag_start = interact_response.interact_pointer_pos();
+                state.lasso_points.clear();
+                if let Some(p) = state.marquee_drag_start {
+                    state.lasso_points.push(p);
+                }
             }
             if interact_response.dragged_by(egui::PointerButton::Primary) {
                 if let (Some(start), Some(current)) = (state.marquee_drag_start, hover_pos) {
                     if start != current {
-                        if state.measure_mode {
-                            let distance = (to_world(start) - to_world(current)).length();
-                            ui.painter().line_segment(
-                                [start, current],
-                                egui::Stroke::new(2.0_f32, crate::theme::ACCENT),
-                            );
-                            ui.painter().text(
-                                current,
-                                egui::Align2::LEFT_TOP,
-                                format!("{distance:.1} units"),
-                                egui::FontId::monospace(crate::theme::SIZE_SMALL),
-                                egui::Color32::WHITE,
-                            );
-                        } else {
-                            let sel_rect = egui::Rect::from_two_pos(start, current);
-                            ui.painter().rect(
-                                sel_rect,
-                                0.0,
-                                egui::Color32::from_white_alpha(20),
-                                egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(180)),
-                            );
+                        match state.marquee_mode {
+                            crate::MarqueeMode::Measure => {
+                                let distance = (to_world(start) - to_world(current)).length();
+                                ui.painter().line_segment(
+                                    [start, current],
+                                    egui::Stroke::new(2.0_f32, crate::theme::ACCENT),
+                                );
+                                ui.painter().text(
+                                    current,
+                                    egui::Align2::LEFT_TOP,
+                                    format!("{distance:.1} units"),
+                                    egui::FontId::monospace(crate::theme::SIZE_SMALL),
+                                    egui::Color32::WHITE,
+                                );
+                            }
+                            crate::MarqueeMode::Select => {
+                                let sel_rect = egui::Rect::from_two_pos(start, current);
+                                ui.painter().rect(
+                                    sel_rect,
+                                    0.0,
+                                    egui::Color32::from_white_alpha(20),
+                                    egui::Stroke::new(
+                                        1.0_f32,
+                                        egui::Color32::from_white_alpha(180),
+                                    ),
+                                );
+                            }
+                            crate::MarqueeMode::Lasso => {
+                                // Only append when the cursor has moved a
+                                // few pixels since the last vertex, so a
+                                // slow drag doesn't flood the polygon with
+                                // near-duplicate points.
+                                let should_append = state
+                                    .lasso_points
+                                    .last()
+                                    .is_none_or(|&last| (last - current).length() > 3.0);
+                                if should_append {
+                                    state.lasso_points.push(current);
+                                }
+                                if state.lasso_points.len() >= 2 {
+                                    ui.painter().add(egui::Shape::closed_line(
+                                        state.lasso_points.clone(),
+                                        egui::Stroke::new(
+                                            1.5_f32,
+                                            egui::Color32::from_white_alpha(200),
+                                        ),
+                                    ));
+                                }
+                            }
                         }
                     }
                 }
@@ -291,26 +319,40 @@ pub fn viewport_ui(
             if interact_response.drag_stopped_by(egui::PointerButton::Primary) {
                 if let (Some(start), Some(current)) = (state.marquee_drag_start, hover_pos) {
                     if (start - current).length() > 4.0 {
-                        let world_a = to_world(start);
-                        let world_b = to_world(current);
-                        if state.measure_mode {
-                            let distance = (world_a - world_b).length();
-                            state.measure_result = Some((world_a, world_b, distance));
-                        } else {
-                            actions.push(MenuAction::SelectInRect {
-                                min: common::Vec2::new(
-                                    world_a.x.min(world_b.x),
-                                    world_a.y.min(world_b.y),
-                                ),
-                                max: common::Vec2::new(
-                                    world_a.x.max(world_b.x),
-                                    world_a.y.max(world_b.y),
-                                ),
-                            });
+                        match state.marquee_mode {
+                            crate::MarqueeMode::Measure => {
+                                let world_a = to_world(start);
+                                let world_b = to_world(current);
+                                let distance = (world_a - world_b).length();
+                                state.measure_result = Some((world_a, world_b, distance));
+                            }
+                            crate::MarqueeMode::Select => {
+                                let a = to_local_px(start);
+                                let b = to_local_px(current);
+                                actions.push(MenuAction::SelectInRect {
+                                    screen_min: common::Vec2::new(a.x.min(b.x), a.y.min(b.y)),
+                                    screen_max: common::Vec2::new(a.x.max(b.x), a.y.max(b.y)),
+                                    viewport_size: viewport_size_px,
+                                });
+                            }
+                            crate::MarqueeMode::Lasso => {
+                                if state.lasso_points.len() >= 3 {
+                                    let points = state
+                                        .lasso_points
+                                        .iter()
+                                        .map(|&p| to_local_px(p))
+                                        .collect();
+                                    actions.push(MenuAction::SelectInLasso {
+                                        points,
+                                        viewport_size: viewport_size_px,
+                                    });
+                                }
+                            }
                         }
                     }
                 }
                 state.marquee_drag_start = None;
+                state.lasso_points.clear();
             }
 
             // Persist the last completed measurement across frames (not

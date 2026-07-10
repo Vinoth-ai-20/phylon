@@ -11,6 +11,23 @@ pub enum UiError {
 
 impl common::PhylonError for UiError {}
 
+/// Which of the three mutually-exclusive gestures a left-button viewport
+/// drag currently performs (Phase 8, Epic 8.4 — adds `Lasso` alongside the
+/// pre-existing `Select`/`Measure` pair, replacing the previous
+/// `measure_mode: bool` now that there are 3 states, not 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MarqueeMode {
+    /// Rectangular frustum-based box-select (Phase 2 M8; Phase 8 Epic 8.4
+    /// upgraded this from a flat Z=0-plane rectangle to a real screen-space
+    /// frustum test).
+    #[default]
+    Select,
+    /// Freeform polygon lasso-select (Phase 8, Epic 8.4 — new).
+    Lasso,
+    /// Distance measurement (Phase 2, M11).
+    Measure,
+}
+
 /// The active tab in the primary sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SidebarTab {
@@ -341,16 +358,34 @@ pub enum MenuAction {
     TrackEntity(bevy_ecs::entity::Entity),
     /// Select a specific entity.
     SelectEntity(bevy_ecs::entity::Entity),
-    /// Select every organism whose head node falls within a world-space
-    /// rectangle (Phase 2, M8 — marquee-select). `min`/`max` are opposite
-    /// corners in world space, not necessarily min-x/min-y vs. max-x/max-y
-    /// at the call site, but normalized to true min/max before this is
-    /// pushed.
+    /// Select every organism whose head node projects into a screen-space
+    /// rectangle (Phase 2, M8 — marquee-select; Phase 8 Epic 8.4 upgraded
+    /// this from a flat Z=0-plane world-space rectangle to a real
+    /// frustum-based test: each candidate's `Vec3` position is projected
+    /// through the camera's own `view_proj` and tested against this
+    /// rectangle in screen space, working correctly regardless of camera
+    /// tilt or an entity's `Z`). `screen_min`/`screen_max` are viewport-
+    /// local physical-pixel coordinates, normalized to true min/max before
+    /// this is pushed; `viewport_size` is the viewport's pixel size at the
+    /// time of the drag, needed to reconstruct the same projection.
     SelectInRect {
-        /// World-space minimum corner (smaller x, smaller y).
-        min: common::Vec2,
-        /// World-space maximum corner (larger x, larger y).
-        max: common::Vec2,
+        /// Viewport-local minimum corner (smaller x, smaller y), in pixels.
+        screen_min: common::Vec2,
+        /// Viewport-local maximum corner (larger x, larger y), in pixels.
+        screen_max: common::Vec2,
+        /// The viewport's pixel size at the time of the drag.
+        viewport_size: common::Vec2,
+    },
+    /// Select every organism whose head node projects inside a closed
+    /// screen-space polygon (Phase 8, Epic 8.4 — lasso-select). `points`
+    /// are viewport-local physical-pixel coordinates, in drag order (need
+    /// not be explicitly closed); `viewport_size` is the viewport's pixel
+    /// size at the time of the drag.
+    SelectInLasso {
+        /// Viewport-local polygon vertices, in pixels.
+        points: Vec<common::Vec2>,
+        /// The viewport's pixel size at the time of the drag.
+        viewport_size: common::Vec2,
     },
     /// Copy an entity's ID to clipboard.
     CopyEntityId(bevy_ecs::entity::Entity),

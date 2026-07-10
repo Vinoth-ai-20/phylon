@@ -1,13 +1,17 @@
 use wgpu::util::DeviceExt;
 
+/// The depth format shared with `OrganismRenderer`'s depth buffer — badges
+/// are depth-tested against it, so both renderers must agree on the format.
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
 /// An instance for the debug renderer.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct DebugInstance {
     /// World position A
-    pub pos_a: [f32; 2],
+    pub pos_a: [f32; 3],
     /// World position B (if equal to pos_a, renders a circle)
-    pub pos_b: [f32; 2],
+    pub pos_b: [f32; 3],
     /// Color (RGBA)
     pub color: [f32; 4],
     /// Radius or line thickness
@@ -17,35 +21,12 @@ pub struct DebugInstance {
 }
 
 impl DebugInstance {
-    const ATTRIBS: [wgpu::VertexAttribute; 5] = [
-        wgpu::VertexAttribute {
-            offset: 0,
-            shader_location: 1,
-            format: wgpu::VertexFormat::Float32x2,
-        },
-        wgpu::VertexAttribute {
-            offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
-            shader_location: 2,
-            format: wgpu::VertexFormat::Float32x2,
-        },
-        wgpu::VertexAttribute {
-            offset: (std::mem::size_of::<[f32; 2]>() * 2) as wgpu::BufferAddress,
-            shader_location: 3,
-            format: wgpu::VertexFormat::Float32x4,
-        },
-        wgpu::VertexAttribute {
-            offset: (std::mem::size_of::<[f32; 2]>() * 2 + std::mem::size_of::<[f32; 4]>())
-                as wgpu::BufferAddress,
-            shader_location: 4,
-            format: wgpu::VertexFormat::Float32,
-        },
-        wgpu::VertexAttribute {
-            offset: (std::mem::size_of::<[f32; 2]>() * 2
-                + std::mem::size_of::<[f32; 4]>()
-                + std::mem::size_of::<f32>()) as wgpu::BufferAddress,
-            shader_location: 5,
-            format: wgpu::VertexFormat::Uint32,
-        },
+    const ATTRIBS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+        1 => Float32x3, // pos_a
+        2 => Float32x3, // pos_b
+        3 => Float32x4, // color
+        4 => Float32,   // radius
+        5 => Uint32,    // segment_type
     ];
 
     fn desc() -> wgpu::VertexBufferLayout<'static> {
@@ -57,7 +38,24 @@ impl DebugInstance {
     }
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuCamera {
+    view_proj: [[f32; 4]; 4],
+    right: [f32; 3],
+    _pad0: f32,
+    up: [f32; 3],
+    _pad1: f32,
+}
+
 /// The debug renderer.
+///
+/// Renders Health/Disease/Category badges and colony-link markers as
+/// camera-facing billboards (Epic 8.3), depth-tested against — but not
+/// writing into — `OrganismRenderer`'s shared depth buffer (via its
+/// `depth_view()` accessor), so badges correctly hide behind nearer
+/// organisms instead of always drawing flat-on-top as the pre-Epic-8.3 2D
+/// technique did.
 pub struct DebugRenderer {
     pipeline: wgpu::RenderPipeline,
     camera_bind_group: wgpu::BindGroup,
@@ -77,12 +75,15 @@ impl DebugRenderer {
             source: wgpu::ShaderSource::Wgsl(include_str!("debug_quad.wgsl").into()),
         });
 
-        // Setup camera uniform buffer
-        let camera_matrix: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
-
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("CameraBuffer"),
-            contents: bytemuck::cast_slice(&camera_matrix),
+            contents: bytemuck::bytes_of(&GpuCamera {
+                view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                right: [1.0, 0.0, 0.0],
+                _pad0: 0.0,
+                up: [0.0, 1.0, 0.0],
+                _pad1: 0.0,
+            }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -144,7 +145,16 @@ impl DebugRenderer {
                 polygon_mode: wgpu::PolygonMode::Fill,
                 conservative: false,
             },
-            depth_stencil: None,
+            // Test against, but never write, the scene depth buffer shared
+            // with `OrganismRenderer` — badges hide behind nearer geometry
+            // but never occlude each other by draw order alone.
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
@@ -167,22 +177,27 @@ impl DebugRenderer {
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
         instances: &[DebugInstance],
-        screen_size: [f32; 2],
-        camera_pos: common::Vec2,
-        camera_zoom: f32,
+        depth_view: &wgpu::TextureView,
+        view_proj: glam::Mat4,
+        camera_right: glam::Vec3,
+        camera_up: glam::Vec3,
         viewport: Option<[u32; 4]>,
     ) {
         if instances.is_empty() {
             return;
         }
 
-        // Orthographic projection mapping screen coordinates to clip space.
-        let w = screen_size[0] / 2.0 / camera_zoom;
-        let h = screen_size[1] / 2.0 / camera_zoom;
-        let mut proj = glam::Mat4::orthographic_rh(-w, w, -h, h, -1.0, 1.0);
-        proj *= glam::Mat4::from_translation(glam::Vec3::new(-camera_pos.x, -camera_pos.y, 0.0));
-        let view_proj: [[f32; 4]; 4] = proj.to_cols_array_2d();
-        queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&view_proj));
+        queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::bytes_of(&GpuCamera {
+                view_proj: view_proj.to_cols_array_2d(),
+                right: camera_right.into(),
+                _pad0: 0.0,
+                up: camera_up.into(),
+                _pad1: 0.0,
+            }),
+        );
 
         if instances.len() > self.instance_capacity || self.instance_buffer.is_none() {
             self.instance_capacity = instances.len().max(self.instance_capacity * 2).max(256);
@@ -212,7 +227,14 @@ impl DebugRenderer {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });

@@ -714,25 +714,67 @@ impl PhylonApp {
                 ui::MenuAction::SelectEntity(entity) => {
                     self.ui.select(entity);
                 }
-                ui::MenuAction::SelectInRect { min, max } => {
-                    // Head nodes only (`segment_type == 0`) — one selection
-                    // entry per organism, matching how the rest of the app
-                    // treats "the organism" as its head entity (e.g.
-                    // `SelectHeadOf`, the Lineage panel).
+                ui::MenuAction::SelectInRect {
+                    screen_min,
+                    screen_max,
+                    viewport_size,
+                } => {
+                    // Frustum-based box-select (Phase 8, Epic 8.4) — each
+                    // head node's real `Vec3` position is projected through
+                    // the camera's own `view_proj` and tested in screen
+                    // space, replacing the previous flat Z=0-plane
+                    // world-space rectangle (which was blind to camera tilt
+                    // and to any future non-zero `Z`). Head nodes only
+                    // (`segment_type == 0`) — one selection entry per
+                    // organism, matching how the rest of the app treats "the
+                    // organism" as its head entity (e.g. `SelectHeadOf`, the
+                    // Lineage panel).
+                    let camera = self.ui.camera();
                     let mut node_q = self
                         .world
                         .ecs
                         .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
                     let matches: Vec<bevy_ecs::entity::Entity> = node_q
                         .iter(&self.world.ecs)
-                        .filter(|(_, node)| {
-                            node.segment_type == 0
-                                && node.position.x >= min.x
-                                && node.position.x <= max.x
-                                && node.position.y >= min.y
-                                && node.position.y <= max.y
+                        .filter(|(_, node)| node.segment_type == 0)
+                        .filter_map(|(e, node)| {
+                            let screen = camera.world_to_screen(node.position, viewport_size)?;
+                            (screen.x >= screen_min.x
+                                && screen.x <= screen_max.x
+                                && screen.y >= screen_min.y
+                                && screen.y <= screen_max.y)
+                                .then_some(e)
                         })
-                        .map(|(e, _)| e)
+                        .collect();
+                    let count = matches.len();
+                    self.ui.select_multiple(matches);
+                    if count > 0 {
+                        self.ui.push_toast(
+                            format!("Selected {count} organism(s)"),
+                            ui::ToastSeverity::Info,
+                            2.0,
+                        );
+                    }
+                }
+                ui::MenuAction::SelectInLasso {
+                    points,
+                    viewport_size,
+                } => {
+                    // Lasso-select (Phase 8, Epic 8.4) — same projection as
+                    // box-select above, tested against a freeform polygon
+                    // instead of a rectangle.
+                    let camera = self.ui.camera();
+                    let mut node_q = self
+                        .world
+                        .ecs
+                        .query::<(bevy_ecs::entity::Entity, &physics::ParticleNode)>();
+                    let matches: Vec<bevy_ecs::entity::Entity> = node_q
+                        .iter(&self.world.ecs)
+                        .filter(|(_, node)| node.segment_type == 0)
+                        .filter_map(|(e, node)| {
+                            let screen = camera.world_to_screen(node.position, viewport_size)?;
+                            ui::camera::point_in_polygon(screen, &points).then_some(e)
+                        })
                         .collect();
                     let count = matches.len();
                     self.ui.select_multiple(matches);

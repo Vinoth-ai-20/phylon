@@ -226,7 +226,7 @@ impl PhylonApp {
             if let Some(health) = health {
                 if let Some(instance) = organism_visuals::health_ring_instance(
                     health,
-                    [node.position.x, node.position.y],
+                    node.position.into(),
                     self.ui.node_radius,
                 ) {
                     debug_instances.push(instance);
@@ -255,7 +255,7 @@ impl PhylonApp {
                     infection,
                     avg_severity,
                     health_fraction,
-                    [node.position.x, node.position.y],
+                    node.position.into(),
                     self.ui.node_radius,
                 ));
             }
@@ -398,16 +398,16 @@ impl PhylonApp {
             // Health/Disease, beneath the Priority-1 selection/hover
             // highlight (unaffected — draw order for `debug_instances`
             // itself was already fixed at SX-1e).
-            if let (Some(&org_a), Some(&org_b), Some(&pa), Some(&pb)) = (
+            if let (Some(&org_a), Some(&org_b), Some(&pa3), Some(&pb3)) = (
                 entity_organism_id.get(&spring.node_a),
                 entity_organism_id.get(&spring.node_b),
-                node_positions.get(&spring.node_a),
-                node_positions.get(&spring.node_b),
+                node_positions_3d.get(&spring.node_a),
+                node_positions_3d.get(&spring.node_b),
             ) {
                 if org_a != org_b {
                     debug_instances.push(organism_visuals::colony_link_instance(
-                        pa,
-                        pb,
+                        pa3,
+                        pb3,
                         self.ui.skin_thickness,
                     ));
                 }
@@ -475,8 +475,6 @@ impl PhylonApp {
                     .unwrap_or(1.0);
                 let (sdf, debug) = organism_visuals::bone_visual_instances(
                     bone_kind,
-                    pa,
-                    pb,
                     pa3,
                     pb3,
                     opt_color.map(|c| c.0),
@@ -518,11 +516,10 @@ impl PhylonApp {
                 .is_some_and(|c| c.contains(&entity));
 
             let instances = organism_visuals::pellet_like_instances(
-                pos,
                 pos3,
                 [1.000, 0.665, 0.078, 1.0], // #FFD54F
                 [1.000, 0.665, 0.078],
-                2.5,
+                organism_visuals::FOOD_PELLET_RADIUS,
                 should_draw_debug,
                 should_draw_sdf,
                 bone_visible(pos, pos),
@@ -563,11 +560,10 @@ impl PhylonApp {
                 .is_some_and(|c| c.contains(&entity));
 
             let instances = organism_visuals::pellet_like_instances(
-                pos,
                 pos3,
                 [0.397, 0.539, 0.584, 1.0], // #A9C2C9
                 [0.397, 0.539, 0.584],
-                2.0,
+                organism_visuals::MINERAL_PELLET_RADIUS,
                 should_draw_debug,
                 should_draw_sdf,
                 bone_visible(pos, pos),
@@ -608,11 +604,10 @@ impl PhylonApp {
                 .is_some_and(|c| c.contains(&entity));
 
             let instances = organism_visuals::pellet_like_instances(
-                pos,
                 pos3,
                 [0.153, 0.136, 0.156, 1.0], // #6D676E
                 [0.153, 0.136, 0.156],
-                4.0,
+                organism_visuals::CORPSE_RADIUS,
                 should_draw_debug,
                 should_draw_sdf,
                 bone_visible(pos, pos),

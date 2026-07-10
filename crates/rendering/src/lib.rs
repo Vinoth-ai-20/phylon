@@ -50,6 +50,12 @@ pub mod capsule_mesh;
 pub mod organism;
 pub use organism::{CapsuleInstance, OrganismRenderer};
 
+/// Ray-vs-capsule picking (Phase 8, Epic 8.4) — replaces flat, Z=0-plane-
+/// based nearest-point picking with a real 3D ray cast against the exact
+/// capsule primitives the renderer draws.
+pub mod picking;
+pub use picking::ray_capsule_hit;
+
 #[cfg(test)]
 mod tests {
     // Tests for DebugRenderer will go here

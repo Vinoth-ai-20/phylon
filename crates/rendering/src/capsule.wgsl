@@ -1,20 +1,24 @@
-// Capsule-mesh instancing shader (Phase 8, ADR-P8-03) — replaces the
-// retired 2-pass SDF metaball accumulate-blend technique.
+// Capsule-mesh instancing shader (Phase 8, ADR-P8-03/Epic 8.3) — replaces
+// the retired 2-pass SDF metaball accumulate-blend technique.
 //
-// The vertex shader is the "oriented-look-at" technique the ADR names: the
-// shared unit-capsule mesh (see `capsule_mesh.rs`'s doc comment for its
-// local-space convention) is rotated per-instance so its local +Y axis
-// aligns with the bone direction (`pos_b - pos_a`), then each vertex is
-// reconstructed in world space from whichever of the 3 local-space regions
-// (bottom cap / cylinder body / top cap) it belongs to. No per-instance
-// rotation/quaternion is stored — only the two endpoints and a radius.
+// The vertex reconstruction (`capsule_vertex`) is the "oriented-look-at"
+// technique the ADR names: the shared unit-capsule mesh (see
+// `capsule_mesh.rs`'s doc comment for its local-space convention) is
+// rotated per-instance so its local +Y axis aligns with the bone direction
+// (`pos_b - pos_a`), then each vertex is reconstructed in world space from
+// whichever of the 3 local-space regions (bottom cap / cylinder body / top
+// cap) it belongs to. No per-instance rotation/quaternion is stored — only
+// the two endpoints and a radius. One shared function serves both the main
+// pass (`vs_main`) and the shadow pass (`vs_shadow`) — Epic 8.3's own
+// "no duplicated matrix generation" rule.
 //
 // The fragment shader is a single-light Cook-Torrance PBR model (GGX
 // distribution, Smith geometry, Schlick Fresnel) plus a flat ambient term,
 // driven by `sunlight` (the same `GlobalAtmosphere.sunlight` scalar that
-// already tints the background clear color) — untuned roughness/metallic
-// constants, same status as every other not-yet-measured value introduced
-// this phase.
+// already tints the background clear color), modulated by a shadow factor
+// sampled from a directional shadow map (Epic 8.3) — untuned roughness/
+// metallic constants, same status as every other not-yet-measured value
+// introduced this phase.
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -23,6 +27,7 @@ struct Camera {
 }
 
 struct Light {
+    light_view_proj: mat4x4<f32>,
     sun_dir: vec3<f32>,
     sunlight: f32,
 }
@@ -31,6 +36,23 @@ struct Light {
 var<uniform> camera: Camera;
 @group(0) @binding(1)
 var<uniform> light: Light;
+
+struct HighlightColor {
+    color: vec4<f32>,
+}
+
+@group(1) @binding(0)
+var<uniform> highlight_color: HighlightColor;
+
+// Only sampled by `fs_main` — declared (and bound) uniformly across every
+// pipeline in this module anyway, so one `PipelineLayout` serves the main,
+// highlight, and shadow-writing pipelines alike (Epic 8.3's own
+// "no duplicated pipeline layouts" rule); harmless to leave unread by
+// entry points that don't need it.
+@group(2) @binding(0)
+var shadow_map: texture_depth_2d;
+@group(2) @binding(1)
+var shadow_sampler: sampler_comparison;
 
 struct VertexInput {
     @location(0) local_position: vec3<f32>,
@@ -52,9 +74,20 @@ struct VertexOutput {
     @location(2) color: vec3<f32>,
 }
 
-@vertex
-fn vs_main(vert: VertexInput, inst: InstanceInput) -> VertexOutput {
-    let bone_vec = inst.pos_b - inst.pos_a;
+struct CapsuleVertexResult {
+    world_position: vec3<f32>,
+    world_normal: vec3<f32>,
+}
+
+// Shared oriented-capsule reconstruction — see this file's own doc comment.
+fn capsule_vertex(
+    local_position: vec3<f32>,
+    local_normal: vec3<f32>,
+    pos_a: vec3<f32>,
+    pos_b: vec3<f32>,
+    radius: f32,
+) -> CapsuleVertexResult {
+    let bone_vec = pos_b - pos_a;
     let bone_len = length(bone_vec);
     // Point-like entities (pellets, corpses) have `pos_a == pos_b` — fall
     // back to a fixed axis so the capsule degenerates to a sphere instead
@@ -70,27 +103,44 @@ fn vs_main(vert: VertexInput, inst: InstanceInput) -> VertexOutput {
 
     var local_offset: vec3<f32>;
     var world_center: vec3<f32>;
-    if (vert.local_position.y <= 0.0) {
-        world_center = inst.pos_a;
-        local_offset = vert.local_position;
-    } else if (vert.local_position.y >= 1.0) {
-        world_center = inst.pos_b;
-        local_offset = vert.local_position - vec3<f32>(0.0, 1.0, 0.0);
+    if (local_position.y <= 0.0) {
+        world_center = pos_a;
+        local_offset = local_position;
+    } else if (local_position.y >= 1.0) {
+        world_center = pos_b;
+        local_offset = local_position - vec3<f32>(0.0, 1.0, 0.0);
     } else {
-        world_center = mix(inst.pos_a, inst.pos_b, vert.local_position.y);
-        local_offset = vec3<f32>(vert.local_position.x, 0.0, vert.local_position.z);
+        world_center = mix(pos_a, pos_b, local_position.y);
+        local_offset = vec3<f32>(local_position.x, 0.0, local_position.z);
     }
 
     let rotated_offset = right * local_offset.x + up * local_offset.y + fwd * local_offset.z;
-    let world_pos = world_center + rotated_offset * inst.radius;
-    let rotated_normal = right * vert.local_normal.x + up * vert.local_normal.y + fwd * vert.local_normal.z;
+    let rotated_normal = right * local_normal.x + up * local_normal.y + fwd * local_normal.z;
+
+    var result: CapsuleVertexResult;
+    result.world_position = world_center + rotated_offset * radius;
+    result.world_normal = normalize(rotated_normal);
+    return result;
+}
+
+@vertex
+fn vs_main(vert: VertexInput, inst: InstanceInput) -> VertexOutput {
+    let capsule = capsule_vertex(vert.local_position, vert.local_normal, inst.pos_a, inst.pos_b, inst.radius);
 
     var out: VertexOutput;
-    out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
-    out.world_normal = normalize(rotated_normal);
-    out.world_position = world_pos;
+    out.clip_position = camera.view_proj * vec4<f32>(capsule.world_position, 1.0);
+    out.world_normal = capsule.world_normal;
+    out.world_position = capsule.world_position;
     out.color = inst.color * inst.health;
     return out;
+}
+
+// Depth-only shadow-map pass (Epic 8.3) — reuses `capsule_vertex` verbatim,
+// projecting through the light's view-projection instead of the camera's.
+@vertex
+fn vs_shadow(vert: VertexInput, inst: InstanceInput) -> @builtin(position) vec4<f32> {
+    let capsule = capsule_vertex(vert.local_position, vert.local_normal, inst.pos_a, inst.pos_b, inst.radius);
+    return light.light_view_proj * vec4<f32>(capsule.world_position, 1.0);
 }
 
 const PI: f32 = 3.14159265359;
@@ -117,6 +167,21 @@ fn geometry_smith(n_dot_v: f32, n_dot_l: f32, roughness: f32) -> f32 {
 
 fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
     return f0 + (vec3<f32>(1.0) - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+// Projects `world_position` into the light's clip space and samples the
+// shadow map with hardware-filtered depth comparison (a linear-filtered
+// comparison sampler gives a cheap, standard bilinear PCF). Positions
+// outside the shadow frustum (or beyond its far plane) are treated as
+// fully lit rather than shadowed or garbage-sampled.
+fn sample_shadow(world_position: vec3<f32>) -> f32 {
+    let light_clip = light.light_view_proj * vec4<f32>(world_position, 1.0);
+    let light_ndc = light_clip.xyz / light_clip.w;
+    let uv = vec2<f32>(light_ndc.x * 0.5 + 0.5, light_ndc.y * -0.5 + 0.5);
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || light_ndc.z < 0.0 || light_ndc.z > 1.0) {
+        return 1.0;
+    }
+    return textureSampleCompare(shadow_map, shadow_sampler, uv, light_ndc.z);
 }
 
 @fragment
@@ -147,7 +212,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // the scene readable at night, same rationale as that clear color's
     // own nonzero night floor.
     let light_intensity = AMBIENT_FLOOR + (1.0 - AMBIENT_FLOOR) * light.sunlight;
-    let direct = (diffuse + specular) * light_intensity * n_dot_l;
+    let shadow_factor = sample_shadow(in.world_position);
+    let direct = (diffuse + specular) * light_intensity * n_dot_l * shadow_factor;
     let ambient = albedo * AMBIENT_FLOOR * mix(0.5, 1.0, light.sunlight);
 
     let color = ambient + direct;
@@ -160,14 +226,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 // caller passes highlight instances through the same pipeline input
 // layout). Only the fragment shader differs: a flat, unlit color instead
 // of PBR shading, matching the "inverted hull outline" technique's own
-// requirement of a solid silhouette color, not lit geometry.
-
-struct HighlightColor {
-    color: vec4<f32>,
-}
-
-@group(1) @binding(0)
-var<uniform> highlight_color: HighlightColor;
+// requirement of a solid silhouette color, not lit or shadowed geometry —
+// selection/hover highlights stay Priority 1, unaffected by lighting, the
+// same discipline `docs/design/biological_visual_language.md` already
+// established for Health/Disease.
 
 @fragment
 fn fs_highlight(in: VertexOutput) -> @location(0) vec4<f32> {

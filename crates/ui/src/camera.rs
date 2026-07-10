@@ -94,6 +94,32 @@ impl Camera3d {
         let world_dir = (self.orientation * view_dir).normalize();
         (self.position, world_dir)
     }
+
+    /// Projects a world-space point to a screen-space pixel coordinate —
+    /// the inverse direction of [`Camera3d::screen_to_ray`], and (Phase 8,
+    /// Epic 8.4) the second of this type's two projection-related methods,
+    /// used by frustum-based box-select and lasso-select to test entity
+    /// positions against a screen-space region. Returns `None` if
+    /// `world_pos` is behind the camera (not meaningfully projectable to a
+    /// screen pixel).
+    pub fn world_to_screen(&self, world_pos: Vec3, viewport_size: Vec2) -> Option<Vec2> {
+        let aspect = if viewport_size.y > 0.0 {
+            viewport_size.x / viewport_size.y
+        } else {
+            1.0
+        };
+        let clip = self.view_proj(aspect) * world_pos.extend(1.0);
+        if clip.w <= 0.0 {
+            return None;
+        }
+        let ndc = clip.truncate() / clip.w;
+        // Inverse of `screen_to_ray`'s NDC formula, including the same Y
+        // flip (screen space grows downward).
+        Some(Vec2::new(
+            (ndc.x * 0.5 + 0.5) * viewport_size.x,
+            (1.0 - (ndc.y * 0.5 + 0.5)) * viewport_size.y,
+        ))
+    }
 }
 
 impl Default for Camera3d {
@@ -118,6 +144,30 @@ pub fn ray_intersect_z0(origin: Vec3, direction: Vec3) -> Option<Vec2> {
         return None;
     }
     Some((origin + direction * t).truncate())
+}
+
+/// Standard even-odd (crossing-number) point-in-polygon test, in
+/// screen-space pixels (Phase 8, Epic 8.4 — lasso-select). `polygon` need
+/// not be explicitly closed; the last point is implicitly connected back to
+/// the first. Fewer than 3 points never contains anything.
+pub fn point_in_polygon(point: Vec2, polygon: &[Vec2]) -> bool {
+    if polygon.len() < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let mut j = polygon.len() - 1;
+    for i in 0..polygon.len() {
+        let vi = polygon[i];
+        let vj = polygon[j];
+        if (vi.y > point.y) != (vj.y > point.y) {
+            let x_at_y = vj.x + (point.y - vj.y) / (vi.y - vj.y) * (vi.x - vj.x);
+            if point.x < x_at_y {
+                inside = !inside;
+            }
+        }
+        j = i;
+    }
+    inside
 }
 
 /// Arcball orbit around a focus point — the default camera mode (ADR-P8-02),
@@ -540,6 +590,55 @@ mod tests {
     #[test]
     fn ray_intersect_z0_returns_none_for_a_ray_parallel_to_the_plane() {
         assert_eq!(ray_intersect_z0(Vec3::new(0.0, 0.0, 10.0), Vec3::X), None);
+    }
+
+    #[test]
+    fn world_to_screen_round_trips_through_screen_to_ray_at_the_z0_plane() {
+        let camera = OrbitController::default().camera();
+        let viewport = Vec2::new(1280.0, 720.0);
+        let screen_in = Vec2::new(300.0, 450.0);
+        let (origin, dir) = camera.screen_to_ray(screen_in, viewport);
+        let world = ray_intersect_z0(origin, dir).unwrap();
+        let screen_out = camera.world_to_screen(world.extend(0.0), viewport).unwrap();
+        assert!(screen_in.abs_diff_eq(screen_out, 0.5));
+    }
+
+    #[test]
+    fn world_to_screen_returns_none_behind_the_camera() {
+        let camera = OrbitController::default().camera();
+        let behind = camera.position - camera.forward() * 10.0;
+        assert_eq!(
+            camera.world_to_screen(behind, Vec2::new(1280.0, 720.0)),
+            None
+        );
+    }
+
+    #[test]
+    fn point_in_polygon_finds_the_center_of_a_square() {
+        let square = [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, 0.0),
+            Vec2::new(10.0, 10.0),
+            Vec2::new(0.0, 10.0),
+        ];
+        assert!(point_in_polygon(Vec2::new(5.0, 5.0), &square));
+    }
+
+    #[test]
+    fn point_in_polygon_excludes_a_point_outside_the_square() {
+        let square = [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, 0.0),
+            Vec2::new(10.0, 10.0),
+            Vec2::new(0.0, 10.0),
+        ];
+        assert!(!point_in_polygon(Vec2::new(15.0, 5.0), &square));
+    }
+
+    #[test]
+    fn point_in_polygon_is_false_for_fewer_than_three_points() {
+        let line = [Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0)];
+        assert!(!point_in_polygon(Vec2::new(5.0, 5.0), &line));
     }
 
     #[test]
