@@ -18,9 +18,9 @@ use crate::app::PhylonApp;
 /// see `render()`'s own doc comment for how each is consumed by a GPU pass.
 pub(crate) struct WorldRenderInstances {
     pub(crate) debug_instances: Vec<rendering::DebugInstance>,
-    pub(crate) sdf_bones: Vec<rendering::SdfBoneInstance>,
-    pub(crate) hover_bones: Vec<rendering::SdfBoneInstance>,
-    pub(crate) selected_bones: Vec<rendering::SdfBoneInstance>,
+    pub(crate) capsule_instances: Vec<rendering::CapsuleInstance>,
+    pub(crate) hover_bones: Vec<rendering::CapsuleInstance>,
+    pub(crate) selected_bones: Vec<rendering::CapsuleInstance>,
 }
 
 impl PhylonApp {
@@ -35,7 +35,7 @@ impl PhylonApp {
     /// assigned in this function's body.
     pub(crate) fn gather_world_render_instances(&mut self) -> WorldRenderInstances {
         let mut debug_instances = Vec::new();
-        let mut sdf_bones = Vec::new();
+        let mut capsule_instances = Vec::new();
         let mut hover_bones = Vec::new();
         let mut selected_bones = Vec::new();
 
@@ -95,12 +95,14 @@ impl PhylonApp {
                     .unwrap_or((1280.0, 720.0))
             });
         const CULL_MARGIN: f32 = 100.0; // generous slack for bone radius + node_radius
-        let cull_half_w = cull_w / 2.0 / self.ui.camera_zoom + CULL_MARGIN;
-        let cull_half_h = cull_h / 2.0 / self.ui.camera_zoom + CULL_MARGIN;
-        let cull_min_x = self.ui.camera_pos.x - cull_half_w;
-        let cull_max_x = self.ui.camera_pos.x + cull_half_w;
-        let cull_min_y = self.ui.camera_pos.y - cull_half_h;
-        let cull_max_y = self.ui.camera_pos.y + cull_half_h;
+        let cull_camera_pos = self.ui.camera_pos_2d();
+        let cull_camera_zoom = self.ui.camera_zoom_2d();
+        let cull_half_w = cull_w / 2.0 / cull_camera_zoom + CULL_MARGIN;
+        let cull_half_h = cull_h / 2.0 / cull_camera_zoom + CULL_MARGIN;
+        let cull_min_x = cull_camera_pos.x - cull_half_w;
+        let cull_max_x = cull_camera_pos.x + cull_half_w;
+        let cull_min_y = cull_camera_pos.y - cull_half_h;
+        let cull_max_y = cull_camera_pos.y + cull_half_h;
         let bone_visible = |pa: [f32; 2], pb: [f32; 2]| -> bool {
             let min_x = pa[0].min(pb[0]);
             let max_x = pa[0].max(pb[0]);
@@ -111,6 +113,15 @@ impl PhylonApp {
 
         // Build node position lookup for bone endpoint resolution
         let mut node_positions: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 2]> =
+            std::collections::HashMap::new();
+        // Phase 8 (ADR-P8-03): the mesh-based capsule renderer needs real
+        // `Vec3` endpoints (organisms still grow with `z` fixed at `0.0`
+        // until Epic 8.6, but the renderer itself is now genuinely 3D) —
+        // kept as a second map rather than widening `node_positions` itself
+        // since every other consumer of that map (culling, spotlight
+        // nearby-lookup, colony-link debug instances) is still flat 2D
+        // logic, unaffected by and out of scope for this epic.
+        let mut node_positions_3d: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 3]> =
             std::collections::HashMap::new();
 
         // Per-node organism-id lookup (Phase 5, SX-3d) — `physics::ParticleNode.organism_id`
@@ -195,6 +206,7 @@ impl PhylonApp {
         for (entity, node, category, health, infection) in query_nodes_render.iter(&self.world.ecs)
         {
             node_positions.insert(entity, [node.position.x, node.position.y]);
+            node_positions_3d.insert(entity, node.position.into());
             entity_organism_id.insert(entity, node.organism_id);
 
             let is_in_selected = selected_component
@@ -408,13 +420,13 @@ impl PhylonApp {
                 .as_ref()
                 .is_some_and(|comp| comp.contains(&spring.node_a) && comp.contains(&spring.node_b));
 
-            if let (Some(&pa), Some(&pb)) = (
-                node_positions.get(&spring.node_a),
-                node_positions.get(&spring.node_b),
+            if let (Some(&pa3), Some(&pb3)) = (
+                node_positions_3d.get(&spring.node_a),
+                node_positions_3d.get(&spring.node_b),
             ) {
                 let (hover, selected) = organism_visuals::bone_highlight_instances(
-                    pa,
-                    pb,
+                    pa3,
+                    pb3,
                     spring.is_fin == 1,
                     spring.constraint_type,
                     self.ui.skin_thickness,
@@ -451,9 +463,11 @@ impl PhylonApp {
                 continue;
             };
 
-            if let (Some(&pa), Some(&pb)) = (
+            if let (Some(&pa), Some(&pb), Some(&pa3), Some(&pb3)) = (
                 node_positions.get(&spring.node_a),
                 node_positions.get(&spring.node_b),
+                node_positions_3d.get(&spring.node_a),
+                node_positions_3d.get(&spring.node_b),
             ) {
                 let health_fraction = entity_health_fraction
                     .get(&spring.node_a)
@@ -463,6 +477,8 @@ impl PhylonApp {
                     bone_kind,
                     pa,
                     pb,
+                    pa3,
+                    pb3,
                     opt_color.map(|c| c.0),
                     health_fraction,
                     spotlight_factor(spring.node_a),
@@ -474,7 +490,7 @@ impl PhylonApp {
                     bone_visible(pa, pb),
                 );
                 if let Some(instance) = sdf {
-                    sdf_bones.push(instance);
+                    capsule_instances.push(instance);
                 }
                 if let Some(instance) = debug {
                     debug_instances.push(instance);
@@ -489,6 +505,7 @@ impl PhylonApp {
             .query::<(bevy_ecs::entity::Entity, &ecology::FoodPellet)>();
         for (entity, food) in query_food.iter(&self.world.ecs) {
             let pos = [food.position.x, food.position.y];
+            let pos3: [f32; 3] = food.position.into();
             let is_in_selected = selected_component
                 .as_ref()
                 .is_some_and(|c| c.contains(&entity));
@@ -502,6 +519,7 @@ impl PhylonApp {
 
             let instances = organism_visuals::pellet_like_instances(
                 pos,
+                pos3,
                 [1.000, 0.665, 0.078, 1.0], // #FFD54F
                 [1.000, 0.665, 0.078],
                 2.5,
@@ -515,7 +533,7 @@ impl PhylonApp {
                 debug_instances.push(instance);
             }
             if let Some(instance) = instances.sdf {
-                sdf_bones.push(instance);
+                capsule_instances.push(instance);
             }
             if let Some(instance) = instances.hover {
                 hover_bones.push(instance);
@@ -532,6 +550,7 @@ impl PhylonApp {
             .query::<(bevy_ecs::entity::Entity, &ecology::MineralPellet)>();
         for (entity, mineral) in query_mineral.iter(&self.world.ecs) {
             let pos = [mineral.position.x, mineral.position.y];
+            let pos3: [f32; 3] = mineral.position.into();
             let is_in_selected = selected_component
                 .as_ref()
                 .is_some_and(|c| c.contains(&entity));
@@ -545,6 +564,7 @@ impl PhylonApp {
 
             let instances = organism_visuals::pellet_like_instances(
                 pos,
+                pos3,
                 [0.397, 0.539, 0.584, 1.0], // #A9C2C9
                 [0.397, 0.539, 0.584],
                 2.0,
@@ -558,7 +578,7 @@ impl PhylonApp {
                 debug_instances.push(instance);
             }
             if let Some(instance) = instances.sdf {
-                sdf_bones.push(instance);
+                capsule_instances.push(instance);
             }
             if let Some(instance) = instances.hover {
                 hover_bones.push(instance);
@@ -575,6 +595,7 @@ impl PhylonApp {
             .query::<(bevy_ecs::entity::Entity, &ecology::Corpse)>();
         for (entity, corpse) in query_corpse.iter(&self.world.ecs) {
             let pos = [corpse.position.x, corpse.position.y];
+            let pos3: [f32; 3] = corpse.position.into();
             let is_in_selected = selected_component
                 .as_ref()
                 .is_some_and(|c| c.contains(&entity));
@@ -588,6 +609,7 @@ impl PhylonApp {
 
             let instances = organism_visuals::pellet_like_instances(
                 pos,
+                pos3,
                 [0.153, 0.136, 0.156, 1.0], // #6D676E
                 [0.153, 0.136, 0.156],
                 4.0,
@@ -601,7 +623,7 @@ impl PhylonApp {
                 debug_instances.push(instance);
             }
             if let Some(instance) = instances.sdf {
-                sdf_bones.push(instance);
+                capsule_instances.push(instance);
             }
             if let Some(instance) = instances.hover {
                 hover_bones.push(instance);
@@ -613,7 +635,7 @@ impl PhylonApp {
 
         WorldRenderInstances {
             debug_instances,
-            sdf_bones,
+            capsule_instances,
             hover_bones,
             selected_bones,
         }

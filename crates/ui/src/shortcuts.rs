@@ -191,5 +191,12 @@ impl ShortcutManager {
         if ctx.input(|i| i.key_pressed(Key::Home) || i.key_pressed(Key::Num0)) {
             actions.push(MenuAction::CameraHome);
         }
+
+        // Camera mode toggle (Phase 8, ADR-P8-02) — unmodified, gated by
+        // `wants_keyboard_input` alongside X/F above (not a global zoom-
+        // style binding, since it's a mode switch, not a continuous input).
+        if !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(Key::Tab)) {
+            actions.push(MenuAction::ToggleCameraMode);
+        }
     }
 }

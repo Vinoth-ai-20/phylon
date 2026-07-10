@@ -171,26 +171,26 @@ fn highlight_radius(
 /// either may be `None` if the bone isn't in that highlight set.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bone_highlight_instances(
-    pos_a: [f32; 2],
-    pos_b: [f32; 2],
+    pos_a: [f32; 3],
+    pos_b: [f32; 3],
     is_fin: bool,
     constraint_type: physics::ConstraintType,
     skin_thickness: f32,
     is_hovered: bool,
     is_selected: bool,
 ) -> (
-    Option<rendering::SdfBoneInstance>,
-    Option<rendering::SdfBoneInstance>,
+    Option<rendering::CapsuleInstance>,
+    Option<rendering::CapsuleInstance>,
 ) {
     let radius = highlight_radius(is_fin, constraint_type, skin_thickness);
-    let hover = is_hovered.then_some(rendering::SdfBoneInstance {
+    let hover = is_hovered.then_some(rendering::CapsuleInstance {
         pos_a,
         pos_b,
         radius,
         color: [0.0, 1.0, 0.0],
         health: 1.0,
     });
-    let selected = is_selected.then_some(rendering::SdfBoneInstance {
+    let selected = is_selected.then_some(rendering::CapsuleInstance {
         pos_a,
         pos_b,
         radius,
@@ -223,6 +223,8 @@ pub(crate) fn bone_visual_instances(
     kind: BoneKind,
     pos_a: [f32; 2],
     pos_b: [f32; 2],
+    pos_a3: [f32; 3],
+    pos_b3: [f32; 3],
     opt_color: Option<[f32; 3]>,
     health_fraction: f32,
     spotlight_factor: f32,
@@ -233,7 +235,7 @@ pub(crate) fn bone_visual_instances(
     should_draw_debug: bool,
     bone_visible: bool,
 ) -> (
-    Option<rendering::SdfBoneInstance>,
+    Option<rendering::CapsuleInstance>,
     Option<rendering::DebugInstance>,
 ) {
     let (radius, color) = match kind {
@@ -255,9 +257,9 @@ pub(crate) fn bone_visual_instances(
     };
     let health = health_fraction * spotlight_factor;
 
-    let sdf = (should_draw_sdf && bone_visible).then_some(rendering::SdfBoneInstance {
-        pos_a,
-        pos_b,
+    let sdf = (should_draw_sdf && bone_visible).then_some(rendering::CapsuleInstance {
+        pos_a: pos_a3,
+        pos_b: pos_b3,
         radius,
         color,
         health,
@@ -281,14 +283,15 @@ pub(crate) fn bone_visual_instances(
 /// for its debug/sdf/hover/selected radius alike).
 pub(crate) struct PelletInstances {
     pub(crate) debug: Option<rendering::DebugInstance>,
-    pub(crate) sdf: Option<rendering::SdfBoneInstance>,
-    pub(crate) hover: Option<rendering::SdfBoneInstance>,
-    pub(crate) selected: Option<rendering::SdfBoneInstance>,
+    pub(crate) sdf: Option<rendering::CapsuleInstance>,
+    pub(crate) hover: Option<rendering::CapsuleInstance>,
+    pub(crate) selected: Option<rendering::CapsuleInstance>,
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pellet_like_instances(
     pos: [f32; 2],
+    pos3: [f32; 3],
     debug_color: [f32; 4],
     sdf_color: [f32; 3],
     radius: f32,
@@ -305,23 +308,23 @@ pub(crate) fn pellet_like_instances(
         radius,
         segment_type: 0,
     });
-    let sdf = (should_draw_sdf && bone_visible).then_some(rendering::SdfBoneInstance {
-        pos_a: pos,
-        pos_b: pos,
+    let sdf = (should_draw_sdf && bone_visible).then_some(rendering::CapsuleInstance {
+        pos_a: pos3,
+        pos_b: pos3,
         radius,
         color: sdf_color,
         health: 1.0,
     });
-    let hover = is_hovered.then_some(rendering::SdfBoneInstance {
-        pos_a: pos,
-        pos_b: pos,
+    let hover = is_hovered.then_some(rendering::CapsuleInstance {
+        pos_a: pos3,
+        pos_b: pos3,
         radius,
         color: [0.0, 1.0, 0.0],
         health: 1.0,
     });
-    let selected = is_selected.then_some(rendering::SdfBoneInstance {
-        pos_a: pos,
-        pos_b: pos,
+    let selected = is_selected.then_some(rendering::CapsuleInstance {
+        pos_a: pos3,
+        pos_b: pos3,
         radius,
         color: [1.0, 1.0, 1.0],
         health: 1.0,

@@ -35,25 +35,47 @@ pub fn viewport_ui(
 
             let hover_pos = ui.input(|i| i.pointer.hover_pos());
             let zoom_delta = ui.input(|i| i.zoom_delta());
+            let camera = state.camera();
 
             // Cursor world-space position (Phase 2, M10) — `None` unless the
             // cursor is actually within this canvas's rect, so hovering a
-            // different panel doesn't leave a stale/wrong readout.
+            // different panel doesn't leave a stale/wrong readout. Phase 8,
+            // ADR-P8-02: now goes through the one canonical
+            // `Camera3d::screen_to_ray` unproject, intersected with the
+            // `Z = 0` plane every organism/pellet still lives on, replacing
+            // one of the 3 independently hand-derived screen↔world
+            // transforms the Phase 8 audit found.
             state.cursor_world_pos = hover_pos.filter(|p| rect.contains(*p)).map(|p| {
-                let screen_center = rect.center();
                 let ppp = ctx.pixels_per_point();
-                common::Vec2::new(
-                    state.camera_pos.x + (p.x - screen_center.x) * ppp / state.camera_zoom,
-                    state.camera_pos.y - (p.y - screen_center.y) * ppp / state.camera_zoom,
-                )
+                let screen_pos =
+                    common::Vec2::new((p.x - rect.min.x) * ppp, (p.y - rect.min.y) * ppp);
+                let viewport_size = common::Vec2::new(rect.width() * ppp, rect.height() * ppp);
+                let (origin, dir) = camera.screen_to_ray(screen_pos, viewport_size);
+                crate::camera::ray_intersect_z0(origin, dir)
+                    .unwrap_or_else(|| camera.position.truncate())
             });
+
+            // Middle-button drag orbits/looks around (Orbit/Fly respectively
+            // — see `app::render`'s interaction dispatch); left-button drag
+            // continues to pan, unchanged from pre-Phase-8 behavior.
+            let rotate_delta = if interact_response.dragged_by(egui::PointerButton::Middle) {
+                interact_response.drag_delta()
+            } else {
+                egui::Vec2::ZERO
+            };
+            let pan_delta = if interact_response.dragged_by(egui::PointerButton::Primary) {
+                interact_response.drag_delta()
+            } else {
+                egui::Vec2::ZERO
+            };
 
             *canvas_interaction = Some(CanvasInteraction {
                 rect: interact_response.rect,
                 clicked: interact_response.clicked(),
                 click_pos: interact_response.interact_pointer_pos(),
                 hover_pos,
-                drag_delta: interact_response.drag_delta(),
+                drag_delta: pan_delta,
+                rotate_delta,
                 zoom_delta,
             });
 
@@ -200,16 +222,31 @@ pub fn viewport_ui(
 
             let screen_center = rect.center();
             let ppp = ctx.pixels_per_point();
+            let camera_pos = state.camera_pos_2d();
+            let camera_zoom = state.camera_zoom_2d();
+            // Real unproject (ADR-P8-02) — the second of the 3 duplicated
+            // screen↔world transforms the Phase 8 audit found, now going
+            // through `Camera3d::screen_to_ray` + the shared Z=0 plane
+            // intersection instead of its own hand-derived ortho inverse.
             let to_world = |p: egui::Pos2| {
-                common::Vec2::new(
-                    state.camera_pos.x + (p.x - screen_center.x) * ppp / state.camera_zoom,
-                    state.camera_pos.y - (p.y - screen_center.y) * ppp / state.camera_zoom,
-                )
+                let screen_pos =
+                    common::Vec2::new((p.x - rect.min.x) * ppp, (p.y - rect.min.y) * ppp);
+                let viewport_size = common::Vec2::new(rect.width() * ppp, rect.height() * ppp);
+                let (origin, dir) = camera.screen_to_ray(screen_pos, viewport_size);
+                crate::camera::ray_intersect_z0(origin, dir)
+                    .unwrap_or_else(|| camera.position.truncate())
             };
+            // World→screen projection (the inverse direction) has no
+            // equivalent single `Camera3d` method — the Z=0 plane is a
+            // simulation-space convention the camera itself doesn't know
+            // about (see `ray_intersect_z0`'s doc comment) — so this stays
+            // the same flat formula as before, fed by the `camera_pos_2d`/
+            // `camera_zoom_2d` bridge (Epic 8.1 scope; Epic 8.2 replaces
+            // this whole panel with true 3D rendering).
             let to_screen = |p: common::Vec2| {
                 egui::pos2(
-                    screen_center.x + (p.x - state.camera_pos.x) * state.camera_zoom / ppp,
-                    screen_center.y - (p.y - state.camera_pos.y) * state.camera_zoom / ppp,
+                    screen_center.x + (p.x - camera_pos.x) * camera_zoom / ppp,
+                    screen_center.y - (p.y - camera_pos.y) * camera_zoom / ppp,
                 )
             };
 

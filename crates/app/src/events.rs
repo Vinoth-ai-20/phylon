@@ -128,7 +128,7 @@ impl PhylonApp {
                     }
                 }
                 ui::MenuAction::SpawnPreset(name) => {
-                    let spawn_pos = self.ui.camera_pos;
+                    let spawn_pos = self.ui.camera_pos_2d();
                     self.replay_log.record(
                         self.current_tick(),
                         storage::replay::ReplayAction::SpawnPreset {
@@ -147,7 +147,7 @@ impl PhylonApp {
                 } => {
                     organisms::sandbox::generate_hex_mesh(
                         &mut self.world.ecs,
-                        self.ui.camera_pos,
+                        self.ui.camera_pos_2d(),
                         cols,
                         rows,
                         spacing,
@@ -156,7 +156,7 @@ impl PhylonApp {
                     );
                 }
                 ui::MenuAction::SpawnManualHazard => {
-                    let pos = self.ui.camera_pos;
+                    let pos = self.ui.camera_pos_2d();
                     let tick = self.current_tick();
                     self.replay_log.record(
                         tick,
@@ -361,7 +361,7 @@ impl PhylonApp {
                     }
                 }
                 ui::MenuAction::SpawnProtoFish => {
-                    let pos = self.ui.camera_pos;
+                    let pos = self.ui.camera_pos_2d();
                     self.replay_log.record(
                         self.current_tick(),
                         storage::replay::ReplayAction::SpawnProtoFish {
@@ -389,9 +389,15 @@ impl PhylonApp {
                     self.ui.zoom_by(1.0 / 1.1);
                 }
                 ui::MenuAction::CameraHome => {
-                    self.ui.camera_pos = common::Vec2::new(0.0, 0.0);
-                    self.ui.camera_zoom = 1.0;
+                    // Reset resets to `Orbit` mode too — "Home" has always
+                    // meant "back to the canonical default view," not just
+                    // a position/zoom reset.
+                    self.ui.camera_controller =
+                        ui::camera::CameraController::Orbit(ui::camera::OrbitController::default());
                     self.ui.set_follow(None);
+                }
+                ui::MenuAction::ToggleCameraMode => {
+                    self.ui.camera_controller.toggle();
                 }
                 ui::MenuAction::TogglePlayPause => {
                     self.ui.is_paused = !self.ui.is_paused;
@@ -423,7 +429,7 @@ impl PhylonApp {
                                         organisms::spawn_organism(
                                             ecs,
                                             &genome,
-                                            self.ui.camera_pos.extend(0.0),
+                                            self.ui.camera_pos_2d().extend(0.0),
                                             ecology::Diet::Omnivore,
                                             ecology::EcologicalCategory::None,
                                             0,
@@ -666,7 +672,14 @@ impl PhylonApp {
                             .query::<&physics::ParticleNode>()
                             .get(&self.world.ecs, entity)
                         {
-                            self.ui.camera_pos = node.position.truncate();
+                            match &mut self.ui.camera_controller {
+                                ui::camera::CameraController::Orbit(orbit) => {
+                                    orbit.focus_on(node.position);
+                                }
+                                ui::camera::CameraController::Fly(fly) => {
+                                    fly.look_at(node.position);
+                                }
+                            }
                         }
                     }
                 }
@@ -900,24 +913,60 @@ impl ApplicationHandler for PhylonApp {
                 ..
             } => {
                 use winit::keyboard::{KeyCode, PhysicalKey};
-                let pan_speed = 10.0 / self.ui.camera_zoom;
+                // WASD/arrows pan in `Orbit` mode (unchanged from
+                // pre-Phase-8 behavior) or fly in `Fly` mode (Phase 8,
+                // ADR-P8-02) — each individual keydown event moves a fixed
+                // step, relying on the OS's own key-repeat rate for
+                // continuous movement while held, exactly like the
+                // pre-existing pan behavior already did.
+                const FLY_STEP_DT: f32 = 1.0 / 60.0;
+                let pan_speed = 10.0 / self.ui.camera_zoom_2d();
+                match &mut self.ui.camera_controller {
+                    ui::camera::CameraController::Orbit(orbit) => {
+                        let mut panned = true;
+                        match physical_key {
+                            PhysicalKey::Code(KeyCode::KeyW)
+                            | PhysicalKey::Code(KeyCode::ArrowUp) => {
+                                orbit.focus.y += pan_speed;
+                            }
+                            PhysicalKey::Code(KeyCode::KeyS)
+                            | PhysicalKey::Code(KeyCode::ArrowDown) => {
+                                orbit.focus.y -= pan_speed;
+                            }
+                            PhysicalKey::Code(KeyCode::KeyA)
+                            | PhysicalKey::Code(KeyCode::ArrowLeft) => {
+                                orbit.focus.x -= pan_speed;
+                            }
+                            PhysicalKey::Code(KeyCode::KeyD)
+                            | PhysicalKey::Code(KeyCode::ArrowRight) => {
+                                orbit.focus.x += pan_speed;
+                            }
+                            _ => panned = false,
+                        }
+                        if panned {
+                            self.ui.set_follow(None);
+                        }
+                    }
+                    ui::camera::CameraController::Fly(fly) => match physical_key {
+                        PhysicalKey::Code(KeyCode::KeyW) | PhysicalKey::Code(KeyCode::ArrowUp) => {
+                            fly.move_relative(1.0, 0.0, 0.0, FLY_STEP_DT, 1.0);
+                        }
+                        PhysicalKey::Code(KeyCode::KeyS)
+                        | PhysicalKey::Code(KeyCode::ArrowDown) => {
+                            fly.move_relative(-1.0, 0.0, 0.0, FLY_STEP_DT, 1.0);
+                        }
+                        PhysicalKey::Code(KeyCode::KeyA)
+                        | PhysicalKey::Code(KeyCode::ArrowLeft) => {
+                            fly.move_relative(0.0, -1.0, 0.0, FLY_STEP_DT, 1.0);
+                        }
+                        PhysicalKey::Code(KeyCode::KeyD)
+                        | PhysicalKey::Code(KeyCode::ArrowRight) => {
+                            fly.move_relative(0.0, 1.0, 0.0, FLY_STEP_DT, 1.0);
+                        }
+                        _ => {}
+                    },
+                }
                 match physical_key {
-                    PhysicalKey::Code(KeyCode::KeyW) | PhysicalKey::Code(KeyCode::ArrowUp) => {
-                        self.ui.camera_pos.y += pan_speed;
-                        self.ui.set_follow(None);
-                    }
-                    PhysicalKey::Code(KeyCode::KeyS) | PhysicalKey::Code(KeyCode::ArrowDown) => {
-                        self.ui.camera_pos.y -= pan_speed;
-                        self.ui.set_follow(None);
-                    }
-                    PhysicalKey::Code(KeyCode::KeyA) | PhysicalKey::Code(KeyCode::ArrowLeft) => {
-                        self.ui.camera_pos.x -= pan_speed;
-                        self.ui.set_follow(None);
-                    }
-                    PhysicalKey::Code(KeyCode::KeyD) | PhysicalKey::Code(KeyCode::ArrowRight) => {
-                        self.ui.camera_pos.x += pan_speed;
-                        self.ui.set_follow(None);
-                    }
                     // Zoom with + and -
                     PhysicalKey::Code(KeyCode::Equal) | PhysicalKey::Code(KeyCode::NumpadAdd) => {
                         self.ui.zoom_by(1.1);
@@ -950,9 +999,16 @@ impl ApplicationHandler for PhylonApp {
                                 self.ui.zoom_by(1.0 / 1.1);
                             }
                         } else {
-                            // Pan
-                            self.ui.camera_pos.x -= x * 20.0 / self.ui.camera_zoom;
-                            self.ui.camera_pos.y += y * 20.0 / self.ui.camera_zoom;
+                            let zoom = self.ui.camera_zoom_2d();
+                            if let ui::camera::CameraController::Orbit(orbit) =
+                                &mut self.ui.camera_controller
+                            {
+                                // Pan (Orbit mode only — see the drag-pan
+                                // handler in `render.rs` for why `Fly` mode
+                                // doesn't define an equivalent).
+                                orbit.focus.x -= x * 20.0 / zoom;
+                                orbit.focus.y += y * 20.0 / zoom;
+                            }
                         }
                     }
                     winit::event::MouseScrollDelta::PixelDelta(p) => {
@@ -963,9 +1019,14 @@ impl ApplicationHandler for PhylonApp {
                                 self.ui.zoom_by(zoom_factor);
                             }
                         } else {
-                            // Touchpad two-finger swipe: pan
-                            self.ui.camera_pos.x -= p.x as f32 / self.ui.camera_zoom;
-                            self.ui.camera_pos.y += p.y as f32 / self.ui.camera_zoom;
+                            let zoom = self.ui.camera_zoom_2d();
+                            if let ui::camera::CameraController::Orbit(orbit) =
+                                &mut self.ui.camera_controller
+                            {
+                                // Touchpad two-finger swipe: pan (Orbit mode only)
+                                orbit.focus.x -= p.x as f32 / zoom;
+                                orbit.focus.y += p.y as f32 / zoom;
+                            }
                         }
                     }
                 }

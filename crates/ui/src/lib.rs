@@ -10,6 +10,13 @@
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 
+/// The canonical 3D camera (Phase 8, ADR-P8-02) — `Camera3d`, its two
+/// controllers (`OrbitController`/`FlyController`), and the shared
+/// screen-ray/plane-intersection primitives every renderer and input path
+/// consumes.
+pub mod camera;
+pub use camera::{Camera3d, CameraController, FlyController, OrbitController};
+
 pub mod shortcuts;
 /// UI state types and enums.
 pub mod types;

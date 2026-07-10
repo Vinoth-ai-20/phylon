@@ -214,8 +214,9 @@ pub(crate) struct PhylonApp {
     /// Rendering pipeline for structural/debug view
     pub(crate) debug_renderer: Option<rendering::DebugRenderer>,
 
-    /// Rendering pipeline for organic SDF skin view
-    pub(crate) sdf_skin_renderer: Option<rendering::SdfSkinRenderer>,
+    /// Mesh-based capsule organism renderer (Phase 8, ADR-P8-03) — the
+    /// replacement for `SdfSkinRenderer`.
+    pub(crate) organism_renderer: Option<rendering::OrganismRenderer>,
 
     /// Renderer for the diffusion field.
     pub(crate) field_renderer: Option<rendering::FieldRenderer>,
@@ -485,7 +486,7 @@ impl PhylonApp {
             splat_compute: None,
             brain_compute: None,
             debug_renderer: None,
-            sdf_skin_renderer: None,
+            organism_renderer: None,
             field_renderer: None,
             window: None,
             egui_state: None,
@@ -615,7 +616,7 @@ impl PhylonApp {
         surface.configure(&device, &surface_config);
 
         let debug_renderer = rendering::DebugRenderer::new(&device, surface_format);
-        let sdf_skin_renderer = rendering::SdfSkinRenderer::new(
+        let organism_renderer = rendering::OrganismRenderer::new(
             &device,
             surface_format,
             size.width.max(1),
@@ -653,7 +654,7 @@ impl PhylonApp {
             readback_buffer,
         });
         self.debug_renderer = Some(debug_renderer);
-        self.sdf_skin_renderer = Some(sdf_skin_renderer);
+        self.organism_renderer = Some(organism_renderer);
         self.field_renderer = Some(field_renderer);
         self.physics_compute = Some(physics_compute);
         self.diffusion_compute = Some(diffusion_compute);
@@ -727,8 +728,8 @@ impl PhylonApp {
                 surface.configure(&gpu.device, config);
             }
         }
-        if let Some(sdf) = self.sdf_skin_renderer.as_mut() {
-            sdf.resize(&gpu.device, new_size.width, new_size.height);
+        if let Some(organism_renderer) = self.organism_renderer.as_mut() {
+            organism_renderer.resize(&gpu.device, new_size.width, new_size.height);
         }
     }
 
@@ -748,21 +749,18 @@ impl PhylonApp {
             .map(|r| [r[0] as f32, r[1] as f32, r[2] as f32, r[3] as f32])
             .unwrap_or([0.0, 0.0, gpu_w, gpu_h]);
         let [vx, vy, vw, vh] = canvas_rect;
-        let local_x = screen_pos.x - vx;
-        let local_y = screen_pos.y - vy;
+        let local_pos = common::Vec2::new(screen_pos.x - vx, screen_pos.y - vy);
+        let viewport_size = common::Vec2::new(vw, vh);
 
-        // NDC (Normalized Device Coordinates): [-1,1] × [-1,1]
-        let ndc_x = (local_x / vw) * 2.0 - 1.0;
-        let ndc_y = -((local_y / vh) * 2.0 - 1.0); // Y is flipped
+        // Real unproject (Phase 8, ADR-P8-02) — the third of the 3
+        // duplicated screen↔world transforms the Phase 8 audit found, now
+        // going through `Camera3d::screen_to_ray` + the shared Z=0 plane
+        // intersection instead of its own hand-derived ortho inverse.
+        let camera = self.ui.camera();
+        let (origin, dir) = camera.screen_to_ray(local_pos, viewport_size);
+        let world_pos = ui::camera::ray_intersect_z0(origin, dir)?;
 
-        // World space: invert the orthographic projection
-        let half_w = (vw / 2.0) / self.ui.camera_zoom;
-        let half_h = (vh / 2.0) / self.ui.camera_zoom;
-        let world_x = ndc_x * half_w + self.ui.camera_pos.x;
-        let world_y = ndc_y * half_h + self.ui.camera_pos.y;
-        let world_pos = common::Vec2::new(world_x, world_y);
-
-        let pick_radius = 30.0 / self.ui.camera_zoom;
+        let pick_radius = 30.0 / self.ui.camera_zoom_2d();
 
         let mut best: Option<bevy_ecs::entity::Entity> = None;
         let mut best_dist = pick_radius;

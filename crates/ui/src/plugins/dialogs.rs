@@ -155,7 +155,10 @@ fn keybinds_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) {
                         ("+ / =", "Zoom In"),
                         ("−", "Zoom Out"),
                         ("Home / 0 / Ctrl+R", "Reset Camera"),
-                        ("W A S D / Arrow Keys", "Pan Camera"),
+                        ("W A S D / Arrow Keys", "Pan (Orbit) / Fly (Fly mode)"),
+                        ("Middle-Drag", "Orbit / Look Around"),
+                        ("Tab", "Toggle Orbit / Fly Camera"),
+                        ("Double-Click", "Focus Selection"),
                     ],
                 );
                 keybind_section(

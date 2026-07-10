@@ -156,10 +156,13 @@ pub struct WorkbenchState {
     pub toolbar_visible: bool,
 
     // Viewport
-    /// World-space camera position.
-    pub camera_pos: common::Vec2,
-    /// Camera zoom factor (pixels per world unit).
-    pub camera_zoom: f32,
+    /// The active 3D camera mode and its parameters (Phase 8, ADR-P8-02) —
+    /// replaces the pre-Phase-8 `camera_pos: Vec2` + `camera_zoom: f32`
+    /// pair. `Orbit` is the default; `Fly` is opt-in
+    /// (`MenuAction::ToggleCameraMode`). See `crate::camera` and
+    /// [`WorkbenchState::camera`]/[`WorkbenchState::camera_pos_2d`]/
+    /// [`WorkbenchState::camera_zoom_2d`].
+    pub camera_controller: crate::camera::CameraController,
     /// Whether the camera automatically follows the most interesting organism.
     pub spectator_mode: bool,
     /// Screen-space rect of the viewport canvas, if known this frame.
@@ -548,8 +551,7 @@ impl Default for WorkbenchState {
             status_bar_visible: true,
             toolbar_visible: true,
 
-            camera_pos: common::Vec2::ZERO,
-            camera_zoom: 1.0,
+            camera_controller: crate::camera::CameraController::default(),
             spectator_mode: false,
             canvas_rect: None,
             pending_click: None,
@@ -740,15 +742,82 @@ impl WorkbenchState {
         self.tracked_entity = entity;
     }
 
-    /// Multiplies `camera_zoom` by `factor` and clamps it back into the
-    /// standing `[0.1, 10.0]` range — the zoom-then-clamp step every camera
-    /// zoom input (menu actions, keyboard +/-, mouse wheel, touchpad pinch)
-    /// applied identically and independently before this extraction (Phase
-    /// 7, W5c). At most one zoom operation happens per input event in every
-    /// caller, so clamping immediately here is behaviorally identical to a
-    /// caller that used to defer the clamp to after its own single call.
+    /// Zooms the camera by `factor` (`> 1.0` zooms in) — the zoom-then-
+    /// clamp step every camera zoom input (menu actions, keyboard +/-,
+    /// mouse wheel, touchpad pinch) applies identically and independently
+    /// (Phase 7, W5c). Only meaningful in `Orbit` mode (adjusts distance,
+    /// clamped — see `camera::OrbitController::zoom_by`); a no-op in `Fly`
+    /// mode, which has no zoom concept, matching how the pre-Phase-8 camera
+    /// had no fly concept at all to begin with.
     pub fn zoom_by(&mut self, factor: f32) {
-        self.camera_zoom = (self.camera_zoom * factor).clamp(0.1, 10.0);
+        if let crate::camera::CameraController::Orbit(orbit) = &mut self.camera_controller {
+            orbit.zoom_by(factor);
+        }
+    }
+
+    /// The `Camera3d` the active controller currently describes — the
+    /// single source every renderer/interaction system should read (Phase
+    /// 8, ADR-P8-02).
+    pub fn camera(&self) -> crate::camera::Camera3d {
+        self.camera_controller.camera()
+    }
+
+    /// The current viewport size in pixels, from `canvas_rect` if known
+    /// this frame, falling back to the application's default window size
+    /// (`data/default.ron`) before the first frame has laid out the
+    /// viewport.
+    fn viewport_size(&self) -> common::Vec2 {
+        self.canvas_rect
+            .map(|[_, _, w, h]| common::Vec2::new(w as f32, h as f32))
+            .unwrap_or(common::Vec2::new(1280.0, 720.0))
+    }
+
+    /// **Epic 8.1 transitional bridge** — the world-space XY point
+    /// currently at the center of the viewport, for renderers/UI code not
+    /// yet migrated to consume `Camera3d` directly (`SdfSkinRenderer`,
+    /// `DebugRenderer`, `FieldRenderer`, and every flat screen↔world
+    /// formula in `ui::render`/`ui::plugins::viewport`/`ui::plugins::
+    /// toolbar` — all Epic 8.2's job to replace, not this one's). Exactly
+    /// reproduces the pre-Phase-8 `camera_pos` value whenever the camera is
+    /// in its default straight-down orientation, since the orbit focus
+    /// point is always exactly what's centered on screen.
+    pub fn camera_pos_2d(&self) -> common::Vec2 {
+        let camera = self.camera();
+        let viewport = self.viewport_size();
+        let (origin, dir) = camera.screen_to_ray(viewport * 0.5, viewport);
+        crate::camera::ray_intersect_z0(origin, dir).unwrap_or_else(|| camera.position.truncate())
+    }
+
+    /// **Epic 8.1 transitional bridge** — see [`WorkbenchState::camera_pos_2d`].
+    /// The effective pixels-per-world-unit scale at the `Z = 0` plane,
+    /// directly at screen center, for the same not-yet-migrated flat
+    /// renderers/screen math. Derived by measuring how far a single pixel's
+    /// worth of screen-space movement covers at the ground plane (rather
+    /// than an analytic `distance`/`fov_y` formula), so it degrades
+    /// gracefully — rather than assuming a perfectly straight-down view —
+    /// if the camera has been orbited or is in `Fly` mode.
+    pub fn camera_zoom_2d(&self) -> f32 {
+        let camera = self.camera();
+        let viewport = self.viewport_size();
+        let center = viewport * 0.5;
+
+        let (center_origin, center_dir) = camera.screen_to_ray(center, viewport);
+        let (edge_origin, edge_dir) =
+            camera.screen_to_ray(center + common::Vec2::new(1.0, 0.0), viewport);
+
+        let (Some(center_world), Some(one_px_over)) = (
+            crate::camera::ray_intersect_z0(center_origin, center_dir),
+            crate::camera::ray_intersect_z0(edge_origin, edge_dir),
+        ) else {
+            return 1.0;
+        };
+
+        let world_per_pixel = (one_px_over - center_world).length();
+        if world_per_pixel > 1e-6 {
+            1.0 / world_per_pixel
+        } else {
+            1.0
+        }
     }
 
     /// Push a transient notification. Displayed in the bottom-right toast area.

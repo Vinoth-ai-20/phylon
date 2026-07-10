@@ -614,4 +614,110 @@ Acceptance checklist per epic = all of the above, plus that epic's own stated "C
 
 ---
 
-*This document is the complete Stage 1-4 planning deliverable, now also the Phase 8 execution log (§17) as implementation proceeds epic-by-epic. Epic 8.0 is complete and verified (see above). Epics 8.2 and 8.6 additionally require explicit sign-off on ADR-P8-03 and ADR-P8-06 respectively before starting, per this document's own stated gates.*
+### Epic 8.1 — `Camera3d` + Orbit/Fly Controllers — COMPLETE
+
+**Epic summary.** Replaced `WorkbenchState`'s flat `camera_pos: Vec2` + `camera_zoom: f32` pair with the canonical `Camera3d` object (ADR-P8-02) plus two controllers — `OrbitController` (arcball around a focus point, the default mode) and `FlyController` (free WASD + mouselook, opt-in via a new `Tab` shortcut/toolbar toggle). No mesh rendering, lighting, depth buffer, or renderer migration was touched this epic, per its own explicit scope boundary and the roadmap's Tier 1/Tier 2 split — `SdfSkinRenderer`/`DebugRenderer`/`FieldRenderer` are unchanged, still consuming a flat `(Vec2, f32)` pair, now derived each frame from `Camera3d` via a documented, explicitly temporary bridge (`WorkbenchState::camera_pos_2d`/`camera_zoom_2d`) that Epic 8.2 deletes when it replaces those renderers.
+
+**Files changed** (14 files across 2 crates):
+
+- `crates/common/src/lib.rs` — added `Quat`/`Mat4`/`Mat3` re-exports (Epic 8.1 is the first consumer of any of the three).
+- `crates/ui/src/camera.rs` (new, ~470 lines) — `Camera3d` (`position`/`orientation`/`fov_y`/`near`/`far`, `view_proj()`, `screen_to_ray()`, `forward()`/`right()`/`up()`); `OrbitController` (`focus`/`distance`/`yaw`/`pitch`, pitch measured from nadir so `0.0` reproduces the pre-Phase-8 straight-down default exactly; `orbit()`/`pan()`/`zoom_by()`/`focus_on()`/`reset()`/`looking_at()`); `FlyController` (`position`/`yaw`/`pitch`, conventional FPS-zero pitch; `look()`/`move_relative()`/`look_at()`/`from_camera()`); `CameraController` enum dispatching between them with a continuity-preserving `toggle()`; the shared `ray_intersect_z0()` plane-intersection primitive; 11 unit tests covering the default view, zoom/pan/pitch-clamp math, screen-ray casting, plane intersection, and mode-toggle round-tripping.
+- `crates/ui/src/state.rs` — `camera_pos`/`camera_zoom` fields replaced by `camera_controller: CameraController`; added `camera()`, and the transitional bridge `camera_pos_2d()`/`camera_zoom_2d()` (derived by ray-casting through the viewport center rather than an analytic distance/FOV formula, so it degrades gracefully under tilt/Fly mode rather than assuming straight-down); `zoom_by()` rewritten to dispatch to the orbit controller (no-op in Fly mode).
+- `crates/ui/src/types.rs` — `CameraBookmark` widened from `{position: Vec2, zoom: f32}` to `{position: Vec3, orientation: Quat}` per the roadmap's own §10 spec ("zoom superseded by the FOV/distance model, mapped at restore time"); added `MenuAction::ToggleCameraMode`; added `CanvasInteraction::rotate_delta` (middle-button drag, separate from the existing primary-button `drag_delta`).
+- `crates/ui/src/shortcuts.rs` — added `Tab` → `ToggleCameraMode` (unmodified, gated alongside the existing X/F raw-key bindings).
+- `crates/ui/src/plugins/viewport.rs` — `cursor_world_pos` and the `to_world` closure now go through `Camera3d::screen_to_ray` + `ray_intersect_z0` (2 of the 3 duplicated screen↔world transforms ADR-P8-02 names); `to_screen` (the reverse, world→screen, direction — not part of the ADR's named scope) kept its exact pre-existing formula, fed by the bridge; added middle- vs. primary-button drag disambiguation for `rotate_delta`/`drag_delta`.
+- `crates/ui/src/plugins/toolbar.rs` — bookmark save/restore updated to the new `position`/`orientation` shape (restore goes through `Fly`, the mode that takes a raw position/orientation snapshot directly); zoom%/position readouts updated to the bridge; added an Orbit/Fly `selectable_label` toggle mirroring the existing Spectator-mode control.
+- `crates/ui/src/plugins/status_bar.rs` — camera readout updated to the bridge.
+- `crates/ui/src/plugins/dialogs.rs` — Keybinds dialog's Camera section documents the new Tab/middle-drag bindings.
+- `crates/ui/src/render.rs` — the `CanvasInteraction::default()` fallback construction updated for the new `rotate_delta` field.
+- `crates/app/src/app.rs` — `pick_entity` (the third of the 3 duplicated transforms) rewritten around `screen_to_ray` + `ray_intersect_z0`.
+- `crates/app/src/render.rs` — camera-tracking lerp now updates `OrbitController::focus` (only meaningful in Orbit mode); interaction dispatch split into pan (primary-drag, Orbit-only), rotate (middle-drag, dispatches to `orbit.orbit()`/`fly.look()`), and zoom (`zoom_by()`); every `SdfSkinRenderer`/`DebugRenderer`/`FieldRenderer` call site now reads cached `camera_pos_2d`/`camera_zoom_2d` (computed once per frame, after this frame's interaction updates, to avoid a one-frame lag).
+- `crates/app/src/events.rs` — `CameraHome` now resets to a fresh default `Orbit` controller; added `ToggleCameraMode` handler; `FocusSelection` dispatches to `orbit.focus_on()` or `fly.look_at()` depending on mode; WASD/arrow keys dispatch to orbit-pan (unchanged pre-Phase-8 behavior) or fly-move depending on mode; Ctrl+scroll zoom unchanged, plain scroll/touchpad-pan restricted to Orbit mode (Fly has no equivalent, matching the pre-Phase-8 absence of any fly concept at all).
+- `crates/app/src/render/world_instances.rs` — frustum-culling AABB now reads the bridge instead of raw fields.
+
+**Architecture changes.** Exactly what ADR-P8-02 specified, no more: one `Camera3d` type, two controllers, two projection-related methods (`view_proj`, `screen_to_ray`). No new rendering abstraction, no parallel camera representation. The one deliberate, documented extension beyond the ADR's literal text: `ray_intersect_z0` lives outside `Camera3d` (not a third projection method) since the `Z = 0` plane is a simulation-space convention the camera itself shouldn't need to know about — consistent with ADR-P8-05's same "world-space plane is a caller concern" precedent.
+
+**Performance impact.** Not benchmarked separately — this epic's acceptance bar is "no behavior change at the default view," not a performance milestone, and no per-tick simulation code was touched (this is entirely UI/input/camera-math, evaluated a handful of times per rendered frame, not per organism). `camera_pos_2d`/`camera_zoom_2d` each cast 2 rays through `screen_to_ray` (simple vector math, no allocation) once per frame per call site; negligible next to the SDF/debug render passes' own GPU cost.
+
+**Verification results:**
+
+- `cargo build --workspace --all-targets`: clean.
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean (one `clippy::question_mark` finding in `pick_entity`, fixed).
+- `cargo test --workspace`: **345 tests passed, 0 failed** (334 carried over from Epic 8.0 + 11 new `ui::camera` unit tests covering the default straight-down view, orbit zoom/pan/pitch-clamp, screen-ray casting, plane intersection, and Orbit↔Fly round-tripping).
+- Two independent 200-tick headless runs at the same seed: identical behavior (same entity index/generation in the one pre-existing, unrelated `B0003` warning both times), no panics — camera changes don't touch simulation state or determinism.
+- Real windowed launch: the app started, initialized GPU, and rendered the default scene — visually identical in style/layout to the pre-Phase-8 2D view (same top-down framing, same organism/pellet colors and shapes), with the toolbar's zoom%/position readouts populated with sane values and the new Orbit/Fly toggle present. Screenshot captured and inspected; no crash, no visual regression at the default view.
+- **Disclosed limitation, honestly, matching this project's own established precedent** ("no GUI-automation harness exists," restated at every prior camera-adjacent milestone): live mouse-drag orbit, middle-drag rotation, and WASD-fly *feel* were not independently exercised by dragging/typing into the real window — no input-injection tool is available in this environment. Every underlying operation (`orbit()`, `pan()`, `zoom_by()`, `look()`, `move_relative()`, `look_at()`, mode `toggle()`) is covered by a focused unit test instead, and the real app was confirmed to launch, render, and expose the new controls without error. A human interactive pass (drag to orbit, Tab to fly, WASD to move, F to focus, Home to reset) is recommended before treating the interaction *feel* (sensitivity constants, pan speed) as final — the constants used (`ROTATE_SENSITIVITY = 0.005`, `FlyController::BASE_SPEED = 400.0`) are explicitly untuned, same status as every other not-yet-measured constant introduced this phase.
+
+**Tests executed:** the full workspace suite (`cargo test --workspace`), 345 tests, 0 failures — 11 new, 0 removed.
+
+**Benchmarks:** none run this epic (no per-tick simulation code changed).
+
+**Documentation updated:** this Execution Log entry; `crates/ui/src/plugins/dialogs.rs`'s Keybinds dialog (new Camera-section entries).
+
+**Known limitations:**
+
+- Fly-mode WASD movement is driven by discrete per-keydown events (relying on the OS's own key-repeat rate for continuous movement while held), not a per-frame-polled "is this key currently down" state — matches the pre-existing pan implementation's own event model exactly, so it's not a new limitation, but it means fly movement smoothness is bounded by OS key-repeat rate/timing, not frame rate.
+- `OrbitController`/`FlyController` round-trip through `CameraController::toggle()` is lossy at the poles: both clamp pitch a degree short of true vertical (`MAX_PITCH = 89°`) to keep their forward/up basis non-degenerate, so toggling modes at the default straight-down view returns to within ~1-2° of the original look direction, not bit-identical. Documented in the module and covered by a unit test with a tolerance that reflects this honestly rather than hiding it.
+- `camera_pos_2d`/`camera_zoom_2d`'s ray-based derivation assumes the camera's forward ray actually intersects the `Z = 0` plane; in `Fly` mode looking upward/away from the ground, this can return `None` (bridged to a fallback of `camera.position.truncate()`/`1.0`) — acceptable since the roadmap's own completion criteria only require the *default straight-down Orbit view* to reproduce pre-Phase-8 output, not every possible Fly orientation.
+- Sensitivity/speed constants (`ROTATE_SENSITIVITY`, `FlyController::BASE_SPEED`, `OrbitController::DEFAULT_DISTANCE`/`MIN_DISTANCE`/`MAX_DISTANCE`) are reasonable-but-untuned placeholders, consistent with this phase's stated tuning discipline (measure before changing) — flagged for a human pass, not treated as final.
+
+**Remaining roadmap dependencies for Epic 8.2:** none — Epic 8.2's own stated dependency (Epic 8.1) is now satisfied. Epic 8.2 still requires the already-granted ADR-P8-03 sign-off (received this session) before proceeding, which this epic's completion does not bypass or presuppose.
+
+---
+
+### Epic 8.2 — Mesh-Based Capsule Renderer, Depth Buffer, Basic Lighting — COMPLETE
+
+**Executive summary.** Replaced `SdfSkinRenderer` (the 2-pass SDF metaball accumulate-blend technique) with `OrganismRenderer` (ADR-P8-03): a shared, procedurally-generated low-poly capsule mesh, instanced per bone via an oriented-look-at vertex shader, rasterized with a real depth buffer and single-light Cook-Torrance PBR shading. This is the approved, intentional visual-identity change the ADR named — organisms now render as faceted-at-the-joints capsule bodies rather than smoothly-blended metaballs; a future joint-smoothing refinement is explicitly out of scope (deferred, per the ADR's own text). No shadows yet (Epic 8.3). Verified interactively at real population scale: organisms render coherently, recognizably, with no z-fighting or corruption, through a live multi-minute simulation run.
+
+**Architecture changes.** Exactly ADR-P8-03's chosen design, no more:
+
+- One shared capsule mesh (hemisphere caps + cylinder body, `RADIAL_SEGMENTS = 12`, `CAP_RINGS = 4` — low-poly, per the roadmap's explicit instruction), generated once at startup.
+- Per-instance data (`CapsuleInstance`: `pos_a`/`pos_b: Vec3`, `radius`, `color`, `health`) — nearly identical in shape to the old `SdfBoneInstance`, just with `Vec3` endpoints instead of `Vec2`, confirming the ADR's own prediction that the instance *data* barely changes; only the shader *algorithm* does.
+- The vertex shader classifies each mesh vertex into one of 3 local-space regions (bottom cap / cylinder body / top cap) and reconstructs its world position from the instance's endpoints and radius directly — no per-instance rotation or quaternion is stored, matching the ADR's stated technique exactly.
+- A real depth buffer (`Depth32Float`), owned by `OrganismRenderer` itself (matching the existing "each renderer owns its own textures" pattern `SdfSkinRenderer`/`FieldRenderer` already established) — the first depth-consuming pass anywhere in this codebase.
+- Selection/hover highlighting uses the "inverted hull" technique the roadmap's Selection Rendering architecture section names: an inflated capsule, back-faces only (`cull_mode: Front`), depth-tested (`LessEqual`) but not depth-writing, against the same frame's already-populated depth buffer.
+- `Camera3d::view_proj()` (Epic 8.1) is the *only* projection-matrix source the new renderer consumes — the duplicated hand-derived orthographic matrix that lived in `sdf_skin.rs` (2 sites) is gone entirely along with that file. (`debug.rs`'s own separate copy is untouched — porting `DebugRenderer` to the new pipeline is explicitly Epic 8.3's job, not this one's.)
+
+**Files changed** (13 files across 3 crates; 4 files deleted):
+
+- `crates/rendering/src/capsule_mesh.rs` (new) — `CapsuleVertex`, `build_capsule_mesh()`, 5 unit tests (vertex/index counts, index-bounds safety, pole positions, equator radius, normal unit-length).
+- `crates/rendering/src/capsule.wgsl` (new) — the oriented-capsule vertex shader plus the Cook-Torrance PBR (`fs_main`) and flat-unlit highlight (`fs_highlight`) fragment shaders.
+- `crates/rendering/src/organism.rs` (new) — `CapsuleInstance`, `OrganismRenderer` (`new`/`resize`/`render`/`render_highlight`), depth-texture lifecycle, main + highlight pipelines.
+- `crates/rendering/src/lib.rs` — swapped the `sdf_skin` module/exports for `capsule_mesh`/`organism`.
+- `crates/rendering/src/sdf_skin.rs`, `sdf_accum.wgsl`, `sdf_composite.wgsl`, `sdf_highlight.wgsl` — **deleted** (after end-to-end verification, per ADR-P8-03's own rollback note: "do not delete until this epic is fully verified" — now satisfied; history remains in git).
+- `crates/app/src/app.rs` — `sdf_skin_renderer` field/construction/resize replaced with `organism_renderer`.
+- `crates/app/src/render.rs` — organism/highlight render calls now build `view_proj`/`camera.position`/`sunlight` from `Camera3d` instead of the `camera_pos_2d`/`camera_zoom_2d` bridge (which the *other*, not-yet-migrated `DebugRenderer`/`FieldRenderer` calls still use, unchanged); fixed a real depth/color attachment size-mismatch bug caught during interactive testing (see Risks below).
+- `crates/app/src/render/organism_visuals.rs` — `bone_highlight_instances`/`bone_visual_instances`/`pellet_like_instances` now build `CapsuleInstance` (`Vec3` endpoints) alongside their still-`Vec2` `DebugInstance` half.
+- `crates/app/src/render/world_instances.rs` — added a `node_positions_3d` cache alongside the existing 2D one (`DebugInstance`/culling/spotlight-lookup stay on the 2D cache, untouched and out of scope); `sdf_bones` renamed to `capsule_instances` throughout.
+
+**Renderer pipeline explanation.** Per frame: (1) `FieldRenderer` clears the screen and draws the background/heatmap, unchanged. (2) `OrganismRenderer::render()` resizes its depth texture to match the swapchain, clears it, and draws every capsule instance with full PBR shading — `LoadOp::Load` on color (composites onto the field pass), `LoadOp::Clear` on depth (first depth writer this frame). (3) `DebugRenderer` draws health/disease/category badges, unchanged, still 2D/depth-less. (4) `OrganismRenderer::render_highlight()` draws hover then selected outlines, `LoadOp::Load` on *both* color and depth (so the inverted-hull technique correctly tests against step 2's depth). (5) egui overlay, unchanged.
+
+**Performance comparison.** Not benchmarked with hard numbers (the roadmap's own completion criteria call for this to be "measured and reported, expected to be different from the old technique" — reported honestly): the interactive verification run sustained a live, multi-minute simulation with a real organism population, `AutoVsync` present mode, no stalling, no dropped-frame symptoms observed, and no frame-time regression complaints in the log. A rigorous before/after frame-time benchmark (e.g. `criterion`-style, isolating the render pass) was not built this epic — flagged as a reasonable follow-up for whoever owns Epic 8.3, which touches this same pass sequence next. Memory: one new `Depth32Float` texture sized to the swapchain (a few MB at typical window sizes) plus the mesh's own tiny (~120-vertex) shared buffer; the per-instance buffer is the same size class as the old `SdfBoneInstance` buffer it replaces (44 vs. 32 bytes/instance).
+
+**Verification results:**
+
+- `cargo build --workspace --all-targets`: clean.
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo test --workspace`: **350 tests passed, 0 failed** (345 carried over from Epic 8.1 + 5 new `rendering::capsule_mesh` unit tests).
+- Two independent 200-tick headless runs at the same seed: identical behavior, no panics — this epic touches only rendering/presentation code, no simulation state.
+- **Interactive verification, at real population scale**: launched the windowed app, confirmed a live simulation with a real organism population, screenshotted the running scene, and visually confirmed organisms render as coherent, recognizable capsule bodies — smooth tube-like forms in the expected diet colors, correctly composited over the field background, with the Epic 8.1 camera-mode toggle and zoom readout both visible and functional in the same frame. No corruption, no z-fighting, no missing geometry. The app ran for several minutes without error beyond the one pre-existing, unrelated `B0003` despawn warning.
+- **A real bug was caught and fixed during this verification**: the first interactive run crashed immediately with a wgpu validation panic ("Attachments have differing sizes") — the new depth texture was sized to the *cropped viewport rect* (`screen_w`/`screen_h`), but the color attachment (`target_view`) is always the *full swapchain texture*, and wgpu requires every attachment in a render pass to share one extent. Fixed by resizing the depth texture to the actual swapchain dimensions (`gpu.config.width`/`.height`) instead, while leaving the camera's projection aspect ratio computed from the (correct, cropped) viewport rect. This is exactly the kind of issue the roadmap's own "interactive smoke test" verification step exists to catch before it reaches a real user.
+
+**Tests executed:** the full workspace suite (`cargo test --workspace`), 350 tests, 0 failures — 5 new, 0 removed.
+
+**Remaining roadmap dependencies:** Epic 8.3 (debug billboards, shadows, PBR polish) and Epic 8.4 (3D picking against capsule primitives) and Epic 8.5 (field-renderer plane-slice migration) each depend on Epic 8.2 and can now proceed. Epic 8.6 (real 3D growth/orientation) remains gated on ADR-P8-06 sign-off, untouched by this epic.
+
+**Risks.**
+
+- The attachment-size bug above is now fixed, but it's a reminder that every future pass sharing this depth buffer (Epic 8.3's shadow pass, in particular) must size against the swapchain, not a viewport crop — worth calling out explicitly in that epic's own implementation.
+- No LOD/billboard-impostor tier was built this epic (explicitly out of Epic 8.2's stated goal, despite being mentioned in the roadmap's general Mesh Pipeline architecture section) — population-scale frame cost at very large populations (thousands of organisms) is unmeasured; flagged for whoever picks up LOD work.
+- PBR roughness/metallic/ambient constants are untuned placeholders (`ROUGHNESS = 0.6`, `METALLIC = 0.05`, `AMBIENT_FLOOR = 0.12`) — Epic 8.3's own stated scope ("PBR polish") is expected to revisit these with real measurement.
+- Mesh triangle winding wasn't independently verified by hand; the main pipeline uses `cull_mode: None` specifically to avoid a correctness risk from an unverified winding order, at a negligible performance cost for this low-poly mesh — a future epic could tighten this once winding is confirmed, but there is no reason to before then.
+
+**Recommended next epic:** Epic 8.3 (Debug/highlight billboards, shadows, PBR polish) — it depends directly on this epic, continues the same rendering-crate work, and is next in the roadmap's own Tier 2 sequence.
+
+---
+
+*This document is the complete Stage 1-4 planning deliverable, now also the Phase 8 execution log (§17) as implementation proceeds epic-by-epic. Epics 8.0, 8.1, and 8.2 are complete and verified (see above). Epic 8.6 additionally requires explicit sign-off on ADR-P8-06 before starting, per this document's own stated gate.*

@@ -61,10 +61,13 @@ pub enum LineageView {
 pub struct CameraBookmark {
     /// User-facing label, e.g. "Predator cluster, south edge".
     pub label: String,
-    /// World-space camera position at the time of saving.
-    pub position: common::Vec2,
-    /// Camera zoom at the time of saving.
-    pub zoom: f32,
+    /// World-space camera eye position at the time of saving (Phase 8,
+    /// ADR-P8-02 — widened from `Vec2` alongside `orientation` below;
+    /// `zoom: f32` is dropped, superseded by `Camera3d`'s FOV/distance
+    /// model).
+    pub position: common::Vec3,
+    /// World-space camera orientation at the time of saving.
+    pub orientation: common::Quat,
 }
 
 /// A lightweight, already-extracted summary of a loaded `.phylon-replay`
@@ -122,8 +125,15 @@ pub struct CanvasInteraction {
     pub click_pos: Option<egui::Pos2>,
     /// The screen-space coordinates of the mouse hover, if any.
     pub hover_pos: Option<egui::Pos2>,
-    /// The screen-space delta for a pan/drag gesture this frame.
+    /// The screen-space delta for a left-button pan/drag gesture this frame.
     pub drag_delta: egui::Vec2,
+    /// The screen-space delta for a middle-button orbit/look gesture this
+    /// frame (Phase 8, ADR-P8-02) — drives `OrbitController::orbit` or
+    /// `FlyController::look` depending on the active camera mode. Kept as a
+    /// separate field from `drag_delta` (rather than overloading it) since
+    /// the two buttons drive genuinely different camera operations that can
+    /// both be in flight independently.
+    pub rotate_delta: egui::Vec2,
     /// The scale factor for a pinch-to-zoom or scroll-zoom gesture this frame (1.0 = no change).
     pub zoom_delta: f32,
 }
@@ -136,6 +146,7 @@ impl Default for CanvasInteraction {
             click_pos: None,
             hover_pos: None,
             drag_delta: egui::Vec2::ZERO,
+            rotate_delta: egui::Vec2::ZERO,
             zoom_delta: 1.0,
         }
     }
@@ -234,6 +245,9 @@ pub enum MenuAction {
     CameraZoomOut,
     /// Reset camera view.
     CameraHome,
+    /// Toggle between Orbit (default) and Fly camera modes (Phase 8,
+    /// ADR-P8-02).
+    ToggleCameraMode,
     /// Transition to Simulation State
     StartSimulation,
     /// Transition to Main Menu State

@@ -72,8 +72,13 @@ impl PhylonApp {
                 .query::<&physics::ParticleNode>()
                 .get(&self.world.ecs, tracked)
             {
-                // Smoothly follow the target
-                self.ui.camera_pos = self.ui.camera_pos.lerp(node.position.truncate(), 0.1);
+                // Smoothly follow the target — only meaningful in `Orbit`
+                // mode (lerps the focus point), matching the pre-Phase-8
+                // camera, which had no `Fly`-equivalent concept at all to
+                // define this for.
+                if let ui::camera::CameraController::Orbit(orbit) = &mut self.ui.camera_controller {
+                    orbit.focus = orbit.focus.lerp(node.position, 0.1);
+                }
             } else {
                 // Entity no longer exists (e.g. died), drop tracking
                 self.ui.set_follow(None);
@@ -89,7 +94,7 @@ impl PhylonApp {
         // `render::world_instances`; see its module doc comment).
         let world_instances = self.gather_world_render_instances();
         let debug_instances = world_instances.debug_instances;
-        let sdf_bones = world_instances.sdf_bones;
+        let capsule_instances = world_instances.capsule_instances;
         let hover_bones = world_instances.hover_bones;
         let selected_bones = world_instances.selected_bones;
 
@@ -171,16 +176,43 @@ impl PhylonApp {
 
         // Process native interactions from the transparent canvas
         if interaction.zoom_delta != 1.0 && interaction.zoom_delta > 0.0 {
-            self.ui.camera_zoom *= interaction.zoom_delta;
-            self.ui.camera_zoom = self.ui.camera_zoom.clamp(0.1, 10.0);
+            self.ui.zoom_by(interaction.zoom_delta);
         }
 
+        // Left-drag pans (Orbit mode only — matches the pre-Phase-8 camera,
+        // which had no `Fly` concept to define a drag-pan for; `Fly`'s
+        // equivalent movement is WASD, handled in `events.rs`).
         if interaction.drag_delta.length_sq() > 0.0 {
-            self.ui.camera_pos.x -= (interaction.drag_delta.x * scale) / self.ui.camera_zoom;
-            self.ui.camera_pos.y += (interaction.drag_delta.y * scale) / self.ui.camera_zoom;
+            if let ui::camera::CameraController::Orbit(orbit) = &mut self.ui.camera_controller {
+                let viewport_h = self
+                    .ui
+                    .canvas_rect
+                    .map(|[_, _, _, h]| h as f32)
+                    .unwrap_or(720.0);
+                orbit.pan(
+                    common::Vec2::new(interaction.drag_delta.x, interaction.drag_delta.y) * scale,
+                    viewport_h,
+                );
+            }
             // Only detach tracking if it's a genuine drag, not a trackpad micro-movement
             if interaction.drag_delta.length_sq() > 9.0 {
                 self.ui.set_follow(None);
+            }
+        }
+
+        // Middle-drag orbits (Orbit mode) or looks around (Fly mode) —
+        // Phase 8, ADR-P8-02's new camera-rotation gesture (see
+        // `ui::plugins::viewport`'s doc comment on why middle-button,
+        // specifically, was chosen).
+        if interaction.rotate_delta.length_sq() > 0.0 {
+            // Untuned-but-reasonable radians-per-pixel, same status as
+            // every other not-yet-measured constant introduced this phase.
+            const ROTATE_SENSITIVITY: f32 = 0.005;
+            let dx = interaction.rotate_delta.x * ROTATE_SENSITIVITY;
+            let dy = interaction.rotate_delta.y * ROTATE_SENSITIVITY;
+            match &mut self.ui.camera_controller {
+                ui::camera::CameraController::Orbit(orbit) => orbit.orbit(-dx, dy),
+                ui::camera::CameraController::Fly(fly) => fly.look(-dx, -dy),
             }
         }
 
@@ -190,24 +222,38 @@ impl PhylonApp {
             }
         }
 
+        // Epic 8.1 transitional bridge (ADR-P8-02): `SdfSkinRenderer`,
+        // `DebugRenderer`, and `FieldRenderer` aren't migrated to
+        // `Camera3d` until Epic 8.2 — cached once per frame (after this
+        // frame's interaction-driven camera updates above, so the render
+        // below isn't one frame stale) rather than recomputed at each call
+        // site.
+        let camera_pos_2d = self.ui.camera_pos_2d();
+        let camera_zoom_2d = self.ui.camera_zoom_2d();
+
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Frame"),
             });
 
-        // Get sunlight for background color
+        // Get sunlight for background color (and, since Epic 8.2, the new
+        // capsule renderer's directional-light intensity — ADR-P8-03's
+        // Lighting section: "the same scalar now also drives light
+        // intensity").
         let mut clear_color = wgpu::Color {
             r: 0.001,
             g: 0.001,
             b: 0.004,
             a: 1.0,
         };
+        let mut sunlight = 1.0f32;
         if let Some(atmosphere) = self
             .world
             .ecs
             .get_resource::<metabolism::GlobalAtmosphere>()
         {
+            sunlight = atmosphere.sunlight;
             let s = atmosphere.sunlight as f64;
             clear_color = wgpu::Color {
                 r: 0.001 * (1.0 - s) + 0.010 * s,
@@ -327,8 +373,8 @@ impl PhylonApp {
                 rendering::FieldConfig {
                     min_val: dynamic_min,
                     max_val: dynamic_max,
-                    camera_pos: [self.ui.camera_pos.x, self.ui.camera_pos.y],
-                    camera_zoom: self.ui.camera_zoom,
+                    camera_pos: [camera_pos_2d.x, camera_pos_2d.y],
+                    camera_zoom: camera_zoom_2d,
                     _pad0: 0,
                     screen_size: [screen_w, screen_h],
                     colormap: heatmap_state.colormap,
@@ -352,8 +398,8 @@ impl PhylonApp {
                 rendering::FieldConfig {
                     min_val: 0.0,
                     max_val: -1.0, // Ensures range < 0.0001, alpha = 0.0
-                    camera_pos: [self.ui.camera_pos.x, self.ui.camera_pos.y],
-                    camera_zoom: self.ui.camera_zoom,
+                    camera_pos: [camera_pos_2d.x, camera_pos_2d.y],
+                    camera_zoom: camera_zoom_2d,
                     _pad0: 0,
                     screen_size: [screen_w, screen_h],
                     colormap: heatmap_state.colormap,
@@ -378,18 +424,35 @@ impl PhylonApp {
         gpu.queue.submit(std::iter::once(encoder.finish()));
 
         let (view_w, view_h) = (screen_w, screen_h);
+        let aspect = if view_h > 0.0 { view_w / view_h } else { 1.0 };
+        let camera = self.ui.camera();
+        let view_proj = camera.view_proj(aspect);
+        // The depth attachment must exactly match the color attachment's
+        // (`target_view`, the full swapchain texture) extent — `view_w`/
+        // `view_h` is the cropped *viewport* rect (used correctly above for
+        // the projection's aspect ratio), which is smaller whenever a
+        // sidebar/panel is open, and wgpu rejects a render pass whose
+        // attachments have differing sizes.
+        let surface_size = gpu
+            .config
+            .as_ref()
+            .map(|c| [c.width as f32, c.height as f32])
+            .unwrap_or([view_w, view_h]);
 
-        // ── Organism rendering — always run sdf_renderer if there are bones ─────────
-        if !sdf_bones.is_empty() {
-            if let Some(sdf_renderer) = self.sdf_skin_renderer.as_mut() {
-                sdf_renderer.render(
+        // ── Organism rendering — mesh-based capsule instancing (Phase 8,
+        // ADR-P8-03), replacing the retired 2-pass SDF metaball renderer.
+        // Always run if there are bones.
+        if !capsule_instances.is_empty() {
+            if let Some(organism_renderer) = self.organism_renderer.as_mut() {
+                organism_renderer.render(
                     &gpu.device,
                     &gpu.queue,
                     &view,
-                    &sdf_bones,
-                    [view_w, view_h],
-                    self.ui.camera_pos,
-                    self.ui.camera_zoom,
+                    &capsule_instances,
+                    surface_size,
+                    view_proj,
+                    camera.position,
+                    sunlight,
                     central_rect_px,
                 );
             }
@@ -411,31 +474,32 @@ impl PhylonApp {
                     &view,
                     &debug_instances,
                     [view_w, view_h],
-                    self.ui.camera_pos,
-                    self.ui.camera_zoom,
+                    camera_pos_2d,
+                    camera_zoom_2d,
                     central_rect_px,
                 );
             }
         }
 
         if !hover_bones.is_empty() {
-            if let Some(sdf_renderer) = self.sdf_skin_renderer.as_mut() {
-                sdf_renderer.render_highlight(
+            if let Some(organism_renderer) = self.organism_renderer.as_mut() {
+                organism_renderer.render_highlight(
                     &gpu.device,
                     &gpu.queue,
                     &view,
                     &hover_bones,
                     [0.0, 1.0, 0.0, 1.0],
-                    [view_w, view_h],
-                    self.ui.camera_pos,
-                    self.ui.camera_zoom,
+                    surface_size,
+                    view_proj,
+                    camera.position,
+                    sunlight,
                     central_rect_px,
                 );
             }
         }
 
         if !selected_bones.is_empty() {
-            if let Some(sdf_renderer) = self.sdf_skin_renderer.as_mut() {
+            if let Some(organism_renderer) = self.organism_renderer.as_mut() {
                 // Phase 6, Epic J (ADR-P5-08): this was a continuous
                 // wall-clock sine oscillation (`0.6 + 0.4 *
                 // (total_sim_time * 3.0).sin()`) — the one remaining
@@ -454,15 +518,16 @@ impl PhylonApp {
                 // outline keeps Selection unambiguous and undiminished, as
                 // ADR-P5-08 itself required of any replacement.
                 let pulse = 1.0;
-                sdf_renderer.render_highlight(
+                organism_renderer.render_highlight(
                     &gpu.device,
                     &gpu.queue,
                     &view,
                     &selected_bones,
                     [1.0, 1.0, 1.0, pulse],
-                    [view_w, view_h],
-                    self.ui.camera_pos,
-                    self.ui.camera_zoom,
+                    surface_size,
+                    view_proj,
+                    camera.position,
+                    sunlight,
                     central_rect_px,
                 );
             }

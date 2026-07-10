@@ -10,7 +10,8 @@
 //! - **Entity identity**: [`EntityId`], [`ChunkId`], [`Tick`]
 //! - **Simulation unit newtypes**: [`SimLength`], [`SimMass`], [`SimEnergy`], [`SimTime`]
 //! - **Math re-exports**: [`Vec2`] (UI-internal 2D layouts), [`Vec3`]
-//!   (simulation space, Phase 8), [`IVec2`]
+//!   (simulation space, Phase 8), [`IVec2`], [`Quat`]/[`Mat4`]/[`Mat3`]
+//!   (the 3D camera, Phase 8)
 //! - **Error base**: [`PhylonError`] trait and [`PhylonResult`] type alias
 //! - **Determinism**: [`SimRng`], the single seeded source of randomness
 //! - **Tick timing**: [`TickRate`], the single source of truth for the fixed per-tick delta-time
@@ -45,6 +46,19 @@ pub use glam::Vec3;
 
 /// 2-D integer vector — used for chunk grid coordinates and spatial hash keys.
 pub use glam::IVec2;
+
+/// Rotation quaternion — the orientation half of `ui::camera::Camera3d`
+/// (Phase 8, ADR-P8-02). No simulation code produces or consumes rotations
+/// yet (organism orientation is still a scalar `heading` angle, untouched
+/// until Epic 8.6) — today this exists solely for the 3D camera.
+pub use glam::Quat;
+
+/// 4x4 matrix — used for `Camera3d::view_proj()` (Phase 8, ADR-P8-02).
+pub use glam::Mat4;
+
+/// 3x3 matrix — used internally to build a `Quat` from an explicit
+/// right/up/forward basis (Phase 8, ADR-P8-02's camera controllers).
+pub use glam::Mat3;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Entity identity

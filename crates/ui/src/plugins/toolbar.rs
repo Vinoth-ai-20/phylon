@@ -208,10 +208,11 @@ pub fn toolbar_ui(
             format!("{} Bookmarks", egui_remixicon::icons::BOOKMARK_LINE),
             |ui| {
                 if ui.button("+ Save Current View").clicked() {
+                    let camera = state.camera();
                     state.bookmarks.push(crate::CameraBookmark {
                         label: format!("View {}", state.bookmarks.len() + 1),
-                        position: state.camera_pos,
-                        zoom: state.camera_zoom,
+                        position: camera.position,
+                        orientation: camera.orientation,
                     });
                     ui.close_menu();
                 }
@@ -221,8 +222,25 @@ pub fn toolbar_ui(
                     for (i, bookmark) in state.bookmarks.iter().enumerate() {
                         ui.horizontal(|ui| {
                             if ui.button(&bookmark.label).clicked() {
-                                state.camera_pos = bookmark.position;
-                                state.camera_zoom = bookmark.zoom;
+                                // A bookmark's position+orientation is a
+                                // complete camera snapshot on its own (no
+                                // saved focus/distance is needed) — restore
+                                // it via `Fly`, the mode that takes a raw
+                                // position/orientation pair directly (Phase
+                                // 8, ADR-P8-02's "zoom superseded by the
+                                // FOV/distance model, mapped at restore
+                                // time").
+                                state.camera_controller = crate::camera::CameraController::Fly(
+                                    crate::camera::FlyController::from_camera(
+                                        &crate::camera::Camera3d {
+                                            position: bookmark.position,
+                                            orientation: bookmark.orientation,
+                                            fov_y: crate::camera::Camera3d::DEFAULT_FOV_Y,
+                                            near: crate::camera::Camera3d::DEFAULT_NEAR,
+                                            far: crate::camera::Camera3d::DEFAULT_FAR,
+                                        },
+                                    ),
+                                );
                                 ui.close_menu();
                             }
                             if ui
@@ -249,7 +267,7 @@ pub fn toolbar_ui(
             if ui.button("-").on_hover_text("Zoom Out (−)").clicked() {
                 actions.push(MenuAction::CameraZoomOut);
             }
-            ui.label(format!("{:.0}%", state.camera_zoom * 100.0));
+            ui.label(format!("{:.0}%", state.camera_zoom_2d() * 100.0));
             if ui.button("+").on_hover_text("Zoom In (+)").clicked() {
                 actions.push(MenuAction::CameraZoomIn);
             }
@@ -261,6 +279,26 @@ pub fn toolbar_ui(
             {
                 actions.push(MenuAction::CameraHome);
             }
+            ui.separator();
+            // Camera mode (Phase 8, ADR-P8-02) — Orbit is the default;
+            // Fly is opt-in. Mirrors the Spectator toggle's
+            // `selectable_label` pattern immediately below.
+            let is_fly = state.camera_controller.is_fly();
+            let mode_text = if is_fly {
+                egui::RichText::new(format!("{} Fly", egui_remixicon::icons::PLANE_LINE))
+                    .color(egui::Color32::LIGHT_GREEN)
+            } else {
+                egui::RichText::new(format!("{} Orbit", egui_remixicon::icons::REFRESH_LINE))
+                    .color(crate::theme::DISABLED_FG)
+            };
+            if ui
+                .selectable_label(is_fly, mode_text)
+                .on_hover_text("Toggle Orbit / Fly camera (Tab)")
+                .clicked()
+            {
+                actions.push(MenuAction::ToggleCameraMode);
+            }
+
             ui.separator();
             // Spectator mode
             let spec_text = if state.spectator_mode {
@@ -314,10 +352,11 @@ pub fn toolbar_ui(
             } else {
                 String::new()
             };
+            let camera_pos = state.camera_pos_2d();
             ui.label(
                 egui::RichText::new(format!(
                     "Cam ({:.0}, {:.0}){}",
-                    state.camera_pos.x, state.camera_pos.y, track_str
+                    camera_pos.x, camera_pos.y, track_str
                 ))
                 .color(crate::theme::DISABLED_FG)
                 .size(crate::theme::SIZE_MICRO),

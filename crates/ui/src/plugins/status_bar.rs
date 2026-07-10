@@ -227,9 +227,10 @@ pub fn status_bar_ui(
             // Interaction Design Standards (hover-reveal for low-priority
             // continuous detail).
             let render_mode = if state.debug_structural { "Wireframe" } else { "SDF Skin" };
+            let camera_pos = state.camera_pos_2d();
             let hover_text = format!(
                 "Engine Online\nMemory: {mem_mb} MB\nRender Mode: {render_mode}\nCamera: ({:.0}, {:.0}) × {:.1}",
-                state.camera_pos.x, state.camera_pos.y, state.camera_zoom
+                camera_pos.x, camera_pos.y, state.camera_zoom_2d()
             );
             ui.label(
                 egui::RichText::new(format!("{} System", egui_remixicon::icons::SERVER_LINE))

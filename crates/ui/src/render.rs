@@ -141,6 +141,7 @@ pub fn render_ui(
                     click_pos: None,
                     hover_pos: None,
                     drag_delta: egui::Vec2::ZERO,
+                    rotate_delta: egui::Vec2::ZERO,
                     zoom_delta: 1.0,
                 }
             })
@@ -333,11 +334,13 @@ fn render_trajectory_trail(
     }
 
     let screen_center = viewport_rect.center();
+    let camera_pos = state.camera_pos_2d();
+    let camera_zoom = state.camera_zoom_2d();
     let ppp = ctx.pixels_per_point();
     let to_screen = |pos: common::Vec2| {
         egui::pos2(
-            screen_center.x + (pos.x - state.camera_pos.x) * state.camera_zoom / ppp,
-            screen_center.y - (pos.y - state.camera_pos.y) * state.camera_zoom / ppp,
+            screen_center.x + (pos.x - camera_pos.x) * camera_zoom / ppp,
+            screen_center.y - (pos.y - camera_pos.y) * camera_zoom / ppp,
         )
     };
 
@@ -589,12 +592,14 @@ fn render_vision_cones(
     viewport_rect: egui::Rect,
 ) {
     let screen_center = viewport_rect.center();
+    let camera_pos = state.camera_pos_2d();
+    let camera_zoom = state.camera_zoom_2d();
     let ppp = ctx.pixels_per_point();
 
     let to_screen = |pos: common::Vec2| {
         egui::pos2(
-            screen_center.x + (pos.x - state.camera_pos.x) * state.camera_zoom / ppp,
-            screen_center.y - (pos.y - state.camera_pos.y) * state.camera_zoom / ppp,
+            screen_center.x + (pos.x - camera_pos.x) * camera_zoom / ppp,
+            screen_center.y - (pos.y - camera_pos.y) * camera_zoom / ppp,
         )
     };
 
@@ -717,11 +722,13 @@ fn render_timed_effects(
         .map_or(0, |a| a.ticks);
 
     let screen_center = viewport_rect.center();
+    let camera_pos = state.camera_pos_2d();
+    let camera_zoom = state.camera_zoom_2d();
     let ppp = ctx.pixels_per_point();
     let to_screen = |pos: common::Vec2| {
         egui::pos2(
-            screen_center.x + (pos.x - state.camera_pos.x) * state.camera_zoom / ppp,
-            screen_center.y - (pos.y - state.camera_pos.y) * state.camera_zoom / ppp,
+            screen_center.x + (pos.x - camera_pos.x) * camera_zoom / ppp,
+            screen_center.y - (pos.y - camera_pos.y) * camera_zoom / ppp,
         )
     };
 
@@ -795,11 +802,13 @@ fn render_behavior_glyphs(
     viewport_rect: egui::Rect,
 ) {
     let screen_center = viewport_rect.center();
+    let camera_pos = state.camera_pos_2d();
+    let camera_zoom = state.camera_zoom_2d();
     let ppp = ctx.pixels_per_point();
     let to_screen = |pos: common::Vec2| {
         egui::pos2(
-            screen_center.x + (pos.x - state.camera_pos.x) * state.camera_zoom / ppp,
-            screen_center.y - (pos.y - state.camera_pos.y) * state.camera_zoom / ppp,
+            screen_center.x + (pos.x - camera_pos.x) * camera_zoom / ppp,
+            screen_center.y - (pos.y - camera_pos.y) * camera_zoom / ppp,
         )
     };
 
@@ -877,11 +886,13 @@ fn render_organism_labels(
     viewport_rect: egui::Rect,
 ) {
     let screen_center = viewport_rect.center();
+    let camera_pos = state.camera_pos_2d();
+    let camera_zoom = state.camera_zoom_2d();
     let ppp = ctx.pixels_per_point();
     let to_screen = |pos: common::Vec2| {
         egui::pos2(
-            screen_center.x + (pos.x - state.camera_pos.x) * state.camera_zoom / ppp,
-            screen_center.y - (pos.y - state.camera_pos.y) * state.camera_zoom / ppp,
+            screen_center.x + (pos.x - camera_pos.x) * camera_zoom / ppp,
+            screen_center.y - (pos.y - camera_pos.y) * camera_zoom / ppp,
         )
     };
 
@@ -921,7 +932,7 @@ fn render_organism_labels(
         .filter(|(e, ..)| !always_labeled.contains(e))
         .map(|(e, node, diet)| {
             let pos_2d = node.position.truncate();
-            (e, pos_2d, diet.clone(), pos_2d.distance(state.camera_pos))
+            (e, pos_2d, diet.clone(), pos_2d.distance(camera_pos))
         })
         .collect();
     nearby.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
@@ -986,11 +997,13 @@ fn render_physiology_overlay(
     };
 
     let screen_center = viewport_rect.center();
+    let camera_pos = state.camera_pos_2d();
+    let camera_zoom = state.camera_zoom_2d();
     let ppp = ctx.pixels_per_point();
     let to_screen = |pos: common::Vec2| {
         egui::pos2(
-            screen_center.x + (pos.x - state.camera_pos.x) * state.camera_zoom / ppp,
-            screen_center.y - (pos.y - state.camera_pos.y) * state.camera_zoom / ppp,
+            screen_center.x + (pos.x - camera_pos.x) * camera_zoom / ppp,
+            screen_center.y - (pos.y - camera_pos.y) * camera_zoom / ppp,
         )
     };
 
@@ -1076,16 +1089,18 @@ fn render_scale_grid(
         return;
     }
     let screen_center = viewport_rect.center();
+    let camera_pos = state.camera_pos_2d();
+    let camera_zoom = state.camera_zoom_2d();
     let ppp = ctx.pixels_per_point();
-    let scale = state.camera_zoom / ppp;
+    let scale = camera_zoom / ppp;
     if scale <= 0.0 {
         return;
     }
 
     let to_screen = |x: f32, y: f32| {
         egui::pos2(
-            screen_center.x + (x - state.camera_pos.x) * scale,
-            screen_center.y - (y - state.camera_pos.y) * scale,
+            screen_center.x + (x - camera_pos.x) * scale,
+            screen_center.y - (y - camera_pos.y) * scale,
         )
     };
 
@@ -1093,10 +1108,10 @@ fn render_scale_grid(
     // of margin so lines don't visibly pop in/out at the edges while panning.
     let half_w_world = (viewport_rect.width() / 2.0) / scale + SCALE_GRID_STEP;
     let half_h_world = (viewport_rect.height() / 2.0) / scale + SCALE_GRID_STEP;
-    let min_x = ((state.camera_pos.x - half_w_world) / SCALE_GRID_STEP).floor() * SCALE_GRID_STEP;
-    let max_x = ((state.camera_pos.x + half_w_world) / SCALE_GRID_STEP).ceil() * SCALE_GRID_STEP;
-    let min_y = ((state.camera_pos.y - half_h_world) / SCALE_GRID_STEP).floor() * SCALE_GRID_STEP;
-    let max_y = ((state.camera_pos.y + half_h_world) / SCALE_GRID_STEP).ceil() * SCALE_GRID_STEP;
+    let min_x = ((camera_pos.x - half_w_world) / SCALE_GRID_STEP).floor() * SCALE_GRID_STEP;
+    let max_x = ((camera_pos.x + half_w_world) / SCALE_GRID_STEP).ceil() * SCALE_GRID_STEP;
+    let min_y = ((camera_pos.y - half_h_world) / SCALE_GRID_STEP).floor() * SCALE_GRID_STEP;
+    let max_y = ((camera_pos.y + half_h_world) / SCALE_GRID_STEP).ceil() * SCALE_GRID_STEP;
 
     let mut painter = ctx.layer_painter(egui::LayerId::background());
     painter.set_clip_rect(viewport_rect);
@@ -1138,12 +1153,14 @@ fn render_world_boundary(
     viewport_rect: egui::Rect,
 ) {
     let screen_center = viewport_rect.center();
+    let camera_pos = state.camera_pos_2d();
+    let camera_zoom = state.camera_zoom_2d();
     let ppp = ctx.pixels_per_point();
 
     let to_screen = |pos: common::Vec2| {
         egui::pos2(
-            screen_center.x + (pos.x - state.camera_pos.x) * state.camera_zoom / ppp,
-            screen_center.y - (pos.y - state.camera_pos.y) * state.camera_zoom / ppp,
+            screen_center.x + (pos.x - camera_pos.x) * camera_zoom / ppp,
+            screen_center.y - (pos.y - camera_pos.y) * camera_zoom / ppp,
         )
     };
 
@@ -1240,16 +1257,18 @@ fn render_minimap(
     // here" — reuses the same screen-size/zoom math `render_scale_grid` uses
     // to derive visible world bounds from `camera_zoom`.
     let ppp = ctx.pixels_per_point();
-    let half_w_world = (viewport_rect.width() / 2.0) / (state.camera_zoom / ppp);
-    let half_h_world = (viewport_rect.height() / 2.0) / (state.camera_zoom / ppp);
+    let camera_pos = state.camera_pos_2d();
+    let camera_zoom = state.camera_zoom_2d();
+    let half_w_world = (viewport_rect.width() / 2.0) / (camera_zoom / ppp);
+    let half_h_world = (viewport_rect.height() / 2.0) / (camera_zoom / ppp);
     let frustum = egui::Rect::from_min_max(
         world_to_minimap(common::Vec2::new(
-            state.camera_pos.x - half_w_world,
-            state.camera_pos.y + half_h_world,
+            camera_pos.x - half_w_world,
+            camera_pos.y + half_h_world,
         )),
         world_to_minimap(common::Vec2::new(
-            state.camera_pos.x + half_w_world,
-            state.camera_pos.y - half_h_world,
+            camera_pos.x + half_w_world,
+            camera_pos.y - half_h_world,
         )),
     );
     painter.rect_stroke(
