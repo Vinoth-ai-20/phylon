@@ -22,12 +22,16 @@ pub use camera::{Camera3d, CameraController, FlyController, OrbitController};
 /// mutates the camera. See the module's own doc comment.
 pub mod viewport_input;
 
+/// Phase 9, P9.4 — smooth Frame Selected/Frame All camera transitions.
+pub mod frame_animation;
+
 pub mod shortcuts;
 /// UI state types and enums.
 pub mod types;
 pub use types::{
-    ActiveHeatmap, AppState, BottomTab, CameraBookmark, CanvasInteraction, ClipPlaneState,
-    HeatmapState, LineageView, MarqueeMode, MenuAction, ReplayBrowserSummary, SidebarTab, UiError,
+    ActiveHeatmap, AppState, BottomTab, CameraBookmark, CameraPreset, CanvasInteraction,
+    ClipPlaneState, HeatmapState, LineageView, MarqueeMode, MenuAction, ReplayBrowserSummary,
+    SidebarTab, UiError,
 };
 
 pub mod layout;

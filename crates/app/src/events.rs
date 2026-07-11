@@ -34,6 +34,42 @@ use winit::{
 
 use crate::app::PhylonApp;
 
+/// Phase 9, P9.4 — a simple centroid/bounding-radius pass over a set of
+/// world-space positions, used by `MenuAction::FrameSelected`/`FrameAll` to
+/// compute a real "fit this in view" target rather than guessing a fixed
+/// distance. Not a tight minimal bounding sphere (that's overkill for a
+/// camera-framing heuristic) — centroid plus the farthest point's distance
+/// from it is a cheap, adequate over-approximation.
+fn bounding_sphere(positions: &[common::Vec3]) -> Option<(common::Vec3, f32)> {
+    if positions.is_empty() {
+        return None;
+    }
+    let sum: common::Vec3 = positions.iter().copied().sum();
+    let center = sum / positions.len() as f32;
+    let radius = positions
+        .iter()
+        .map(|p| (*p - center).length())
+        .fold(0.0f32, f32::max);
+    Some((center, radius))
+}
+
+/// Phase 9, P9.4 — converts a bounding-sphere radius into an orbit
+/// distance that comfortably fits it in view: `radius / sin(fov_y / 2)`
+/// (the standard "fit a sphere in a perspective frustum" formula), with a
+/// small padding multiplier so the framed subject isn't touching the
+/// viewport edges, clamped to `OrbitController`'s own distance bounds and
+/// floored so framing a single small node doesn't zoom in absurdly close.
+fn frame_distance_for_radius(radius: f32) -> f32 {
+    const PADDING: f32 = 1.5;
+    const MIN_FRAME_DISTANCE: f32 = 80.0;
+    let half_fov = ui::camera::Camera3d::DEFAULT_FOV_Y * 0.5;
+    let distance = (radius.max(1.0) * PADDING) / half_fov.sin();
+    distance.clamp(
+        MIN_FRAME_DISTANCE.max(ui::camera::OrbitController::MIN_DISTANCE),
+        ui::camera::OrbitController::MAX_DISTANCE,
+    )
+}
+
 impl PhylonApp {
     /// Shared body of `MenuAction::LoadState` (path chosen via a fresh file
     /// picker) and `MenuAction::LoadStateFromPath` (path chosen from "Open
@@ -682,6 +718,72 @@ impl PhylonApp {
                             }
                         }
                     }
+                }
+                ui::MenuAction::FrameSelected => {
+                    // Phase 9, P9.4: smooth re-center-and-re-distance onto
+                    // the selected organism's own bounding sphere (every
+                    // `ParticleNode` sharing its `organism_id`), not a
+                    // fixed guessed distance — a large evolved organism and
+                    // a single-segment sandbox structure both end up
+                    // framed comfortably. Orbit-mode only (see
+                    // `WorkbenchState::start_frame_animation`'s own
+                    // no-op-in-Fly precedent).
+                    if let Some(entity) = self.ui.selected_entity {
+                        let mut nodes = self.world.ecs.query::<&physics::ParticleNode>();
+                        if let Ok(selected_node) = nodes.get(&self.world.ecs, entity) {
+                            let organism_id = selected_node.organism_id;
+                            let positions: Vec<common::Vec3> = nodes
+                                .iter(&self.world.ecs)
+                                .filter(|n| n.organism_id == organism_id)
+                                .map(|n| n.position)
+                                .collect();
+                            if let Some((center, radius)) = bounding_sphere(&positions) {
+                                let distance = frame_distance_for_radius(radius);
+                                self.ui.start_frame_animation(center, distance);
+                            }
+                        }
+                    }
+                }
+                ui::MenuAction::FrameAll => {
+                    // Phase 9, P9.4: same as `FrameSelected`, over the
+                    // entire current population's `ParticleNode`s.
+                    let mut nodes = self.world.ecs.query::<&physics::ParticleNode>();
+                    let positions: Vec<common::Vec3> =
+                        nodes.iter(&self.world.ecs).map(|n| n.position).collect();
+                    if let Some((center, radius)) = bounding_sphere(&positions) {
+                        let distance = frame_distance_for_radius(radius);
+                        self.ui.start_frame_animation(center, distance);
+                    }
+                }
+                ui::MenuAction::SetCameraPreset(preset) => {
+                    // Phase 9, P9.4: only the viewing angle changes —
+                    // `focus`/`distance` are read from whatever the orbit
+                    // is currently at, matching Blender's own preset-view
+                    // behavior of re-orienting around the existing pivot,
+                    // not re-framing it.
+                    if let ui::camera::CameraController::Orbit(orbit) =
+                        &mut self.ui.camera_controller
+                    {
+                        let (yaw, pitch) = match preset {
+                            ui::CameraPreset::Top => (0.0, 0.0),
+                            ui::CameraPreset::Bottom => (0.0, std::f32::consts::PI),
+                            ui::CameraPreset::Front => (0.0, std::f32::consts::FRAC_PI_2),
+                            ui::CameraPreset::Back => {
+                                (std::f32::consts::PI, std::f32::consts::FRAC_PI_2)
+                            }
+                            ui::CameraPreset::Right => {
+                                (std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2)
+                            }
+                            ui::CameraPreset::Left => {
+                                (-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2)
+                            }
+                        };
+                        orbit.yaw = yaw;
+                        orbit.pitch = pitch;
+                    }
+                }
+                ui::MenuAction::ToggleOrthographic => {
+                    self.ui.is_orthographic = !self.ui.is_orthographic;
                 }
                 ui::MenuAction::SetOverlay(heatmap) => {
                     if let Some(mut hs) = self.world.ecs.get_resource_mut::<ui::HeatmapState>() {

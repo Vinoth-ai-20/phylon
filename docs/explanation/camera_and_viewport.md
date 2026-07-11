@@ -12,14 +12,20 @@ Phylon's viewport is a real 3D scene, navigated with a single canonical camera m
 
 Any new code that needs to reason about the camera should call one of these, not re-derive a projection matrix locally.
 
-## Controllers
+`Camera3d` also carries `ortho_half_height: Option<f32>` (Phase 9, P9.4) — `None` (the default) means perspective; `Some(half_height)` means orthographic, with all three methods above branching accordingly (orthographic rays are genuinely parallel, not a perspective approximation). This is a projection-mode field only — it carries no orientation/orbit meaning, and toggling it never touches `yaw`/`pitch`/`focus`/`distance`.
+
+## Controllers — frozen as of P9.3
 
 Two controllers write into `Camera3d` — they hold input state and interaction logic; they never duplicate its projection math:
 
-- **`OrbitController`** (default) — orbits around a pivot point, with pan and dolly-zoom.
-- **`FlyController`** (opt-in) — free-fly navigation, decoupled from any pivot.
+- **`OrbitController`** (default) — orbits freely around a pivot point (`focus`), with pan and dolly-zoom. Orientation is built from a genuine quaternion composition (`yaw` around world `Z`, then `pitch` around local `X`), not a from-forward-vector reconstruction — this has no degenerate point anywhere on the sphere, unlike the pre-P9.3 implementation, which used a fixed reference-up vector and consequently had to hard-clamp pitch short of the horizon to avoid a real "camera feels locked" bug. `pitch` is unbounded; orbit continues smoothly over the full sphere.
+- **`FlyController`** (opt-in) — free-fly navigation, decoupled from any pivot. Unchanged by P9.3 — it still clamps pitch a few degrees short of straight up/down to keep its own basis non-degenerate.
 
-Both are plain input-to-state translators: given mouse/keyboard deltas, they update `Camera3d`'s `position`/`orientation` and nothing else.
+Both are plain input-to-state translators: given mouse/keyboard deltas, they update `Camera3d`'s `position`/`orientation` and nothing else. **P9.3 was the last milestone permitted to change either controller's orientation/orbit mathematics** — later navigation work (P9.4's Frame Selected/Frame All/preset views/orthographic toggle included) only ever reads or writes their existing public fields (`focus`, `distance`, `yaw`, `pitch`) from the outside, or adds narrowly-scoped, additive fields elsewhere (`Camera3d::ortho_half_height`); it does not add new orientation logic to either type.
+
+## Smooth camera transitions (P9.4)
+
+`ui::frame_animation::FrameAnimation` drives a 250ms eased (smoothstep) transition of `OrbitController::focus`/`distance` only — `yaw`/`pitch` are left alone, so Frame Selected/Frame All re-center and re-distance without ever spinning the view. It lives outside `camera.rs` entirely (a `WorkbenchState` field, ticked once per rendered frame from `render.rs`) specifically so it never needed to touch the now-frozen controller types — it only ever writes their existing public `focus`/`distance` fields from the outside, the same way any other external caller would.
 
 ## Input — one canonical layer (ADR-P9-01)
 
@@ -30,6 +36,14 @@ Before Phase 9, two independent code paths each interpreted raw platform input a
 - **`apply_to_camera`** is the single `ViewportController` — the only function anywhere that reads a `ViewportInput` and mutates `OrbitController`/`FlyController`. Every adapter converges here.
 
 Discrete, one-shot camera commands (Home/reset, menu-driven zoom-in/out, frame-selected, toggle camera mode) stay on `ui::types::MenuAction` — they were never the duplicated-gesture problem this layer fixes, since each already had exactly one dispatch path. `ViewportInput` is specifically for continuous, per-frame interaction (orbit/pan/zoom/fly).
+
+## Camera bookmarks (P9.4)
+
+`CameraBookmark` records `orbit_focus: Option<Vec3>` alongside its position/orientation snapshot — `Some(focus)` if `Orbit` mode was active at save time, `None` if `Fly` was. Restoring a bookmark reconstructs whichever mode it was saved in; a bookmark saved while orbiting no longer force-switches you to Fly mode on restore (a real, previously-disclosed bug, now fixed).
+
+## Preset views (P9.4)
+
+Six axis-aligned views (Top/Bottom/Front/Back/Left/Right) each just set `OrbitController::yaw`/`pitch` to a fixed value, leaving `focus`/`distance` untouched — a preset view only ever changes the viewing angle, matching Blender's own preset-view behavior of re-orienting around the existing pivot rather than re-framing it.
 
 ## Picking and selection
 

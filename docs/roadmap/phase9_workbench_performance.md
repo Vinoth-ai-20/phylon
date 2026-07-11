@@ -1,6 +1,44 @@
 # Phase 9 — Workbench UX, Performance & Optimization Roadmap
 
-**Status: P9.1 and P9.2 implemented and verified. P9.3 (free camera orbit) is next.** Everything in this document is either a direct measurement or a code-cited finding — no claim here is a guess or an assumption carried over from prior phases' documentation.
+**Status: P9.1 through P9.4 implemented and verified. P9.5 (viewport gizmos) is next.** Everything in this document is either a direct measurement or a code-cited finding — no claim here is a guess or an assumption carried over from prior phases' documentation.
+
+## P9.4 — Blender Navigation Parity: implemented, verified
+
+Built entirely on top of P9.3's now-frozen camera math — nothing in `OrbitController`/`FlyController`'s orientation logic changed for this milestone; every feature below either reads/writes their existing public fields from the outside, or adds a narrowly-scoped, additive-only projection field to `Camera3d` (orthographic support — a projection-mode change, not an orientation one).
+
+- **Smooth Frame Selected / Frame All** (`crates/ui/src/frame_animation.rs`, new): a `FrameAnimation` type holding a 250ms eased (smoothstep) transition of `focus`/`distance` only — yaw/pitch untouched, so framing re-centers and re-distances without ever spinning the view. Computes a real bounding sphere (centroid + farthest-point radius) over the selected organism's own nodes (`FrameSelected`) or the whole population (`FrameAll`), not a guessed fixed distance. Driven once per rendered frame from `render.rs`'s existing "Camera Tracking" step, via its own dedicated wall-clock timing field (kept separate from simulation-tick timing on purpose — camera smoothness shouldn't couple to simulation bookkeeping).
+- **Six preset views** (Top/Bottom/Front/Back/Left/Right) — each just sets `yaw`/`pitch` to a fixed value, leaving `focus`/`distance` alone (Blender's own preset-view behavior: re-orient around the existing pivot, don't re-frame it).
+- **Camera bookmark mode-preservation bug, fixed**: `CameraBookmark` now records `orbit_focus: Option<Vec3>` (`Some` if Orbit was active at save time, `None` if Fly was) — restoring a bookmark reconstructs the *same* mode instead of always forcing Fly, which was the previously-disclosed bug.
+- **Orthographic/perspective toggle**: `Camera3d` gained `ortho_half_height: Option<f32>` (`None` = perspective, unchanged default everywhere). `view_proj`/`screen_to_ray`/`world_to_screen` all branch on it — orthographic rays are genuinely parallel (constant direction, varying origin), not a perspective approximation. Applied only inside `WorkbenchState::camera()` (the one accessor every consumer already reads through), sized to match perspective's own apparent scale at the moment of toggling, so flipping modes doesn't jarringly rescale the view. `OrbitController`/`FlyController` themselves always still produce a plain perspective `Camera3d`, untouched.
+- **"Orbit Around Selection"**: not implemented as a separate persistent-mode toggle — Frame Selected already re-centers the pivot on the selected organism, which is the practical behavior Blender's own preference is for. Flagged as a deliberate scope decision, not an oversight.
+- **Navigation gizmo / view pie menu**: deliberately not built here — the roadmap's own §3 already scopes gizmos to P9.5, and a view pie menu was explicitly optional ("if desired") in the brief; building either now would have meant redoing work once P9.5 lands its own gizmo/interaction surface.
+- Wired into both the keyboard (`.` for Frame Selected, `Home` for Frame All — `Num0` keeps the original hard `CameraHome` reset, now a distinct action since the two are no longer synonyms — `1`/`3`/`7` and `Ctrl+1`/`3`/`7` for the presets) and a new "View → Camera" menu, so every action is reachable without memorizing a keybinding.
+
+**Verification:** 3 new orthographic-projection tests (parallel rays, round-trip through `screen_to_ray`, behind-camera rejection) and 3 new `FrameAnimation` tests (reaches target exactly at full duration, stays properly interpolated partway, easing is monotonic/bounded) — all pass, alongside every pre-existing test unmodified. Full `fmt`/`clippy --workspace --all-targets -D warnings`/`build --workspace`/`test --workspace` clean, plus a windowed release smoke test.
+
+**Disclosed limitation, same as P9.2/P9.3:** no automated input-injection tooling in this environment for a live "trigger Frame Selected and watch it ease smoothly" session — verified by the automated tests above (which exercise the same interpolation math the live app runs) plus a launch/stability smoke test, not a real interactive pass. If you can drive real input, confirming the 250ms ease actually reads as smooth (not just mathematically correct) is the one thing worth a manual check.
+
+---
+
+## P9.3 — Free Camera Orbit: implemented, verified
+
+Re-audited `OrbitController` directly before touching it (per this phase's own "re-audit before every milestone" rule) and found the "camera feels locked" complaint traced to two compounding issues, not one:
+
+1. `orbit()`'s pitch was hard-clamped to `[0°, 89°]` — the camera could never tilt past just-short-of-horizon, let alone orbit over the top of the pivot.
+2. `OrbitController::camera()` built its orientation via `orientation_from_forward_and_reference_up(forward, Vec3::Y)` — using world `Y` as the reference-up, inconsistent with `FlyController`'s `Vec3::Z`, and itself only non-degenerate near the original top-down default view. Simply swapping that one vector to `Vec3::Z` (my own first attempt) turns out to be wrong on inspection: it makes the *default top-down view itself* degenerate (looking straight down **is** looking along `Z`), which would have silently rotated the most common view by 90° — a real feel regression the phase's own "measure before assuming a fix is correct" rule exists to catch.
+
+**The actual fix** replaces the from-forward-vector reconstruction with a genuine quaternion composition — `orientation = Quat::from_axis_angle(Z, yaw) * Quat::from_axis_angle(X, pitch)` — which has no degenerate point anywhere on the sphere (composing two proper rotations never produces a NaN or ill-defined basis, unlike reconstructing an orientation from a forward vector plus a separate reference-up hint). This composition has a real, non-coincidental property: at `pitch == 0` it reduces to pure yaw-around-`Z`, leaving the pre-existing top-down default's screen-up exactly at world `+Y` (**zero feel change at the default view**, confirmed by the pre-existing `default_orbit_looks_straight_down_at_the_origin` test still passing unmodified); at `pitch == π/2` (horizon) it puts world `+Z` at screen-up, satisfying the Z-up requirement. `orbit()`'s pitch clamp was removed entirely — pitch is now an unbounded float, and the sinusoidal `forward()` formula (unchanged, and shown by direct derivation to already equal what the quaternion composition produces) is periodic by construction, so no wraparound logic was needed for continuous 360° orbit.
+
+**Preserved exactly, per this milestone's tightened scope:** Orbit/Pan/Fly remain three distinct modes (nothing here merges them); all sensitivities (rotate/pan/zoom constants) untouched; orbit still always revolves around `OrbitController.focus`, an explicit pivot, never the camera itself; `FlyController` untouched (its own pitch clamp stays, deliberately out of scope); no inertia/damping/gizmos/bookmarks/view-presets added — those are P9.4/P9.5.
+
+**Verification:**
+
+- New tests: `orbit_pitch_is_unbounded_and_never_clamped`, `orbit_can_pass_continuously_over_the_top_of_the_pivot` (a 200-step full pole-to-pole-to-pole sweep asserting `forward()` stays finite and never jumps discontinuously frame-to-frame), `orbit_reference_up_is_world_z_not_y` (confirms screen-up reads as `+Z` at the horizon). All pre-existing camera tests, including the default-view and Orbit↔Fly round-trip tests, pass unmodified.
+- `cargo fmt` / `clippy --workspace --all-targets -D warnings` / `build --workspace` / `test --workspace` all clean.
+- Windowed release-build smoke test: launches and runs stably.
+- **Disclosed limitation, same as P9.2:** no automated input-injection tooling in this environment to drive a live 360°-orbit-by-mouse session; verified by direct derivation (the quaternion composition was checked by hand against the existing `forward()` formula and found to produce identical output) and the automated sweep test above, not a live interactive pass. Picking/clipping/field-overlay registration were not touched by this change (only `OrbitController`'s own orientation math changed; `Camera3d::screen_to_ray`/`world_to_screen`/`view_proj` — what picking and field overlays actually consume — are unmodified), so they're expected to keep working unchanged, but a live confirmation is still worth doing if you can drive real input.
+
+---
 
 ## P9.2 — One Canonical Input Layer: implemented, verified
 
@@ -69,9 +107,9 @@ Ordered by measured impact and risk, per this project's own "never optimize with
 
 **Epic P9.2 — One input layer. ✅ Done** — see the results section at the top of this document, and ADR-P9-01 below.
 
-**Epic P9.3 — Free camera orbit.** Relax/redesign the pitch clamp so the camera can orbit fully while Z stays world-up (the brief's own framing: "Z remains the world-up axis, the camera itself must be completely free"), reconcile the orbit/fly up-axis inconsistency, and add smooth damping/inertia on orbit/pan/zoom. Needs its own ADR — pitch-clamp removal has real implications for pole-adjacent gimbal behavior that should be designed, not patched.
+**Epic P9.3 — Free camera orbit. ✅ Done** — see the results section near the top of this document. Scope was tightened at review to explicitly exclude inertia/damping (deferred to a later milestone) and keep this a pure camera-mathematics fix.
 
-**Epic P9.4 — Blender-parity navigation features.** Frame-selected, frame-all, orthographic projection, preset views (Top/Front/Right/Left/Bottom), pivot-mode options, and a fixed bookmark-restore-mode bug. Builds on P9.2/P9.3's consolidated input layer rather than adding a fourth parallel input path.
+**Epic P9.4 — Blender-parity navigation features. ✅ Done** — see the results section near the top of this document. Navigation gizmo/view pie menu deliberately deferred to P9.5/skipped; "orbit around selection" satisfied via Frame Selected rather than a separate persistent-mode toggle.
 
 **Epic P9.5 — View-cube, navigation gizmo, transform gizmo.** Larger UI/rendering surface area; scope after P9.1–P9.4 land, since a gizmo needs a stable camera/input layer under it.
 

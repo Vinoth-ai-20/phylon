@@ -10,13 +10,25 @@
 //!
 //! ## World/camera axis convention
 //!
-//! Organisms live in the world XY plane (Z fixed at `0.0` until Epic 8.6).
-//! `Z` is therefore the camera's "altitude" axis: the default orbit
-//! configuration sits above the origin at a fixed height, looking straight
-//! down (`-Z`), with world `+Y` appearing "up" on screen — this exactly
-//! reproduces the pre-Phase-8 flat top-down view (see
-//! `WorkbenchState::camera_pos_2d`/`camera_zoom_2d`, the temporary bridge
-//! that feeds the not-yet-migrated 2D renderers this same information).
+//! `Z` is the world's fixed up axis (Phase 9, P9.3 — see
+//! `OrbitController::orientation`'s doc comment for the full reasoning).
+//! The default orbit configuration sits above the origin at a fixed
+//! height, looking straight down (`-Z`) — this reproduces the original
+//! flat top-down view (see `WorkbenchState::camera_pos_2d`/
+//! `camera_zoom_2d`, the temporary bridge that feeds the not-yet-migrated
+//! 2D renderers this same information), with world `+Y` reading as
+//! screen-up specifically *at that default view* — not because `Y` is the
+//! up axis, but because `Y` is what a Z-up camera's screen-up naturally
+//! reduces to when looking straight down the up axis itself. Tilt the
+//! camera toward the horizon and screen-up smoothly rotates toward world
+//! `+Z`, which *is* the up axis everywhere else on the sphere.
+//!
+//! `OrbitController` orbits freely over the full sphere (no pitch clamp);
+//! `FlyController` still clamps pitch a few degrees short of straight
+//! up/down to keep its own forward/right/up basis non-degenerate — the two
+//! controllers are independent, and only `OrbitController`'s clamp was in
+//! scope for the P9.3 fix (Fly mode's own feel was explicitly left
+//! unchanged).
 
 use common::{Mat3, Mat4, Quat, Vec2, Vec3};
 
@@ -28,12 +40,22 @@ pub struct Camera3d {
     /// World-space orientation. Local `-Z` is "forward," local `+Y` is
     /// "up," matching `glam`'s usual right-handed convention.
     pub orientation: Quat,
-    /// Vertical field of view, in radians.
+    /// Vertical field of view, in radians. Only meaningful in perspective
+    /// mode (`ortho_half_height.is_none()`) — still populated either way
+    /// so toggling projection mode doesn't need to reconstruct the whole
+    /// `Camera3d`.
     pub fov_y: f32,
     /// Near clip distance.
     pub near: f32,
     /// Far clip distance.
     pub far: f32,
+    /// Phase 9, P9.4: `None` (the default, and the only value before this
+    /// milestone) means perspective projection. `Some(half_height)` means
+    /// orthographic, with `half_height` the world-space half-extent
+    /// visible at the vertical center of the viewport — deliberately a
+    /// *projection-mode* field, not an orbit/orientation one; nothing
+    /// about `yaw`/`pitch`/`orientation` construction changes based on it.
+    pub ortho_half_height: Option<f32>,
 }
 
 impl Camera3d {
@@ -62,20 +84,44 @@ impl Camera3d {
         self.orientation * Vec3::X
     }
 
+    /// The projection matrix alone (no view) for the given aspect ratio —
+    /// perspective or orthographic depending on `ortho_half_height`. Shared
+    /// by [`Self::view_proj`] and [`Self::world_to_screen`] so the two
+    /// never drift out of sync on which projection mode is active.
+    fn projection_matrix(&self, aspect: f32) -> Mat4 {
+        match self.ortho_half_height {
+            None => Mat4::perspective_rh(self.fov_y, aspect.max(0.0001), self.near, self.far),
+            Some(half_height) => {
+                let half_width = half_height * aspect.max(0.0001);
+                Mat4::orthographic_rh(
+                    -half_width,
+                    half_width,
+                    -half_height,
+                    half_height,
+                    self.near,
+                    self.far,
+                )
+            }
+        }
+    }
+
     /// The combined view-projection matrix for the given viewport aspect
     /// ratio (`width / height`). The one and only place any renderer should
     /// obtain a projection matrix from (ADR-P8-02).
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         let view = Mat4::look_to_rh(self.position, self.forward(), self.up());
-        let proj = Mat4::perspective_rh(self.fov_y, aspect.max(0.0001), self.near, self.far);
-        proj * view
+        self.projection_matrix(aspect) * view
     }
 
     /// Produces a world-space ray `(origin, direction)` from a screen-space
     /// point — the one and only unproject pathway (ADR-P8-02), replacing
     /// the 3 independently hand-derived screen↔world transforms the Phase 8
     /// audit found (`app::pick_entity`, and two closures in
-    /// `ui::plugins::viewport`).
+    /// `ui::plugins::viewport`). In orthographic mode (Phase 9, P9.4) every
+    /// ray shares the same `forward()` direction and only the *origin*
+    /// varies across the viewport, matching how parallel projection
+    /// actually works — perspective's diverging-rays-from-one-point model
+    /// doesn't apply.
     ///
     /// `screen_pos` and `viewport_size` are both in the same pixel units
     /// (physical or logical, as long as both agree).
@@ -88,6 +134,14 @@ impl Camera3d {
         // NDC in [-1, 1], with Y flipped since screen space grows downward.
         let ndc_x = (screen_pos.x / viewport_size.x.max(1.0)) * 2.0 - 1.0;
         let ndc_y = 1.0 - (screen_pos.y / viewport_size.y.max(1.0)) * 2.0;
+
+        if let Some(half_height) = self.ortho_half_height {
+            let half_width = half_height * aspect;
+            let origin = self.position
+                + self.right() * (ndc_x * half_width)
+                + self.up() * (ndc_y * half_height);
+            return (origin, self.forward());
+        }
 
         let tan_half_fov = (self.fov_y * 0.5).tan();
         let view_dir = Vec3::new(ndc_x * tan_half_fov * aspect, ndc_y * tan_half_fov, -1.0);
@@ -108,10 +162,21 @@ impl Camera3d {
         } else {
             1.0
         };
-        let clip = self.view_proj(aspect) * world_pos.extend(1.0);
-        if clip.w <= 0.0 {
+        let view = Mat4::look_to_rh(self.position, self.forward(), self.up());
+        let view_pos = view * world_pos.extend(1.0);
+        // Behind-camera test via view-space Z (RH view space: the camera
+        // looks down -Z, so a visible point has negative view-space Z) —
+        // checked directly rather than via clip-space `w`, since an
+        // orthographic projection's `w` is always `1.0` and would never
+        // catch this the way perspective's `w == -view_z` does.
+        if view_pos.z >= 0.0 {
             return None;
         }
+        let clip = self.projection_matrix(aspect) * view_pos;
+        // `clip.w` is always `1.0` for the orthographic branch (no
+        // perspective divide), so this is a no-op there and a correct
+        // divide-by-`w` for the perspective branch — one formula, both
+        // modes, no branch needed here.
         let ndc = clip.truncate() / clip.w;
         // Inverse of `screen_to_ray`'s NDC formula, including the same Y
         // flip (screen space grows downward).
@@ -170,26 +235,51 @@ pub fn point_in_polygon(point: Vec2, polygon: &[Vec2]) -> bool {
     inside
 }
 
-/// Arcball orbit around a focus point — the default camera mode (ADR-P8-02),
-/// matching the Blender-style scientific-tool convention this project's UX
-/// already leans on elsewhere.
+/// Arcball/turntable orbit around a focus point — the default camera mode
+/// (ADR-P8-02), matching the Blender-style scientific-tool convention this
+/// project's UX already leans on elsewhere.
 ///
-/// `pitch` is measured from nadir (`0.0` = looking straight down at
-/// `focus`, matching the pre-Phase-8 default view exactly) rather than from
-/// the horizon — the natural zero for a tool whose primary view has always
-/// been top-down. `yaw` is the azimuth of the tilt direction; kept
-/// well-defined at `pitch == 0.0` (where azimuth is otherwise meaningless)
-/// by simply leaving it unchanged rather than resetting it.
+/// Phase 9, P9.3: `pitch` is an **unbounded** polar angle (radians, `0.0` =
+/// looking straight down at `focus`, matching the original top-down
+/// default) — the previous `[0.0, 89°]` clamp stopped the camera just short
+/// of the horizon and could never orbit "up and over" the pivot, which is
+/// the exact "camera feels locked" complaint this milestone fixes. `yaw` is
+/// the azimuth of the tilt direction; kept well-defined at `pitch == 0.0`
+/// (where azimuth is otherwise meaningless) by simply leaving it unchanged
+/// rather than resetting it. `forward()`'s spherical parameterization is
+/// continuous and periodic in `pitch` by construction (`sin`/`cos` are
+/// periodic), so letting `pitch` grow or shrink without bound produces a
+/// smooth, unbroken orbit over the full sphere — no wraparound logic is
+/// needed, and there is no artificial stopping point.
+///
+/// **World `Z` is the fixed reference-up for this orbit** (previously
+/// `Vec3::Y` — an inconsistency with `FlyController`, which always used
+/// `Z`, left over from when the simulation was 2D-in-the-XY-plane and `Z`
+/// was merely a camera "altitude," not a true up axis). With `Z` as the
+/// reference, screen-up stays anchored to world-up everywhere except at
+/// the exact poles (`pitch` an exact multiple of π, where `forward` is
+/// parallel to `Z`) — there,
+/// `orientation_from_forward_and_reference_up`'s existing fallback to
+/// `Vec3::X` keeps the basis non-degenerate, at the cost of a one-instant
+/// roll-reference discontinuity exactly at that single point. This is the
+/// same, well-known, accepted behavior every Z-up turntable camera has at
+/// true zenith/nadir (Blender's turntable orbit included) — it is not the
+/// pathological "gimbal lock" (loss of a whole degree of freedom) the
+/// previous hard pitch clamp was a workaround for, and does not recur
+/// anywhere else on the sphere.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OrbitController {
-    /// World-space point the camera looks at and orbits around.
+    /// World-space point the camera looks at and orbits around — always an
+    /// explicit pivot (never the camera's own position); see
+    /// `focus_on`/`looking_at` for how it's set.
     pub focus: Vec3,
     /// Distance from `focus` to the camera's eye position.
     pub distance: f32,
     /// Azimuth of the tilt direction, in radians.
     pub yaw: f32,
-    /// Tilt away from straight-down, in radians. `0.0` is nadir (today's
-    /// default top-down view); clamped to `[0.0, MAX_PITCH]`.
+    /// Polar tilt from nadir, in radians. `0.0` is straight down at
+    /// `focus` (today's default top-down view). Unbounded — see this
+    /// struct's own doc comment for why no clamp is applied.
     pub pitch: f32,
 }
 
@@ -205,39 +295,64 @@ impl OrbitController {
     pub const MIN_DISTANCE: f32 = 20.0;
     /// Farthest the camera is allowed to sit from its focus point.
     pub const MAX_DISTANCE: f32 = 8_000.0;
-    /// Maximum tilt away from nadir — stops just short of the horizon
-    /// (`90°`) so the camera never crosses into or past looking sideways
-    /// along the ground plane.
-    pub const MAX_PITCH: f32 = 89.0_f32.to_radians();
+
+    /// The full orientation this orbit configuration describes, as a
+    /// genuine quaternion composition — **not** a from-forward-vector
+    /// reconstruction (which is what the pre-P9.3 code, and this method's
+    /// own first draft, used, via `orientation_from_forward_and_reference_up`
+    /// with a fixed reference-up vector). That approach has an inherent
+    /// blind spot: whichever single vector is chosen as "reference up" is
+    /// itself degenerate (parallel to `forward`) at *some* orientation, and
+    /// there is no one choice that is simultaneously non-degenerate at
+    /// nadir (where the pre-existing top-down default needs `Y` to read as
+    /// screen-up) and correct at the horizon (where a genuinely Z-up world
+    /// needs `Z` to read as screen-up).
+    ///
+    /// Composing two rotations instead has no such blind spot anywhere on
+    /// the sphere: `yaw` rotates around world `Z` (spinning the view around
+    /// the vertical axis), then `pitch` rotates around the *local* `X`
+    /// (tilting forward away from nadir). At `pitch == 0.0` this reduces to
+    /// pure yaw-around-`Z`, which leaves local `-Z` (forward) and `+Y` (up)
+    /// exactly where the pre-existing top-down default expects them — this
+    /// is a genuine mathematical property of the composition, not a
+    /// special-cased branch. At `pitch == π/2` (horizon), the composition
+    /// puts world `+Z` exactly at screen-up, satisfying "the world stays
+    /// Z-up." Every angle in between interpolates continuously and is
+    /// numerically well-defined; `Quat` multiplication has no singularity
+    /// to fall back from.
+    fn orientation(&self) -> Quat {
+        Quat::from_axis_angle(Vec3::Z, self.yaw) * Quat::from_axis_angle(Vec3::X, self.pitch)
+    }
 
     /// The world-space forward direction this orbit configuration looks
-    /// along, independent of `focus`/`distance`.
+    /// along, independent of `focus`/`distance`. Valid (and continuous) for
+    /// any `pitch`, not just `[0, π]` — see [`Self::orientation`]'s doc
+    /// comment.
     fn forward(&self) -> Vec3 {
-        let (sin_p, cos_p) = self.pitch.sin_cos();
-        let (sin_y, cos_y) = self.yaw.sin_cos();
-        Vec3::new(-sin_p * sin_y, sin_p * cos_y, -cos_p)
+        self.orientation() * Vec3::NEG_Z
     }
 
     /// Builds the `Camera3d` this orbit configuration currently describes.
     pub fn camera(&self) -> Camera3d {
-        let forward = self.forward();
-        let position = self.focus - forward * self.distance;
-        let orientation = orientation_from_forward_and_reference_up(forward, Vec3::Y);
+        let orientation = self.orientation();
+        let position = self.focus - self.forward() * self.distance;
         Camera3d {
             position,
             orientation,
             fov_y: Camera3d::DEFAULT_FOV_Y,
             near: Camera3d::DEFAULT_NEAR,
             far: Camera3d::DEFAULT_FAR,
+            ortho_half_height: None,
         }
     }
 
     /// Rotates the orbit by a screen-space drag delta (radians per pixel is
     /// baked into the caller's scale factor — this method just applies the
-    /// resulting angle deltas and clamps pitch).
+    /// resulting angle deltas). Phase 9, P9.3: `pitch` is no longer
+    /// clamped — see this struct's own doc comment.
     pub fn orbit(&mut self, delta_yaw: f32, delta_pitch: f32) {
         self.yaw += delta_yaw;
-        self.pitch = (self.pitch + delta_pitch).clamp(0.0, Self::MAX_PITCH);
+        self.pitch += delta_pitch;
     }
 
     /// Pans `focus` along the camera's own right/up-on-ground axes, scaled
@@ -302,10 +417,11 @@ impl OrbitController {
         }
         let forward = (-offset / offset.length().max(1e-6)).normalize();
         // Invert `forward()`: forward = (-sin(p)sin(y), sin(p)cos(y), -cos(p)).
-        let pitch = (-forward.z)
-            .clamp(-1.0, 1.0)
-            .acos()
-            .clamp(0.0, Self::MAX_PITCH);
+        // `acos` already returns `[0, π]`, exactly `forward()`'s valid
+        // domain — no further clamp needed (P9.3: `pitch` is unbounded, but
+        // a freshly-derived value from a concrete `forward` vector is
+        // naturally within one period).
+        let pitch = (-forward.z).clamp(-1.0, 1.0).acos();
         let sin_p = pitch.sin();
         let yaw = if sin_p > 1e-4 {
             (-forward.x / sin_p).atan2(forward.y / sin_p)
@@ -383,6 +499,7 @@ impl FlyController {
             fov_y: Camera3d::DEFAULT_FOV_Y,
             near: Camera3d::DEFAULT_NEAR,
             far: Camera3d::DEFAULT_FAR,
+            ortho_half_height: None,
         }
     }
 
@@ -514,6 +631,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn orthographic_screen_to_ray_produces_parallel_rays() {
+        let mut camera = OrbitController::default().camera();
+        camera.ortho_half_height = Some(200.0);
+        let viewport = Vec2::new(1280.0, 720.0);
+        let (origin_a, dir_a) = camera.screen_to_ray(Vec2::new(0.0, 0.0), viewport);
+        let (origin_b, dir_b) = camera.screen_to_ray(Vec2::new(1280.0, 720.0), viewport);
+        // Parallel projection: every ray shares the same direction, only
+        // the origin differs across the viewport.
+        assert!(dir_a.abs_diff_eq(dir_b, 1e-5));
+        assert!(dir_a.abs_diff_eq(camera.forward(), 1e-5));
+        assert!(
+            (origin_a - origin_b).length() > 1.0,
+            "orthographic ray origins must differ across the viewport"
+        );
+    }
+
+    #[test]
+    fn orthographic_world_to_screen_round_trips_through_screen_to_ray() {
+        let mut camera = OrbitController::default().camera();
+        camera.ortho_half_height = Some(200.0);
+        let viewport = Vec2::new(1280.0, 720.0);
+        let screen_in = Vec2::new(400.0, 500.0);
+        let (origin, dir) = camera.screen_to_ray(screen_in, viewport);
+        let world = ray_intersect_z0(origin, dir).unwrap();
+        let screen_out = camera.world_to_screen(world.extend(0.0), viewport).unwrap();
+        assert!(screen_in.abs_diff_eq(screen_out, 0.5));
+    }
+
+    #[test]
+    fn orthographic_world_to_screen_returns_none_behind_the_camera() {
+        let mut camera = OrbitController::default().camera();
+        camera.ortho_half_height = Some(200.0);
+        let behind = camera.position - camera.forward() * 10.0;
+        assert_eq!(
+            camera.world_to_screen(behind, Vec2::new(1280.0, 720.0)),
+            None
+        );
+    }
+
+    #[test]
     fn default_orbit_looks_straight_down_at_the_origin() {
         let camera = OrbitController::default().camera();
         assert!(camera.position.truncate().abs_diff_eq(Vec2::ZERO, 1e-4));
@@ -553,12 +710,60 @@ mod tests {
     }
 
     #[test]
-    fn orbit_pitch_clamps_to_max_and_never_goes_negative() {
+    fn orbit_pitch_is_unbounded_and_never_clamped() {
+        // P9.3: the previous [0, 89°] clamp is gone — orbit must be able to
+        // swing well past the old horizon-adjacent limit in either
+        // direction without being stopped.
         let mut orbit = OrbitController::default();
         orbit.orbit(0.0, -10.0);
-        assert_eq!(orbit.pitch, 0.0);
-        orbit.orbit(0.0, 10.0);
-        assert_eq!(orbit.pitch, OrbitController::MAX_PITCH);
+        assert!((orbit.pitch - (-10.0)).abs() < 1e-6);
+        orbit.orbit(0.0, 25.0);
+        assert!((orbit.pitch - 15.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn orbit_can_pass_continuously_over_the_top_of_the_pivot() {
+        // A full pole-to-pole sweep (pitch 0 -> π -> 2π) must never panic,
+        // produce a NaN, or visibly reverse direction tick-to-tick — the
+        // exact "camera feels locked / can orbit over the top" requirement
+        // this milestone fixes.
+        let mut orbit = OrbitController::default();
+        let steps = 200;
+        let mut last_forward = orbit.forward();
+        for i in 1..=steps {
+            orbit.orbit(0.0, std::f32::consts::TAU / steps as f32);
+            let forward = orbit.forward();
+            assert!(forward.is_finite(), "forward became non-finite at step {i}");
+            // Consecutive samples must stay close together — a true flip
+            // would show up as a large discontinuous jump.
+            assert!(
+                last_forward.dot(forward) > 0.9,
+                "discontinuous jump in forward direction at step {i}"
+            );
+            last_forward = forward;
+        }
+        // A full 2π sweep must return arbitrarily close to where it started.
+        assert!(orbit
+            .forward()
+            .abs_diff_eq(OrbitController::default().forward(), 1e-3));
+    }
+
+    #[test]
+    fn orbit_reference_up_is_world_z_not_y() {
+        // P9.3: Orbit used to build its basis from `Vec3::Y`, inconsistent
+        // with `FlyController`'s `Vec3::Z` — this must no longer be true.
+        // With the camera looking horizontally (pitch near the equator,
+        // away from the degenerate poles), its screen-up vector should
+        // read close to world +Z.
+        let orbit = OrbitController {
+            pitch: std::f32::consts::FRAC_PI_2, // horizon, away from either pole
+            ..OrbitController::default()
+        };
+        let up = orbit.camera().up();
+        assert!(
+            up.dot(Vec3::Z) > 0.99,
+            "orbit's up vector should track world Z, got {up:?}"
+        );
     }
 
     #[test]
@@ -661,12 +866,14 @@ mod tests {
         controller.toggle();
         assert!(!controller.is_fly());
         let after = controller.camera();
-        // Round-tripping through Fly is lossy: both controllers clamp pitch
-        // a degree short of the true pole (`MAX_PITCH = 89°`) to keep their
-        // forward/up basis non-degenerate, so a straight-down orbit view
-        // can only round-trip to within about that same margin, not
-        // exactly — the resulting orbit must still look in approximately
-        // the same direction, not identically.
+        // Round-tripping through Fly is lossy: P9.3 removed Orbit's own
+        // pitch clamp, but `FlyController` still clamps a degree short of
+        // its own pole (`FlyController::MAX_PITCH = 89°`, left unchanged —
+        // Fly mode is explicitly out of this milestone's scope) to keep
+        // its forward/up basis non-degenerate. A straight-down orbit view
+        // can therefore only round-trip through Fly to within about that
+        // margin, not exactly — the resulting orbit must still look in
+        // approximately the same direction, not identically.
         assert!(before.forward().abs_diff_eq(after.forward(), 0.05));
     }
 }

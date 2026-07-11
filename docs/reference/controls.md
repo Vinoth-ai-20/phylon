@@ -39,11 +39,27 @@ Keyboard and mouse bindings for the live application. The single active shortcut
 | Select all | `Ctrl+A` |
 | Deselect | `Esc` |
 | Spawn (sandbox tool) | `Ctrl+P` |
-| Reset camera | `Ctrl+R` |
-| Frame all / reset zoom | `Home` or `Num 0` |
+| Toggle whether the selected entity is fixed in place | `F` |
+| Delete selected entity | `X` |
+| Toggle Orbit / Fly camera mode | `Tab` |
+
+## Camera Navigation (Phase 9)
+
+| Action | Binding |
+|---|---|
+| Orbit | Middle-drag (Orbit mode) |
+| Pan | Left-drag (Orbit mode) |
+| Look around | Middle-drag (Fly mode) |
+| Fly move | `W`/`A`/`S`/`D` or arrow keys (Fly mode) |
+| Pan (Orbit mode, keyboard) | `W`/`A`/`S`/`D` or arrow keys |
 | Zoom in | `+` / `=` |
 | Zoom out | `-` |
-| Focus on selection | `F` |
-| Tab between UI regions | `Tab` |
+| Frame Selected (smooth) | `.` (period) |
+| Frame All (smooth, fits the real current population) | `Home` |
+| Reset camera (hard reset to the literal default view) | `Num 0` or `Ctrl+R` |
+| Preset view: Front / Back | `1` / `Ctrl+1` |
+| Preset view: Right / Left | `3` / `Ctrl+3` |
+| Preset view: Top / Bottom | `7` / `Ctrl+7` |
+| Toggle perspective / orthographic | View menu → Camera (no default keybinding) |
 
-See [Camera & Viewport](../explanation/camera_and_viewport.md) for the underlying `Camera3d`/`OrbitController`/`FlyController` model these bindings drive, and `crates/ui/src/shortcuts.rs` for the authoritative, current binding list (this table is a convenience summary, not the source of truth — re-check it there if in doubt).
+All of the above are also reachable from the **View → Camera** menu. See [Camera & Viewport](../explanation/camera_and_viewport.md) for the underlying `Camera3d`/`OrbitController`/`FlyController`/`ViewportInput` model these bindings drive, and `crates/ui/src/shortcuts.rs` for the authoritative, current binding list (this table is a convenience summary, not the source of truth — re-check it there if in doubt).

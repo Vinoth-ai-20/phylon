@@ -196,6 +196,79 @@ pub fn menu_ui(
 
         // ── VIEW ──────────────────────────────────────────────────────────
         ui.menu_button("View", |ui| {
+            // Phase 9, P9.4 — Blender-style navigation actions, gathered
+            // in one submenu rather than scattered across "View" directly,
+            // since these are one-shot camera commands, not view-state
+            // toggles like the checkboxes below.
+            ui.menu_button(
+                format!("{} Camera", egui_remixicon::icons::CAMERA_LINE),
+                |ui| {
+                    if ui.button("Frame Selected  (.)").clicked() {
+                        actions.push(MenuAction::FrameSelected);
+                        ui.close_menu();
+                    }
+                    if ui.button("Frame All  (Home)").clicked() {
+                        actions.push(MenuAction::FrameAll);
+                        ui.close_menu();
+                    }
+                    if ui.button("Reset Camera  (Num0)").clicked() {
+                        actions.push(MenuAction::CameraHome);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Top  (7)").clicked() {
+                        actions.push(MenuAction::SetCameraPreset(crate::CameraPreset::Top));
+                        ui.close_menu();
+                    }
+                    if ui.button("Bottom  (Ctrl+7)").clicked() {
+                        actions.push(MenuAction::SetCameraPreset(crate::CameraPreset::Bottom));
+                        ui.close_menu();
+                    }
+                    if ui.button("Front  (1)").clicked() {
+                        actions.push(MenuAction::SetCameraPreset(crate::CameraPreset::Front));
+                        ui.close_menu();
+                    }
+                    if ui.button("Back  (Ctrl+1)").clicked() {
+                        actions.push(MenuAction::SetCameraPreset(crate::CameraPreset::Back));
+                        ui.close_menu();
+                    }
+                    if ui.button("Right  (3)").clicked() {
+                        actions.push(MenuAction::SetCameraPreset(crate::CameraPreset::Right));
+                        ui.close_menu();
+                    }
+                    if ui.button("Left  (Ctrl+3)").clicked() {
+                        actions.push(MenuAction::SetCameraPreset(crate::CameraPreset::Left));
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui
+                        .button(format!(
+                            "{}  Toggle Perspective / Orthographic",
+                            if state.is_orthographic { "◻" } else { "◇" }
+                        ))
+                        .clicked()
+                    {
+                        actions.push(MenuAction::ToggleOrthographic);
+                        ui.close_menu();
+                    }
+                    if ui
+                        .button(format!(
+                            "Toggle Camera Mode  (Tab) — currently {}",
+                            if state.camera_controller.is_fly() {
+                                "Fly"
+                            } else {
+                                "Orbit"
+                            }
+                        ))
+                        .clicked()
+                    {
+                        actions.push(MenuAction::ToggleCameraMode);
+                        ui.close_menu();
+                    }
+                },
+            );
+            ui.separator();
+
             ui.checkbox(&mut state.debug_structural, "Wireframe View");
             ui.checkbox(&mut state.show_vision_cones, "Show Vision Cones");
             ui.checkbox(

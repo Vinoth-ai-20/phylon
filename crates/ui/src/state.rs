@@ -167,6 +167,17 @@ pub struct WorkbenchState {
     /// [`WorkbenchState::camera`]/[`WorkbenchState::camera_pos_2d`]/
     /// [`WorkbenchState::camera_zoom_2d`].
     pub camera_controller: crate::camera::CameraController,
+    /// Phase 9, P9.4 — an in-progress smooth Frame Selected/Frame All
+    /// transition, if any; see `crate::frame_animation`'s module doc
+    /// comment for why this lives here rather than inside
+    /// `OrbitController` itself.
+    pub frame_animation: Option<crate::frame_animation::FrameAnimation>,
+    /// Phase 9, P9.4 — perspective/orthographic projection toggle. Applied
+    /// only inside [`WorkbenchState::camera`] (the single accessor every
+    /// renderer/picking/interaction call site already reads through), not
+    /// inside `OrbitController`/`FlyController` themselves — see that
+    /// method's own doc comment.
+    pub is_orthographic: bool,
     /// Whether the camera automatically follows the most interesting organism.
     pub spectator_mode: bool,
     /// Screen-space rect of the viewport canvas, if known this frame.
@@ -560,6 +571,8 @@ impl Default for WorkbenchState {
             toolbar_visible: true,
 
             camera_controller: crate::camera::CameraController::default(),
+            frame_animation: None,
+            is_orthographic: false,
             spectator_mode: false,
             canvas_rect: None,
             pending_click: None,
@@ -764,11 +777,69 @@ impl WorkbenchState {
         }
     }
 
+    /// Phase 9, P9.4 — starts a smooth Frame Selected/Frame All transition
+    /// to `target_focus`/`target_distance`, preserving the current
+    /// yaw/pitch (a re-center-and-re-distance, not a re-orientation). A
+    /// no-op in `Fly` mode, matching `zoom_by`'s own "no equivalent
+    /// concept in Fly mode" precedent — `FocusSelection`'s existing
+    /// `look_at`-based Fly handling is untouched and still covers Fly mode.
+    pub fn start_frame_animation(&mut self, target_focus: common::Vec3, target_distance: f32) {
+        if let crate::camera::CameraController::Orbit(orbit) = &self.camera_controller {
+            self.frame_animation = Some(crate::frame_animation::FrameAnimation::new(
+                orbit.focus,
+                orbit.distance,
+                target_focus,
+                target_distance,
+            ));
+        }
+    }
+
+    /// Phase 9, P9.4 — advances any in-progress `frame_animation` by `dt`
+    /// seconds, writing the interpolated focus/distance directly into the
+    /// active `OrbitController` and clearing `frame_animation` once the
+    /// transition finishes. Call once per rendered frame.
+    pub fn tick_frame_animation(&mut self, dt: f32) {
+        let Some(animation) = &mut self.frame_animation else {
+            return;
+        };
+        let (focus, distance, finished) = animation.advance(dt);
+        if let crate::camera::CameraController::Orbit(orbit) = &mut self.camera_controller {
+            orbit.focus = focus;
+            orbit.distance = distance;
+        }
+        if finished {
+            self.frame_animation = None;
+        }
+    }
+
     /// The `Camera3d` the active controller currently describes — the
     /// single source every renderer/interaction system should read (Phase
-    /// 8, ADR-P8-02).
+    /// 8, ADR-P8-02). Phase 9, P9.4: also where `is_orthographic` gets
+    /// applied — `OrbitController`/`FlyController` themselves always
+    /// produce a plain perspective `Camera3d` (untouched, per this
+    /// milestone's "camera math is frozen" boundary); this method is the
+    /// one place that overrides `ortho_half_height` afterward, so every
+    /// existing consumer of `WorkbenchState::camera()` gets orthographic
+    /// support automatically with no call-site changes.
     pub fn camera(&self) -> crate::camera::Camera3d {
-        self.camera_controller.camera()
+        let mut camera = self.camera_controller.camera();
+        if self.is_orthographic {
+            // Half-height chosen to match perspective's own apparent
+            // scale at the current view, so toggling projection mode
+            // doesn't jarringly change how large things look: for Orbit,
+            // `distance * tan(fov_y / 2)` is exactly the half-height of
+            // the perspective frustum at the focus plane; Fly has no
+            // focus/distance concept, so it gets a fixed, reasonable
+            // default instead.
+            let half_height = match &self.camera_controller {
+                crate::camera::CameraController::Orbit(orbit) => {
+                    orbit.distance * (crate::camera::Camera3d::DEFAULT_FOV_Y * 0.5).tan()
+                }
+                crate::camera::CameraController::Fly(_) => 300.0,
+            };
+            camera.ortho_half_height = Some(half_height);
+        }
+        camera
     }
 
     /// The current viewport size in pixels, from `canvas_rect` if known

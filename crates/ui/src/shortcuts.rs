@@ -178,6 +178,40 @@ impl ShortcutManager {
             if ctx.input(|i| i.key_pressed(Key::F)) {
                 actions.push(MenuAction::ToggleStationary);
             }
+
+            // Phase 9, P9.4 — Blender-style Frame Selected (`.`, the
+            // closest egui-portable stand-in for Numpad `.`, which egui's
+            // platform-agnostic `Key` enum doesn't distinguish from the
+            // main-row period) and the six axis-aligned preset views
+            // (`1`/`3`/`7`, `Ctrl+1`/`Ctrl+3`/`Ctrl+7` — Blender's own
+            // Numpad 1/3/7 convention, same portability caveat).
+            if ctx.input(|i| i.key_pressed(Key::Period)) {
+                actions.push(MenuAction::FrameSelected);
+            }
+            ctx.input(|i| {
+                let ctrl = i.modifiers.ctrl;
+                if i.key_pressed(Key::Num1) {
+                    actions.push(MenuAction::SetCameraPreset(if ctrl {
+                        crate::CameraPreset::Back
+                    } else {
+                        crate::CameraPreset::Front
+                    }));
+                }
+                if i.key_pressed(Key::Num3) {
+                    actions.push(MenuAction::SetCameraPreset(if ctrl {
+                        crate::CameraPreset::Left
+                    } else {
+                        crate::CameraPreset::Right
+                    }));
+                }
+                if i.key_pressed(Key::Num7) {
+                    actions.push(MenuAction::SetCameraPreset(if ctrl {
+                        crate::CameraPreset::Bottom
+                    } else {
+                        crate::CameraPreset::Top
+                    }));
+                }
+            });
         }
 
         // Camera zoom — always active, no modifier, not gated by
@@ -188,7 +222,14 @@ impl ShortcutManager {
         if ctx.input(|i| i.key_pressed(Key::Minus)) {
             actions.push(MenuAction::CameraZoomOut);
         }
-        if ctx.input(|i| i.key_pressed(Key::Home) || i.key_pressed(Key::Num0)) {
+        // Phase 9, P9.4: `Home` now means Blender's "Frame All" (fit the
+        // real current population, not a fixed default) — `Num0` still
+        // means the original hard reset (`CameraHome`), a distinct action
+        // now that the two are no longer synonyms.
+        if ctx.input(|i| i.key_pressed(Key::Home)) {
+            actions.push(MenuAction::FrameAll);
+        }
+        if ctx.input(|i| i.key_pressed(Key::Num0)) {
             actions.push(MenuAction::CameraHome);
         }
 

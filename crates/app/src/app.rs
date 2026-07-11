@@ -251,6 +251,15 @@ pub(crate) struct PhylonApp {
     /// per-redraw increment.
     pub(crate) last_frame_instant: std::time::Instant,
 
+    /// Phase 9, P9.4: wall-clock time of the previous `render()` call, used
+    /// only to advance `ui::WorkbenchState::frame_animation` — deliberately
+    /// a separate field from `last_frame_instant` rather than reusing it,
+    /// since that one is consumed and overwritten by
+    /// `advance_simulation_for_frame` (which runs after camera tracking),
+    /// and camera-transition smoothness shouldn't become coupled to
+    /// simulation-tick bookkeeping.
+    pub(crate) last_camera_animation_instant: std::time::Instant,
+
     /// Storage manager for snapshots and database logs
     pub(crate) storage: storage::StorageManager,
 
@@ -535,6 +544,7 @@ impl PhylonApp {
             simulation_speed: 1.0,
             accumulated_time: 0.0,
             last_frame_instant: std::time::Instant::now(),
+            last_camera_animation_instant: std::time::Instant::now(),
             storage,
             task_rx: Some(task_rx),
             task_tx: Some(task_tx),

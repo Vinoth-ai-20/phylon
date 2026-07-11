@@ -231,10 +231,22 @@ pub fn toolbar_ui(
             |ui| {
                 if ui.button("+ Save Current View").clicked() {
                     let camera = state.camera();
+                    // Phase 9, P9.4: record which mode (and, for Orbit, the
+                    // pivot) was active, so restoring reconstructs the same
+                    // mode instead of always forcing Fly — see
+                    // `CameraBookmark::orbit_focus`'s doc comment.
+                    let orbit_focus = if let crate::camera::CameraController::Orbit(orbit) =
+                        &state.camera_controller
+                    {
+                        Some(orbit.focus)
+                    } else {
+                        None
+                    };
                     state.bookmarks.push(crate::CameraBookmark {
                         label: format!("View {}", state.bookmarks.len() + 1),
                         position: camera.position,
                         orientation: camera.orientation,
+                        orbit_focus,
                     });
                     ui.close_menu();
                 }
@@ -244,25 +256,29 @@ pub fn toolbar_ui(
                     for (i, bookmark) in state.bookmarks.iter().enumerate() {
                         ui.horizontal(|ui| {
                             if ui.button(&bookmark.label).clicked() {
-                                // A bookmark's position+orientation is a
-                                // complete camera snapshot on its own (no
-                                // saved focus/distance is needed) — restore
-                                // it via `Fly`, the mode that takes a raw
-                                // position/orientation pair directly (Phase
-                                // 8, ADR-P8-02's "zoom superseded by the
-                                // FOV/distance model, mapped at restore
-                                // time").
-                                state.camera_controller = crate::camera::CameraController::Fly(
-                                    crate::camera::FlyController::from_camera(
-                                        &crate::camera::Camera3d {
-                                            position: bookmark.position,
-                                            orientation: bookmark.orientation,
-                                            fov_y: crate::camera::Camera3d::DEFAULT_FOV_Y,
-                                            near: crate::camera::Camera3d::DEFAULT_NEAR,
-                                            far: crate::camera::Camera3d::DEFAULT_FAR,
-                                        },
+                                // Phase 9, P9.4: restore into whichever
+                                // mode was active at save time, not always
+                                // `Fly` — see `CameraBookmark::orbit_focus`'s
+                                // doc comment for the bug this fixes.
+                                let snapshot = crate::camera::Camera3d {
+                                    position: bookmark.position,
+                                    orientation: bookmark.orientation,
+                                    fov_y: crate::camera::Camera3d::DEFAULT_FOV_Y,
+                                    near: crate::camera::Camera3d::DEFAULT_NEAR,
+                                    far: crate::camera::Camera3d::DEFAULT_FAR,
+                                    ortho_half_height: None,
+                                };
+                                state.camera_controller = match bookmark.orbit_focus {
+                                    Some(focus) => crate::camera::CameraController::Orbit(
+                                        crate::camera::OrbitController::looking_at(
+                                            focus,
+                                            bookmark.position,
+                                        ),
                                     ),
-                                );
+                                    None => crate::camera::CameraController::Fly(
+                                        crate::camera::FlyController::from_camera(&snapshot),
+                                    ),
+                                };
                                 ui.close_menu();
                             }
                             if ui

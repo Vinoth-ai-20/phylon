@@ -13,13 +13,13 @@
 //! this logic a third time or reaching into whichever of the two existing
 //! paths looked closest.
 //!
-//! [`ViewportInput`] is the fix: a plain, platform-agnostic struct
+//! `ViewportInput` is the fix: a plain, platform-agnostic struct
 //! describing "what interaction happened this frame," entirely ignorant of
 //! egui/winit. Each input source is an *adapter* that fills in a
-//! `ViewportInput` (see [`ViewportInput::from_canvas_interaction`] for the
+//! `ViewportInput` (see `ViewportInput::from_canvas_interaction` for the
 //! egui adapter; `app::events`'s keyboard handler is the winit adapter,
 //! building one inline since it has no equivalent shared gesture type to
-//! adapt from). [`apply_to_camera`] is the single `ViewportController` — the
+//! adapt from). `apply_to_camera` is the single `ViewportController` — the
 //! only place any of this input actually mutates a camera — so a future
 //! adapter needs only to produce a `ViewportInput`, never touch
 //! `CameraController`/`OrbitController`/`FlyController` itself.
@@ -35,7 +35,7 @@ use crate::types::CanvasInteraction;
 
 /// One frame's worth of canonical viewport interaction, produced by an
 /// adapter (egui or winit today; a future 3D-mouse/VR/touch/replay source
-/// tomorrow) and consumed exactly once by [`apply_to_camera`].
+/// tomorrow) and consumed exactly once by `apply_to_camera`.
 #[derive(Default, Clone, Copy, Debug)]
 pub struct ViewportInput {
     /// Left-drag pan delta, screen pixels, not yet scaled by the window's
@@ -83,7 +83,7 @@ impl ViewportInput {
 }
 
 /// The single `ViewportController` — the only function anywhere that reads
-/// a [`ViewportInput`] and mutates the camera. Framework-agnostic: takes
+/// a `ViewportInput` and mutates the camera. Framework-agnostic: takes
 /// nothing egui- or winit-specific, only the already-adapted input plus
 /// the workspace state/scale it needs to apply it.
 ///

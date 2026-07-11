@@ -85,6 +85,13 @@ pub struct CameraBookmark {
     pub position: common::Vec3,
     /// World-space camera orientation at the time of saving.
     pub orientation: common::Quat,
+    /// Phase 9, P9.4: `Some(focus)` if `Orbit` mode was active at save
+    /// time (its pivot point); `None` if `Fly` mode was active. Restoring
+    /// a bookmark uses this to reconstruct the *same* mode it was saved
+    /// in, rather than always forcing `Fly` — the previous behavior, and
+    /// a real, disclosed bug (a bookmark saved while orbiting used to
+    /// silently switch you to Fly mode on restore).
+    pub orbit_focus: Option<common::Vec3>,
 }
 
 /// A lightweight, already-extracted summary of a loaded `.phylon-replay`
@@ -179,6 +186,26 @@ pub enum AppState {
     Simulation,
 }
 
+/// One of the six axis-aligned Blender-style preset views (Phase 9, P9.4).
+/// Each preset sets `OrbitController::yaw`/`pitch` to a fixed value —
+/// `focus`/`distance` are left exactly as they are, so a preset view only
+/// ever changes the viewing *angle*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CameraPreset {
+    /// Looking straight down `-Z` (the original default).
+    Top,
+    /// Looking straight up `+Z`.
+    Bottom,
+    /// Looking along `+Y` (toward the viewer from `-Y`).
+    Front,
+    /// Looking along `-Y`.
+    Back,
+    /// Looking along `+X`.
+    Right,
+    /// Looking along `-X`.
+    Left,
+}
+
 /// # UI Command Dispatch
 ///
 /// ## 1. What Happens
@@ -260,11 +287,31 @@ pub enum MenuAction {
     CameraZoomIn,
     /// Zoom camera out.
     CameraZoomOut,
-    /// Reset camera view.
+    /// Reset camera view (hard reset to the literal default: origin,
+    /// default distance/orientation) — distinct from `FrameAll`, which
+    /// fits the *current* population's real extent instead of resetting
+    /// to a fixed default.
     CameraHome,
     /// Toggle between Orbit (default) and Fly camera modes (Phase 8,
     /// ADR-P8-02).
     ToggleCameraMode,
+    /// Phase 9, P9.4 — smoothly frames the selected entity: re-centers and
+    /// re-distances (preserving yaw/pitch) so it fills a comfortable
+    /// fraction of the viewport. Orbit-mode only; a no-op if nothing is
+    /// selected or the camera is in Fly mode (use `FocusSelection` for the
+    /// Fly-mode equivalent).
+    FrameSelected,
+    /// Phase 9, P9.4 — smoothly frames the entire current population
+    /// (every `ParticleNode`'s bounding sphere), preserving yaw/pitch.
+    /// Orbit-mode only.
+    FrameAll,
+    /// Phase 9, P9.4 — snaps to one of the six axis-aligned preset views
+    /// (Blender-style Numpad 1/3/7/Ctrl+1/3/7), preserving the current
+    /// focus/distance — only the viewing angle changes.
+    SetCameraPreset(CameraPreset),
+    /// Phase 9, P9.4 — toggles between perspective and orthographic
+    /// projection.
+    ToggleOrthographic,
     /// Transition to Simulation State
     StartSimulation,
     /// Transition to Main Menu State

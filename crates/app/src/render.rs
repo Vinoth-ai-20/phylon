@@ -67,6 +67,15 @@ impl PhylonApp {
         }
 
         // 1. Camera Tracking
+
+        // Phase 9, P9.4: advances any in-progress Frame Selected/Frame All
+        // transition — see `last_camera_animation_instant`'s own doc
+        // comment for why this uses its own dedicated timing field.
+        let now = std::time::Instant::now();
+        let camera_animation_dt = (now - self.last_camera_animation_instant).as_secs_f32();
+        self.last_camera_animation_instant = now;
+        self.ui.tick_frame_animation(camera_animation_dt);
+
         if let Some(tracked) = self.ui.tracked_entity {
             if let Ok(node) = self
                 .world
