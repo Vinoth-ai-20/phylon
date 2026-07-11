@@ -345,7 +345,22 @@ impl PhylonApp {
         world
             .ecs
             .insert_resource(diffusion::CpuHazardFieldState::default());
-        world.ecs.insert_resource(ecology::EcologyConfig::default());
+        // Phase 9, Goal 3 behavior-validation finding: `EcologyConfig`'s
+        // default `max_organisms` (50) was never connected to
+        // `SimulationConfig::target_organism_count` (default 1_000, the
+        // value `seed_ecosystem` actually spawns towards) — since founders
+        // are spawned directly (bypassing `reproduction_system`'s own
+        // population-cap check), a founder population past 50 permanently
+        // blocked *all* asexual and sexual reproduction from tick 1 onward
+        // in every default-config run, measured directly via a real
+        // headless run showing `births_since_start = 0` /
+        // `reproductions_since_start = 0` across 2000 ticks. Wiring the
+        // already-existing (previously unread) config field through fixes
+        // the root cause without inventing a new one.
+        world.ecs.insert_resource(ecology::EcologyConfig {
+            max_organisms: sim_config.simulation.target_organism_count as usize,
+            ..Default::default()
+        });
         world
             .ecs
             .insert_resource(ecology::ResourceSpatialGrids::new(50.0));
@@ -378,6 +393,15 @@ impl PhylonApp {
         world
             .ecs
             .insert_resource(crate::motion_diagnostic::MotionDiagnosticState::default());
+        // Phase 9, Goal 3: reads `PHYLON_BEHAVIOR_VALIDATION` once at
+        // startup — see `behavior_validation::BehaviorValidationConfig`'s
+        // doc comment for why this isn't re-checked per tick.
+        world
+            .ecs
+            .insert_resource(crate::behavior_validation::BehaviorValidationConfig::from_env());
+        world
+            .ecs
+            .insert_resource(crate::behavior_validation::BehaviorValidationState::default());
         world.ecs.insert_resource(analytics::MetricsState::new());
         world.ecs.insert_resource(analytics::NarrationLog::new(100));
         world

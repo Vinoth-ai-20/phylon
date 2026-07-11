@@ -298,6 +298,11 @@ impl PhylonApp {
         self.world
             .ecs
             .run_system_once(crate::motion_diagnostic::motion_diagnostic_system);
+        // Phase 9, Goal 3: opt-in, zero-cost when `PHYLON_BEHAVIOR_VALIDATION`
+        // is unset — see `behavior_validation`'s module doc comment.
+        self.world
+            .ecs
+            .run_system_once(crate::behavior_validation::behavior_validation_system);
         self.world
             .ecs
             .run_system_once(crate::analytics_bridge::analytics_bridge_system);

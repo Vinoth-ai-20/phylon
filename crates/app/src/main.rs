@@ -27,6 +27,7 @@
 pub mod analytics_bridge;
 pub mod app;
 pub mod batch;
+pub mod behavior_validation;
 pub mod capture;
 pub mod events;
 pub mod interventions;
