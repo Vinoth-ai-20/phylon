@@ -35,7 +35,7 @@ pub(crate) mod organism_visuals;
 /// spring/per-pellet orchestration that calls `organism_visuals`'s
 /// builders, extracted out of `render()` itself. See its own module doc
 /// comment for the extraction discipline.
-mod world_instances;
+pub(crate) mod world_instances;
 
 impl PhylonApp {
     /// # Main Frame Renderer and Time Integrator
@@ -176,47 +176,13 @@ impl PhylonApp {
             egui_context = Some(ctx);
         }
 
-        // Process native interactions from the transparent canvas
-        if interaction.zoom_delta != 1.0 && interaction.zoom_delta > 0.0 {
-            self.ui.zoom_by(interaction.zoom_delta);
-        }
-
-        // Left-drag pans (Orbit mode only — matches the pre-Phase-8 camera,
-        // which had no `Fly` concept to define a drag-pan for; `Fly`'s
-        // equivalent movement is WASD, handled in `events.rs`).
-        if interaction.drag_delta.length_sq() > 0.0 {
-            if let ui::camera::CameraController::Orbit(orbit) = &mut self.ui.camera_controller {
-                let viewport_h = self
-                    .ui
-                    .canvas_rect
-                    .map(|[_, _, _, h]| h as f32)
-                    .unwrap_or(720.0);
-                orbit.pan(
-                    common::Vec2::new(interaction.drag_delta.x, interaction.drag_delta.y) * scale,
-                    viewport_h,
-                );
-            }
-            // Only detach tracking if it's a genuine drag, not a trackpad micro-movement
-            if interaction.drag_delta.length_sq() > 9.0 {
-                self.ui.set_follow(None);
-            }
-        }
-
-        // Middle-drag orbits (Orbit mode) or looks around (Fly mode) —
-        // Phase 8, ADR-P8-02's new camera-rotation gesture (see
-        // `ui::plugins::viewport`'s doc comment on why middle-button,
-        // specifically, was chosen).
-        if interaction.rotate_delta.length_sq() > 0.0 {
-            // Untuned-but-reasonable radians-per-pixel, same status as
-            // every other not-yet-measured constant introduced this phase.
-            const ROTATE_SENSITIVITY: f32 = 0.005;
-            let dx = interaction.rotate_delta.x * ROTATE_SENSITIVITY;
-            let dy = interaction.rotate_delta.y * ROTATE_SENSITIVITY;
-            match &mut self.ui.camera_controller {
-                ui::camera::CameraController::Orbit(orbit) => orbit.orbit(-dx, dy),
-                ui::camera::CameraController::Fly(fly) => fly.look(-dx, -dy),
-            }
-        }
+        // Process native interactions from the transparent canvas — Phase
+        // 9, ADR-P9-01: routed through the one canonical
+        // `ui::viewport_input` layer (egui adapter + `ViewportController`)
+        // instead of interpreting `CanvasInteraction` directly here.
+        let viewport_input =
+            ui::viewport_input::ViewportInput::from_canvas_interaction(&interaction);
+        ui::viewport_input::apply_to_camera(&mut self.ui, &viewport_input, scale);
 
         if interaction.clicked {
             if let Some(pos) = interaction.click_pos {

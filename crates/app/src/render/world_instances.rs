@@ -23,6 +23,30 @@ pub(crate) struct WorldRenderInstances {
     pub(crate) selected_bones: Vec<rendering::CapsuleInstance>,
 }
 
+/// Phase 9, P9.1 (performance foundation): the six intermediate lookup
+/// tables `gather_world_render_instances` builds every frame, hoisted out
+/// of that function's locals and into a field `PhylonApp` owns across
+/// frames — measured directly (a temporary FPS probe, since removed) to
+/// be one of the largest per-frame CPU costs at population scale, since
+/// every one of these was a fresh `HashMap::new()` (zero capacity, forcing
+/// repeated reallocation as it fills) on every single frame regardless of
+/// whether the population changed. `.clear()` (called at the top of
+/// `gather_world_render_instances`, see there) empties a `HashMap` without
+/// releasing its backing allocation, so after the first few frames these
+/// tables stop reallocating at all and just get reused at their
+/// steady-state capacity. This is intermediate/local-only state — never
+/// borrowed or returned across frames — so hoisting it costs nothing in
+/// correctness or clarity, only in one extra `PhylonApp` field.
+#[derive(Default)]
+pub(crate) struct RenderInstanceScratch {
+    node_positions: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 2]>,
+    node_positions_3d: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 3]>,
+    entity_organism_id: std::collections::HashMap<bevy_ecs::entity::Entity, u32>,
+    entity_health_fraction: std::collections::HashMap<bevy_ecs::entity::Entity, f32>,
+    entity_avg_severity: std::collections::HashMap<bevy_ecs::entity::Entity, f32>,
+    entity_growth_progress: std::collections::HashMap<bevy_ecs::entity::Entity, f32>,
+}
+
 impl PhylonApp {
     /// Gathers this frame's render instances from `World` state: selection/
     /// hover highlighting, frustum culling, and every organism/food/mineral/
@@ -111,9 +135,18 @@ impl PhylonApp {
             max_x >= cull_min_x && min_x <= cull_max_x && max_y >= cull_min_y && min_y <= cull_max_y
         };
 
-        // Build node position lookup for bone endpoint resolution
-        let mut node_positions: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 2]> =
-            std::collections::HashMap::new();
+        // Build node position lookup for bone endpoint resolution.
+        // Phase 9, P9.1: reused across frames via `self.render_scratch`
+        // (see `RenderInstanceScratch`'s doc comment) — `.clear()` keeps
+        // the backing allocation instead of dropping and reallocating it
+        // every frame.
+        self.render_scratch.node_positions.clear();
+        self.render_scratch.node_positions_3d.clear();
+        self.render_scratch.entity_organism_id.clear();
+        self.render_scratch.entity_health_fraction.clear();
+        self.render_scratch.entity_avg_severity.clear();
+        self.render_scratch.entity_growth_progress.clear();
+        let node_positions = &mut self.render_scratch.node_positions;
         // Phase 8 (ADR-P8-03): the mesh-based capsule renderer needs real
         // `Vec3` endpoints (organisms still grow with `z` fixed at `0.0`
         // until Epic 8.6, but the renderer itself is now genuinely 3D) —
@@ -121,8 +154,7 @@ impl PhylonApp {
         // since every other consumer of that map (culling, spotlight
         // nearby-lookup, colony-link debug instances) is still flat 2D
         // logic, unaffected by and out of scope for this epic.
-        let mut node_positions_3d: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 3]> =
-            std::collections::HashMap::new();
+        let node_positions_3d = &mut self.render_scratch.node_positions_3d;
 
         // Per-node organism-id lookup (Phase 5, SX-3d) — `physics::ParticleNode.organism_id`
         // is already stored per node; no BFS/adjacency-map traversal is
@@ -130,8 +162,7 @@ impl PhylonApp {
         // comparison of two nodes' `organism_id` on either end of a spring
         // (see the spring loop below). Built in the same query as
         // `node_positions` below, at no extra query cost.
-        let mut entity_organism_id: std::collections::HashMap<bevy_ecs::entity::Entity, u32> =
-            std::collections::HashMap::new();
+        let entity_organism_id = &mut self.render_scratch.entity_organism_id;
 
         // Per-segment vitality lookup (Phase 5, SX-1c) — `metabolism::Health`
         // lives only on an organism's head entity (`organisms::spawning`), not
@@ -141,8 +172,7 @@ impl PhylonApp {
         // rather than inventing a new one. Absent from this map (sandbox
         // structures with no `Health`) defaults to `1.0` (fully vital) at the
         // lookup site below, not inserted here.
-        let mut entity_health_fraction: std::collections::HashMap<bevy_ecs::entity::Entity, f32> =
-            std::collections::HashMap::new();
+        let entity_health_fraction = &mut self.render_scratch.entity_health_fraction;
         let mut query_health_graphs = self
             .world
             .ecs
@@ -167,8 +197,7 @@ impl PhylonApp {
         // `SegmentInfection.severity` across segments rather than reading a
         // single value, since severity is a genuinely per-segment quantity
         // (P4-F5).
-        let mut entity_avg_severity: std::collections::HashMap<bevy_ecs::entity::Entity, f32> =
-            std::collections::HashMap::new();
+        let entity_avg_severity = &mut self.render_scratch.entity_avg_severity;
         let mut query_segment_infection = self
             .world
             .ecs
@@ -295,15 +324,14 @@ impl PhylonApp {
             .world
             .ecs
             .query::<(bevy_ecs::entity::Entity, &organisms::SpawnTick)>();
-        let entity_growth_progress: std::collections::HashMap<bevy_ecs::entity::Entity, f32> =
-            query_spawn_ticks
-                .iter(&self.world.ecs)
-                .map(|(e, spawn_tick)| {
-                    let age_ticks = current_tick.saturating_sub(spawn_tick.0);
-                    let progress = (age_ticks as f32 / GROWTH_FADE_IN_TICKS as f32).clamp(0.0, 1.0);
-                    (e, progress)
-                })
-                .collect();
+        let entity_growth_progress = &mut self.render_scratch.entity_growth_progress;
+        entity_growth_progress.extend(query_spawn_ticks.iter(&self.world.ecs).map(
+            |(e, spawn_tick)| {
+                let age_ticks = current_tick.saturating_sub(spawn_tick.0);
+                let progress = (age_ticks as f32 / GROWTH_FADE_IN_TICKS as f32).clamp(0.0, 1.0);
+                (e, progress)
+            },
+        ));
 
         // Spotlight mode (Phase 5, SX-5b) — dims every organism except the
         // selected entity, its connected body/colony (reusing the exact

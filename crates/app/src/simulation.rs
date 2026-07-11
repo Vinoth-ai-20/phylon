@@ -2,6 +2,24 @@ use crate::app::PhylonApp;
 use crate::systems::*;
 use bevy_ecs::system::RunSystemOnce;
 
+/// Phase 9, P9.1 (performance foundation): cross-tick scratch storage for
+/// `update_simulation`'s GPU node/spring buffer gathering — measured
+/// directly to be a real per-tick allocation cost at population scale
+/// (fresh, zero-capacity `HashMap`/`Vec` every tick, up to
+/// `max_ticks_per_frame` times per rendered frame). `.clear()` (called at
+/// the top of `update_simulation`, see there) empties these without
+/// releasing their backing allocation, so after the first few ticks they
+/// stop reallocating and are reused at steady-state capacity — the same
+/// pattern `render::world_instances::RenderInstanceScratch` uses for the
+/// render-side equivalent of this problem.
+#[derive(Default)]
+pub(crate) struct SimTickScratch {
+    entity_to_index: std::collections::HashMap<bevy_ecs::entity::Entity, u32>,
+    gpu_nodes: Vec<gpu::physics_pipeline::GpuParticleNode>,
+    node_entities: Vec<bevy_ecs::entity::Entity>,
+    gpu_springs: Vec<gpu::physics_pipeline::GpuPhysicsSpring>,
+}
+
 impl PhylonApp {
     /// # Discrete Biological Update Loop
     ///
@@ -139,10 +157,16 @@ impl PhylonApp {
             .ecs
             .run_system_once(organisms::pack_hunting_system);
 
-        // 2. Gather Nodes and build Entity -> Index map
-        let mut entity_to_index = std::collections::HashMap::new();
-        let mut gpu_nodes = Vec::new();
-        let mut node_entities = Vec::new();
+        // 2. Gather Nodes and build Entity -> Index map.
+        // Phase 9, P9.1 (performance foundation): reused across ticks via
+        // `self.sim_scratch` (see `SimTickScratch`'s doc comment) instead
+        // of a fresh, zero-capacity `HashMap`/`Vec` every tick.
+        self.sim_scratch.entity_to_index.clear();
+        self.sim_scratch.gpu_nodes.clear();
+        self.sim_scratch.node_entities.clear();
+        let entity_to_index = &mut self.sim_scratch.entity_to_index;
+        let gpu_nodes = &mut self.sim_scratch.gpu_nodes;
+        let node_entities = &mut self.sim_scratch.node_entities;
 
         let mut query_nodes = self
             .world
@@ -164,9 +188,10 @@ impl PhylonApp {
             node_entities.push(entity);
         }
 
-        // 3. Gather Springs
+        // 3. Gather Springs (P9.1: reused scratch, see above).
         let mut query_springs = self.world.ecs.query::<&physics::Spring>();
-        let mut gpu_springs = Vec::new();
+        self.sim_scratch.gpu_springs.clear();
+        let gpu_springs = &mut self.sim_scratch.gpu_springs;
         for spring in query_springs.iter(&self.world.ecs) {
             let Some(&idx_a) = entity_to_index.get(&spring.node_a) else {
                 continue;
@@ -211,14 +236,19 @@ impl PhylonApp {
             let pending = physics_compute.dispatch(
                 &gpu.device,
                 &gpu.queue,
-                &gpu_nodes,
-                &gpu_springs,
+                gpu_nodes,
+                gpu_springs,
                 dt,
                 global_time,
                 gpu.query_set.as_ref(),
             );
             physics_duration_ms += dispatch_start.elapsed().as_secs_f64() * 1000.0;
-            self.pending_physics = Some((pending, node_entities));
+            // `node_entities` is scratch (`self.sim_scratch`, reused across
+            // ticks — see P9.1's doc comment above); `pending_physics`
+            // needs its own owned copy to carry into next tick's readback,
+            // so this clone is real and necessary, not something P9.1 left
+            // unoptimized.
+            self.pending_physics = Some((pending, node_entities.clone()));
         }
 
         // 5. Run remaining biological systems

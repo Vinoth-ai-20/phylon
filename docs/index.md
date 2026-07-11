@@ -48,6 +48,7 @@ This documentation is organized following the [Diátaxis framework](https://diat
 - [Project History](roadmap/history.md) - A phase-by-phase summary of what was built, in order.
 - [Architecture Decisions](roadmap/decisions.md) - Durable ADRs extracted from the phase archive, organized by topic.
 - [Open Items & Backlog](roadmap/backlog.md) - Disclosed, still-open gaps and unscheduled future work.
+- [Phase 9 — Workbench UX, Performance & Optimization](roadmap/phase9_workbench_performance.md) - Active roadmap: measured FPS/rendering bottlenecks and camera/input architecture findings, not yet implemented.
 
 ---
 

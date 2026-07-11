@@ -17,6 +17,11 @@
 pub mod camera;
 pub use camera::{Camera3d, CameraController, FlyController, OrbitController};
 
+/// Phase 9, ADR-P9-01 — the canonical viewport-interaction layer
+/// (`ViewportInput` + `apply_to_camera`), the only place any input source
+/// mutates the camera. See the module's own doc comment.
+pub mod viewport_input;
+
 pub mod shortcuts;
 /// UI state types and enums.
 pub mod types;

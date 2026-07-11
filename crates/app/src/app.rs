@@ -301,6 +301,19 @@ pub(crate) struct PhylonApp {
     /// events are rare), so a `.phylon-replay` bundle is available to save
     /// at any point via `MenuAction::SaveState`'s replay counterpart.
     pub(crate) replay_log: storage::replay::ReplayLog,
+
+    /// Phase 9, P9.1 (performance foundation): cross-frame scratch storage
+    /// for `gather_world_render_instances`'s intermediate lookup tables —
+    /// see `render::world_instances::RenderInstanceScratch`'s doc comment.
+    pub(crate) render_scratch: crate::render::world_instances::RenderInstanceScratch,
+
+    /// Phase 9, P9.1 (performance foundation): cross-tick scratch storage
+    /// for `update_simulation`'s GPU node/spring buffer gathering — reused
+    /// the same way `render_scratch` is (see that field's doc comment);
+    /// `.clear()` at the top of each tick keeps the backing allocation
+    /// instead of reallocating from empty every tick, which otherwise
+    /// happens up to `max_ticks_per_frame` times per rendered frame.
+    pub(crate) sim_scratch: crate::simulation::SimTickScratch,
 }
 
 /// Per-entity `(start_node_index, node_count)` offsets into a batched
@@ -532,6 +545,8 @@ impl PhylonApp {
             recording: None,
             experiment_manifest,
             replay_log,
+            render_scratch: Default::default(),
+            sim_scratch: Default::default(),
         }
     }
 

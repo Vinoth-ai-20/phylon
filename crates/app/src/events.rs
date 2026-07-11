@@ -954,71 +954,44 @@ impl ApplicationHandler for PhylonApp {
                     },
                 ..
             } => {
+                // WASD/arrows pan in `Orbit` mode or fly in `Fly` mode —
+                // Phase 9, ADR-P9-01: this winit adapter builds a
+                // `ViewportInput` and hands it to the same
+                // `ui::viewport_input::apply_to_camera` the egui-routed
+                // path (`app::render`) uses, rather than mutating the
+                // camera controller directly here. Each individual keydown
+                // event moves a fixed step, relying on the OS's own
+                // key-repeat rate for continuous movement while held,
+                // exactly like the pre-existing behavior did. Discrete
+                // `+`/`-` zoom is deliberately not handled here — it was a
+                // straight duplicate of `shortcuts.rs`'s `Key::Plus`/
+                // `Key::Minus` binding (`MenuAction::CameraZoomIn/Out`),
+                // not a distinct input source, so it was removed rather
+                // than migrated.
                 use winit::keyboard::{KeyCode, PhysicalKey};
-                // WASD/arrows pan in `Orbit` mode (unchanged from
-                // pre-Phase-8 behavior) or fly in `Fly` mode (Phase 8,
-                // ADR-P8-02) — each individual keydown event moves a fixed
-                // step, relying on the OS's own key-repeat rate for
-                // continuous movement while held, exactly like the
-                // pre-existing pan behavior already did.
-                const FLY_STEP_DT: f32 = 1.0 / 60.0;
                 let pan_speed = 10.0 / self.ui.camera_zoom_2d();
-                match &mut self.ui.camera_controller {
-                    ui::camera::CameraController::Orbit(orbit) => {
-                        let mut panned = true;
-                        match physical_key {
-                            PhysicalKey::Code(KeyCode::KeyW)
-                            | PhysicalKey::Code(KeyCode::ArrowUp) => {
-                                orbit.focus.y += pan_speed;
-                            }
-                            PhysicalKey::Code(KeyCode::KeyS)
-                            | PhysicalKey::Code(KeyCode::ArrowDown) => {
-                                orbit.focus.y -= pan_speed;
-                            }
-                            PhysicalKey::Code(KeyCode::KeyA)
-                            | PhysicalKey::Code(KeyCode::ArrowLeft) => {
-                                orbit.focus.x -= pan_speed;
-                            }
-                            PhysicalKey::Code(KeyCode::KeyD)
-                            | PhysicalKey::Code(KeyCode::ArrowRight) => {
-                                orbit.focus.x += pan_speed;
-                            }
-                            _ => panned = false,
-                        }
-                        if panned {
-                            self.ui.set_follow(None);
-                        }
-                    }
-                    ui::camera::CameraController::Fly(fly) => match physical_key {
-                        PhysicalKey::Code(KeyCode::KeyW) | PhysicalKey::Code(KeyCode::ArrowUp) => {
-                            fly.move_relative(1.0, 0.0, 0.0, FLY_STEP_DT, 1.0);
-                        }
-                        PhysicalKey::Code(KeyCode::KeyS)
-                        | PhysicalKey::Code(KeyCode::ArrowDown) => {
-                            fly.move_relative(-1.0, 0.0, 0.0, FLY_STEP_DT, 1.0);
-                        }
-                        PhysicalKey::Code(KeyCode::KeyA)
-                        | PhysicalKey::Code(KeyCode::ArrowLeft) => {
-                            fly.move_relative(0.0, -1.0, 0.0, FLY_STEP_DT, 1.0);
-                        }
-                        PhysicalKey::Code(KeyCode::KeyD)
-                        | PhysicalKey::Code(KeyCode::ArrowRight) => {
-                            fly.move_relative(0.0, 1.0, 0.0, FLY_STEP_DT, 1.0);
-                        }
-                        _ => {}
-                    },
-                }
+                let mut input = ui::viewport_input::ViewportInput::default();
                 match physical_key {
-                    // Zoom with + and -
-                    PhysicalKey::Code(KeyCode::Equal) | PhysicalKey::Code(KeyCode::NumpadAdd) => {
-                        self.ui.zoom_by(1.1);
+                    PhysicalKey::Code(KeyCode::KeyW) | PhysicalKey::Code(KeyCode::ArrowUp) => {
+                        input.key_pan_step.y += pan_speed;
+                        input.key_fly_move.0 += 1.0;
                     }
-                    PhysicalKey::Code(KeyCode::Minus)
-                    | PhysicalKey::Code(KeyCode::NumpadSubtract) => {
-                        self.ui.zoom_by(1.0 / 1.1);
+                    PhysicalKey::Code(KeyCode::KeyS) | PhysicalKey::Code(KeyCode::ArrowDown) => {
+                        input.key_pan_step.y -= pan_speed;
+                        input.key_fly_move.0 -= 1.0;
+                    }
+                    PhysicalKey::Code(KeyCode::KeyA) | PhysicalKey::Code(KeyCode::ArrowLeft) => {
+                        input.key_pan_step.x -= pan_speed;
+                        input.key_fly_move.1 -= 1.0;
+                    }
+                    PhysicalKey::Code(KeyCode::KeyD) | PhysicalKey::Code(KeyCode::ArrowRight) => {
+                        input.key_pan_step.x += pan_speed;
+                        input.key_fly_move.1 += 1.0;
                     }
                     _ => {}
                 }
+                input.detach_follow = input.key_pan_step.length_squared() > 0.0;
+                ui::viewport_input::apply_to_camera(&mut self.ui, &input, 1.0);
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 let s = modifiers.state();

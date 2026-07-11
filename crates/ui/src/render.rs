@@ -844,6 +844,19 @@ fn render_behavior_glyphs(
         };
 
         let screen_pos = to_screen(node.position.truncate());
+        // Phase 9, P9.1 (performance foundation): skip the (comparatively
+        // expensive) egui text-shaping call for glyphs that fall outside
+        // the viewport — measured to be a real per-frame cost at
+        // population scale. Purely a screen-space visibility cull, not a
+        // user-facing toggle: this overlay stays "population-wide, not
+        // opt-in" per `docs/design/biological_visual_language.md`'s
+        // Behavior entry — an off-screen glyph was already invisible
+        // (clipped), so skipping its layout/shaping changes no rendered
+        // output, only what CPU work off-screen organisms cost.
+        const GLYPH_CULL_MARGIN: f32 = 20.0;
+        if !viewport_rect.expand(GLYPH_CULL_MARGIN).contains(screen_pos) {
+            continue;
+        }
         painter.text(
             screen_pos - egui::vec2(0.0, 14.0),
             egui::Align2::CENTER_BOTTOM,

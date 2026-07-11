@@ -129,24 +129,89 @@ pub fn status_bar_ui(
         crate::widgets::status_chip(ui, egui_remixicon::icons::BUG_LINE, entity_count.to_string(), None);
         ui.separator();
 
-        let food_count = world.ecs.query::<&ecology::FoodPellet>().iter(&world.ecs).count();
-        let mineral_count = world.ecs.query::<&ecology::MineralPellet>().iter(&world.ecs).count();
-        let corpse_count = world.ecs.query::<&ecology::Corpse>().iter(&world.ecs).count();
-
-        let mut prod_count = 0usize;
-        let mut herb_count = 0usize;
-        let mut carn_count = 0usize;
-        let mut omni_count = 0usize;
-        let mut deco_count = 0usize;
-        for diet in world.ecs.query::<&ecology::Diet>().iter(&world.ecs) {
-            match diet {
-                ecology::Diet::Producer => prod_count += 1,
-                ecology::Diet::Herbivore => herb_count += 1,
-                ecology::Diet::Carnivore => carn_count += 1,
-                ecology::Diet::Omnivore => omni_count += 1,
-                ecology::Diet::Decomposer => deco_count += 1,
-            }
+        // Phase 9, P9.1 (performance foundation): these population-wide
+        // counts were previously recomputed via 6 full-population ECS
+        // queries every single frame, unconditionally — the status bar has
+        // no visibility gate (unlike Metrics, which only pays this cost
+        // while its panel is open), so this ran regardless of whether the
+        // simulation was even paused. A status strip refreshing every
+        // `COUNT_REFRESH_INTERVAL` frames (~0.25s at 60Hz) is visually
+        // indistinguishable from every-frame updates for slowly-changing
+        // population counts, while cutting this cost to a fraction of its
+        // former total. Cached in a `thread_local!`, matching the existing
+        // `SYS`/memory-probe pattern immediately below in this same file.
+        const COUNT_REFRESH_INTERVAL: u32 = 15;
+        struct CachedCounts {
+            frame: u32,
+            food: usize,
+            mineral: usize,
+            corpse: usize,
+            prod: usize,
+            herb: usize,
+            carn: usize,
+            omni: usize,
+            deco: usize,
+            hunting: usize,
+            diseased: usize,
         }
+        thread_local! {
+            static COUNTS: std::cell::RefCell<CachedCounts> = const {
+                std::cell::RefCell::new(CachedCounts {
+                    frame: 0, food: 0, mineral: 0, corpse: 0,
+                    prod: 0, herb: 0, carn: 0, omni: 0, deco: 0,
+                    hunting: 0, diseased: 0,
+                })
+            };
+        }
+        let (
+            food_count,
+            mineral_count,
+            corpse_count,
+            prod_count,
+            herb_count,
+            carn_count,
+            omni_count,
+            deco_count,
+            hunting_count,
+            diseased_count,
+        ) = COUNTS.with(|cell| {
+            let mut c = cell.borrow_mut();
+            c.frame = c.frame.wrapping_add(1);
+            if c.frame % COUNT_REFRESH_INTERVAL == 0 {
+                c.food = world.ecs.query::<&ecology::FoodPellet>().iter(&world.ecs).count();
+                c.mineral = world.ecs.query::<&ecology::MineralPellet>().iter(&world.ecs).count();
+                c.corpse = world.ecs.query::<&ecology::Corpse>().iter(&world.ecs).count();
+
+                let (mut prod, mut herb, mut carn, mut omni, mut deco) = (0usize, 0usize, 0usize, 0usize, 0usize);
+                for diet in world.ecs.query::<&ecology::Diet>().iter(&world.ecs) {
+                    match diet {
+                        ecology::Diet::Producer => prod += 1,
+                        ecology::Diet::Herbivore => herb += 1,
+                        ecology::Diet::Carnivore => carn += 1,
+                        ecology::Diet::Omnivore => omni += 1,
+                        ecology::Diet::Decomposer => deco += 1,
+                    }
+                }
+                (c.prod, c.herb, c.carn, c.omni, c.deco) = (prod, herb, carn, omni, deco);
+
+                c.hunting = world
+                    .ecs
+                    .query::<&behavior::BehaviorState>()
+                    .iter(&world.ecs)
+                    .filter(|s| **s == behavior::BehaviorState::Hunting)
+                    .count();
+                c.diseased = world
+                    .ecs
+                    .query::<&ecology::disease::Infection>()
+                    .iter(&world.ecs)
+                    .filter(|i| i.state == ecology::disease::InfectionState::Infectious)
+                    .count();
+            }
+            (
+                c.food, c.mineral, c.corpse, c.prod, c.herb, c.carn, c.omni, c.deco,
+                c.hunting, c.diseased,
+            )
+        });
 
         tight_row(ui, |ui| {
             ui.label(format!("{} P:", egui_remixicon::icons::TEAM_LINE));
@@ -176,19 +241,8 @@ pub fn status_bar_ui(
         // Reuses the per-organism `BehaviorState`/`Infection` data SX-1b/1d
         // already added (population-wide behavior glyphs, disease tint) —
         // this is the same data aggregated into a status-bar count instead
-        // of a second query mechanism.
-        let hunting_count = world
-            .ecs
-            .query::<&behavior::BehaviorState>()
-            .iter(&world.ecs)
-            .filter(|s| **s == behavior::BehaviorState::Hunting)
-            .count();
-        let diseased_count = world
-            .ecs
-            .query::<&ecology::disease::Infection>()
-            .iter(&world.ecs)
-            .filter(|i| i.state == ecology::disease::InfectionState::Infectious)
-            .count();
+        // of a second query mechanism. `hunting_count`/`diseased_count`
+        // computed above, alongside the other Zone-2 counts (P9.1).
         tight_row(ui, |ui| {
             ui.label(format!(
                 "{} Hunting: ",

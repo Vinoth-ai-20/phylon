@@ -21,6 +21,16 @@ Two controllers write into `Camera3d` — they hold input state and interaction 
 
 Both are plain input-to-state translators: given mouse/keyboard deltas, they update `Camera3d`'s `position`/`orientation` and nothing else.
 
+## Input — one canonical layer (ADR-P9-01)
+
+Before Phase 9, two independent code paths each interpreted raw platform input and mutated the camera directly: an egui-routed path (mouse drag/scroll) and a separate winit-routed path (raw WASD/arrow keys), with zoom specifically triggered from three different call sites. This is now consolidated into `ui::viewport_input`:
+
+- **`ViewportInput`** — a plain, platform-agnostic struct describing "what interaction happened this frame" (pan/rotate/zoom deltas, key-driven pan/fly-move axes, whether to detach camera-follow). It knows nothing about egui or winit.
+- **Adapters** translate a raw input source into a `ViewportInput`: `ViewportInput::from_canvas_interaction` for the egui-routed mouse path; `app::events`'s keyboard handler builds one inline for the winit-routed WASD/arrow path. A future 3D-mouse, VR, touch, or synthetic/replay-driven input source is another adapter, not a third parallel camera-mutation path.
+- **`apply_to_camera`** is the single `ViewportController` — the only function anywhere that reads a `ViewportInput` and mutates `OrbitController`/`FlyController`. Every adapter converges here.
+
+Discrete, one-shot camera commands (Home/reset, menu-driven zoom-in/out, frame-selected, toggle camera mode) stay on `ui::types::MenuAction` — they were never the duplicated-gesture problem this layer fixes, since each already had exactly one dispatch path. `ViewportInput` is specifically for continuous, per-frame interaction (orbit/pan/zoom/fly).
+
 ## Picking and selection
 
 Picking is ray-based: `screen_to_ray` produces a world-space ray from a screen-space click, tested against organism capsule geometry (`rendering::picking::ray_capsule_hit`). Box-select and lasso-select build on the same `world_to_screen` projection, testing organism head positions against a screen-space rectangle or polygon.
