@@ -69,3 +69,6 @@ bincode.workspace = true
 image.workspace = true
 serde = { workspace = true }
 ron = { workspace = true }
+
+[dev-dependencies]
+rand_chacha = { workspace = true }

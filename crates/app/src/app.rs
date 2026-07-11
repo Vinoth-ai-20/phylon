@@ -1353,16 +1353,34 @@ pub(crate) fn seed_ecosystem(
         common::EntityId(0),
         brain_template.clone(),
         genetics::Cppn::new(),
-        // Unmutated decode: [Tail, Torso, Torso, Head, Torso, Torso, Torso,
-        // Tail, Tail, Tail], effector active 10/10.
+        // Phase 9, Goal 2 root-cause audit (re-tuned; see
+        // `phase9_movement_root_cause_diagnostic` below): the previous
+        // weights here decoded [Tail, Torso, Torso, Head, Torso, Torso,
+        // Torso, Tail, Tail, Tail] — the "effector active 10/10" this
+        // comment used to claim only ever measured raw
+        // `actuation_amplitude != 0` at every position (every position
+        // always produces *some* amplitude value, per
+        // `develop_at_position`), never whether that position actually
+        // decoded as `SegmentType::Muscle` (the only type that becomes an
+        // `Elastic`, actuatable spring — see `develop.rs`/
+        // `compile_segment`). The real bug this decode had: `Tail` at
+        // position 0 (i.e. `growth_system`'s first real segment, position
+        // 1, was still `Torso`, harmless) but every position had
+        // `apoptosis = true` — DEF-002's germ-line-protection pruning fired
+        // everywhere, so a real fish organism grew *zero* body past its
+        // head, regardless of Hox/Muscle content. Re-tuned unmutated
+        // decode (positions 1-9): [Head, Head, Muscle, Head, Head, Head,
+        // Head, Head, Head], none apoptotic, 1 real actuatable Muscle
+        // segment; ~65% of individuals retain >=1 actuatable effector after
+        // `spawn_pop`'s 10-round mutation pass at the corrected 0.1 rate.
         seed_regulatory_cppn(RegulatorySeedWeights {
-            output_bias: -4.40,
-            hox_weight: 6.21,
-            differentiation_weight: 6.27,
-            effector_weight: 6.99,
-            pigment_weight: 0.88,
-            sine_coarse_weight: 0.34,
-            sine_fine_weight: 1.95,
+            output_bias: -6.3154593,
+            hox_weight: 7.676084,
+            differentiation_weight: 3.2809398,
+            effector_weight: 6.233916,
+            pigment_weight: 1.3872341,
+            sine_coarse_weight: 0.5254265,
+            sine_fine_weight: 2.490907,
         }),
     );
 
@@ -1371,17 +1389,25 @@ pub(crate) fn seed_ecosystem(
         common::EntityId(0),
         brain_template.clone(),
         genetics::Cppn::new(),
-        // Unmutated decode: [Ganglion, Ganglion, Muscle, Muscle, Muscle,
-        // Ganglion, Ganglion, Ganglion, Ganglion, Germinal], effector active
-        // 10/10.
+        // Phase 9, Goal 2 root-cause audit (re-tuned; see
+        // `phase9_movement_root_cause_diagnostic` below): the previous
+        // weights here had the exact same DEF-002 apoptosis defect as
+        // `fish_genome` above — every position except the two `Germinal`
+        // ends had `apoptosis = true`, so a real branchy organism also grew
+        // zero body past its head despite the Hox table showing 2 Muscle
+        // positions. Re-tuned unmutated decode (positions 1-9): [Ganglion,
+        // Germinal, Germinal, Germinal, Germinal, Germinal, Muscle, Muscle,
+        // Muscle], none apoptotic, 3 real actuatable Muscle segments; ~51%
+        // of individuals retain >=1 actuatable effector after `spawn_pop`'s
+        // 10-round mutation pass at the corrected 0.1 rate.
         seed_regulatory_cppn(RegulatorySeedWeights {
-            output_bias: -3.08,
-            hox_weight: 9.33,
-            differentiation_weight: 2.01,
-            effector_weight: 5.96,
-            pigment_weight: 2.10,
-            sine_coarse_weight: 2.05,
-            sine_fine_weight: 0.57,
+            output_bias: -4.885546,
+            hox_weight: 11.249819,
+            differentiation_weight: 2.586886,
+            effector_weight: 4.5433483,
+            pigment_weight: 2.1518261,
+            sine_coarse_weight: 2.6428568,
+            sine_fine_weight: 1.3519208,
         }),
     );
 
@@ -1447,11 +1473,30 @@ pub(crate) fn seed_ecosystem(
             let px = rng.gen_range(-1000.0..1000.0);
             let py = rng.gen_range(-1000.0..1000.0);
 
-            // Give each individual a unique randomized brain if they are not producers
+            // Give each individual a unique randomized brain if they are not
+            // producers. `mutation_rate` here must stay in line with
+            // `reproduction`'s own per-birth mutation calls (0.1-0.2 — see
+            // `crates/reproduction/src/lib.rs`'s `child_genome.mutate(...)`
+            // call sites), not a guaranteed full-strength pass: measured
+            // directly (Phase 9 Goal 2 root-cause audit — see
+            // `phase9_movement_root_cause_diagnostic` below), the previous
+            // `mutate(1.0, ...)` x10 — an outer gate of 1.0 means every one
+            // of the 10 rounds mutates at full strength, not 10 *chances* at
+            // a milder mutation — collapsed the seed regulatory CPPNs'
+            // actuatable-Muscle-segment rate from 100% down to ~11-23% for
+            // 3 of 5 starter presets (worm/omnivore/decomposer), which is
+            // this session's own real headless `PHYLON_MOTION_DIAGNOSTIC=1`
+            // observation of 0 actuatable effectors across every sampled
+            // organism, compounded further by per-generation reproduction
+            // mutating the same already-degraded lineages again. At
+            // `mutation_rate = 0.1` (matching reproduction's own asexual
+            // rate), the same 10-round loop still gives every individual a
+            // genuinely unique brain/body-plan while preserving a healthy
+            // majority (~60-80%) actuatable-effector rate.
             let mut ind_genome = genome.clone();
             if diet != ecology::Diet::Producer {
                 for _ in 0..10 {
-                    ind_genome.mutate(1.0, rng, tracker);
+                    ind_genome.mutate(0.1, rng, tracker);
                 }
             }
 
@@ -1516,5 +1561,187 @@ pub(crate) fn seed_ecosystem(
             position: common::Vec3::new(px, py, 0.0),
             energy_value: 50.0,
         });
+    }
+}
+
+#[cfg(test)]
+mod starter_species_locomotion_viability {
+    //! Regression coverage for Phase 9 Goal 2's root-cause finding: every
+    //! non-Producer starter species must actually be capable of
+    //! muscle-driven locomotion, both unmutated and after `spawn_pop`'s
+    //! founder-diversity mutation pass. Two independent, measured defects
+    //! were found and fixed here (not guessed — see each call site's own
+    //! comment in `seed_ecosystem` for the full measurement):
+    //!
+    //! 1. `spawn_pop` mutated every founder genome 10 times at
+    //!    `mutation_rate = 1.0` (a guaranteed full-strength pass each
+    //!    round) before ever spawning it — 100x more aggressive than
+    //!    `reproduction`'s own per-birth convention (0.1-0.2, one call).
+    //!    Measured effect: collapsed the actuatable-effector rate from
+    //!    100% to single digits for otherwise-healthy presets. Fixed by
+    //!    matching reproduction's own 0.1 rate.
+    //! 2. `fish_genome`/`branchy_genome`'s regulatory seed weights caused
+    //!    DEF-002's germ-line-protection apoptosis check to fire on nearly
+    //!    every body position, pruning the entire body except the head —
+    //!    these two starter species grew no muscle-bearing body at all,
+    //!    independent of any mutation. Fixed by re-tuning their weights
+    //!    (search anchored near the originals, gated on: apoptosis-survives
+    //!    for >=4 positions AND >=1 real actuatable `Muscle` segment).
+    use super::*;
+    use rand::SeedableRng;
+
+    fn preset(name: &str) -> RegulatorySeedWeights {
+        match name {
+            "worm" => RegulatorySeedWeights {
+                output_bias: -4.45,
+                hox_weight: 8.97,
+                differentiation_weight: 7.07,
+                effector_weight: 3.12,
+                pigment_weight: 1.22,
+                sine_coarse_weight: 2.15,
+                sine_fine_weight: 1.76,
+            },
+            "fish" => RegulatorySeedWeights {
+                output_bias: -6.3154593,
+                hox_weight: 7.676084,
+                differentiation_weight: 3.2809398,
+                effector_weight: 6.233916,
+                pigment_weight: 1.3872341,
+                sine_coarse_weight: 0.5254265,
+                sine_fine_weight: 2.490907,
+            },
+            "branchy" => RegulatorySeedWeights {
+                output_bias: -4.885546,
+                hox_weight: 11.249819,
+                differentiation_weight: 2.586886,
+                effector_weight: 4.5433483,
+                pigment_weight: 2.1518261,
+                sine_coarse_weight: 2.6428568,
+                sine_fine_weight: 1.3519208,
+            },
+            "omnivore" => RegulatorySeedWeights {
+                output_bias: -4.13,
+                hox_weight: 8.84,
+                differentiation_weight: 2.10,
+                effector_weight: 2.96,
+                pigment_weight: 2.22,
+                sine_coarse_weight: 2.22,
+                sine_fine_weight: 2.10,
+            },
+            "decomposer" => RegulatorySeedWeights {
+                output_bias: -3.05,
+                hox_weight: 6.90,
+                differentiation_weight: 3.90,
+                effector_weight: 0.69,
+                pigment_weight: 0.40,
+                sine_coarse_weight: 0.54,
+                sine_fine_weight: 1.09,
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    /// Measures the fraction of organisms with >=1 actuatable (`Muscle`,
+    /// nonzero amplitude) segment, for a given preset / mutation-round
+    /// count / `total_segments`, mirroring `growth_system`'s real halting
+    /// rule (position 0 is the pre-existing head; growth stops at the
+    /// first decoded `Tail`; apoptotic positions are skipped).
+    fn measure(
+        preset_name: &str,
+        mutate_rounds: usize,
+        total_segments: usize,
+        trials: u64,
+    ) -> (usize, usize) {
+        measure_with_rate(preset_name, mutate_rounds, 1.0, total_segments, trials)
+    }
+
+    fn measure_with_rate(
+        preset_name: &str,
+        mutate_rounds: usize,
+        mutation_rate: f32,
+        total_segments: usize,
+        trials: u64,
+    ) -> (usize, usize) {
+        let mut tracker = genetics::GlobalInnovationTracker::default();
+        let seed = seed_regulatory_cppn(preset(preset_name));
+
+        let mut with_muscle = 0usize;
+        let mut with_effector = 0usize;
+
+        for trial in 0..trials {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(trial);
+            let mut genome = genetics::Genome::seed(
+                genetics::GenomeId(trial),
+                common::EntityId(0),
+                genetics::Cppn::new(),
+                genetics::Cppn::new(),
+                seed.clone(),
+            );
+            for _ in 0..mutate_rounds {
+                genome.mutate(mutation_rate, &mut rng, &mut tracker);
+            }
+
+            let mut any_effector = false;
+            let mut any_muscle = false;
+            for pos in 1..total_segments {
+                let out = genetics::develop_at_position(
+                    &genome.expressed_regulatory_cppn(),
+                    pos,
+                    total_segments,
+                );
+                if out.apoptosis {
+                    continue;
+                }
+                if out.segment_type == genetics::SegmentType::Muscle {
+                    any_muscle = true;
+                    if out.actuation_amplitude.abs() > 0.01 {
+                        any_effector = true;
+                    }
+                }
+                if out.segment_type == genetics::SegmentType::Tail {
+                    break;
+                }
+            }
+            if any_muscle {
+                with_muscle += 1;
+            }
+            if any_effector {
+                with_effector += 1;
+            }
+        }
+
+        (with_muscle, with_effector)
+    }
+
+    #[test]
+    fn every_non_producer_preset_has_a_reachable_actuatable_effector_unmutated() {
+        for preset_name in ["worm", "fish", "branchy", "omnivore", "decomposer"] {
+            let (muscle, effector) = measure(preset_name, 0, 10, 1);
+            assert_eq!(
+                (muscle, effector),
+                (1, 1),
+                "preset {preset_name} must decode >=1 reachable, actuatable Muscle segment \
+                 unmutated (DEF-002 apoptosis must not prune the entire body)"
+            );
+        }
+    }
+
+    #[test]
+    fn founder_population_retains_a_healthy_effector_majority_after_spawn_pop_mutation() {
+        // Mirrors `spawn_pop`'s exact mutation dosage (10 rounds at
+        // `mutation_rate = 0.1`) — regression coverage for the measured
+        // finding that `mutation_rate = 1.0` (the previous value) collapsed
+        // this to single digits.
+        let trials = 300u64;
+        for preset_name in ["worm", "fish", "branchy", "omnivore", "decomposer"] {
+            let (_, effector) =
+                measure_with_rate(preset_name, 10, 0.1, organisms::MAX_SEGMENTS, trials);
+            let rate = effector as f64 / trials as f64;
+            assert!(
+                rate > 0.3,
+                "preset {preset_name}: post-mutation actuatable-effector rate {rate:.2} \
+                 is too low (expected >0.3) at spawn_pop's real mutation dosage"
+            );
+        }
     }
 }
