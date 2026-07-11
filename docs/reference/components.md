@@ -12,8 +12,8 @@ Every living organism in Phylon is an Entity composed of multiple distinct Compo
 
 The fundamental physical manifestation of an organism.
 
-- Tracks `position`, `velocity`, `mass`, and `segment_type`.
-- Exists in the spatial grid for collision detection and vision querying.
+- Tracks `position`/`velocity` (both `common::Vec3` — the simulation is 3D), `mass`, and `segment_type`.
+- Exists in the spatial index (`spatial::Octree` on the CPU side, a GPU spatial hash on the physics-compute side) for collision detection and vision querying.
 - Organisms are often composed of a primary "Head" node connected to child "Body" nodes via springs.
 
 ### 2. `metabolism::Metabolism` & `metabolism::ChemicalEconomy`
@@ -45,17 +45,18 @@ The neural controller of the organism.
 
 ### 6. `genetics::Genome`
 
-The inheritable blueprint of the organism.
+The inheritable blueprint of the organism — exactly three CPPNs, no separate body-plan-sequence type:
 
-- Contains the `HoxSequence` governing the physical segment layout (L-System grammar).
-- Contains the `CPPN` neural network governing the synaptic wiring of the `Brain`.
+- `regulatory_cppn` — decoded per body position into a segment type, branching decision, actuation, and pigment (see [Genetics & Neurobiology](../explanation/genetics_and_neurobiology.md)). This is what actually determines body-plan layout today.
+- `brain_cppn` — governs the synaptic wiring of the `Brain`.
+- `morph_cppn` — crossed/mutated/part of the speciation-distance calculation, but not read at growth time (disclosed technical debt).
 - Passed down (and mutated) during events spawned by the `reproduction_system`.
 
 ### 7. `sensing::SensoryState`
 
 The organism's view of the world.
 
-- A flat float vector containing 9 normalized inputs: Olfaction, Signal Field, Hazard Field, Energy, Age, Vision (Left, Center, Right), and the Internal Pacemaker (CPG) clock.
+- A flat float vector of **15 normalized inputs**: 3 scalar channels (Olfaction, Energy/ATP, Age) plus a 9-value vision representation (a binned azimuth × elevation cone around the organism's 3D forward/dorsal frame).
 - Populated by the `sensing_system` and fed directly into the `Brain` component each tick.
 
 ## Environmental Resources

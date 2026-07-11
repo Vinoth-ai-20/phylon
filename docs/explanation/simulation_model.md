@@ -17,21 +17,23 @@ Where:
 
 Visually, the `app` rendering layer directly interpolates the `wgpu` ClearColor of the background based on $I_{sun}(t)$, smoothly shifting the environment from deep navy blue to dark twilight.
 
-## Symplectic Euler Physics
+## Symplectic Euler Physics (3D)
 
-The rigid-body mechanics of organisms are governed by a Symplectic Euler integrator (`crates/physics`).
+The rigid-body mechanics of organisms are governed by a Symplectic Euler integrator (`crates/physics`), operating in 3D (`common::Vec3` positions/velocities).
 
-- Each organism is constructed of **Particle Nodes** (mass points) connected by **Springs**.
-- Muscles are represented by actuated springs whose `base_length` is dynamically altered by the organism's neural output.
-- The physics engine runs entirely on the GPU (`crates/gpu/src/physics_pipeline.rs`) to ensure determinism and handle tens of thousands of constraints simultaneously.
+- Each organism is constructed of **Particle Nodes** (mass points, positioned in 3D) connected by **Springs**.
+- A spring's `constraint_type` is `Rigid` (structural bone), `Passive` (inert), or `Elastic` — only `Elastic` springs actuate, and only a body position that decoded as a `Muscle` segment (see [Genetics & Neurobiology](genetics_and_neurobiology.md)) ever becomes one.
+- Bilateral fin/limb pairs are placed using a body-fixed `forward`/`dorsal` orientation frame (`bilateral_fin_direction = dorsal × forward`), replacing an earlier 2D-only perpendicular-vector trick.
+- The physics engine runs entirely on the GPU (`crates/gpu/src/physics_pipeline.rs`), using a spatial-hash broad-phase (not a dense grid — a dense 3D grid at the same resolution as the original 2D grid would cost roughly 128× the memory) for organism-vs-organism steric collision. A CPU implementation of the same integrator exists and is used for unit tests, headless CI, and deterministic-behavior validation — the GPU path is the one the live app always uses.
 
 ## Chemical Diffusion
 
-The environment contains continuous chemical layers (Food, Pheromones, Hazards).
+The environment contains five continuous chemical layers, diffused as 2D world-space planes (deliberately not volumetric — see [Architecture](architecture.md) for why): **Pheromones**, **Energy**, **O2**, **CO2**, and **Morphogen** (the inter-organism developmental-signaling layer — see [Genetics & Neurobiology](genetics_and_neurobiology.md)).
 
 - Diffusion is solved discretely across a uniform spatial grid via WGSL compute shaders.
-- A discrete Laplacian operator spreads values between adjacent cells each tick, mathematically simulating the physical spread of scent molecules in a fluid medium.
+- A discrete Laplacian operator spreads values between adjacent cells each tick, mathematically simulating the physical spread of a substance through a fluid medium.
 - Evaporation occurs at a constant decay rate to prevent the grid values from saturating to infinity over long periods.
+- A second, independently-instanced diffusion field drives environmental hazards.
 
 ## Data & Analytics
 

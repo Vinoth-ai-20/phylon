@@ -287,7 +287,7 @@ Each entry: simulation state → biological meaning → viewport → inspector �
 |---|---|---|---|
 | Behavior | Glyph (absent = Idle) | Primary | Always |
 | Health | Opacity + ring color | Primary | Always |
-| Disease (organism-wide) | Dashed ring, purple | Primary | Always |
+| Disease (organism-wide) | Offset filled-disk badge, Decomposer purple | Primary | Always |
 | Predation | `TimedEffects` text | Secondary | Momentary |
 | Reproduction | `TimedEffects` text + ring | Secondary | Momentary |
 | Development/Growth | Scale-in animation | Secondary | Momentary |

@@ -1,5 +1,7 @@
 # Phase 5 — Simulation Experience (SX) Redesign: Audit & Roadmap
 
+> **Archived historical record.** This document describes the project as of when it was written and is retained only for provenance and source-code cross-references — it is not maintained going forward. For current documentation, see [docs/](../../index.md); for durable decisions and knowledge extracted from this document, see [Architecture Decisions](../decisions.md) and [Project History](../history.md).
+
 ## 0. Framing
 
 Phase 4 built real biology (per-segment physiology, transport, endocrine, immune, life stages) and a real design system (tokens, reusable widgets, 14 dockable panels). This document is the requested audit-first deliverable for turning that engineering into a legible, alive-feeling **Simulation Experience** — per the brief: *"the problem is no longer typography, spacing or colors. The problem is communication."*

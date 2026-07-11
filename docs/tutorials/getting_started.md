@@ -30,16 +30,22 @@ cargo run -p app --release
 
 ### What You Will See
 
-Upon launch, Phylon will spawn a window with a 2D environment representing an ecosystem.
+Upon launch, Phylon spawns a window with a real 3D viewport representing an ecosystem, rendered with mesh-based organisms and physically-based shading.
 
-- **Producers (Green)**: Static entities that form the base of the food chain.
-- **Herbivores (White/Blue)**: Swarming organisms that actively seek out and consume producers.
-- **Carnivores (Red)**: Apex predators that hunt herbivores.
-- **Decomposers (Grey)**: Scavengers that break down corpses to return nutrients to the environment.
+- **Producers**: Static entities that form the base of the food chain.
+- **Herbivores**: Swarming organisms that actively seek out and consume producers.
+- **Carnivores**: Apex predators that hunt herbivores.
+- **Decomposers**: Scavengers that break down corpses to return nutrients to the environment.
+
+Organism skin color is emergent (decoded per-segment from the genome, not a fixed per-diet palette), so don't expect every individual of a given diet to look identical — a species' *starting* population is seeded toward a characteristic look, but it can drift over generations.
 
 At spawn, the organisms' brains (CTRNNs) are randomized. You are observing true, unassisted Darwinian evolution. Over time, organisms that randomly possess viable swimming and hunting patterns will survive, reproduce, and pass those genetic traits to their offspring.
 
-## Step 3: Navigating the UI
+## Step 3: Navigating the Viewport
+
+The viewport uses a single 3D camera you orbit, pan, and zoom — see [Controls](../reference/controls.md) for the full keybinding list, and [Camera & Viewport](../explanation/camera_and_viewport.md) for how it works. Click an organism to select it; `F` focuses the camera on the current selection; `Home` frames the whole scene.
+
+## Step 4: Navigating the UI
 
 The application shell provides several interactive panels to inspect the simulation in real-time.
 
@@ -47,8 +53,8 @@ The application shell provides several interactive panels to inspect the simulat
 2. **Left Genetics Panel**: Displays the phylogenetic tree, tracking lineages and speciation events.
 3. **Right Inspector Panel**: Click on any organism in the viewport to open its inspector. Here you can view its:
    - **Metabolic State**: Current energy, age, and diet.
-   - **Neural Output**: Live visualization of its CTRNN node activations, complete with semantic labels (Olfaction, Vision Left/Right, Energy, etc.) for easy behavioral analysis.
-   - **Genetic Blueprint**: The organism's Hox Sequence (body plan) and CPPN (brain wiring).
+   - **Neural Output**: Live visualization of its CTRNN node activations, complete with semantic labels (Olfaction, Vision, Energy, etc.) for easy behavioral analysis.
+   - **Genetic Blueprint**: The organism's decoded body plan and CPPN (brain wiring) — see [Genetics & Neurobiology](../explanation/genetics_and_neurobiology.md).
    - **Go to Head**: A quick button in the physics node section that traverses the limb structure to instantly refocus the inspector on the organism's main head.
 
 4. **Settings Panel**: Offers visual adjustment sliders for `Skin Thickness`, `Node Radius`, and `Bone Thickness` to help declutter dense swarms.

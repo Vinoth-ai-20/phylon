@@ -1,37 +1,40 @@
 # Architecture & Concurrency
 
-Phylon's architecture is designed around three core principles: **High-Performance Data-Oriented Design**, **Strict Boundary Encapsulation**, and **Bit-Exact Reproducibility**.
+Phylon's architecture is built around three core principles: **high-performance data-oriented design**, **strict boundary encapsulation**, and **as much determinism as is actually verified** (see [Determinism](determinism.md) for the precise, honest scope of that guarantee).
 
-## The Custom Deterministic Tick Scheduler
+## The Tick Loop
 
-Many Rust game engines (like Bevy) struggle with cross-platform reproducibility because of floating-point drift over standard real-time clocks (e.g., `bevy::time::Time`).
+Phylon decouples simulation logic entirely from wall-clock rendering. The simulation advances in discrete `u64` ticks, driven by a hand-written per-tick function (`app::simulation::update_simulation`) that calls every simulation system directly, in a fixed order, once per tick — not by a generic scheduler abstraction.
 
-To bypass this, Phylon entirely decouples the simulation logic from the visual rendering pipeline. Instead of relying on real-time deltas, Phylon uses a **Custom Deterministic Tick Scheduler**.
+A `scheduler` crate does exist in the workspace (a `bevy_ecs`-based scheduling abstraction, with its own tests and a benchmark), but **it is not used by the running application** — it was removed from the live app's tick-driving path early in the project's history and is kept only as a benchmark fixture and integration-test target. Don't describe the app as "using a scheduler"; describe it as a fixed-order tick function.
 
-- The simulation advances in discrete `u64` ticks, completely independent of the frame rate.
-- Operations that require time integration (like physics and metabolic burn) use fixed constants rather than wall-clock `dt`.
-- This guarantees that tick $N$ on a Windows machine will have the exact same mathematical state as tick $N$ on a headless Linux cluster.
+- Operations that require time integration (physics, metabolic burn) use a fixed `dt` rather than a wall-clock delta.
+- Structural ECS changes (spawning/despawning) are deferred via `bevy_ecs::system::Commands` during the parallel phase, to avoid lock contention across `rayon` worker threads.
 
 ## The Entity-Component-System (ECS)
 
-At the heart of the CPU logic is a lock-free, multithreaded ECS leveraging custom integration pathways heavily inspired by `hecs` and `bevy_ecs`.
+Phylon's ECS layer is `bevy_ecs` (specifically `bevy_ecs::world::World`, used directly — not the rest of the Bevy engine, and not `hecs`; the workspace has never depended on `hecs`).
 
-- **Entities**: Organisms, Mineral Pellets, Food Pellets, and Corpses.
-- **Components**: Flat, contiguous arrays of data (e.g., `ParticleNode`, `SensoryState`, `Brain`, `Metabolism`).
-- **Systems**: Isolated logic blocks that iterate over specific Component signatures, advancing the state by one discrete tick.
+- **Entities**: organisms (each a small graph of particle nodes — head plus body segments), mineral pellets, food pellets, corpses.
+- **Components**: flat, contiguous arrays of data (`ParticleNode`, `SensoryState`, `Brain`, `Metabolism`, …).
+- **Systems**: isolated logic blocks iterating specific component signatures, advancing state by one tick.
 
-This architecture ensures high CPU cache coherency and allows heavy processing tasks (like the `sensing_system` and `reproduction_system`) to scale linearly across CPU cores.
+This gives high CPU cache coherency and lets heavy per-organism work (sensing, reproduction, metabolism) scale linearly across cores via `rayon`.
 
 ## The Crate Graph
 
-Phylon is divided into 30 independent Rust crates forming a strict **Directed Acyclic Graph (DAG)**. This prevents circular dependencies, drastically improves incremental compilation times, and enforces strong domain boundaries.
+Phylon is divided into 30 independent Rust crates forming a strict Directed Acyclic Graph — see [Crate Dependency Graph](../reference/crate_graph.md) for the full, level-by-level breakdown. At a glance:
 
-- **Core Logic**: `genetics`, `behavior`, `metabolism`, `sensing`, `ecology`
-- **Engine**: `physics`, `diffusion`, `gpu`
-- **Application**: `app` (composition root), `ui`, `rendering`
+- **Core simulation primitives**: `genetics` (CPPNs, regulatory-network body-plan decode), `brain` (CTRNN), `metabolism`, `sensing`, `ecology`, `physics`, `diffusion`.
+- **3D engine**: `spatial` (uniform grid + `Octree`), `gpu` (compute-only — physics integration and chemical diffusion, zero rendering), `rendering` (mesh-based organism rendering, GPU-driven field/clip-plane overlays), `ui` (the `Camera3d`-driven viewport and every egui panel).
+- **Application**: `app` — the composition root, the only crate permitted to depend on everything.
+
+## 3D Simulation Space
+
+Organism and physics state live in 3D (`common::Vec3` positions, a body-fixed `forward`/`dorsal` orientation frame replacing an earlier 2D scalar heading). Chemical diffusion fields remain deliberately 2D (a bounded set of world-space planes, not a volumetric texture) — this was a measured tradeoff, not an oversight: a volumetric diffusion field would cost roughly two orders of magnitude more GPU memory/bandwidth for a benefit that hasn't been demonstrated as necessary. See [Camera & Viewport](camera_and_viewport.md) for the 3D camera and rendering pipeline this space is viewed and interacted through.
 
 ## Concurrency Model
 
-1. **CPU Simulation Phase**: `rayon` parallelizes organism behaviors. During this phase, structural changes to the ECS (like spawning or despawning entities) are deferred using `bevy_ecs::system::Commands` to prevent lock contention across threads.
-2. **GPU Synchronization Phase**: All biological data is serialized into flat buffer arrays and dispatched to the GPU (Vulkan/Metal/DX12) as WGSL compute passes. The GPU solves the heavy matrix math for the physics integration and Laplacian chemical diffusion.
-3. **Rendering Phase**: The application shell reads the updated states and pushes instanced `wgpu` meshes to the screen without holding locks on the core simulation state.
+1. **CPU simulation phase**: `rayon` parallelizes per-organism work (sensing, behavior evaluation prep, metabolism); structural ECS mutations are deferred via `Commands`.
+2. **GPU synchronization phase**: physics (particle/spring integration, spatial-hash broad-phase collision) and chemical diffusion are dispatched as WGSL compute passes on `wgpu` (Vulkan/Metal/DX12 backend, selected by the platform).
+3. **Rendering phase**: the application shell reads updated state and issues instanced `wgpu` draw calls (mesh-based capsule rendering with a physically-based shading model) without holding locks on simulation state.

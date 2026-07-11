@@ -1,12 +1,12 @@
 # How to Modify the Environment
 
-The Phylon environment consists of a continuous 2D spatial grid governed by strict physics and chemical diffusion rules. This guide explains how to alter the environmental constraints.
+Organisms and their physics are simulated in 3D; chemical diffusion fields remain 2D world-space planes (see [Architecture](../explanation/architecture.md)). This guide explains how to alter the environmental constraints.
 
 ## Modifying Chemical Hotspots
 
-The environment features chemical diffusion fields (e.g., pheromones, food scent, hazard markers). At the start of a simulation, "Hotspots" (Emitters) are spawned to seed these fields.
+The environment features chemical diffusion fields (pheromones, energy, O2, CO2, morphogen). At the start of a simulation, "Hotspots" (Emitters) are spawned to seed these fields.
 
-Open `crates/app/src/app.rs` and locate the "Spawn Resource Hotspots" section (around line 680).
+Open `crates/app/src/app.rs`'s `seed_ecosystem` function and locate the emitter-spawning loop (search for `diffusion::Emitter` — exact line numbers drift as the file grows, so search rather than trust a cached line number).
 
 ```rust
 // Spawn 20 random chemical emitters
@@ -25,13 +25,13 @@ You can change the loop count, adjust the bounding box (`-1000.0..1000.0`), or c
 
 ## Modifying Physics Global Constraints
 
-The physics engine relies on a symplectic Euler integrator with strict positional constraints. The global constraints (e.g., spatial bounds, grid sizes) are initialized in the `EnvironmentManager`.
+The physics engine relies on a symplectic Euler integrator with strict positional constraints. The global constraints (spatial bounds, world seed, toroidal wrapping) are initialized via `environment::EnvironmentManager`.
 
-Locate the physics initialization in `app.rs`:
+Locate the environment initialization in `app.rs` (search for `EnvironmentManager::new`):
 
 ```rust
-// Adjust the maximum spatial bounds of the simulation
-let env_manager = environment::EnvironmentManager::new(2000.0, 2000.0);
+// EnvironmentManager::new(seed, toroidal, width, height)
+let env_manager = environment::EnvironmentManager::new(rng_seed, false, 2000.0, 2000.0);
 world.insert_resource(env_manager);
 ```
 
@@ -46,6 +46,9 @@ To alter how "thick" or viscous the fluid medium feels to the organisms, you mus
 world.insert_resource(physics::PhysicsConfig {
     linear_damping: 0.95,  // Lower values = thicker fluid (more drag)
     angular_damping: 0.90, // Lower values = harder to rotate
-    gravity: common::Vec2::new(0.0, 0.0), // You can add gravity here!
+    gravity: 0.0,          // scalar, applied along -Z; 0.0 for a neutral-buoyancy medium
+    ..Default::default()
 });
 ```
+
+Check `crates/physics/src/lib.rs`'s `PhysicsConfig` definition for the full current field list before copying this snippet verbatim — fields get added over time and this example may not be exhaustive.

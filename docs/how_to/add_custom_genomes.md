@@ -2,45 +2,53 @@
 
 Phylon allows you to define and spawn completely custom species into the ecosystem. This guide explains how to create a new genetic blueprint and inject a population into the starting simulation state.
 
-## Step 1: Define the Hox Sequence (Morphology)
+There is no `HoxSequence`, `HoxGene`, or `Genome::new_hox_driven` in the current codebase — an earlier design was retired early in the project's history. The current mechanism is described below; see [Genetics & Neurobiology](../explanation/genetics_and_neurobiology.md) for the full decode model.
 
-The physical structure (morphology) of an organism is dictated by its `HoxSequence`. You can use predefined factories or define your own sequence of `HoxGene` segments (e.g., Head, Torso, Muscle, Tail).
+## Step 1: Define the Regulatory Seed
 
-Open `crates/app/src/app.rs` and locate the genome definitions (around line 604).
+A starter genome is an ordinary `genetics::Genome` whose `regulatory_cppn` was hand-tuned rather than evolved. `crates/app/src/app.rs`'s `seed_ecosystem` function is where every built-in starter species is defined — search it for `RegulatorySeedWeights` to find the existing examples to copy from.
 
 ```rust
-use genetics::{Genome, GenomeId, HoxSequence};
+use genetics::{Genome, GenomeId, Cppn};
 use common::EntityId;
 
-// Example: Create a new custom "Titan" worm with 6 torso segments
-let titan_genome = Genome::new_hox_driven(
-    GenomeId(10),       // Ensure this ID is unique!
-    EntityId(0),        // Origin entity (0 for root founders)
-    HoxSequence::worm(6, [0.153, 0.224, 0.110]), // Deep Forest Green (#27391C)
+// A starter genome is 3 CPPNs: brain, morph (currently unused at growth
+// time), and regulatory (drives body-plan decode).
+let titan_genome = Genome::seed(
+    GenomeId(10),               // must be unique
+    EntityId(0),                // origin entity, 0 for a founder
+    seed_brain_cppn(),          // shared brain-wiring seed, or your own
+    Cppn::new(),                // morph_cppn — currently inert, minimal is fine
+    seed_regulatory_cppn(RegulatorySeedWeights {
+        output_bias: -4.0,
+        hox_weight: 8.0,
+        differentiation_weight: 3.0,
+        effector_weight: 3.0,
+        pigment_weight: 1.0,
+        sine_coarse_weight: 2.0,
+        sine_fine_weight: 1.0,
+    }),
 );
 ```
 
-### Color Palette Mappings
+**Before trusting a new weight combination, measure it — don't assume it decodes a viable body.** The regulatory network's decode is genuinely sensitive to these weights: it's possible to produce a genome whose body apoptoses almost entirely, or one with zero actuatable muscle segments, while still compiling and running without error. At minimum, check across the position range your species will grow to:
 
-When defining custom genomes, it is recommended to use the standard simulation palette to visually separate ecological roles:
+```rust
+for pos in 1..organisms::MAX_SEGMENTS {
+    let out = genetics::develop_at_position(&regulatory_cppn, pos, organisms::MAX_SEGMENTS);
+    println!("{pos}: {:?} apoptosis={}", out.segment_type, out.apoptosis);
+}
+```
 
-- **Producers**: `[0.290, 0.871, 0.502]` (#4ADE80)
-- **Herbivores (Worm)**: `[0.937, 0.663, 0.522]` (#EFA985)
-- **Herbivores (Branchy)**: `[0.282, 0.792, 0.894]` (#48CAE4)
-- **Carnivores (Fish)**: `[0.941, 0.329, 0.329]` (#F05454)
-- **Omnivores**: `[0.702, 0.533, 0.922]` (#B388EB)
-- **Decomposers**: `[0.831, 0.639, 0.451]` (#D4A373)
+Confirm the resulting sequence has several non-apoptotic segments and at least one real `Muscle` segment with a nonzero `actuation_amplitude`. This exact kind of check caught a real bug in two of the built-in starter species — see [Architecture Decisions](../roadmap/decisions.md).
 
-> [!NOTE]
-> Because Phylon's `wgpu` backend renders to an sRGB surface, it expects color arrays to be in **Linear RGB** color space, not standard sRGB floats.
-> To convert a standard HEX color into a Linear RGB float for the genome array, use the following formula per channel:
-> `c_linear = ((c_srgb / 255.0 + 0.055) / 1.055) ** 2.4`
+### Color
+
+Pigment is **emergent** — decoded per-segment from three "Pigment"-role regulatory genes, never stored as RGB on the genome. There is no fixed color-literal table to copy from for a custom genome; if you want a starting population to lean toward a particular hue, that comes from how the Pigment genes' regulatory-network weights happen to respond across the body, the same way Hox/Effector weights shape body plan. `ecology::Diet::standard_color()` is the fallback/reference palette used for diet-based UI elements (charts, legends) — it is not what an individual organism's skin necessarily renders as.
 
 ## Step 2: Spawn the Population
 
-Once the base genome is defined, you need to spawn a population of individuals.
-
-In `crates/app/src/app.rs`, locate the "Spawn Populations" section. Use the `spawn_pop` helper closure. You must specify the base genome, the ecological diet, and the number of individuals to spawn.
+Once the base genome is defined, spawn a population with the `spawn_pop` helper closure (also in `seed_ecosystem`):
 
 ```rust
 // Spawn 50 Titans that act as Carnivores
@@ -48,11 +56,9 @@ spawn_pop(&titan_genome, ecology::Diet::Carnivore, 50);
 ```
 
 > [!NOTE]
-> The `spawn_pop` helper automatically mutates the neural wiring (CPPN) of the base genome for every individual it spawns (unless they are `Diet::Producer`). This ensures your new population is genetically diverse rather than a clone army.
+> `spawn_pop` mutates each non-`Producer` individual's genome a small number of times before spawning, to give the founder population genetic diversity rather than a clone army. The mutation rate used here matters: too aggressive, and it can degrade the same body-plan viability checked in Step 1 across the whole population. If you change it, re-measure the population's actuatable-effector rate directly (a real headless run), the same way the current rate was chosen.
 
 ## Step 3: Compile and Observe
-
-Run the simulation:
 
 ```bash
 cargo run -p app --release

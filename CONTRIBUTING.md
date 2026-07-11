@@ -2,18 +2,31 @@
 
 ## Building and Testing
 
-Phylon relies on `cargo` and requires a stable Rust toolchain.
+Phylon relies on `cargo` and requires a stable Rust toolchain (1.80+).
 Compile the workspace locally with optimizations enabled:
 
 ```bash
 cargo build --release
 ```
 
-Execute the test suite utilizing `cargo-nextest` for concurrent test execution (or standard `cargo test`):
+Run the test suite:
 
 ```bash
-cargo test
+cargo test --all
 ```
+
+`cargo-nextest` also works if you have it installed, for faster concurrent execution.
+
+Before opening a pull request, run the same checks CI enforces:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all
+cargo doc --no-deps --document-private-items
+```
+
+A pull request that doesn't pass all four cleanly will not merge.
 
 ## Branching Strategy
 
@@ -25,7 +38,11 @@ All pull requests must originate from feature branches using the following namin
 
 ## Architectural Enforcement
 
-All simulation decisions, library additions, and architectural patterns must strictly conform to the specifications defined in `PHYLON_PROMPT_v2.md`. Pull requests that violate the deterministic boundary conditions, introduce circular dependencies, or fail to adhere to the defined crate structure will be rejected.
+New crates and dependencies must preserve the workspace's acyclic dependency graph — see [`docs/reference/crate_graph.md`](docs/reference/crate_graph.md) for the current structure and boundaries. `app` is the only crate permitted to depend on everything else.
+
+Any change that affects simulation outcomes must go through `common::SimRng`, the project's single seeded source of randomness — never an unseeded RNG (e.g. `fastrand::` used directly). See [`docs/explanation/determinism.md`](docs/explanation/determinism.md) for exactly what determinism guarantee this project makes today, and what's still an open gap — don't claim a PR "preserves determinism" without checking that document first.
+
+For the architectural decisions a change might touch, see [`docs/roadmap/decisions.md`](docs/roadmap/decisions.md); for what's already known to be open/unfinished, see [`docs/roadmap/backlog.md`](docs/roadmap/backlog.md) before assuming something is a new bug.
 
 ## Licensing
 

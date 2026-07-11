@@ -1,0 +1,28 @@
+# Open Items & Backlog
+
+Disclosed, still-open gaps and unscheduled future work, gathered from across the project's development record plus this documentation pass's own verification against current code. Nothing here is secretly broken — every item was found and disclosed by the same "measure, don't assume" discipline this project applies throughout; this page exists so that discipline doesn't get lost once the phase document it came from is archived.
+
+## Correctness / measurement gaps
+
+- **GPU physics is not currently bit-exact across separate runs of the same seed.** Measured directly: per-organism floating-point values diverge within a few hundred ticks, cascading into different discrete outcomes (population, death counts) within roughly 600 ticks. Confirmed to pre-date the most recent round of changes at the time it was found. The specific mechanism (accumulation order? atomic operation order?) has not been isolated. See [Determinism](../explanation/determinism.md).
+- **No speciation occurred at all over a 15,000-tick validation run.** `species_count` stayed at 1 for the entire run despite ongoing reproduction and mutation. Needs its own investigation — likely candidates are the speciation-distance threshold relative to this run's mutation rates, or the compatibility-distance formula's weighting across the three genome CPPNs.
+- **Foraging success and predator/prey interaction were validated indirectly** (zero starvation deaths, healthy/rising average energy, continuously-rising predation-death counts over a long run) but never directly instrumented (no explicit "foraging attempt succeeded" or "kill event" counter independent of the death-cause tally). Hazard avoidance specifically has no direct evidence either way — zero environment/injury-caused deaths over a long run is consistent with either successful avoidance or hazards not spawning; this wasn't disambiguated.
+- **Regional brains are architecturally complete but functionally dormant.** No genome has ever been observed to decode a `Ganglion` segment in practice, so brain regions are uniformly `Central` — nothing exercises the region-aware wiring logic in a real population.
+- **Reaction-diffusion morphogens' inter-organism/environmental half has never been observed producing a meaningfully nonzero cross-organism signal in practice** — the plumbing is real and tested in isolation, but its population-level effect is uncharacterized.
+- **`GrowthState` (mid-growth organisms) is still not covered by save/load.** Saving and reloading a simulation while organisms are actively growing loses their in-progress growth state, even though the completed-organism physiology state this used to also be true of has since been fixed.
+- **A harmless double-despawn race exists** between predation/eating logic and death-processing when both target the same organism in the same tick (visible as a `B0003` warning in logs). Confirmed cosmetic — it's a duplicate no-op despawn command, not a crash or state-corruption bug — but not yet cleaned up.
+- **Long, unbounded runs show producer populations declining substantially** (observed dropping from several hundred to under 50 over 15,000 ticks in one validation run) while the rest of the ecosystem stabilizes — plausibly overgrazing pressure from herbivores outpacing producer regrowth. Not yet confirmed as a systemic issue vs. a fine (if precarious) equilibrium; worth watching in future long runs.
+
+## Scoped but unbuilt
+
+- **Epic W8 — Comparative Analysis Workspace.** Side-by-side organism/genome/GRN/neural/HOX/physiology/lineage/experiment comparison. Named, scoped, and explicitly cross-referenced by later work as still pending.
+- **Phase 6's later epics (research-platform maturity, sci-viz maturity, visual-verification tooling, performance benchmarking, a validation pass, and Epic E's own calibration workstream) were scoped in detail but never executed** — their content remains a legitimate, detailed proposal, not a description of anything currently built. Check before assuming any of this exists.
+- **A live, in-app Replay Timeline** (scrub/seek/bookmark against a running or replayed simulation) was found to require restructuring the application's main loop and was explicitly deferred; the Replay Browser that shipped instead is static inspection only (source path, seed, event table — no scrubbing).
+- **Live colorblind simulation preview** in the UI was deferred pending a real color-transform pipeline; a `palette`-crate migration for continuous color interpolation (e.g. an N-species gradient beyond the fixed 5-diet palette) remains a deliberately-deferred future trigger, not scheduled work.
+- **`cargo-deny` (or equivalent) enforcement of the acyclic crate-dependency graph** has been a stated intention for a long time but is, as far as this pass could confirm, still convention-only.
+- **No save-file migration tooling exists for any of the breaking schema changes made so far** — this is a standing policy (see [Architecture Decisions](decisions.md)), not an oversight, but is listed here since it means old save files from before a schema bump are simply incompatible, with no upgrade path.
+
+## Documentation debt this pass didn't fully close
+
+- **Per-file line-number citations in some how-to guides** are inherently fragile (they drift as the cited file grows) — this pass replaced the worst offenders' exact line numbers with search-by-symbol guidance instead, but didn't audit every remaining citation across the full `docs/` tree.
+- **A full API-level reference** (beyond `cargo doc --open`) doesn't exist and wasn't attempted here — this project's documentation intentionally treats generated rustdoc as the source of truth for exhaustive signatures.

@@ -1,5 +1,7 @@
 # Phase 4, Epic 1 — Regional Brain Representation: Dedicated Audit & Sub-Roadmap (P4-N1 / P4-N2)
 
+> **Archived historical record.** This document describes the project as of when it was written and is retained only for provenance and source-code cross-references — it is not maintained going forward. For current documentation, see [docs/](../../index.md); for durable decisions and knowledge extracted from this document, see [Architecture Decisions](../decisions.md) and [Project History](../history.md).
+
 ## 0. Why This Document Exists
 
 `PHASE4_ROADMAP.md`'s **ADR-P4-04** deliberately left Epic 1 (regional brains, ganglia, CNS) unscoped in the main roadmap: *"Epic 1 is explicitly not pre-specified to milestone-level detail in this document. It is scoped as its own dedicated audit-and-roadmap, produced when this epic is reached, following the same process this document itself follows for Phase 4 as a whole."* This is that document, for **P4-N1** (regional brain representation) and, at lower resolution, **P4-N2** (axon guidance/pruning), which explicitly depends on N1.

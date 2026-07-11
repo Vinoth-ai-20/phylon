@@ -1,5 +1,7 @@
 # Phase 7 — Professional Scientific Workbench: Architecture Report & Roadmap
 
+> **Archived historical record.** This document describes the project as of when it was written and is retained only for provenance and source-code cross-references — it is not maintained going forward. For current documentation, see [docs/](../../index.md); for durable decisions and knowledge extracted from this document, see [Architecture Decisions](../decisions.md) and [Project History](../history.md).
+
 **Status: Phase A (audit) complete. Phase B (this report) and Phase C (this roadmap) complete, reviewed and approved by the user with the priority reordering and governing rules in §3. Phase D (implementation) has not begun — no code has been changed as part of Phase 7. Execution proceeds epic-by-epic in the order: W0 → W3 → W2 → W4 → W6 → W5 → W1 → W7.**
 
 Per `PHASE 7.md`: no biological work, no simulation expansion. Everything below is UX, workbench, maintainability, performance, architecture, and research-productivity scoped. Phase 6's biological roadmap (`PHASE6_RESEARCH_PLATFORM_ROADMAP.md`) is paused, not abandoned — it resumes only on explicit future direction.

@@ -1,5 +1,7 @@
 # Phase 4, Epic 4 — Reaction-Diffusion Morphogens: Dedicated Audit & Sub-Roadmap (P4-D1 / P4-D2)
 
+> **Archived historical record.** This document describes the project as of when it was written and is retained only for provenance and source-code cross-references — it is not maintained going forward. For current documentation, see [docs/](../../index.md); for durable decisions and knowledge extracted from this document, see [Architecture Decisions](../decisions.md) and [Project History](../history.md).
+
 ## 0. Why This Document Exists
 
 Same process as `PHASE4_EPIC1_NEURAL_ROADMAP.md` (regional brains): `PHASE4_ROADMAP.md`'s **ADR-P4-04** left Epic 4 (reaction-diffusion morphogens) unscoped in the main roadmap specifically because it is GPU-touching and High-complexity, requiring its own dedicated audit before implementation — *"do not skip that step under schedule pressure."* This is that document, for **P4-D1** (reaction-diffusion morphogens) and, at low resolution, **P4-D2** (temporal gene expression), which depends on D1. **No code has been written for D1/D2. This is audit and design only, awaiting approval.**

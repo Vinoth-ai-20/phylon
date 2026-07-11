@@ -2,7 +2,7 @@
 
 Welcome to the official documentation for **Phylon**, a research-grade, high-performance artificial life laboratory built in Rust.
 
-This documentation is organized following the [Di�taxis framework](https://diataxis.fr/), which divides content into four distinct quadrants based on user needs:
+This documentation is organized following the [Diátaxis framework](https://diataxis.fr/), which divides content into four distinct quadrants based on user needs.
 
 ## 1. Tutorials (Learning-Oriented)
 *Start here if you are new to Phylon.*
@@ -16,16 +16,18 @@ This documentation is organized following the [Di�taxis framework](https://dia
 
 ## 3. Explanation (Understanding-Oriented)
 *Deep-dive theoretical discussions on how Phylon works.*
-- [Architecture & Concurrency](explanation/architecture.md) - ECS, Crate Graph, and multi-threading.
-- [Simulation Model](explanation/simulation_model.md) - Physics, Diffusion, Metabolism, and Ecology.
-- [Genetics & Neurobiology](explanation/genetics_and_neurobiology.md) - Hox sequences, CPPNs, and CTRNNs.
-- [GPU Determinism](explanation/determinism.md) - How we guarantee bit-exact reproducibility across platforms.
+- [Architecture & Concurrency](explanation/architecture.md) - ECS, crate graph, and multi-threading.
+- [Simulation Model](explanation/simulation_model.md) - Physics, diffusion, metabolism, and ecology.
+- [Genetics & Neurobiology](explanation/genetics_and_neurobiology.md) - Regulatory networks, CPPNs, and CTRNNs.
+- [Camera & Viewport (3D Engine)](explanation/camera_and_viewport.md) - The 3D camera, rendering pipeline, and navigation model.
+- [Determinism](explanation/determinism.md) - What is and isn't guaranteed to reproduce bit-for-bit today.
 
 ## 4. Reference (Information-Oriented)
 *Quick lookups and technical overviews.*
 - [Component Overview](reference/components.md) - High-level map of the Entity-Component-System logic.
 - [Crate Dependency Graph](reference/crate_graph.md) - Workspace architecture and boundaries.
-- **Rust API Docs:** For exhaustive method signatures, structs, and enumerations, run cargo doc --open in the root workspace.
+- [Controls](reference/controls.md) - Keyboard and mouse bindings.
+- **Rust API Docs:** For exhaustive method signatures, structs, and enumerations, run `cargo doc --open` in the root workspace.
 
 ## 5. Design System (Information-Oriented)
 *The permanent source of truth for the workbench UI's visual and interaction design — implemented in `crates/ui/src/theme.rs`.*
@@ -33,11 +35,20 @@ This documentation is organized following the [Di�taxis framework](https://dia
 - [Typography](design/typography.md) - Type scale, numerals, capitalization.
 - [Colors](design/colors.md) - Every color token and its meaning.
 - [Spacing](design/spacing.md) - The 4/8/12/16/24/32/48 scale.
-- [Layout &amp; Docking](design/layout.md) - Panel ratios, docking model, window management.
+- [Layout & Docking](design/layout.md) - Panel ratios, docking model, window management.
 - [Component Catalog](design/components.md) - Every reusable widget, fully specified.
 - [Iconography](design/iconography.md) - Icon sizes and semantic meaning.
 - [Accessibility](design/accessibility.md) - Colorblind safety, focus, keyboard navigation.
+- [Biological Visual Language](design/biological_visual_language.md) - The canonical mapping from simulation state to viewport signal (health, disease, behavior, death, etc.).
+
+## 6. Roadmap & History (Information-Oriented)
+
+*What shipped, why, and what's still open — condensed from the project's own phase-by-phase development record.*
+
+- [Project History](roadmap/history.md) - A phase-by-phase summary of what was built, in order.
+- [Architecture Decisions](roadmap/decisions.md) - Durable ADRs extracted from the phase archive, organized by topic.
+- [Open Items & Backlog](roadmap/backlog.md) - Disclosed, still-open gaps and unscheduled future work.
 
 ---
 
-> **Note to Ecologists and RSEs:** Phylon is designed to enforce bit-exact reproducibility while simulating massive populations. Understanding the strict boundaries between the CPU-authoritative logic layer and the GPU compute layer is critical for adding new ecological mechanics.
+> **Note to researchers:** Phylon's determinism guarantees are real but partial — see [Determinism](explanation/determinism.md) for exactly what's covered today (fixed timesteps, seeded RNG, sorted ECS iteration) and what is a known, open gap (bit-exact reproducibility of the GPU physics pipeline across separate runs of the same seed).

@@ -1,5 +1,7 @@
 # Phylon — Phase 3 Roadmap
 
+> **Archived historical record.** This document describes the project as of when it was written and is retained only for provenance and source-code cross-references — it is not maintained going forward. For current documentation, see [docs/](../../index.md); for durable decisions and knowledge extracted from this document, see [Architecture Decisions](../decisions.md) and [Project History](../history.md).
+
 ## Evo-Devo, Research Biology, and Scientific Instrumentation
 
 **Document type:** Pre-implementation architecture design and roadmap (analysis only — no code changes made in producing this document).

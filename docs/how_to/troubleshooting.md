@@ -30,16 +30,22 @@ Phylon relies heavily on `wgpu` and Vulkan for its compute shaders.
 - **Cause**: You likely ran the application in debug mode (`cargo run`).
 - **Solution**: Always compile and run Phylon with the `--release` flag (`cargo run --release`). The ECS iteration overhead and GPU data syncing are significantly optimized in release builds.
 
-## "Twitching Meat Blocks" (Organisms Not Moving)
+## Organisms Not Moving
 
-**Issue:** Organisms spawn but just sit there twitching, eventually starving to death.
+**Issue:** Organisms spawn and grow correctly but never actuate — brain outputs look non-zero, but nothing moves.
 
-- **Cause**: In Phase 16, organisms are spawned with completely randomized neural wiring (via their CPPN). A vast majority of random neural configurations are non-viable.
-- **Solution**: This is intended behavior. The simulation is an evolutionary engine. Wait a few hundred ticks; the tiny percentage of organisms that randomly possess a viable swimming pattern will find food, reproduce, and pass on their viable brains.
+Some of this is expected: a freshly-spawned population's brains (CTRNNs) are randomized, and most random neural configurations don't produce a coherent locomotion pattern — waiting a few hundred ticks for reproduction and selection to favor viable brains is normal.
+
+But if you observe this at the *population* level for an extended run (most or all organisms, indefinitely, not just early on), check the actual root cause rather than assuming it's "just evolution hasn't found a gait yet": this project has directly measured and fixed two structural causes of exactly this symptom before —
+
+1. **Zero actuatable muscle segments.** A body position only becomes a physically-actuated spring if it decoded as a `Muscle` segment (see [Genetics & Neurobiology](../explanation/genetics_and_neurobiology.md)) — an organism can have a perfectly normal-looking brain and body and still have *no spring capable of moving at all*. Add a print of `motor.effectors.len()` for a sample of organisms; if it's consistently `0`, the bug is in body-plan decode or founder-genome tuning, not the brain.
+2. **Founder-population mutation dosage.** If every founder genome is mutated too aggressively before it's ever spawned, it can wash out an otherwise-viable regulatory-network tuning across most of the population — this has happened in this project's history and was root-caused by measuring the actual post-mutation actuatable-effector rate directly, not by inspecting the mutation code and guessing.
+
+**Solution**: Measure — sample real organisms' `effectors.len()` and CTRNN outputs directly in a headless run — before assuming this is "just evolution."
 
 ## Physics Explosions
 
 **Issue:** Organisms suddenly stretch to infinity or disappear, and the terminal prints `NaN` values.
 
-- **Cause**: A physics singularity occurred. This usually happens if you modify `HoxSequence` to spawn two nodes precisely on top of each other, or if you set the `linear_damping` too close to `1.0` in `PhysicsConfig`.
+- **Cause**: A physics singularity occurred. This usually happens if a custom body plan spawns two particle nodes precisely on top of each other, or if you set `linear_damping` too close to `1.0` in `PhysicsConfig`.
 - **Solution**: Ensure your custom body plans have logical spacing. Reset `linear_damping` to `0.95`.

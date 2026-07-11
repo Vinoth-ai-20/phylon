@@ -1,5 +1,7 @@
 # Phase 4, Epic 9 — 3D-Readiness Design Document (P4-A1)
 
+> **Archived historical record.** This document describes the project as of when it was written and is retained only for provenance and source-code cross-references — it is not maintained going forward. For current documentation, see [docs/](../../index.md); for durable decisions and knowledge extracted from this document, see [Architecture Decisions](../decisions.md) and [Project History](../history.md).
+
 ## 0. Scope and Status
 
 Per `PHASE4_ROADMAP.md`'s milestone table: *"3D-readiness design document: dimension-independent math/body-graph/physics-interface design, renderer abstraction, migration strategy — **audit and design only, no 3D implementation**."* This document is that deliverable. It is independent of every other Phase 4 epic (no code depends on it; it depends on no other epic landing first — see the roadmap's own dependency graph, where this node has no incoming edges).

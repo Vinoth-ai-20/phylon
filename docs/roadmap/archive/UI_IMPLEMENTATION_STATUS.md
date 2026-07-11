@@ -1,5 +1,7 @@
 # Phylon UI — Implementation Status & Remaining Work
 
+> **Archived historical record.** This document describes the project as of when it was written and is retained only for provenance and source-code cross-references — it is not maintained going forward. For current documentation, see [docs/](../../index.md); for durable decisions and knowledge extracted from this document, see [Architecture Decisions](../decisions.md) and [Project History](../history.md).
+
 **Document type:** Post-implementation UI/UX audit (analysis only — no code changes made in producing this document). This document's own scope is Phase 1; **Phase 2 work (a new set of panels/features, in progress) is tracked in [UI_PHASE2_ROADMAP.md](UI_PHASE2_ROADMAP.md), not here** — see that file's own Execution Log for anything past Phase 1.
 **Companion to:** [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) (simulation/backend audit), [UI_PHASE2_ROADMAP.md](UI_PHASE2_ROADMAP.md) (Phase 2 audit and roadmap)
 **Context:** A prior UI/UX audit scored the interface 5.8/10 against professional-tool conventions and produced a 13-milestone implementation plan (`logical-stirring-mist.md`). **That plan has since been substantially implemented** — this document re-verifies its actual completion state against the real codebase (not the plan's intentions) and defines what remains, using the same evidence-first discipline as the backend audit.

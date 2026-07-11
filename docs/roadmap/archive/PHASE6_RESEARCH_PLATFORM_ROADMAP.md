@@ -1,5 +1,7 @@
 # Phase 6 — Research Platform Roadmap
 
+> **Archived historical record.** This document describes the project as of when it was written and is retained only for provenance and source-code cross-references — it is not maintained going forward. For current documentation, see [docs/](../../index.md); for durable decisions and knowledge extracted from this document, see [Architecture Decisions](../decisions.md) and [Project History](../history.md).
+
 **Status: APPROVED, frozen as the authoritative Phase 6 plan, implementation in progress (milestone-by-milestone). This document is not to be silently expanded or re-scoped during implementation — any decision change gets a superseding note, not a rewrite.**
 
 This is the master roadmap for the work remaining before Phylon can reasonably be considered a modern computational artificial-life research platform, produced by a full repository audit following the completion of Phase 5 (Simulation Experience — `PHASE5_SX_ROADMAP.md`). Every claim below was verified against current source (file:line citations given where load-bearing), not assumed from a stale document. Where implementation had already superseded planning, that is called out explicitly rather than re-proposed.

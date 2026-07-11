@@ -1,5 +1,7 @@
 # Phylon — Implementation Status & Phase 2 Roadmap
 
+> **Archived historical record.** This document describes the project as of when it was written and is retained only for provenance and source-code cross-references — it is not maintained going forward. For current documentation, see [docs/](../../index.md); for durable decisions and knowledge extracted from this document, see [Architecture Decisions](../decisions.md) and [Project History](../history.md).
+
 **Document type:** Post-implementation engineering audit and forward roadmap
 **Supersedes:** `PHYLON_PROMPT_v2.md`'s implementation assumptions (the original spec remains valid as a *vision* document; this document is the source of truth for *current state*)
 **As of:** End of Epic 15 (Learning Framework) — all 15 epics of the first implementation roadmap closed

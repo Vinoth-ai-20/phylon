@@ -2,7 +2,7 @@
 
 Phylon is aggressively divided into dozens of independent crates. This structure enforces architectural boundaries and maximizes incremental compilation speeds. The dependency graph forms a strict Directed Acyclic Graph (DAG).
 
-**Correction (Phase 7, W1e)**: this document previously listed 20 of the workspace's 29 crates and claimed `world` wraps `hecs`. Both corrected below, verified directly against `Cargo.toml`'s `members` list and `world`'s own doc comment (`bevy_ecs::world::World`, not `hecs` — this workspace has never depended on `hecs`).
+**Correction:** an earlier revision of this document listed only 20 of the workspace's 30 crates and claimed `world` wraps `hecs`. Both corrected below, verified directly against `Cargo.toml`'s `members` list (30 entries) and `world`'s own doc comment (`bevy_ecs::world::World`, not `hecs` — this workspace has never depended on `hecs`).
 
 ## Core Dependency Stack
 
@@ -17,13 +17,13 @@ The stack is organized from bottom to top. Crates higher up the stack depend on 
 
 - `storage`: Bincode serialization and file I/O for saving/loading lineages.
 - `events`: The lock-free global event bus.
-- `spatial`: Spatial indexing structures (uniform grid, etc.) for efficient entity neighborhood queries — shared by `ecology`'s foraging broad-phase and `sensing`.
+- `spatial`: Spatial indexing structures (uniform grid, `Octree`) for efficient entity neighborhood queries — shared by `ecology`'s foraging broad-phase and `sensing`.
 
 ### Level 2: Core Simulation Primitives
 
 - `physics`: Spatial partitioning and Symplectic Euler integration.
 - `diffusion`: Grid-based discrete Laplacian diffusion.
-- `genetics`: Hox sequencing, CPPN mutation engine.
+- `genetics`: CPPN mutation engine and the regulatory-network body-plan decode (positional Hox-code, not a stored sequence — see [Genetics & Neurobiology](../explanation/genetics_and_neurobiology.md)).
 - `brain`: CTRNN execution math.
 - `ecology`: Diets, Food Pellets, and Corpses.
 - `metabolism`: Energy tracking and starvation logic.
