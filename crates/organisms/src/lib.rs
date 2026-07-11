@@ -32,8 +32,8 @@ pub use components::{
 /// ADR-P3-04, which made it transient).
 pub mod developmental_graph;
 pub use developmental_graph::{
-    can_branch, compile_segment, simulate_growth_timeline, CompiledSegment, DevelopmentalGraph,
-    DevelopmentalNode,
+    bilateral_fin_direction, can_branch, compile_segment, simulate_growth_timeline,
+    CompiledSegment, DevelopmentalGraph, DevelopmentalNode,
 };
 
 /// Organism ECS systems.

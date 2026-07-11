@@ -2,6 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Screen/UI-resolved 2D values that are genuinely 2D at the point they're
+/// recorded — a hazard's world-space center (ADR-P8-05: the hazard field
+/// stays a flat plane) or a replay-recorded spawn-click position
+/// ([`crate::replay::ReplayAction`]) — never a live entity's world
+/// position (see [`SerializedVec3`] for that).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SerializedVec2 {
     pub x: f32,
@@ -17,6 +22,34 @@ impl From<common::Vec2> for SerializedVec2 {
 impl From<SerializedVec2> for common::Vec2 {
     fn from(val: SerializedVec2) -> Self {
         common::Vec2::new(val.x, val.y)
+    }
+}
+
+/// A live entity's world-space position/velocity (Phase 8, Epic 8.13,
+/// ADR-P8-08) — replaces `SerializedVec2` for every field that used to
+/// truncate a real `Vec3` down to 2D on save and re-extend it with `z =
+/// 0.0` on restore. `SchemaVersion::CURRENT` bumped from 4 to 5 for this
+/// change — see that constant's own doc comment.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SerializedVec3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl From<common::Vec3> for SerializedVec3 {
+    fn from(v: common::Vec3) -> Self {
+        Self {
+            x: v.x,
+            y: v.y,
+            z: v.z,
+        }
+    }
+}
+
+impl From<SerializedVec3> for common::Vec3 {
+    fn from(val: SerializedVec3) -> Self {
+        common::Vec3::new(val.x, val.y, val.z)
     }
 }
 
@@ -38,8 +71,8 @@ pub struct SnapshotDevelopmentalNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotNode {
     pub id: u64, // Internal mapping ID
-    pub position: SerializedVec2,
-    pub velocity: SerializedVec2,
+    pub position: SerializedVec3,
+    pub velocity: SerializedVec3,
     pub mass: f32,
     pub segment_type: u32,
     pub is_fixed: bool,
@@ -107,19 +140,19 @@ pub struct SnapshotSpring {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotFood {
-    pub position: SerializedVec2,
+    pub position: SerializedVec3,
     pub energy_value: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotMineral {
-    pub position: SerializedVec2,
+    pub position: SerializedVec3,
     pub energy_value: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotCorpse {
-    pub position: SerializedVec2,
+    pub position: SerializedVec3,
     pub energy_value: f32,
     pub decay_timer: u32,
     pub max_decay: u32,
@@ -211,11 +244,10 @@ impl SimulationSnapshot {
 
             nodes.push(SnapshotNode {
                 id,
-                // `SerializedVec2` stays 2D by design until Epic 8.13's
-                // schema bump (ADR-P8-08) — truncate `z` (always `0.0`
-                // until Epic 8.6) at this save boundary.
-                position: node.position.truncate().into(),
-                velocity: node.velocity.truncate().into(),
+                // Phase 8, Epic 8.13 (ADR-P8-08): full `Vec3` fidelity —
+                // no truncation, unlike the pre-8.13 `SerializedVec2`.
+                position: node.position.into(),
+                velocity: node.velocity.into(),
                 mass: node.mass,
                 segment_type: node.segment_type,
                 is_fixed: node.is_fixed,
@@ -418,7 +450,7 @@ impl SimulationSnapshot {
         let mut food_query = world.query::<&ecology::FoodPellet>();
         for food in food_query.iter(world) {
             food_pellets.push(SnapshotFood {
-                position: food.position.truncate().into(),
+                position: food.position.into(),
                 energy_value: food.energy_value,
             });
         }
@@ -426,7 +458,7 @@ impl SimulationSnapshot {
         let mut mineral_query = world.query::<&ecology::MineralPellet>();
         for min in mineral_query.iter(world) {
             mineral_pellets.push(SnapshotMineral {
-                position: min.position.truncate().into(),
+                position: min.position.into(),
                 energy_value: min.energy_value,
             });
         }
@@ -434,7 +466,7 @@ impl SimulationSnapshot {
         let mut corpse_query = world.query::<&ecology::Corpse>();
         for corpse in corpse_query.iter(world) {
             corpses.push(SnapshotCorpse {
-                position: corpse.position.truncate().into(),
+                position: corpse.position.into(),
                 energy_value: corpse.energy_value,
                 decay_timer: corpse.decay_timer,
                 max_decay: corpse.max_decay,
@@ -460,13 +492,11 @@ impl SimulationSnapshot {
         let mut id_map = std::collections::HashMap::new();
 
         for node in &self.nodes {
-            let restored_position: common::Vec2 = node.position.clone().into();
-            let restored_velocity: common::Vec2 = node.velocity.clone().into();
+            let restored_position: common::Vec3 = node.position.clone().into();
+            let restored_velocity: common::Vec3 = node.velocity.clone().into();
             let mut entity_cmds = world.spawn(physics::ParticleNode {
-                // `z` is always `0.0` on restore until Epic 8.6's real 3D
-                // growth redesign — see the save-side truncation above.
-                position: restored_position.extend(0.0),
-                velocity: restored_velocity.extend(0.0),
+                position: restored_position,
+                velocity: restored_velocity,
                 force: common::Vec3::ZERO,
                 mass: node.mass,
                 segment_type: node.segment_type,
@@ -609,25 +639,22 @@ impl SimulationSnapshot {
         }
 
         for food in &self.food_pellets {
-            let position: common::Vec2 = food.position.clone().into();
             world.spawn(ecology::FoodPellet {
-                position: position.extend(0.0),
+                position: food.position.clone().into(),
                 energy_value: food.energy_value,
             });
         }
 
         for min in &self.mineral_pellets {
-            let position: common::Vec2 = min.position.clone().into();
             world.spawn(ecology::MineralPellet {
-                position: position.extend(0.0),
+                position: min.position.clone().into(),
                 energy_value: min.energy_value,
             });
         }
 
         for corpse in &self.corpses {
-            let position: common::Vec2 = corpse.position.clone().into();
             world.spawn(ecology::Corpse {
-                position: position.extend(0.0),
+                position: corpse.position.clone().into(),
                 energy_value: corpse.energy_value,
                 decay_timer: corpse.decay_timer,
                 max_decay: corpse.max_decay,
@@ -655,7 +682,11 @@ mod tests {
         let head = world
             .spawn((
                 physics::ParticleNode {
-                    position: common::Vec3::new(1.0, 2.0, 0.0),
+                    // Non-zero `z` (Phase 8, Epic 8.13) proves the
+                    // round trip preserves full 3D fidelity, not just
+                    // the pre-8.13 truncate-to-2D/re-extend-with-0.0
+                    // behavior.
+                    position: common::Vec3::new(1.0, 2.0, 5.0),
                     velocity: common::Vec3::ZERO,
                     force: common::Vec3::ZERO,
                     mass: 1.0,
@@ -781,6 +812,7 @@ mod tests {
         // their previously-lost components intact, not that entity ids
         // matched (they never do — Bevy assigns fresh ones).
         let mut head_query = restored.query::<(
+            &physics::ParticleNode,
             &metabolism::ChemicalEconomy,
             &metabolism::Age,
             &metabolism::Metabolism,
@@ -796,6 +828,7 @@ mod tests {
             &organisms::DevelopmentalGraph,
         )>();
         let (
+            node,
             chem,
             age,
             metabolism,
@@ -813,6 +846,10 @@ mod tests {
             .iter(&restored)
             .next()
             .expect("restored head entity should carry every previously-lost component");
+
+        // Phase 8, Epic 8.13's own named verification requirement: real 3D
+        // data survives the round trip, not just the pre-8.13 flat 2D case.
+        assert_eq!(node.position, common::Vec3::new(1.0, 2.0, 5.0));
 
         assert_eq!(chem.glucose, 111.0);
         assert_eq!(chem.atp, 444.0);

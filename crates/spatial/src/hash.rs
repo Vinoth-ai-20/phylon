@@ -1,7 +1,7 @@
 use crate::index::SpatialIndex;
 use crate::{SpatialError, SpatialResult};
 use bevy_ecs::entity::Entity;
-use common::{Vec2, Vec3};
+use common::Vec3;
 use std::collections::HashMap;
 
 /// # Fixed-Table Spatial Hash
@@ -42,11 +42,10 @@ use std::collections::HashMap;
 /// they take `Vec3` positions (previously `Vec2`, widened alongside
 /// [`crate::UniformGrid`]), with a 3rd-axis term folded into `cell_of`'s
 /// cell-key computation and `bucket_of`'s hash mix. The `SpatialIndex` trait
-/// impl at the bottom of this file stays `Vec2`-based (shared with
-/// [`crate::Quadtree`], not migrated until Phase 8 Epic 8.9) and
-/// truncates/pads `z` at that boundary — confirmed via a workspace-wide
-/// search that no live caller uses this type through the trait, only
-/// through these inherent methods directly.
+/// (widened to `Vec3` in Phase 8, Epic 8.9, alongside [`crate::Octree`]'s
+/// introduction) is a thin pass-through over these same inherent methods —
+/// confirmed via a workspace-wide search that no live caller uses this type
+/// through the trait, only through these inherent methods directly.
 pub struct SpatialHash {
     cell_size: f32,
     table_size: usize,
@@ -199,20 +198,20 @@ impl SpatialHash {
 }
 
 impl SpatialIndex for SpatialHash {
-    fn insert(&mut self, id: Entity, position: Vec2) -> SpatialResult<()> {
-        SpatialHash::insert(self, id, position.extend(0.0))
+    fn insert(&mut self, id: Entity, position: Vec3) -> SpatialResult<()> {
+        SpatialHash::insert(self, id, position)
     }
 
-    fn update(&mut self, id: Entity, position: Vec2) -> SpatialResult<()> {
-        SpatialHash::update(self, id, position.extend(0.0))
+    fn update(&mut self, id: Entity, position: Vec3) -> SpatialResult<()> {
+        SpatialHash::update(self, id, position)
     }
 
     fn remove(&mut self, id: Entity) -> SpatialResult<()> {
         SpatialHash::remove(self, id)
     }
 
-    fn query_radius(&self, center: Vec2, radius: f32) -> Vec<Entity> {
-        SpatialHash::query_radius(self, center.extend(0.0), radius)
+    fn query_radius(&self, center: Vec3, radius: f32) -> Vec<Entity> {
+        SpatialHash::query_radius(self, center, radius)
     }
 
     fn clear(&mut self) {

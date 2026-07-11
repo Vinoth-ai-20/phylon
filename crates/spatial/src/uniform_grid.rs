@@ -1,7 +1,7 @@
 use crate::index::SpatialIndex;
 use crate::{SpatialError, SpatialResult};
 use bevy_ecs::entity::Entity;
-use common::{Vec2, Vec3};
+use common::Vec3;
 use std::collections::HashMap;
 
 /// # Broad-Phase Uniform Grid Index
@@ -37,13 +37,11 @@ use std::collections::HashMap;
 /// Inherent methods below are the primary API — as of Phase 8 (ADR-P8-01),
 /// they take `Vec3` positions (previously `Vec2`, widened alongside
 /// `physics::ParticleNode`), with a 3rd-axis term folded into `cell_of`'s
-/// cell-key computation. The `SpatialIndex` trait impl at the bottom of
-/// this file stays `Vec2`-based (shared with [`crate::Quadtree`], which
-/// isn't migrated until Phase 8 Epic 8.9) and truncates/pads `z` at that
-/// boundary — confirmed via a workspace-wide search that no live caller
-/// uses this type through the trait, only through these inherent methods
-/// directly, so this boundary is dead-code-safe today, not a behavior
-/// change for anything real.
+/// cell-key computation. The `SpatialIndex` trait (widened to `Vec3` in
+/// Phase 8, Epic 8.9, alongside [`crate::Octree`]'s introduction) is a thin
+/// pass-through over these same inherent methods — confirmed via a
+/// workspace-wide search that no live caller uses this type through the
+/// trait, only through these inherent methods directly.
 pub struct UniformGrid {
     /// Edge length of each grid cell in simulation length units.
     cell_size: f32,
@@ -174,20 +172,20 @@ impl UniformGrid {
 }
 
 impl SpatialIndex for UniformGrid {
-    fn insert(&mut self, id: Entity, position: Vec2) -> SpatialResult<()> {
-        UniformGrid::insert(self, id, position.extend(0.0))
+    fn insert(&mut self, id: Entity, position: Vec3) -> SpatialResult<()> {
+        UniformGrid::insert(self, id, position)
     }
 
-    fn update(&mut self, id: Entity, position: Vec2) -> SpatialResult<()> {
-        UniformGrid::update(self, id, position.extend(0.0))
+    fn update(&mut self, id: Entity, position: Vec3) -> SpatialResult<()> {
+        UniformGrid::update(self, id, position)
     }
 
     fn remove(&mut self, id: Entity) -> SpatialResult<()> {
         UniformGrid::remove(self, id)
     }
 
-    fn query_radius(&self, center: Vec2, radius: f32) -> Vec<Entity> {
-        UniformGrid::query_radius(self, center.extend(0.0), radius)
+    fn query_radius(&self, center: Vec3, radius: f32) -> Vec<Entity> {
+        UniformGrid::query_radius(self, center, radius)
     }
 
     fn clear(&mut self) {

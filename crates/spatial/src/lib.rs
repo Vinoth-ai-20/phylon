@@ -15,9 +15,11 @@
 //! - **[`SpatialHash`]** — same cell-bucketing idea, but a fixed-size hash
 //!   table instead of a per-cell `HashMap` entry, for populations spread
 //!   unevenly across a large or unbounded area.
-//! - **[`Quadtree`]** — sparse, logarithmic-depth structure over a fixed
+//! - **[`Octree`]** — sparse, logarithmic-depth structure over a fixed
 //!   bounded region, for long-range queries on static or slow-moving
-//!   objects.
+//!   objects. `Vec3`-native since Phase 8, Epic 8.9 (the direct successor
+//!   to the pre-8.9 `Quadtree`, which had zero real callers — see this
+//!   type's own doc comment).
 //!
 //! ## Dependency rules
 //!
@@ -30,12 +32,12 @@ use bevy_ecs::entity::Entity;
 
 mod hash;
 mod index;
-mod quadtree;
+mod octree;
 mod uniform_grid;
 
 pub use hash::SpatialHash;
 pub use index::SpatialIndex;
-pub use quadtree::Quadtree;
+pub use octree::Octree;
 pub use uniform_grid::UniformGrid;
 
 /// Result type for spatial operations.
@@ -60,7 +62,7 @@ pub enum SpatialError {
     },
 
     /// An entity's position falls outside a bounded index's fixed region
-    /// (currently only [`Quadtree`] has bounds — [`UniformGrid`] and
+    /// (currently only [`Octree`] has bounds — [`UniformGrid`] and
     /// [`SpatialHash`] are unbounded).
     #[error("entity {0:?}'s position is outside the spatial index's bounds")]
     OutOfBounds(Entity),

@@ -19,7 +19,7 @@
 #![warn(clippy::all)]
 
 use bevy_ecs::entity::Entity;
-use common::Vec2;
+use common::{Vec2, Vec3};
 use std::collections::HashMap;
 
 /// The sensory modalities available to organisms.
@@ -81,16 +81,33 @@ impl SensoryState {
 ///
 /// ## 3. How It Happens
 /// The system checks the angle to nearby entities. If the entity falls within the `fov` cone,
-/// its inverse-distance is accumulated into three bins (Left, Center, Right). This gives the
-/// neural network enough gradient information to turn toward or away from a target.
+/// its inverse-distance is accumulated into a 3×3 azimuth×elevation grid of bins (Phase 8,
+/// Epic 8.7, ADR-P8-07 — extended from the pre-8.7 3-bin Left/Center/Right azimuth-only
+/// model). This gives the neural network enough gradient information to turn toward or away
+/// from a target, and (once organisms have real vertical body-plan variation — not yet, see
+/// `dorsal`'s own doc comment) to pitch up/down toward it too.
 #[derive(bevy_ecs::prelude::Component, Debug, Clone)]
 pub struct HeadVision {
     /// Maximum distance the organism can see.
     pub range: f32,
     /// Field of view angle in radians.
     pub fov: f32,
-    /// Last known forward direction (used when velocity is near zero).
-    pub last_forward: common::Vec2,
+    /// Last known forward (direction-of-travel) unit vector, used when
+    /// velocity is near zero. `Vec3` since Phase 8, Epic 8.7 (ADR-P8-07) —
+    /// still confined to the `Z = 0` plane in practice today, since it's
+    /// derived from `physics::ParticleNode::velocity`, which is itself
+    /// always `Z = 0` (no code path gives an organism vertical velocity).
+    pub last_forward: Vec3,
+    /// Body-fixed dorsal ("up") reference (Phase 8, Epic 8.7, ADR-P8-07) —
+    /// together with `last_forward`, forms the body frame the azimuth/
+    /// elevation calculation is computed in (`crate::vision_azimuth_elevation`),
+    /// mirroring `organisms::GrowthState::dorsal`'s same role and same
+    /// `Vec3::Z` default. Since every sensed position is also `Z = 0` today
+    /// (no world-space vertical variation exists anywhere yet), elevation
+    /// is provably always the "mid" bin in practice — a real, disclosed
+    /// limitation of today's flat world, not a bug in the math itself (see
+    /// `vision_azimuth_elevation`'s own tests for the genuine 3D case).
+    pub dorsal: Vec3,
     /// Distance within which nodes are ignored (self-occlusion heuristic).
     pub self_occlusion_radius: f32,
     /// The food/prey entity currently being steered towards, if any.
@@ -101,6 +118,28 @@ pub struct HeadVision {
     /// picked) once this entity is no longer a valid candidate (eaten,
     /// despawned, or out of range/FOV).
     pub locked_target: Option<bevy_ecs::entity::Entity>,
+}
+
+/// Azimuth (angle in the forward-right plane) and elevation (angle in the
+/// forward-up/dorsal plane) of a unit direction `dir`, relative to the body
+/// frame defined by `forward`/`dorsal` (Phase 8, Epic 8.7, ADR-P8-07) —
+/// replaces the pre-8.7 `Vec2::angle_to`, a signed 2D angle with no direct
+/// 3D analogue (see the ADR's own Context section).
+///
+/// `azimuth` reproduces the pre-8.7 formula exactly whenever `dorsal ==
+/// Vec3::Z` and `forward`/`dir` are confined to the XY plane (true for
+/// every real call site today): `atan2((forward × dir) · dorsal, forward ·
+/// dir)` reduces to the 2D cross-product/dot-product form `Vec2::angle_to`
+/// used. `elevation` is `asin(dir · dorsal)` — the signed angle `dir` makes
+/// above (`> 0`) or below (`< 0`) the horizontal (forward-right) plane;
+/// always `0.0` today since every `dir` this crate constructs has `z ==
+/// 0.0` and `dorsal == Vec3::Z`.
+///
+/// All three of `forward`, `dorsal`, and `dir` must be unit vectors.
+pub fn vision_azimuth_elevation(forward: Vec3, dorsal: Vec3, dir: Vec3) -> (f32, f32) {
+    let azimuth = forward.cross(dir).dot(dorsal).atan2(forward.dot(dir));
+    let elevation = dir.dot(dorsal).clamp(-1.0, 1.0).asin();
+    (azimuth, elevation)
 }
 
 /// Grid cell size used for the broad-phase spatial indices built each tick.
@@ -128,7 +167,8 @@ struct EntitySnapshot {
 struct VisionSnapshot {
     range: f32,
     fov: f32,
-    last_forward: Vec2,
+    last_forward: Vec3,
+    dorsal: Vec3,
     self_occlusion_radius: f32,
     locked_target: Option<Entity>,
 }
@@ -139,7 +179,7 @@ struct SensingResult {
     entity: Entity,
     inputs: Vec<f32>,
     /// `Some` only when the entity has a [`HeadVision`] component.
-    vision_update: Option<(Vec2, Option<Entity>)>, // (new last_forward, new locked_target)
+    vision_update: Option<(Vec3, Option<Entity>)>, // (new last_forward, new locked_target)
 }
 
 /// Read-only snapshots of everything `compute_sensing` needs to look up
@@ -222,38 +262,63 @@ fn compute_sensing(snap: &EntitySnapshot, world: &WorldSnapshot) -> SensingResul
 
     let mut vision_update = None;
 
-    // 4, 5, 6. Vision (Left, Center, Right bins)
+    // 4-12. Vision (Phase 8, Epic 8.7, ADR-P8-07: a 3×3 azimuth×elevation
+    // grid of bins — Left/Center/Right crossed with Up/Mid/Down — extended
+    // from the pre-8.7 3-bin azimuth-only model).
     if let Some(vision) = snap.vision {
-        // Update forward direction based on velocity
+        // Update forward direction based on velocity — still Z=0-confined
+        // in practice (`snap.velocity` is a `Vec2`, extended to `Vec3` with
+        // `z = 0.0`), since nothing gives an organism vertical velocity.
         let mut last_forward = vision.last_forward;
         if snap.velocity.length_squared() > 0.01 {
-            last_forward = snap.velocity.normalize();
+            last_forward = snap.velocity.extend(0.0).normalize();
         } else if last_forward.length_squared() < 0.01 {
-            last_forward = Vec2::X; // Fallback
+            last_forward = Vec3::X; // Fallback
         }
         let forward = last_forward;
+        let dorsal = vision.dorsal;
         let half_fov = vision.fov / 2.0;
-        let third_fov = half_fov / 1.5; // Divide FOV into 3 bins
+        let third_fov = half_fov / 1.5; // Divide FOV into 3 bins per axis
 
-        let mut obs_left = 0.0f32;
-        let mut obs_center = 0.0f32;
-        let mut obs_right = 0.0f32;
+        // Classifies a (azimuth, elevation) pair into one of the 9 grid
+        // bins, row-major by elevation (Down=0, Mid=1, Up=2) then azimuth
+        // (Left=0, Center=1, Right=2) — matches `BIN_LABELS` in this
+        // module's tests.
+        let bin_index = |azimuth: f32, elevation: f32| -> usize {
+            let az_bin = if azimuth < -third_fov {
+                0
+            } else if azimuth > third_fov {
+                2
+            } else {
+                1
+            };
+            let el_bin = if elevation < -third_fov {
+                0
+            } else if elevation > third_fov {
+                2
+            } else {
+                1
+            };
+            el_bin * 3 + az_bin
+        };
 
-        // Returns `Some((angle, strength))` if `target_pos` is visible
-        // (outside self-occlusion radius, within range and FOV).
-        let vision_check = |target_pos: Vec2| -> Option<(f32, f32)> {
-            let diff = target_pos - snap.position;
+        let mut obs_bins = [0.0f32; 9];
+
+        // Returns `Some((azimuth, elevation, strength))` if `target_pos` is
+        // visible (outside self-occlusion radius, within range and FOV).
+        let vision_check = |target_pos: Vec2| -> Option<(f32, f32, f32)> {
+            let diff = (target_pos - snap.position).extend(0.0);
             let dist = diff.length();
             if dist < vision.self_occlusion_radius || dist > vision.range {
                 return None;
             }
             let dir = diff / dist;
-            let angle = forward.angle_to(dir);
-            if angle < -half_fov || angle > half_fov {
+            let (azimuth, elevation) = vision_azimuth_elevation(forward, dorsal, dir);
+            if azimuth < -half_fov || azimuth > half_fov {
                 return None;
             }
             let strength = 1.0 - (dist / vision.range);
-            Some((angle, strength))
+            Some((azimuth, elevation, strength))
         };
 
         // Candidate food/prey targets seen this tick — the actual bin
@@ -261,7 +326,7 @@ fn compute_sensing(snap: &EntitySnapshot, world: &WorldSnapshot) -> SensingResul
         // accumulated across all of them, so the organism commits to one
         // target (see `HeadVision::locked_target`) instead of flip-flopping
         // between whichever candidate is momentarily strongest.
-        let mut food_candidates: Vec<(Entity, f32, f32)> = Vec::new();
+        let mut food_candidates: Vec<(Entity, f32, f32, f32)> = Vec::new();
 
         // 1. See other organisms (mating, collision avoidance, predation)
         for other_entity in world
@@ -287,17 +352,14 @@ fn compute_sensing(snap: &EntitySnapshot, world: &WorldSnapshot) -> SensingResul
                     )
                 );
             }
-            let Some((angle, strength)) = vision_check(other_pos) else {
+            let Some((azimuth, elevation, strength)) = vision_check(other_pos) else {
                 continue;
             };
             if is_food {
-                food_candidates.push((other_entity, angle, strength));
-            } else if angle < -third_fov {
-                obs_left = obs_left.max(strength);
-            } else if angle > third_fov {
-                obs_right = obs_right.max(strength);
+                food_candidates.push((other_entity, azimuth, elevation, strength));
             } else {
-                obs_center = obs_center.max(strength);
+                let bin = bin_index(azimuth, elevation);
+                obs_bins[bin] = obs_bins[bin].max(strength);
             }
         }
 
@@ -311,8 +373,8 @@ fn compute_sensing(snap: &EntitySnapshot, world: &WorldSnapshot) -> SensingResul
                         .query_radius(snap.position.extend(0.0), vision.range)
                     {
                         if let Some(&pos) = world.mineral_positions.get(&entity) {
-                            if let Some((angle, strength)) = vision_check(pos) {
-                                food_candidates.push((entity, angle, strength));
+                            if let Some((azimuth, elevation, strength)) = vision_check(pos) {
+                                food_candidates.push((entity, azimuth, elevation, strength));
                             }
                         }
                     }
@@ -324,8 +386,8 @@ fn compute_sensing(snap: &EntitySnapshot, world: &WorldSnapshot) -> SensingResul
                         .query_radius(snap.position.extend(0.0), vision.range)
                     {
                         if let Some(&pos) = world.food_positions.get(&entity) {
-                            if let Some((angle, strength)) = vision_check(pos) {
-                                food_candidates.push((entity, angle, strength));
+                            if let Some((azimuth, elevation, strength)) = vision_check(pos) {
+                                food_candidates.push((entity, azimuth, elevation, strength));
                             }
                         }
                     }
@@ -337,8 +399,8 @@ fn compute_sensing(snap: &EntitySnapshot, world: &WorldSnapshot) -> SensingResul
                         .query_radius(snap.position.extend(0.0), vision.range)
                     {
                         if let Some(&pos) = world.corpse_positions.get(&entity) {
-                            if let Some((angle, strength)) = vision_check(pos) {
-                                food_candidates.push((entity, angle, strength));
+                            if let Some((azimuth, elevation, strength)) = vision_check(pos) {
+                                food_candidates.push((entity, azimuth, elevation, strength));
                             }
                         }
                     }
@@ -354,39 +416,31 @@ fn compute_sensing(snap: &EntitySnapshot, world: &WorldSnapshot) -> SensingResul
         // the lock is lost.
         let locked_candidate = vision
             .locked_target
-            .and_then(|locked| food_candidates.iter().find(|(e, _, _)| *e == locked))
+            .and_then(|locked| food_candidates.iter().find(|(e, _, _, _)| *e == locked))
             .copied();
 
         let chosen = locked_candidate.or_else(|| {
             food_candidates
                 .iter()
                 .copied()
-                .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+                .max_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal))
         });
 
-        let new_locked_target = chosen.map(|(entity, _, _)| entity);
+        let new_locked_target = chosen.map(|(entity, _, _, _)| entity);
 
-        let (food_left, food_center, food_right) = match chosen {
-            Some((_, angle, strength)) if angle < -third_fov => (strength, 0.0, 0.0),
-            Some((_, angle, strength)) if angle > third_fov => (0.0, 0.0, strength),
-            Some((_, _, strength)) => (0.0, strength, 0.0),
-            None => (0.0, 0.0, 0.0),
-        };
-
-        if idx < inputs.len() {
-            inputs[idx] = food_left - obs_left;
-            idx += 1;
-        }
-        if idx < inputs.len() {
-            inputs[idx] = food_center - obs_center;
-            idx += 1;
-        }
-        if idx < inputs.len() {
-            inputs[idx] = food_right - obs_right;
-            idx += 1;
+        let mut food_bins = [0.0f32; 9];
+        if let Some((_, azimuth, elevation, strength)) = chosen {
+            food_bins[bin_index(azimuth, elevation)] = strength;
         }
 
-        // 7. Internal Pacemaker (CPG)
+        for bin in 0..9 {
+            if idx < inputs.len() {
+                inputs[idx] = food_bins[bin] - obs_bins[bin];
+                idx += 1;
+            }
+        }
+
+        // Internal Pacemaker (CPG)
         if idx < inputs.len() {
             // At 60 ticks/sec, * 0.2 gives ~2 Hz frequency.
             let pacemaker_signal = (world.tick as f32 * 0.2).sin();
@@ -524,6 +578,7 @@ pub fn sensing_system(
                     range: v.range,
                     fov: v.fov,
                     last_forward: v.last_forward,
+                    dorsal: v.dorsal,
                     self_occlusion_radius: v.self_occlusion_radius,
                     locked_target: v.locked_target,
                 }),
@@ -566,6 +621,60 @@ pub fn sensing_system(
 mod tests {
     use super::*;
 
+    /// ADR-P8-07's own named regression check: for the default `Vec3::Z`
+    /// dorsal and any `forward`/`dir` confined to the XY plane (every real
+    /// call site today), the new azimuth formula must reproduce the pre-8.7
+    /// `Vec2::angle_to` result exactly, and elevation must be exactly zero.
+    #[test]
+    fn vision_azimuth_elevation_with_z_dorsal_matches_the_pre_8_7_2d_angle() {
+        let forward = Vec3::new(1.0, 0.0, 0.0);
+        for angle_deg in [-150, -90, -45, 0, 30, 89, 90, 150] {
+            let angle = (angle_deg as f32).to_radians();
+            let dir = Vec3::new(angle.cos(), angle.sin(), 0.0);
+            let (azimuth, elevation) = vision_azimuth_elevation(forward, Vec3::Z, dir);
+
+            let old_angle = Vec2::X.angle_to(Vec2::new(dir.x, dir.y));
+            assert!(
+                (azimuth - old_angle).abs() < 1e-4,
+                "angle {angle_deg}: expected azimuth {old_angle}, got {azimuth}"
+            );
+            assert!(
+                elevation.abs() < 1e-6,
+                "angle {angle_deg}: expected zero elevation, got {elevation}"
+            );
+        }
+    }
+
+    /// Genuine 3D correctness: a target directly "above" the organism along
+    /// its `dorsal` axis must read as maximal elevation (π/2) regardless of
+    /// azimuth, and a target exactly on the horizon must read as zero
+    /// elevation — proving the formula is a real, well-defined 3D
+    /// generalization, not merely re-deriving the 2D case.
+    #[test]
+    fn vision_azimuth_elevation_reads_maximal_elevation_straight_up() {
+        let forward = Vec3::new(1.0, 0.0, 0.0);
+        let dorsal = Vec3::Z;
+        let (_, elevation) = vision_azimuth_elevation(forward, dorsal, dorsal);
+        assert!((elevation - std::f32::consts::FRAC_PI_2).abs() < 1e-4);
+    }
+
+    /// A tilted `dorsal` (not the default `Vec3::Z`) still produces a
+    /// coherent azimuth/elevation split — the two angles remain independent
+    /// (a purely horizontal offset in the tilted frame reads as zero
+    /// elevation), confirming the math doesn't silently assume a
+    /// world-space-vertical dorsal.
+    #[test]
+    fn vision_azimuth_elevation_works_with_a_tilted_dorsal() {
+        let forward = Vec3::new(1.0, 0.0, 0.0);
+        let dorsal = Vec3::new(0.0, 1.0, 1.0).normalize(); // tilted 45° off Z
+        let right = forward.cross(dorsal).normalize();
+        // A direction purely along `right` (in the tilted horizontal plane)
+        // should read as ~90° azimuth, ~0 elevation.
+        let (azimuth, elevation) = vision_azimuth_elevation(forward, dorsal, right);
+        assert!((azimuth.abs() - std::f32::consts::FRAC_PI_2).abs() < 1e-3);
+        assert!(elevation.abs() < 1e-3);
+    }
+
     #[test]
     fn sensor_modality_is_copy() {
         let s = SensorModality::Vision;
@@ -577,7 +686,7 @@ mod tests {
 
     /// (inputs, last_forward, locked_target) for one organism after a
     /// `sensing_system` tick.
-    type OrganismOutcome = (Vec<f32>, Vec2, Option<Entity>);
+    type OrganismOutcome = (Vec<f32>, Vec3, Option<Entity>);
 
     fn build_world_with_organisms(n: u32) -> World {
         let mut world = World::new();
@@ -599,11 +708,12 @@ mod tests {
                     0,
                     i,
                 ),
-                SensoryState::new(7),
+                SensoryState::new(15),
                 HeadVision {
                     range: 250.0,
                     fov: std::f32::consts::PI * 0.8,
-                    last_forward: common::Vec2::X,
+                    last_forward: common::Vec3::X,
+                    dorsal: common::Vec3::Z,
                     self_occlusion_radius: 5.0,
                     locked_target: None,
                 },

@@ -151,11 +151,15 @@ impl PhylonApp {
         for (entity, node) in query_nodes.iter(&self.world.ecs) {
             entity_to_index.insert(entity, gpu_nodes.len() as u32);
             gpu_nodes.push(gpu::physics_pipeline::GpuParticleNode {
-                position: [node.position.x, node.position.y],
-                velocity: [node.velocity.x, node.velocity.y],
-                force: [node.force.x, node.force.y],
+                position: node.position.into(),
+                _pad0: 0.0,
+                velocity: node.velocity.into(),
+                _pad1: 0.0,
+                force: node.force.into(),
+                _pad2: 0.0,
                 mass: node.mass,
                 organism_id: node.organism_id,
+                _pad3: [0.0; 2],
             });
             node_entities.push(entity);
         }
@@ -764,10 +768,8 @@ impl PhylonApp {
         let updated_nodes = physics_compute.resolve(&gpu.device, pending);
         for (i, entity) in node_entities.iter().enumerate() {
             if let Some(mut node) = self.world.ecs.get_mut::<physics::ParticleNode>(*entity) {
-                node.position.x = updated_nodes[i].position[0];
-                node.position.y = updated_nodes[i].position[1];
-                node.velocity.x = updated_nodes[i].velocity[0];
-                node.velocity.y = updated_nodes[i].velocity[1];
+                node.position = updated_nodes[i].position.into();
+                node.velocity = updated_nodes[i].velocity.into();
                 // Clear forces for next tick
                 node.force = common::Vec3::new(0.0, 0.0, 0.0);
             }

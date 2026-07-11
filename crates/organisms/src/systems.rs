@@ -113,8 +113,10 @@ fn wire_brain_for_completed_organism(
     chem_query: &Query<&metabolism::ChemicalEconomy>,
     expressed_brain_cppn: &genetics::Cppn,
 ) {
-    // 6 standard inputs + 1 Signal input + 1 Hazard input + 1 Pacemaker
-    let input_count = 9;
+    // 3 scalar inputs (Olfaction, ATP, Age) + 9 Vision inputs (Phase 8,
+    // Epic 8.7, ADR-P8-07's 3×3 azimuth×elevation grid, up from 3
+    // pre-8.7) + 1 Signal input + 1 Hazard input + 1 Pacemaker
+    let input_count = 15;
     // effectors + 1 SignalEmitter output
     let output_count = state.effectors.len() + 1;
 
@@ -303,8 +305,7 @@ fn decode_next_segment(
     // — the formula itself is unchanged from pre-D1b.
     let spawn_pos = if let Some(prev_entity) = state.parent_spine_node {
         if let Ok(parent_node) = node_query.get(prev_entity) {
-            parent_node.position
-                + Vec3::new(state.heading.cos(), state.heading.sin(), 0.0) * -state.segment_length
+            parent_node.position + state.forward * -state.segment_length
         } else {
             state.current_pos
         }
@@ -486,8 +487,7 @@ fn spawn_grown_segment(
         let current_position = state.next_segment_index;
 
         let fin_spread = state.segment_length * 0.75;
-        let dir = Vec3::new(state.heading.cos(), state.heading.sin(), 0.0);
-        let perp = Vec3::new(-dir.y, dir.x, 0.0);
+        let perp = crate::bilateral_fin_direction(state.dorsal, state.forward);
 
         let f_up_pos = spawn_pos + perp * fin_spread;
         let f_dn_pos = spawn_pos + perp * -fin_spread;
@@ -619,7 +619,7 @@ fn spawn_grown_segment(
 
     // Advance state — current_pos still updated as a fallback reference.
     state.parent_spine_node = Some(spine_node);
-    let offset = Vec3::new(state.heading.cos(), state.heading.sin(), 0.0) * -state.segment_length;
+    let offset = state.forward * -state.segment_length;
     state.current_pos += offset;
     state.next_segment_index += 1;
     state.ticks_until_next_bud = state.base_bud_interval;
@@ -738,8 +738,7 @@ pub fn growth_system(
             SegmentDecode::Apoptotic => {
                 state.next_segment_index += 1;
                 state.ticks_until_next_bud = state.base_bud_interval;
-                let offset = Vec3::new(state.heading.cos(), state.heading.sin(), 0.0)
-                    * -state.segment_length;
+                let offset = state.forward * -state.segment_length;
                 state.current_pos += offset;
             }
             SegmentDecode::Grow { spawn_pos, outputs } => {
@@ -928,7 +927,8 @@ mod tests {
                     segment_length: 20.0,
                     effectors: Vec::new(),
                     is_organism_complete: false,
-                    heading: 0.0,
+                    forward: Vec3::new(1.0, 0.0, 0.0),
+                    dorsal: Vec3::Z,
                 },
                 DevelopmentalGraph::new(),
             ))
@@ -1238,7 +1238,8 @@ mod tests {
                 segment_length: 20.0,
                 effectors: Vec::new(),
                 is_organism_complete: false,
-                heading: 0.0,
+                forward: Vec3::new(1.0, 0.0, 0.0),
+                dorsal: Vec3::Z,
             },
             DevelopmentalGraph::new(),
         ));
@@ -1294,7 +1295,8 @@ mod tests {
                 segment_length: 20.0,
                 effectors: Vec::new(),
                 is_organism_complete: false,
-                heading: 0.0,
+                forward: Vec3::new(1.0, 0.0, 0.0),
+                dorsal: Vec3::Z,
             },
             DevelopmentalGraph::new(),
         ));
@@ -1607,7 +1609,8 @@ mod tests {
                     segment_length: 20.0,
                     effectors: Vec::new(),
                     is_organism_complete: head_outputs.segment_type == genetics::SegmentType::Tail,
-                    heading: 0.0,
+                    forward: Vec3::new(1.0, 0.0, 0.0),
+                    dorsal: Vec3::Z,
                 },
                 graph,
             ))
@@ -1718,7 +1721,8 @@ mod tests {
                     segment_length: 20.0,
                     effectors: Vec::new(),
                     is_organism_complete: head_outputs.segment_type == genetics::SegmentType::Tail,
-                    heading: 0.0,
+                    forward: Vec3::new(1.0, 0.0, 0.0),
+                    dorsal: Vec3::Z,
                 },
                 graph,
             ))

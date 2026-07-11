@@ -95,9 +95,12 @@ pub struct GrowthState {
     pub base_bud_interval: u64,
     /// The single spine node spawned by the previous gene — to attach the next one to.
     pub parent_spine_node: Option<bevy_ecs::entity::Entity>,
-    /// Position for the next spine node. `Vec3` since Phase 8 (ADR-P8-01)
-    /// — `z` stays `0.0` until Epic 8.6's real 3D growth-orientation
-    /// redesign; `heading` below is untouched by that same deferral.
+    /// Position for the next spine node. `Vec3` since Phase 8 (ADR-P8-01) —
+    /// `z` stays `0.0` at every construction site: Epic 8.6 (ADR-P8-06) made
+    /// the `forward`/`dorsal` fin-placement math genuinely 3D-capable, but
+    /// deliberately did not introduce a new mechanism for growth to actually
+    /// leave the Z=0 plane (that would be a biological behavior change, out
+    /// of this epic's scope).
     pub current_pos: Vec3,
     /// Distance between adjacent spine nodes.
     pub segment_length: f32,
@@ -108,6 +111,23 @@ pub struct GrowthState {
     /// `organisms::MAX_SEGMENTS` yet (Phase 3, M4; no special-cased length,
     /// just an emergent stopping condition from the decode itself).
     pub is_organism_complete: bool,
-    /// Heading angle at which this organism spawns.
-    pub heading: f32,
+    /// Body-fixed forward (direction-of-travel) unit vector (Phase 8, Epic
+    /// 8.6, ADR-P8-06) — replaces the pre-8.6 `heading: f32` angle; computed
+    /// once at spawn/resume and reused, rather than re-deriving `(cos, sin,
+    /// 0)` at every use site. Still confined to the growth plane (`z ==
+    /// 0.0`) at every construction site in this crate today — Epic 8.6's
+    /// scope is making "left"/"right" fin placement well-defined in 3D, not
+    /// introducing a new growth-direction mechanism (a genuinely tilting
+    /// `forward` would be a biological behavior change, out of scope per
+    /// ADR-P8-06's own framing).
+    pub forward: Vec3,
+    /// Body-fixed dorsal ("up") reference (Phase 8, Epic 8.6, ADR-P8-06) —
+    /// together with `forward`, disambiguates "left fin" vs. "right fin" via
+    /// `organisms::bilateral_fin_direction(dorsal, forward)`, a proper 3D
+    /// cross product that's well-defined now that a second, independent
+    /// reference vector exists (the pre-8.6 `perp = Vec2::new(-dir.y,
+    /// dir.x)` construction had no direct 3D generalization — see
+    /// ADR-P8-06). Every construction site in this crate sets this to
+    /// `Vec3::Z`, which reproduces the pre-8.6 2D fin placement exactly.
+    pub dorsal: Vec3,
 }

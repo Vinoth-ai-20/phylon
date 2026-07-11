@@ -21,6 +21,7 @@ pub fn spawn_organism(
 
     let segment_length = 20.0;
     let heading = rng.gen_range(0.0..std::f32::consts::TAU);
+    let forward = Vec3::new(heading.cos(), heading.sin(), 0.0);
 
     // Decode the head node (body position 0) through the same regulatory
     // pipeline every later segment uses — no special-cased "head" template
@@ -107,11 +108,12 @@ pub fn spawn_organism(
             ticks_until_next_bud: 30, // ~0.5 s per segment bud at 60 Hz
             base_bud_interval: 30,
             parent_spine_node: Some(head_node),
-            current_pos: start_pos + Vec3::new(heading.cos(), heading.sin(), 0.0) * -segment_length,
+            current_pos: start_pos + forward * -segment_length,
             segment_length,
             effectors: Vec::new(),
             is_organism_complete: head_outputs.segment_type == genetics::SegmentType::Tail,
-            heading,
+            forward,
+            dorsal: Vec3::Z,
         },
         // Phase 4, ADR-P4-01: a sibling component, not nested in
         // `GrowthState` — it survives that component's removal once growth
@@ -123,7 +125,8 @@ pub fn spawn_organism(
         sensing::HeadVision {
             range: 250.0,
             fov: std::f32::consts::PI * 0.8, // ~144 degrees
-            last_forward: common::Vec2::X,
+            last_forward: common::Vec3::X,
+            dorsal: common::Vec3::Z,
             // Body length isn't known ahead of growth (Phase 3 M4 decodes
             // segment-by-segment rather than reading a fixed-length
             // sequence) — use the fixed growth ceiling as a safe upper-bound
@@ -243,7 +246,11 @@ pub fn spawn_proto_fish(
     let fin_root = spine_nodes[2];
     let fin_root_pos = pos + dir * (-2.0 * segment_len);
 
-    let perp = Vec3::new(-dir.y, dir.x, 0.0);
+    // Phase 8, Epic 8.6 (ADR-P8-06): same bilateral fin-placement formula
+    // `growth_system` uses, with a fixed `Vec3::Z` dorsal (this preset has
+    // no per-organism `GrowthState`/dorsal of its own) — reproduces the
+    // pre-8.6 `Vec3::new(-dir.y, dir.x, 0.0)` exactly.
+    let perp = crate::bilateral_fin_direction(Vec3::Z, dir);
     let f_up_pos = fin_root_pos + perp * fin_spread;
     let f_dn_pos = fin_root_pos + perp * -fin_spread;
 

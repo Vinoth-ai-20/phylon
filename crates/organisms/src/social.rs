@@ -237,13 +237,13 @@ mod tests {
     use super::*;
     use bevy_ecs::system::RunSystemOnce;
     use bevy_ecs::world::World;
-    use common::Vec2;
 
     fn sample_vision() -> sensing::HeadVision {
         sensing::HeadVision {
             range: 250.0,
             fov: std::f32::consts::PI,
-            last_forward: Vec2::X,
+            last_forward: common::Vec3::X,
+            dorsal: common::Vec3::Z,
             self_occlusion_radius: 5.0,
             locked_target: None,
         }

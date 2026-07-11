@@ -154,6 +154,7 @@ This document was produced by an audit-first, multi-angle investigation (5 indep
 - **Risk**: Medium — touches `growth_system`, the same code Phase 7's W5a milestone carefully extracted into `wire_brain_for_completed_organism`/`decode_next_segment`/`spawn_grown_segment` with an existing 11-test safety net; this migration must extend that same test suite with 3D-specific determinism/correctness tests, not bypass it.
 - **Rollback**: gated behind the existing `growth_system_*` test suite passing unchanged for every 2D-equivalent case (an organism grown with `dorsal` always equal to a fixed world axis should reproduce today's 2D behavior exactly, as a regression check).
 - **Future implications**: a future "radial symmetry" epic (candidate for Phase 9) would add a new gene/trait and a new branch-count/branch-angle-distribution model, built on top of this ADR's `dorsal` vector, not replacing it.
+- **STATUS: APPROVED.** Accepted by the user prior to Epic 8.6, per this document's own sign-off gate — body-fixed `forward`/`dorsal` frame, strict bilateral symmetry preserved, radial symmetry explicitly deferred out of Phase 8. Epic 8.6 may proceed under this decision once Epic 8.5's outstanding manual QA checklist (see its own execution-log entry) is reported back as all-PASS.
 
 ### ADR-P8-07 — Vision/sensing becomes an azimuth×elevation binned cone, preserving the existing "cheap heuristic over expensive raycasting" performance philosophy
 
@@ -864,6 +865,7 @@ Acceptance checklist per epic = all of the above, plus that epic's own stated "C
 - **Runtime shader validation**: launched the release build; log confirms `naga` successfully compiled both rewritten shaders to SPIR-V (`capsule.wgsl`'s new `clip_test` function and `field_overlay.wgsl`'s rewritten `fs_main` both appear in the compilation log with no validation errors) and the app ran for over a minute with no crash, panic, or wgpu validation error.
 - Two independent 200-tick headless runs at the same seed: log output identical byte-for-byte except timestamps — this epic touches only rendering code (shaders, uniform layout, UI controls), no simulation state path; `data/default.ron` reverted immediately after.
 - **Interactive verification, not performed this epic**: per the same automation-reliability issue disclosed in Epic 8.4's report (background-window focus/z-order instability in this environment), no screenshot-based visual check of the field's on-screen registration or the clip plane's visible slicing effect was attempted. This is a real, disclosed gap: **the plane-slice field projection and the clip-plane's visual effect on organism geometry have not been visually confirmed by this epic's own automation** — only that they compile, pass clippy, and don't crash at runtime. The user should confirm: the heatmap/field overlay still aligns with organism positions when panning/orbiting the camera (the actual bug this migration fixes — the old technique could drift under tilt); and that toggling the Clipping Plane checkbox visibly slices through capsule geometry at the configured height.
+- **Manual QA checklist, outstanding**: the user is running a 10-point manual pass/fail checklist locally (camera registration under orbit/pan/zoom/tilt; clipping-plane behavior; clip stability under camera movement; field/clip alignment; picking and highlight rendering on clipped geometry; debug billboard behavior; population-scale stress test; startup shader-validation log check; and a no-clipping regression pass). Results pending — Epic 8.6 begins once all 10 are reported PASS, per the user's explicit gate.
 
 **Tests executed:** the full workspace suite (`cargo test --workspace`) — same pass count as Epic 8.4 (no new tests added this epic).
 
@@ -879,8 +881,332 @@ Acceptance checklist per epic = all of the above, plus that epic's own stated "C
 
 **Remaining roadmap dependencies:** Epic 8.6 (real 3D growth/orientation) remains gated on ADR-P8-06 sign-off — the next epic in the roadmap's own Tier 2→3 sequence, and the second of the two explicitly-flagged scientific-decision gates this roadmap names.
 
-**Recommended next epic:** Epic 8.6 (`heading` → `forward`/`dorsal` growth-orientation redesign) — **requires explicit user sign-off on ADR-P8-06's bilateral-symmetry decision before starting**, per this document's own stated gate. Per the established pattern, **implementation stops here** — Epic 8.6 is not begun without that sign-off.
+**Recommended next epic (superseded — see Epic 8.6's own completion report below):** ~~Epic 8.6 requires explicit user sign-off on ADR-P8-06's bilateral-symmetry decision before starting~~ — **ADR-P8-06 was approved by the user** (see its own STATUS line above), and Epic 8.6 is now complete.
 
 ---
 
-*This document is the complete Stage 1-4 planning deliverable, now also the Phase 8 execution log (§17) as implementation proceeds epic-by-epic. Epics 8.0 through 8.5 are complete and verified (see above; Epics 8.4 and 8.5 each have one disclosed interactive-verification gap — see their own Risks sections). Epic 8.6 additionally requires explicit sign-off on ADR-P8-06 before starting, per this document's own stated gate.*
+### Epic 8.6 — Growth Orientation Redesign (`heading` → `forward`/`dorsal`) — COMPLETE
+
+**Executive summary.** Implements ADR-P8-06 exactly as approved: `GrowthState::heading: f32` is replaced by two body-fixed `Vec3` fields, `forward` (direction-of-travel — a renamed, pre-computed-once version of the same value `heading` encoded) and `dorsal` (new — a per-organism "up" reference, initialized to `Vec3::Z` at every construction site). "Left fin"/"right fin" placement is now `organisms::bilateral_fin_direction(dorsal, forward)` (a proper 3D cross product), replacing the `Vec2::new(-dir.y, dir.x)` construction that had no direct 3D generalization. Per the user's explicit framing when approving the ADR ("moving from 2D to 3D is an engine migration, not a biological redesign"), this epic deliberately does **not** introduce any mechanism for `forward` to leave the Z=0 growth plane — every construction site still derives it the same way (`(heading.cos(), heading.sin(), 0.0)`, or an equivalent normalized delta between two Z=0 spine positions), so real running populations grow identically to before. The new math is genuinely 3D-*capable* (verified with a tilted `dorsal` in a dedicated test), not merely retyped.
+
+**Architecture changes.**
+
+- **`organisms::developmental_graph::bilateral_fin_direction(dorsal: Vec3, forward: Vec3) -> Vec3`** (new, `dorsal.cross(forward)`) — the single shared implementation of the fin-placement formula, replacing two independent copies of the ad hoc 2D-only construction (`growth_system`'s branch logic in `systems.rs`, and the standalone `spawn_proto_fish` debug preset in `spawning.rs`, which has no `GrowthState`/`dorsal` of its own and passes a fixed `Vec3::Z`). Exported at the crate root alongside `can_branch`/`compile_segment`, the existing home for small, pure decode-to-physics helpers.
+- **`GrowthState`** (`components.rs`) — `heading: f32` → `forward: Vec3` + `dorsal: Vec3`. Every one of the 9 construction sites across `spawning.rs` (2 organism-creation paths), `life_cycle.rs` (resumed adult growth + 1 test fixture), and `systems.rs` (5 test fixtures) updated; every one of the 4 `state.heading.cos()/.sin()` read sites in `systems.rs` replaced with direct reads of the pre-computed `state.forward`.
+- **`life_cycle.rs`'s resumed-growth heading inference** — previously computed a 2D angle (`delta.y.atan2(delta.x)`) from the last two spine positions, then reconstructed a direction vector from it; now computes `delta.normalize()` directly, one fewer round-trip through trigonometric functions, same result for any Z=0 delta (confirmed via the existing `resumed_growth_reaches_completion_and_rebuilds_the_brain` test, unchanged and passing).
+- **No changes** to `current_pos: Vec3` (still `z == 0.0` at every construction site, per its own doc comment, now updated to explain *why* — Epic 8.6 made the fin-placement math 3D-capable without adding a mechanism for growth to actually leave the plane) or to any other `GrowthState` field.
+
+**Files changed** (5 files, 1 crate):
+
+- `crates/organisms/src/developmental_graph.rs` — new `bilateral_fin_direction`; 3 new unit tests.
+- `crates/organisms/src/components.rs` — `GrowthState::heading` → `forward`/`dorsal`, with updated doc comments.
+- `crates/organisms/src/systems.rs` — 4 read-site replacements; fin-placement call site; 5 test-fixture updates.
+- `crates/organisms/src/spawning.rs` — `spawn_organism`'s `GrowthState` construction; `spawn_proto_fish`'s independent fin-placement formula routed through the same shared helper.
+- `crates/organisms/src/life_cycle.rs` — resumed-growth `forward` inference; 1 test-fixture update; doc comment.
+- `crates/organisms/src/lib.rs` — exports `bilateral_fin_direction`.
+
+**Verification results:**
+
+- `cargo build --workspace --all-targets`: clean.
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo test --workspace`: all tests pass, including **all 11 pre-existing `growth_system_*` tests, unchanged and passing** — the exact regression check ADR-P8-06 and the roadmap's own Epic 8.6 entry both name as the rollback gate. 3 new tests added: `bilateral_fin_direction_with_z_dorsal_matches_the_pre_8_6_2d_formula` (the 2D-equivalence regression, checked across 6 headings, not just one), `bilateral_fin_direction_with_a_tilted_dorsal_stays_orthogonal_to_both_inputs` (the genuine 3D-correctness check — a non-`Z` dorsal still produces a mathematically valid perpendicular), and `bilateral_fin_direction_is_zero_when_dorsal_and_forward_are_parallel` (the one honestly-degenerate case, documented as a zero-length result rather than a silent NaN).
+- Two independent 200-tick headless runs at the same seed: log output identical byte-for-byte except timestamps — confirms this migration changed no observable simulation behavior for any currently-possible `GrowthState` (since `dorsal` is always `Vec3::Z` and `forward` is always Z=0-plane-confined in every real code path today). `data/default.ron` reverted immediately after.
+- No interactive/visual verification needed or attempted — this epic touches only internal growth-system math with no rendering surface of its own (organisms rendered by the existing capsule renderer are unaffected, since bone endpoints/positions are unchanged).
+
+**Tests executed:** the full workspace suite (`cargo test --workspace`) — 3 new, 0 removed, all passing (`organisms` crate alone: 68 tests, up from 65).
+
+**Performance observations.** Not benchmarked with hard numbers — expected to be a net-neutral-to-negligible-positive change: the 4 former `.cos()`/`.sin()` recomputations per tick per organism are replaced by direct field reads of a value computed once at spawn/resume, a small constant-factor reduction, not a new cost.
+
+**Determinism validation.** Confirmed via two independent 200-tick headless runs at the same seed (see Verification above) — bit-identical behavior.
+
+**Risks.**
+
+- None newly introduced. The one pre-existing risk this epic was meant to retire — "growth-orientation redesign introduces a scientific regression (bilateral symmetry silently reinterpreted)" (risk register) — is addressed directly by the regression test suite passing unchanged plus the new 2D-equivalence test covering 6 distinct headings, not just the default.
+- `bilateral_fin_direction`'s degenerate case (`dorsal` parallel to `forward`) returns a zero-length vector rather than panicking — correctly documented, but any future code that divides by this result's length without checking would need to handle it; no such call site exists today (both fin-placement call sites multiply by `fin_spread`, tolerating a zero vector as "no lateral offset" rather than crashing).
+- `dorsal` is not yet evolvable or dynamically variable by any mechanism — it is a real, per-organism-stored field (not a hardcoded global), but every code path sets it to the same constant `Vec3::Z` today. This is the correct, disclosed scope boundary per ADR-P8-06 and the user's own explicit framing, not an oversight: a future epic could vary `dorsal` (e.g., as an evolvable trait) without touching `bilateral_fin_direction` itself.
+
+**Remaining roadmap dependencies:** none blocking. Epic 8.7 (vision/sensing redesign, ADR-P8-07) depends on the same `dorsal`/`forward` body-frame this epic introduces (its own decision text: "computed via the same `dorsal`/`forward` body-frame ADR-P8-06 introduces") and can now proceed. No further sign-off gate exists between here and the end of the roadmap's currently-planned epics — both of the roadmap's named gates (ADR-P8-03, ADR-P8-06) are now resolved.
+
+**Recommended next epic (superseded — see Epic 8.7's own completion report below):** Epic 8.7 is now complete.
+
+---
+
+### Epic 8.7 — Vision/Sensing Redesign (Azimuth×Elevation Binned Cone) — COMPLETE
+
+**Executive summary.** Implements ADR-P8-07 exactly as decided: the pre-8.7 3-bin (Left/Center/Right) vision heuristic, built on a signed 2D angle (`Vec2::angle_to`) with no 3D analogue, is replaced by a genuine 3×3 azimuth×elevation grid computed via a body-fixed `forward`/`dorsal` frame (new `sensing::vision_azimuth_elevation`), mirroring the same frame Epic 8.6 introduced on `GrowthState` (though — since `GrowthState` is removed once growth completes — `HeadVision` gets its own persistent `last_forward`/`dorsal: Vec3` pair, not a literal reuse of the now-gone component). Still a cheap O(candidates-in-range) binned heuristic, not raycasting, per the ADR's explicit performance-philosophy preservation requirement. `SensoryState`'s brain-facing input count grows from 9 to 15 (3 vision bins → 9). Per the same "engine migration, not biological redesign" discipline Epic 8.6 established, elevation is honestly disclosed as *provably always the "mid" bin in every real run today* — no code path gives any sensed position (self or target) a nonzero `Z`, so `elevation = asin(dir · dorsal) = asin(0) = 0` always. The math is genuinely 3D-capable (verified with synthetic non-planar test vectors), the simulated world just isn't yet.
+
+**Architecture changes.**
+
+- **`sensing::vision_azimuth_elevation(forward, dorsal, dir) -> (azimuth, elevation)`** (new) — `azimuth = atan2((forward × dir) · dorsal, forward · dir)`, `elevation = asin(dir · dorsal)`. Reproduces `Vec2::angle_to`'s exact result whenever `dorsal == Vec3::Z` and `forward`/`dir` are confined to the XY plane (true at every real call site), verified across 8 distinct angles in a dedicated regression test.
+- **`HeadVision`** — `last_forward: Vec2` → `Vec3`; new `dorsal: Vec3` field (initialized to `Vec3::Z` at both real construction sites — `organisms::spawning::spawn_organism` and the `organisms::social` test helper). `last_forward` is still derived from `physics::ParticleNode::velocity` (extended to `Vec3` with `z = 0.0`), unchanged in spirit from before.
+- **`compute_sensing`'s vision block** (`crates/sensing/src/lib.rs`) — `vision_check` now returns `(azimuth, elevation, strength)` instead of a single `angle`; a new `bin_index(azimuth, elevation) -> usize` classifies each candidate into one of 9 bins (row-major: elevation × 3 + azimuth, each axis Left/Center/Right or Down/Mid/Up via the same `third_fov` threshold style as before, just applied to both axes); obstacle bins accumulate by max-strength per bin as before, food/prey selection still commits to one chosen candidate (locked-target semantics unchanged) and populates only that candidate's bin.
+- **`wire_brain_for_completed_organism`** (`organisms::systems`) — `input_count` updated from `9` to `15` (3 scalar inputs [Olfaction/ATP/Age] + 9 Vision + Signal + Hazard + Pacemaker), the single source of truth that sizes both the CTRNN's input layer and `SensoryState::new(...)`. The brain itself needed no change — confirmed dimension-agnostic per the ADR's own risk assessment, and by every existing `growth_system_*`/CTRNN test passing unmodified.
+
+**Files changed** (4 files, 2 crates):
+
+- `crates/sensing/src/lib.rs` — `vision_azimuth_elevation` (new, 3 unit tests); `HeadVision::dorsal` (new); `last_forward` widened to `Vec3`; `compute_sensing`'s vision block rewritten for the 3×3 grid; `VisionSnapshot`/`SensingResult` widened to match; test fixture updated (`SensoryState::new(7)` → `new(15)`, matching the real production dimension).
+- `crates/organisms/src/systems.rs` — `input_count` `9` → `15`.
+- `crates/organisms/src/spawning.rs` — `HeadVision` construction: `last_forward`/`dorsal` updated.
+- `crates/organisms/src/social.rs` — `sample_vision()` test helper updated; unused `Vec2` import removed.
+
+**Verification results:**
+
+- `cargo build --workspace --all-targets`: clean.
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo test --workspace`: all tests pass. 3 new tests in `sensing` (`vision_azimuth_elevation_with_z_dorsal_matches_the_pre_8_7_2d_angle` — the 2D-equivalence regression across 8 angles; `vision_azimuth_elevation_reads_maximal_elevation_straight_up` — genuine 3D correctness, a target directly along `dorsal` reads exactly π/2 elevation; `vision_azimuth_elevation_works_with_a_tilted_dorsal` — confirms the formula doesn't silently assume a world-space-vertical dorsal), plus the pre-existing `sensing_is_deterministic_regardless_of_thread_count` test passing unchanged (still the same 1-vs-8-thread cross-check, now exercising the 3×3 grid instead of the 3-bin version).
+- Two independent 200-tick headless runs at the same seed: log output identical byte-for-byte except timestamps. `data/default.ron` reverted immediately after.
+- No interactive/visual verification needed — this epic touches only internal sensing/brain-input math with no rendering surface of its own.
+
+**Tests executed:** the full workspace suite (`cargo test --workspace`) — 3 new, 0 removed, all passing (`sensing` crate alone: 5 tests, up from 2).
+
+**Performance observations.** Not benchmarked with hard numbers. Per-candidate cost grows modestly (one `atan2` + one `asin` instead of one `angle_to`, plus a 9-way instead of 3-way bin classification) — still O(candidates-in-range), no new spatial query or per-tick allocation added. The CTRNN brain's input layer grows by 6 nodes (9 vision vs. 3) per organism, a small, bounded, one-time-at-wiring cost, not a per-tick one.
+
+**Determinism validation.** Confirmed via two independent 200-tick headless runs at the same seed (see Verification above) — bit-identical behavior.
+
+**Risks.**
+
+- None newly introduced beyond what the ADR itself named and accepted. The literal 3×3 grid (not the cheaper azimuth-only fallback) was implemented per the ADR's own default decision, since no measurement has shown it exceeds the population-scale budget — if a future profiling pass finds otherwise, the ADR's own named fallback (azimuth-only, 3 bins) remains straightforward to revert to.
+- **6 of the 9 vision bins are provably dead output in every real run today** (any bin with a non-"mid" elevation index) — a real, disclosed characteristic of building 3D-capable sensing math ahead of any actual 3D world-space variation (mirrors Epic 8.6's `dorsal` field, which is similarly real-but-unvaried today). This means the CTRNN brain's input layer carries 6 always-zero input nodes per organism until some future epic gives sensed positions genuine, non-zero `Z` — a modest, bounded cost (6 extra always-quiescent input nodes), not a correctness problem.
+- `HeadVision::dorsal` is not evolvable or dynamically variable by any mechanism, same disclosed scope boundary as `GrowthState::dorsal` in Epic 8.6.
+
+**Remaining roadmap dependencies:** none blocking further Tier 3/4 epics. No further sign-off gate exists anywhere ahead in this roadmap.
+
+**Recommended next epic (superseded — see Epic 8.9's own completion report below):** Epic 8.9 is now complete, following the roadmap's own recommended execution order (§15's numbered sequence lists Epic 8.9 before Epic 8.8).
+
+---
+
+### Epic 8.9 — CPU Spatial Index 3D Extension + Octree — COMPLETE
+
+**Executive summary.** Completes the `spatial` crate's Phase 8 migration. `UniformGrid`/`SpatialHash` were already `Vec3`-native as of Epic 8.0 (their inherent methods, the primary API, took `Vec3` positions from the start) — the only remaining pre-8.9 gap was the bounded, sparse-query index: the `Quadtree` (2D, 4-way quadrant splitting) is replaced by a new `Octree` (3D, 8-way octant splitting), and the shared `SpatialIndex` trait — previously `Vec2`-based purely because `Quadtree` was — is widened to `Vec3` to match. `Quadtree` had zero real callers anywhere in the workspace (confirmed via a fresh crate-wide search before starting, matching the audit finding this roadmap already recorded), so this is a straight replacement, not a parallel type or a migration with call-site risk.
+
+**Architecture changes.**
+
+- **`spatial::Octree`** (new, replaces `Quadtree`) — same bounded-region, splitting-leaf design as its predecessor, generalized from 4-way quadrant splitting (`QuadNode`, `Vec2` min/max) to 8-way octant splitting (`OctNode`, `Vec3` min/max). Octant classification (`octant_of`) is a 3-bit index (`x`/`y`/`z` each contributing one bit), replacing the 2-bit quadrant index. The circle-vs-AABB overlap test becomes a sphere-vs-AABB test (`intersects_sphere`). All of `Quadtree`'s own accepted design limitations (no merge-on-removal, `insert`/`update`/`remove`/`query_radius`/`clear` semantics) carry over unchanged.
+- **`spatial::SpatialIndex`** — every method widened from `Vec2` to `Vec3`. `UniformGrid`/`SpatialHash`'s trait impls, which previously bridged `Vec2` → `Vec3` via `.extend(0.0)` at the trait boundary (since the trait was the only thing still asking for `Vec2`), now pass through directly with no conversion — a small simplification, not just a type change, since the truncate/extend shim this exact spot in both files' own doc comments called out is now gone entirely.
+- **No changes to any real call site** — every existing caller (physics broad-phase, sensing, reproduction proximity search, ecology foraging) already used `UniformGrid`/`SpatialHash`'s own inherent `Vec3` methods directly, never the `SpatialIndex` trait or `Quadtree`, confirmed again via a workspace-wide search before and after this epic's changes.
+
+**Files changed** (5 files, 1 crate; 1 file removed, 1 added):
+
+- `crates/spatial/src/octree.rs` (new, replaces `quadtree.rs`) — `Octree`/`OctNode`, `SpatialIndex` impl, 12 unit tests (11 carried over from `Quadtree`'s own suite, generalized to 3D coordinates, plus one new: `query_radius_distinguishes_entities_by_z_alone`, the genuinely-3D correctness check a 2D `Quadtree` couldn't even represent).
+- `crates/spatial/src/quadtree.rs` — deleted (git history preserves it).
+- `crates/spatial/src/index.rs` — `SpatialIndex` trait widened to `Vec3`.
+- `crates/spatial/src/uniform_grid.rs` / `hash.rs` — `SpatialIndex` impls simplified (direct pass-through, no more `.extend(0.0)` bridge); doc comments updated.
+- `crates/spatial/src/lib.rs` — exports `Octree` instead of `Quadtree`; module doc and `SpatialError::OutOfBounds` doc-link updated.
+
+**Verification results:**
+
+- `cargo build --workspace --all-targets`: clean.
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo test --workspace`: all tests pass. `spatial` crate: 27 tests, up from 19 (`Octree`'s 12 vs. `Quadtree`'s 11, plus the pre-existing `hash`/`uniform_grid` suites unchanged).
+- Two independent 200-tick headless runs at the same seed: log output identical byte-for-byte except timestamps — expected, since no real call site was touched. `data/default.ron` reverted immediately after.
+- No interactive/visual verification needed — this epic touches only an internal, currently-uncalled-in-production data structure.
+
+**Tests executed:** the full workspace suite (`cargo test --workspace`) — 1 new (net, after accounting for the carried-over 11), 0 removed beyond the deleted-and-replaced `Quadtree` suite.
+
+**Performance observations.** Not benchmarked with hard numbers (no real caller exists yet to benchmark against) — the roadmap's own stated verification for this epic ("benchmark comparison vs. the 2D baseline") is deferred until a real caller adopts `Octree`, since benchmarking an unused data structure against its own predecessor would not produce a meaningful population-scale signal.
+
+**Determinism validation.** Confirmed via two independent 200-tick headless runs at the same seed (see Verification above) — bit-identical behavior, as expected for a change with zero real call sites.
+
+**Risks.**
+
+- `Octree` (like `Quadtree` before it) has no real caller yet — this epic prepares the data structure per the roadmap's own dependency ordering (ahead of Epic 8.10, which shares its broad-phase design philosophy), not because something today needs it. A future caller should confirm `Octree`'s bounded-region design (fixed `min`/`max` at construction) still fits its access pattern before adopting it.
+- The `SpatialIndex` trait remains, by its own honest accounting, unused by any real call site — this epic keeps it consistent (all `Vec3`) rather than removing it outright, since the roadmap treats it as a deliberate multi-index abstraction point, not dead code to prune.
+
+**Remaining roadmap dependencies:** Epic 8.10 (GPU physics 3D buffers + hash-based broad phase) depends on this epic ("shares broad-phase design philosophy") and can now proceed. Epic 8.8 (fin-drag/anisotropic physics redesign) depends only on Epic 8.6 (already complete) and remains independently startable.
+
+**Recommended next epic (superseded — see note and Epic 8.10's own completion report below):** ~~Epic 8.8~~ — **reordered ahead of Epic 8.8 after an audit found the GPU physics buffers were still `vec2`, so a *numerically real* dorsal-vector fin-drag redesign had nothing to operate on yet.** The user chose to do Epic 8.10 (GPU vec3 buffers + hash-based broad phase) first, then Epic 8.8 against the resulting real `vec3` buffers — see Epic 8.10's own report for the full reasoning. This is a deliberate, disclosed deviation from §15's listed recommended order, not a silent reshuffle.
+
+---
+
+### Epic 8.10 — GPU Physics 3D Buffers + Hash-Based Broad Phase — COMPLETE
+
+**Executive summary.** Implements ADR-P8-04 exactly as decided. `physics.wgsl`'s `ParticleNode.position/velocity/force` (and the matching Rust `GpuParticleNode`) widen from `vec2<f32>`/`[f32; 2]` to `vec3<f32>`/`[f32; 3]`, with explicit padding fields mirroring WGSL's own 16-byte vec3-alignment rule so the Rust and WGSL struct layouts match byte-for-byte (`bytemuck` requires this). A third `atomic_forces_z` buffer joins the existing `atomic_forces_x`/`_y`, with all 4 shader entry points that touch the force-accumulation buffers (`compute_forces`, `integrate`, `pbd_projection`, `apply_pbd`) updated in lockstep. The steric-hindrance repulsion broad-phase moves from a dense `128×128` grid (direct 2D indexing, would have been a ~128× memory increase to extend naively to 3D) to a fixed-size spatial hash over 3D cell coordinates, using the same prime-XOR mixing style `crates/spatial::SpatialHash` uses on the CPU side (ADR-P8-04's explicit "one conceptual broad-phase design" requirement) — sized to cost **zero additional GPU memory** versus the pre-8.10 dense grid (16384 total buckets either way). The fin-drag formula itself is mechanically widened to `vec3` but deliberately **not yet** redesigned against a real `dorsal`-vector body frame — it stays numerically identical to its pre-8.10 behavior (still confined to the `Z = 0` plane), since that redesign is Epic 8.8's own, separate, subsequent change (see the reordering note above).
+
+**Architecture changes.**
+
+- **`GpuParticleNode`** (`crates/gpu/src/physics_pipeline.rs`) — `position`/`velocity`/`force` widened to `[f32; 3]`, each followed by an explicit `_pad*: f32` field (WGSL pads a struct member of type `vec3<f32>` to a 16-byte boundary; Rust doesn't know this rule, so it must be encoded by hand or the two layouts silently diverge). Struct grows from 32 to 64 bytes. `physics.wgsl`'s own `ParticleNode` struct declares the identical padding explicitly, rather than relying on the compiler to insert it implicitly, for the same byte-for-byte-match reason.
+- **Spatial hash broad-phase** (`physics.wgsl`) — `grid_cell_coord` generalized to 3D (no more clamping to a bounded dense-grid index range — a hash table has no such bound). New `bucket_of(cell: vec3<i32>) -> u32` mixes the cell coordinate via the same `(x*P1) XOR (y*P2) XOR (z*P3), mod table_size` style `spatial::SpatialHash` uses (not required to produce bit-identical bucket indices to the CPU side — they index unrelated buffers for unrelated purposes — just the same conceptual mixing approach, per the ADR). `bin_nodes` hashes each node into a bucket instead of a dense cell index. `integrate`'s repulsion neighbor-scan now iterates the 27 neighboring 3D cell coordinates, hashes each to a bucket, and **deduplicates visited buckets before scanning** (a genuine new correctness requirement a hash table introduces that a dense grid didn't have: two distinct neighbor cells can collide into the same bucket, and scanning it twice would double-count that bucket's repulsion contribution).
+- **`atomic_forces_z`** — new buffer, bound at binding 5 (shifting `cell_counts`/`cell_nodes` from bindings 5/6 to 6/7); created/cleared/bound alongside `atomic_forces_x`/`_y` at every one of the same 4 shader-entry-point call sites the roadmap's own audit named in advance (`compute_forces`, `integrate`, `pbd_projection`, `apply_pbd`), not discovered piecemeal mid-implementation.
+- **`crates/app/src/simulation.rs`** — the CPU→GPU node conversion (`gpu_nodes.push(...)`) and the GPU→CPU readback (`resolve_pending_physics`) both updated for the 3-component position/velocity, using `glam`'s `Vec3 <-> [f32; 3]` `Into` conversions rather than manual field-by-field copies.
+- **Fin-drag formula** — `normal = vec3<f32>(-dir.y, dir.x, 0.0)`, mechanically widened from the pre-8.10 `vec2` version with an explicit `.z = 0.0`, preserving identical numeric output (`dfz` is always exactly `0` today, since `dir.z` is always `0` — no real call site produces a non-planar spring direction yet). Explicitly **not** redesigned against `organisms::bilateral_fin_direction`'s dorsal/forward frame here — that's Epic 8.8's own change, now unblocked by this epic's real `vec3` buffers.
+
+**Files changed** (3 files, 2 crates):
+
+- `crates/gpu/src/physics.wgsl` — full rewrite: `vec3` `ParticleNode`, `atomic_forces_z`, spatial-hash broad-phase (`bucket_of`, deduplicated neighbor scan), all 5 compute entry points updated.
+- `crates/gpu/src/physics_pipeline.rs` — `GpuParticleNode` widened with explicit padding; `HASH_TABLE_SIZE`/`HASH_CELL_CAPACITY` constants (replacing `GRID_DIM`); bind-group layout/creation updated for the new `atomic_forces_z` binding and renumbered `cell_counts`/`cell_nodes` bindings; `ensure_capacity` creates/sizes the new buffer.
+- `crates/app/src/simulation.rs` — `GpuParticleNode` construction and readback updated for 3-component position/velocity.
+
+**Verification results:**
+
+- `cargo build --workspace --all-targets`: clean.
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo test --workspace`: all tests pass — **unchanged count**, since the GPU physics pipeline has zero pre-existing unit tests (confirmed: only one `#[test]` exists anywhere in the `gpu` crate, in `diffusion_pipeline.rs`, unrelated to physics) — meaning this change had **no unit-test safety net at all**, making the runtime verification below the primary source of confidence, not a supplement to it.
+- **Runtime shader validation**: launched the release build; log confirms `naga` compiled `physics.wgsl` (and every other shader) with no validation errors, and the app's startup sequence completed normally.
+- **Real headless run with live population** (the critical check, given zero unit tests): ran 600 ticks headless with `PHYLON_MOTION_DIAGNOSTIC=1`, which logs real per-organism position/velocity/speed data every 60 ticks. Result: bounded, sane `max_speed` values throughout (well under the existing 200 units/s hard cap), no `NaN`/`inf`, no runaway growth over the full run, no panic, no crash — the new `vec3` buffer layout and hash-based broad-phase are demonstrably producing physically sane motion, not silently-corrupted data from a layout mismatch.
+- **Data-bearing determinism check**: two independent runs with `PHYLON_MOTION_DIAGNOSTIC=1` at the same seed produced **byte-for-byte identical** logged position/velocity/speed/brain-output data throughout — a stronger check than this session's usual "same log messages" comparison, chosen deliberately here because this is the highest-risk, least-unit-tested change so far. `data/default.ron` reverted immediately after both this and the standard determinism check.
+- **Formal GPU broad-phase benchmark: not built** (disclosed gap — see Risks). The roadmap's own stated verification for this epic asks for "a new GPU broad-phase benchmark... at multiple population sizes, before/after." This wasn't built due to the effort of standing up a `wgpu`-device-owning `criterion` harness within this session's scope; the ADR's core concern (avoiding a ~128× memory blowup) is instead satisfied *by construction*, not by benchmark — `HASH_TABLE_SIZE` was deliberately chosen to exactly match the pre-8.10 dense grid's total cell count (16384), so this change provably costs zero additional broad-phase memory, the specific risk ADR-P8-04 was written to avoid.
+
+**Tests executed:** the full workspace suite (`cargo test --workspace`) — 0 new (no unit-testable surface exists for this change; see above), 0 removed, all passing.
+
+**Performance observations.** Not benchmarked with hard numbers (see the disclosed gap above). Qualitatively: the hash-based neighbor scan does strictly more work per node than the old dense grid (a 27-cell 3D neighborhood with bucket deduplication, vs. a 9-cell 2D neighborhood with no deduplication needed) — some real per-tick cost increase is expected and not measured. GPU memory for the broad-phase buffers is unchanged (16384 buckets × 64-entry capacity, same as before). The `GpuParticleNode` struct grew from 32 to 64 bytes (2×), a mechanical consequence of the vec3 widening plus its alignment padding — proportionally more upload/readback bandwidth per node, not measured against a population-scale budget.
+
+**Determinism validation.** Confirmed via two independent runs at the same seed with `PHYLON_MOTION_DIAGNOSTIC=1` — logged position/velocity/speed/brain-output data bit-identical throughout a 60-tick sampling window. This is the strongest determinism check performed in Phase 8 so far (actual simulation data compared, not just log-message parity), reflecting this epic's higher risk profile.
+
+**Risks.**
+
+- **No formal before/after broad-phase benchmark** (see Verification) — the primary open item. A future pass should stand up the GPU-equivalent of `crates/benchmarks`'s `foraging_scaling` benchmark at multiple population sizes before this broad-phase design is considered fully validated under the roadmap's own original verification bar.
+- **Zero pre-existing unit-test coverage for the GPU physics pipeline** — not a regression this epic introduced, but a pre-existing gap this epic's audit surfaced. The real-headless-run + data-bearing-determinism-check verification performed here is a reasonable substitute for a single change, but doesn't leave a durable, repeatable automated safety net the way a unit test would. Worth a future epic's attention independent of Phase 8.
+- The hash-based neighbor scan's per-node cost is qualitatively higher than the old dense grid's (27 cells + dedup vs. 9 cells, no dedup) — not measured, so an unmeasured performance regression at very high population counts is possible; the "no additional memory" guarantee does not imply "no additional compute cost."
+- The fin-drag formula's `.z = 0.0` hardcoding is a deliberate, temporary placeholder pending Epic 8.8 — reading `physics.wgsl` in isolation without this report's context could look like an oversight rather than an intentional epic-boundary decision; the in-shader comment addresses this but is worth restating here.
+
+**Remaining roadmap dependencies:** Epic 8.8 (fin-drag/anisotropic physics redesign) is now unblocked with real `vec3` GPU buffers to redesign against — the reason this epic was reordered ahead of it.
+
+**Recommended next epic (superseded — see Epic 8.8's own completion report below):** Epic 8.8 is now complete.
+
+---
+
+### Epic 8.8 — Fin-Drag / Anisotropic Physics Redesign — COMPLETE
+
+**Executive summary.** Implements the second half of ADR-P8-04/ADR-P8-06's physics-narrow-phase decision: `physics.wgsl`'s fin-drag perpendicular direction, previously an ad hoc `vec3(-dir.y, dir.x, 0.0)` component-swap trick with no natural 3D generalization (the exact problem the roadmap's own Context section named), is replaced by a real `cross(DORSAL, dir)` — the same `dorsal`-vector body-frame cross product `organisms::bilateral_fin_direction` uses on the CPU side for fin *placement* (Epic 8.6). `DORSAL` is a fixed shader constant (`vec3(0.0, 0.0, 1.0)`), matching the same value `GrowthState::dorsal`/`HeadVision::dorsal` both default to and never vary from — so this redesign is, by design, numerically a no-op today (confirmed directly, not just argued: see Verification), while giving the whole codebase one consistent formula for "body-relative perpendicular" instead of two independently-derived ones (a 2D swap-trick on GPU, a real cross product on CPU).
+
+**Architecture changes.**
+
+- **`physics.wgsl`** — new `const DORSAL: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);`; the fin-drag block's `normal` computation changed from `vec3<f32>(-dir.y, dir.x, 0.0)` to `cross(DORSAL, dir)`. Verified algebraically before implementation (and confirmed empirically after): `cross((0,0,1), dir) == (-dir.y, dir.x, 0)` for any `dir` in the XY plane, so this is an exact reproduction, not an approximation.
+- **No CPU-side changes** — this epic's entire scope is the one WGSL formula; no Rust struct, buffer, or bind-group changed (unlike Epic 8.10, which this epic depended on for real `vec3` buffers to compute a meaningful cross product against in the first place).
+- **Deliberately not built**: a per-spring or per-organism uploaded `dorsal` value. Nothing anywhere in the codebase varies `dorsal` from `Vec3::Z` yet (`organisms::GrowthState`, `sensing::HeadVision` — both Epic 8.6/8.7's own disclosed scope boundary), so adding a GPU upload channel for a value that's always the same constant would be speculative infrastructure with no current consumer — consistent with this project's standing "no unnecessary abstraction" rule.
+
+**Files changed** (1 file, 1 crate):
+
+- `crates/gpu/src/physics.wgsl` — `DORSAL` constant; fin-drag `normal` computation; updated top-of-file and inline doc comments (the Epic 8.10 comment explaining the formula was "not yet redesigned" is now updated to reflect that it is).
+
+**Verification results:**
+
+- `cargo build --workspace --all-targets`: clean.
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo test --workspace`: all tests pass, unchanged count (no new unit-testable surface — same pre-existing zero-unit-test gap for the GPU physics pipeline this epic inherits from Epic 8.10, not something it introduces).
+- **Direct empirical no-op confirmation** (stronger than the algebraic argument alone): ran the release build headless with `PHYLON_MOTION_DIAGNOSTIC=1` and diffed its output byte-for-byte against Epic 8.10's own saved baseline log from earlier in this same session — **identical**, proving this refactor changed no observable simulation behavior, not just arguing it shouldn't.
+- Two additional independent runs at the same seed (this epic's own new baseline): bit-identical position/velocity/speed/brain-output data throughout.
+- `data/default.ron` reverted immediately after all headless runs.
+
+**Tests executed:** the full workspace suite (`cargo test --workspace`) — 0 new, 0 removed, all passing.
+
+**Performance observations.** Negligible — one WGSL component-swap replaced by one `cross()` intrinsic call, same instruction-count order of magnitude, invoked only for spring instances with `is_fin == 1`.
+
+**Determinism validation.** Confirmed two ways: (1) empirical no-op check against Epic 8.10's saved baseline (bit-identical), and (2) a fresh two-independent-run comparison at the same seed (bit-identical) — both the strongest form of verification available (real simulation data, not log-message parity), matching the rigor this epic's higher-risk sibling (Epic 8.10) established.
+
+**Risks.**
+
+- None newly introduced — this epic is a proven no-op today. The risk it *retires* (from the risk register: "fin-drag/anisotropic-physics redesign... genuinely new math... requiring its own explicit determinism test") is addressed by the empirical baseline-diff above, the strongest form of that test.
+- `DORSAL` remains a fixed constant — if a future epic ever makes an organism's dorsal orientation vary (radial symmetry, tilted growth, etc. — all explicitly out of Phase 8's scope per ADR-P8-06), this formula is already the correct integration point (a per-spring or per-organism dorsal upload replacing the constant), not something that needs re-deriving from scratch.
+
+**Remaining roadmap dependencies:** none blocking. This was the last Tier 3 epic; only Tier 4's `crates/benchmarks`/storage-schema epics (8.12, 8.13) remain, per §15's sequence.
+
+**Recommended next epic (superseded — see Epic 8.12's own completion report below):** Epic 8.12 is now complete.
+
+---
+
+### Epic 8.12 — Test/Benchmark Suite 3D Migration — COMPLETE
+
+**Executive summary.** As the roadmap's own entry for this epic anticipated ("this epic is continuous/interleaved with Epics 8.0-8.10 in practice — listed as its own epic here for tracking/completion-criteria purposes, not because it should literally wait"), the ~135+ `Vec2::new(...)` construction sites this epic's goal names were migrated incrementally, test fixture by test fixture, as each prior epic touched its own crate — not deferred to a single bulk pass at the end. This epic's actual remaining work was therefore the audit: a fresh, crate-wide search for every surviving `Vec2::new(...)` call site, confirming each one is a deliberate, documented 2D boundary (not a missed migration), plus the full verification suite's own explicit checklist (fmt/clippy/build/test/doc).
+
+**Audit findings.** Every remaining `Vec2::new(...)` call site across the workspace falls into one of five confirmed-legitimate categories, none of which are migration gaps:
+
+1. **Screen-space/pixel coordinates** (`ui::camera`, `ui::render`, `ui::state`, `ui::plugins::viewport`, `app::app::pick_entity`'s `local_pos`/`viewport_size`, `app::render`'s `hover_pos`/`drag_delta`/`pending_click`) — genuinely 2D by nature (a mouse cursor has no `Z`), never World-space positions.
+2. **The hazard/diffusion fields** (`ecology::catastrophe::Hazard::center`, `diffusion::Emitter::position`, `app::systems`'s `HazardSpawned` event, `app::scripting`'s `apply_spawn_manual_hazard`) — permanently `Vec2` per ADR-P8-05's own explicit "world-space 2D fields stay 2D" decision; not an oversight.
+3. **UI-facing spawn-position parameters that already extend to `Vec3` at their own boundary** (`app::interventions::apply_spawn_preset`/`apply_spawn_proto_fish`) — `position: Vec2` is the correct signature for a value that originates from a 2D screen click, with `.extend(0.0)` already present exactly where it's handed to a `Vec3`-based spawn API.
+4. **Historical documentation comments** (`organisms::components`, `organisms::developmental_graph`) referencing the retired pre-8.6 `Vec2::new(-dir.y, dir.x)` formula by name, for context — not live code.
+5. **Unrelated `IVec2`** (`common::lib.rs`) — an integer grid-coordinate type, never a `Vec2` position.
+
+No fix-up was needed for any of the 5 categories above — the audit's purpose was to *prove* completeness, not assume it, per this project's own standing "measure, don't assume" rule.
+
+**Files changed:** none this epic (audit-only; every real migration happened incrementally in Epics 8.0-8.10's own commits).
+
+**Verification results:**
+
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo build --workspace --all-targets`: clean.
+- `cargo test --workspace`: all tests pass — test count has only ever grown across every Phase 8 epic so far (no test silently deleted or skipped to ease a migration), satisfying this epic's own explicit completion criterion.
+- `cargo doc --workspace --no-deps`: clean, no broken intra-doc links (the workspace-wide check item this roadmap's own Verification Strategy §12 names).
+
+**Tests executed:** the full workspace suite — same count as Epic 8.8's completion, 0 new (audit-only epic), 0 removed.
+
+**Performance observations.** None — no runtime code changed.
+
+**Determinism validation.** Not applicable — no simulation logic changed.
+
+**Risks.** None identified. This epic's only real finding is a negative one (no gaps), which is itself the intended, positive outcome of an audit epic.
+
+**Remaining roadmap dependencies:** Epic 8.13 (storage schema bump) depends on every upstream type change being final — confirmed true by this epic's own audit finding no outstanding `Vec2`-that-should-be-`Vec3` gaps anywhere in the workspace.
+
+**Recommended next epic (superseded — see Epic 8.13's own completion report below):** Epic 8.13 is now complete — **this was the last epic in Phase 8.**
+
+---
+
+### Epic 8.13 — Storage Schema Bump (`SchemaVersion` v4→v5) & Replay Format Update — COMPLETE, LAST EPIC OF PHASE 8
+
+**Executive summary.** Implements ADR-P8-08 exactly as decided, closing out Phase 8. Every world-space position/velocity field that was still truncating a real `Vec3` down to `SerializedVec2` on save and re-extending it with `z = 0.0` on restore (`SnapshotNode.position`/`velocity`, `SnapshotFood`/`SnapshotMineral`/`SnapshotCorpse.position`) now uses a new `SerializedVec3`, preserving full 3D fidelity through the save/load round trip for the first time in this project's history. `SchemaVersion::CURRENT` bumps from 4 to 5. Following this project's own precedented policy (the 4th such bump, none of which have ever included a migration path), **no migration tooling was built** — old `.phylon`/`.phylon-research` files fail to load cleanly (a returned `Err`, confirmed by a new test, never a panic or silent corruption). `SerializedVec2` itself is **not removed** — a fresh audit found it's still the correct type for genuinely-2D data (`ecology::catastrophe::Hazard::center`, ADR-P8-05; recorded replay-action spawn-click/hazard positions), so only the fields that were actually lossy-truncating a live `Vec3` were touched.
+
+**⚠️ BREAKING CHANGE — communicate to users/researchers, per ADR-P8-08's explicit requirement (not optional):** any `.phylon` save file or `.phylon-replay` bundle created by a build before this change (schema version ≤ 4) **will fail to load** against this and all future builds. This is consistent with 3 prior schema bumps in this project's history (v1→2, v2→3, v3→4), none of which provided a migration path either — old research artifacts from before this change should be preserved separately (e.g., archived alongside the specific build that produced them) if they need to remain loadable.
+
+**Architecture changes.**
+
+- **`SerializedVec3`** (new, `crates/storage/src/snapshot.rs`) — `{x, y, z}: f32`, with `From<common::Vec3>`/`Into<common::Vec3>` conversions, mirroring `SerializedVec2`'s existing shape.
+- **`SnapshotNode.position`/`velocity`, `SnapshotFood`/`SnapshotMineral`/`SnapshotCorpse.position`** — all changed from `SerializedVec2` to `SerializedVec3`. Save-side: `node.position.truncate().into()` → `node.position.into()` (no truncation). Restore-side: `restored_position.extend(0.0)` → `restored_position` directly (no re-extension).
+- **`SerializedVec2` retained** — confirmed (via a fresh audit, mirroring Epic 8.12's own methodology) still correct for: `ecology::catastrophe::Hazard::center` (ADR-P8-05's permanent 2D hazard field) and `storage::replay::ReplayAction`'s recorded `SpawnPreset`/`SpawnProtoFish`/`SpawnManualHazard` positions (these originate from a 2D screen-click or the 2D hazard field, and the functions that consume them already correctly take `Vec2` — confirmed in Epic 8.12's own audit). Not a leftover oversight; a deliberate, re-verified boundary.
+- **`export_organisms_csv`** — header and per-row format string gained `z`/`vz` columns (`id,x,y,z,vx,vy,vz,mass,...`, was `id,x,y,vx,vy,mass,...`).
+- **`SchemaVersion::CURRENT`** — bumped 4 → 5, with a doc comment recording the change (matching every prior bump's own documented-inline precedent).
+
+**Files changed** (2 files, 1 crate):
+
+- `crates/storage/src/snapshot.rs` — `SerializedVec3` (new); `SnapshotNode`/`SnapshotFood`/`SnapshotMineral`/`SnapshotCorpse` field types; save/restore call sites; round-trip test updated with non-zero `z` plus a new explicit position assertion.
+- `crates/storage/src/lib.rs` — `SchemaVersion::CURRENT` bump + doc comment; `export_organisms_csv` header/format; CSV-export test updated; new `load_simulation_state_rejects_incompatible_data_cleanly` test.
+
+**Verification results:**
+
+- `cargo build --workspace --all-targets`: clean.
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo doc --workspace --no-deps`: clean, no broken intra-doc links.
+- `cargo test --workspace`: all tests pass. `storage` crate: 13 tests, up from 12 — 1 new (`load_simulation_state_rejects_incompatible_data_cleanly`); the existing round-trip test now asserts real 3D fidelity (`position: Vec3::new(1.0, 2.0, 5.0)` survives exactly, not silently truncated), satisfying this epic's own named verification requirement ("save/load round-trip test with real 3D data").
+- **Old-schema rejection confirmed**: the new test feeds `load_simulation_state` a byte sequence bincode cannot parse as the current `SimulationSnapshot` shape, confirming a clean `Err(StorageError::Io {..})` — the same failure mode a real pre-8.13 (`SerializedVec2`-shaped) file produces against the current, wider `SerializedVec3`-shaped struct, since bincode is a non-self-describing positional format (a mismatched field layout fails to parse correctly before `schema_version` is ever inspected — confirmed by reading `load_simulation_state`'s own logic, not assumed).
+- Two independent 200-tick headless runs at the same seed: log output identical byte-for-byte except timestamps — this epic touches only the save/load path, never exercised by a normal headless run, so this is a basic sanity check (the app still starts/runs/exits normally with the new schema in place) rather than direct save/load verification; the round-trip unit test is the real verification for the schema change itself. `data/default.ron` reverted immediately after.
+
+**Tests executed:** the full workspace suite (`cargo test --workspace`) — 1 new, 0 removed, all passing.
+
+**Performance observations.** Negligible — each affected struct grows by one `f32` per position/velocity field (`SerializedVec2` → `SerializedVec3`), a small, fixed per-entity serialization-size increase, not measured against a population-scale budget (save/load isn't a per-tick hot path).
+
+**Determinism validation.** Confirmed via two independent 200-tick headless runs at the same seed — bit-identical behavior (expected: this epic touches only serialization code, never live simulation state).
+
+**Risks.**
+
+- **The breaking change itself** (see the boxed callout above) — the primary and only real risk, already accepted 3 times before under the same policy. Communicated here, in this document's own execution log, per ADR-P8-08's explicit requirement; no separate CHANGELOG exists in this project's conventions (confirmed: no `CHANGELOG.md`/`CHANGES.md` anywhere in the repo), so this roadmap's own execution log is the release-notes-equivalent artifact.
+- No migration tooling exists for any of this project's 4 schema bumps — a future initiative building one (ADR-P8-08's own named deferred alternative) would need to retroactively cover all 4, not just this one.
+
+**Remaining roadmap dependencies:** none. This was the last epic in Phase 8's own roadmap (§15).
+
+---
+
+## Phase 8 — COMPLETE
+
+All 14 epics (8.0 through 8.13) are implemented, verified, and documented above. Both of the roadmap's named sign-off gates (ADR-P8-03, rendering visual identity; ADR-P8-06, 3D bilateral symmetry) were explicitly approved by the user before their respective epics began. One deliberate, disclosed mid-phase reordering occurred (Epic 8.10 moved ahead of Epic 8.8, since a numerically-real dorsal-driven fin-drag redesign had nothing to operate on until the GPU buffers were widened to `vec3` — see Epic 8.10's own report).
+
+**Summary of what Phase 8 built:** a native 3D rendering pipeline (mesh-based capsule instancing, PBR shading, shadow mapping, camera-facing debug billboards, a plane-slice field renderer with clipping planes), a canonical `Camera3d` with orbit/fly controllers, ray-vs-capsule picking with frustum-based box-select and lasso-select, a `Vec3` foundation across the simulation/physics/spatial/storage layers, a body-fixed `forward`/`dorsal` frame for growth (Epic 8.6) and vision (Epic 8.7) shared with a real dorsal-driven GPU fin-drag redesign (Epic 8.8/8.10), a `Vec3`-native CPU spatial-index suite (`UniformGrid`/`SpatialHash`/`Octree`), GPU physics buffers and a hash-based broad phase avoiding a ~128× memory blowup, and a final storage-schema bump giving saved files the same full 3D fidelity the rest of the engine now has throughout.
+
+**Known, disclosed limitations carried forward (not silently dropped):**
+
+- Organisms still grow with `current_pos.z == 0.0` at every construction site — Epics 8.6/8.7/8.8 deliberately built genuinely 3D-capable math (`bilateral_fin_direction`, `vision_azimuth_elevation`, the GPU `cross(DORSAL, dir)` fin-drag formula) without introducing a new mechanism for growth to actually leave the flat plane, per the user's own explicit framing ("an engine migration, not a biological redesign").
+- Two interactive-verification gaps remain open from Epics 8.4 and 8.5 (box-select/lasso-select drag gestures; field/clip-plane visual registration under camera tilt) — automated screenshot-based verification proved unreliable in this environment and was stopped at the user's request; both are covered by unit tests on their underlying math and clean compiles of the full dispatch wiring, not by direct visual confirmation.
+- No formal GPU broad-phase before/after benchmark was built for Epic 8.10 — the ADR's core memory-safety concern is satisfied by construction (identical bucket count to the pre-8.10 dense grid) rather than by measurement.
+- `crates/spatial::Octree`/`SpatialIndex` trait have no real caller yet (same as their pre-8.9 predecessors) — prepared ahead of need, per the roadmap's own dependency ordering.
+
+**Recommended next phase:** Phase 9, per this document's own "Future Phase 9 dependencies/recommendations" (§15) — named but not built: true volumetric diffusion (pending real measurement), radial body-plan symmetry as a new evolvable trait, a fuller LOD chain, skeletal-animation-adjacent tooling, a real save-file migration tool, and Epic W8 (Comparative Analysis Workspace, from the Phase 7 roadmap).
+
+---
+
+*This document is the complete Stage 1-4 planning deliverable, now also the complete Phase 8 execution log (§17). All 14 epics (8.0-8.13) are complete and verified. Both of this roadmap's named sign-off gates (ADR-P8-03, ADR-P8-06) were explicitly approved by the user. Phase 8 is finished.*

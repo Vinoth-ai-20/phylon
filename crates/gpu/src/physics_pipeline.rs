@@ -1,17 +1,34 @@
 /// A GPU-friendly representation of a ParticleNode.
+///
+/// Phase 8, Epic 8.10: `position`/`velocity`/`force` widened from `[f32; 2]`
+/// to `[f32; 3]`. The explicit `_pad*` fields mirror WGSL's own storage-
+/// buffer layout rule that a `vec3<f32>` struct member is 16-byte aligned
+/// (size 12, but the next field is pushed to the next 16-byte boundary) —
+/// `physics.wgsl`'s `ParticleNode` struct declares the same padding
+/// explicitly so the two layouts match byte-for-byte, required for
+/// `bytemuck`'s buffer casts to be sound.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuParticleNode {
     /// Position of the node.
-    pub position: [f32; 2],
+    pub position: [f32; 3],
+    /// Padding — see this struct's own doc comment.
+    pub _pad0: f32,
     /// Velocity of the node.
-    pub velocity: [f32; 2],
+    pub velocity: [f32; 3],
+    /// Padding — see this struct's own doc comment.
+    pub _pad1: f32,
     /// Accumulated force on the node.
-    pub force: [f32; 2],
+    pub force: [f32; 3],
+    /// Padding — see this struct's own doc comment.
+    pub _pad2: f32,
     /// Mass of the node.
     pub mass: f32,
     /// ID of the organism this node belongs to.
     pub organism_id: u32,
+    /// Padding to a 16-byte multiple (WGSL's array stride requirement for a
+    /// struct containing `vec3<f32>` members).
+    pub _pad3: [f32; 2],
 }
 
 /// A GPU-friendly representation of a Spring constraint.
@@ -53,12 +70,15 @@ struct PhysicsConfigUniform {
     active_spring_count: u32,
 }
 
-/// Broad-phase spatial grid dimensions for the steric-hindrance repulsion
-/// pass. MUST match `GRID_DIM`/`GRID_CELL_CAPACITY` in `physics.wgsl` — they
-/// size a fixed pair of buffers (not grown with population, since the grid
-/// covers a fixed world area regardless of how many organisms are in it).
-const GRID_DIM: u32 = 128;
-const GRID_CELL_CAPACITY: u32 = 64;
+/// Broad-phase spatial-hash table size and per-bucket capacity for the
+/// steric-hindrance repulsion pass. MUST match `HASH_TABLE_SIZE`/
+/// `HASH_CELL_CAPACITY` in `physics.wgsl` — they size a fixed pair of
+/// buffers. Phase 8, Epic 8.10 (ADR-P8-04): chosen to match the pre-8.10
+/// dense `128 x 128` grid's total cell count (16384) exactly, so widening
+/// the broad-phase to a real 3rd axis costs no additional GPU memory —
+/// only the indexing function (hash mix, not direct 2D indexing) changed.
+const HASH_TABLE_SIZE: u32 = 16384;
+const HASH_CELL_CAPACITY: u32 = 64;
 
 /// # GPU Physics Compute Pipeline
 ///
@@ -107,6 +127,7 @@ pub struct PhysicsComputePipeline {
     config_buffer: Option<wgpu::Buffer>,
     atomic_forces_x: Option<wgpu::Buffer>,
     atomic_forces_y: Option<wgpu::Buffer>,
+    atomic_forces_z: Option<wgpu::Buffer>,
     staging_buffer: Option<wgpu::Buffer>,
     bind_group: Option<wgpu::BindGroup>,
 }
@@ -177,7 +198,7 @@ impl PhysicsComputePipeline {
                     },
                     count: None,
                 },
-                // cell_counts (spatial grid, broad-phase repulsion)
+                // atomic_forces_z (Phase 8, Epic 8.10 — 3rd force axis)
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -188,9 +209,20 @@ impl PhysicsComputePipeline {
                     },
                     count: None,
                 },
-                // cell_nodes (spatial grid, broad-phase repulsion)
+                // cell_counts (spatial hash, broad-phase repulsion)
                 wgpu::BindGroupLayoutEntry {
                     binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // cell_nodes (spatial hash, broad-phase repulsion)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -270,10 +302,10 @@ impl PhysicsComputePipeline {
             cache: None,
         });
 
-        // Fixed-size spatial grid buffers — the grid covers a fixed world
-        // area (see GRID_DIM/GRID_CELL_CAPACITY doc comment above) so these
-        // never need to grow with population, unlike the node/spring buffers.
-        let cell_count = (GRID_DIM * GRID_DIM) as wgpu::BufferAddress;
+        // Fixed-size spatial-hash buffers (see `HASH_TABLE_SIZE`/
+        // `HASH_CELL_CAPACITY` doc comment above) — sized once and never
+        // grown with population, unlike the node/spring buffers.
+        let cell_count = HASH_TABLE_SIZE as wgpu::BufferAddress;
         let cell_counts_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("PhysicsCellCountsBuffer"),
             size: cell_count * 4,
@@ -282,7 +314,7 @@ impl PhysicsComputePipeline {
         });
         let cell_nodes_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("PhysicsCellNodesBuffer"),
-            size: cell_count * (GRID_CELL_CAPACITY as wgpu::BufferAddress) * 4,
+            size: cell_count * (HASH_CELL_CAPACITY as wgpu::BufferAddress) * 4,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -304,6 +336,7 @@ impl PhysicsComputePipeline {
             config_buffer: None,
             atomic_forces_x: None,
             atomic_forces_y: None,
+            atomic_forces_z: None,
             staging_buffer: None,
             bind_group: None,
         }
@@ -384,6 +417,7 @@ impl PhysicsComputePipeline {
         let config_buffer = self.config_buffer.as_ref().unwrap();
         let atomic_forces_x = self.atomic_forces_x.as_ref().unwrap();
         let atomic_forces_y = self.atomic_forces_y.as_ref().unwrap();
+        let atomic_forces_z = self.atomic_forces_z.as_ref().unwrap();
         let staging_buffer = self.staging_buffer.as_ref().unwrap();
         let bind_group = self.bind_group.as_ref().unwrap();
 
@@ -409,7 +443,8 @@ impl PhysicsComputePipeline {
         // shader gates on `config.active_node_count`).
         encoder.clear_buffer(atomic_forces_x, 0, None);
         encoder.clear_buffer(atomic_forces_y, 0, None);
-        // Zero the spatial grid's per-cell counters before rebinning below.
+        encoder.clear_buffer(atomic_forces_z, 0, None);
+        // Zero the spatial hash's per-bucket counters before rebinning below.
         encoder.clear_buffer(&self.cell_counts_buffer, 0, None);
 
         let node_workgroups = ((nodes.len() as f32) / 64.0).ceil() as u32;
@@ -554,6 +589,12 @@ impl PhysicsComputePipeline {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }));
+        self.atomic_forces_z = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("AtomicForcesZ"),
+            size: (self.node_capacity * 4) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
         self.staging_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("PhysicsStagingBuffer"),
             size: node_bytes,
@@ -595,10 +636,14 @@ impl PhysicsComputePipeline {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: self.cell_counts_buffer.as_entire_binding(),
+                    resource: self.atomic_forces_z.as_ref().unwrap().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
+                    resource: self.cell_counts_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
                     resource: self.cell_nodes_buffer.as_entire_binding(),
                 },
             ],

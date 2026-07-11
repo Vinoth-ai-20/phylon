@@ -365,9 +365,81 @@ pub fn can_branch(role: SegmentType) -> bool {
     matches!(role, SegmentType::Torso | SegmentType::Muscle)
 }
 
+/// The lateral ("left"/"right" fin) direction for a bilaterally symmetric
+/// branch point (Phase 8, Epic 8.6, ADR-P8-06) — a proper 3D cross product
+/// of the body-fixed `dorsal` ("up") and `forward` (direction-of-travel)
+/// reference vectors, replacing the pre-8.6 `Vec2::new(-dir.y, dir.x)`
+/// construction that only had one well-defined answer in 2D (in 3D,
+/// "perpendicular to a direction" is an entire circle of vectors, not one —
+/// see the ADR's own Context section). One fin sprouts at `root + result *
+/// spread`, the other at `root - result * spread`.
+///
+/// Reproduces the pre-8.6 2D formula exactly whenever `dorsal == Vec3::Z`
+/// and `forward` is confined to the XY plane (`forward.z == 0.0`) — true at
+/// every construction site in this crate today, since Epic 8.6's scope is
+/// making this math well-defined in 3D, not introducing a new growth-
+/// direction mechanism.
+pub fn bilateral_fin_direction(dorsal: common::Vec3, forward: common::Vec3) -> common::Vec3 {
+    dorsal.cross(forward)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::Vec3;
+
+    /// ADR-P8-06's own named regression check: for the default `Vec3::Z`
+    /// dorsal and any `forward` confined to the XY plane (every spawn site
+    /// in this crate today), the new cross-product formula must reproduce
+    /// the pre-8.6 `Vec2::new(-dir.y, dir.x)` construction exactly.
+    #[test]
+    fn bilateral_fin_direction_with_z_dorsal_matches_the_pre_8_6_2d_formula() {
+        for heading_deg in [0, 30, 90, 137, 200, 315] {
+            let heading = (heading_deg as f32).to_radians();
+            let forward = Vec3::new(heading.cos(), heading.sin(), 0.0);
+            let old_perp = Vec3::new(-forward.y, forward.x, 0.0);
+            let new_perp = bilateral_fin_direction(Vec3::Z, forward);
+            assert!(
+                new_perp.abs_diff_eq(old_perp, 1e-5),
+                "heading {heading_deg}: expected {old_perp:?}, got {new_perp:?}"
+            );
+        }
+    }
+
+    /// Genuine 3D correctness (not just the 2D-equivalence regression
+    /// above): a tilted `dorsal` produces a perpendicular that is still
+    /// orthogonal to both `dorsal` and `forward`, and non-degenerate
+    /// whenever the two aren't parallel — proving the formula is a real,
+    /// well-defined 3D generalization, not merely re-deriving the 2D case.
+    #[test]
+    fn bilateral_fin_direction_with_a_tilted_dorsal_stays_orthogonal_to_both_inputs() {
+        let forward = Vec3::new(1.0, 0.0, 0.0);
+        let dorsal = Vec3::new(0.0, 1.0, 1.0).normalize(); // tilted 45° off Z
+        let perp = bilateral_fin_direction(dorsal, forward);
+
+        assert!(perp.length() > 1e-4, "perp degenerated to zero: {perp:?}");
+        assert!(
+            perp.dot(dorsal).abs() < 1e-4,
+            "perp not orthogonal to dorsal: dot = {}",
+            perp.dot(dorsal)
+        );
+        assert!(
+            perp.dot(forward).abs() < 1e-4,
+            "perp not orthogonal to forward: dot = {}",
+            perp.dot(forward)
+        );
+    }
+
+    /// `dorsal`/`forward` parallel is the one genuinely degenerate case
+    /// (undefined perpendicular, same as the 2D formula's own
+    /// zero-direction degeneracy) — documented via a zero-length result
+    /// rather than a panic or NaN.
+    #[test]
+    fn bilateral_fin_direction_is_zero_when_dorsal_and_forward_are_parallel() {
+        let forward = Vec3::new(0.0, 0.0, 1.0);
+        let perp = bilateral_fin_direction(Vec3::Z, forward);
+        assert!(perp.length() < 1e-5);
+    }
 
     fn sample_outputs(segment_type: SegmentType) -> DevelopmentalOutputs {
         DevelopmentalOutputs {

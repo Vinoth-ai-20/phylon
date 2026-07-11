@@ -58,7 +58,7 @@ const RESUMED_BUD_INTERVAL: u64 = 30;
 ///    standalone at spawn, independent of `GrowthState` — see
 ///    `spawning::spawn_organism`) seeds the resumed state; no genome is
 ///    reconstructed or guessed.
-/// 2. `next_segment_index`/`parent_spine_node`/`current_pos`/`heading` are
+/// 2. `next_segment_index`/`parent_spine_node`/`current_pos`/`forward` are
 ///    derived from the last spine node in the `DevelopmentalGraph` — not
 ///    reset to zero — so growth resumes exactly where the body currently
 ///    ends, in the same direction it was already growing.
@@ -124,25 +124,28 @@ pub fn life_stage_system(
             continue;
         };
 
-        // Heading: direction from the second-to-last spine node toward the
-        // last one, so resumed growth continues the same way the body was
-        // already growing. A single-segment (head-only) body has no
-        // direction to infer — default to 0.0.
-        let heading = if spine.len() >= 2 {
+        // Forward (Phase 8, Epic 8.6, ADR-P8-06): direction from the
+        // second-to-last spine node toward the last one, so resumed growth
+        // continues the same way the body was already growing. A
+        // single-segment (head-only) body has no direction to infer —
+        // default to `+X`, matching the pre-8.6 `heading = 0.0` default
+        // exactly (`Vec3::new(0.0_f32.cos(), 0.0_f32.sin(), 0.0) ==
+        // Vec3::new(1.0, 0.0, 0.0)`).
+        let forward = if spine.len() >= 2 {
             spine[spine.len() - 2]
                 .entity
                 .and_then(|prev_entity| node_query.get(prev_entity).ok())
                 .map(|prev_node| {
                     let delta = last_node.position - prev_node.position;
                     if delta.length() > 0.0001 {
-                        delta.y.atan2(delta.x)
+                        delta.normalize()
                     } else {
-                        0.0
+                        common::Vec3::new(1.0, 0.0, 0.0)
                     }
                 })
-                .unwrap_or(0.0)
+                .unwrap_or(common::Vec3::new(1.0, 0.0, 0.0))
         } else {
-            0.0
+            common::Vec3::new(1.0, 0.0, 0.0)
         };
 
         // Reseed `effectors` from every actuated spring already attached to
@@ -168,12 +171,12 @@ pub fn life_stage_system(
             ticks_until_next_bud: RESUMED_BUD_INTERVAL,
             base_bud_interval: RESUMED_BUD_INTERVAL,
             parent_spine_node: Some(last_entity),
-            current_pos: last_node.position
-                + common::Vec3::new(heading.cos(), heading.sin(), 0.0) * -RESUMED_SEGMENT_LENGTH,
+            current_pos: last_node.position + forward * -RESUMED_SEGMENT_LENGTH,
             segment_length: RESUMED_SEGMENT_LENGTH,
             effectors,
             is_organism_complete: false,
-            heading,
+            forward,
+            dorsal: common::Vec3::Z,
         });
     }
 }
@@ -366,7 +369,8 @@ mod tests {
                     segment_length: RESUMED_SEGMENT_LENGTH,
                     effectors: Vec::new(),
                     is_organism_complete: false,
-                    heading: 0.0,
+                    forward: common::Vec3::new(1.0, 0.0, 0.0),
+                    dorsal: common::Vec3::Z,
                 },
                 DevelopmentalGraph::new(),
                 LifeStage::Adult,
