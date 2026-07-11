@@ -439,15 +439,19 @@ name = "benchmarks"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
+ "bytemuck",
  "common",
  "config",
  "criterion",
  "ecology",
  "events",
+ "gpu",
  "metabolism",
  "physics",
+ "pollster",
  "rayon",
  "scheduler",
+ "wgpu",
 ]
 
 [[package]]

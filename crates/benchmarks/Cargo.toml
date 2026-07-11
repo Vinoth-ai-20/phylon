@@ -14,6 +14,10 @@ ecology    = { workspace = true }
 events     = { workspace = true }
 bevy_ecs   = { workspace = true }
 rayon      = { workspace = true }
+gpu        = { workspace = true }
+wgpu       = { workspace = true }
+bytemuck   = { workspace = true }
+pollster   = "0.3"
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -28,4 +32,8 @@ harness = false
 
 [[bench]]
 name = "foraging_scaling"
+harness = false
+
+[[bench]]
+name = "physics_broad_phase"
 harness = false
