@@ -44,6 +44,8 @@ All pull requests must originate from feature branches using the following namin
 
 ## Architectural Enforcement
 
+See [`docs/architecture/ARCHITECTURE_PRINCIPLES.md`](docs/architecture/ARCHITECTURE_PRINCIPLES.md) for the durable rules behind this section, and the six-question checklist to run any nontrivial feature or architectural proposal through before committing to it.
+
 New crates and dependencies must preserve the workspace's acyclic dependency graph — see [`docs/reference/crate_graph.md`](docs/reference/crate_graph.md) for the current structure and boundaries. `app` is the only crate permitted to depend on everything else.
 
 Any change that affects simulation outcomes must go through `common::SimRng`, the project's single seeded source of randomness — never an unseeded RNG (e.g. `fastrand::` used directly). See [`docs/explanation/determinism.md`](docs/explanation/determinism.md) for exactly what determinism guarantee this project makes today, and what's still an open gap — don't claim a PR "preserves determinism" without checking that document first.
