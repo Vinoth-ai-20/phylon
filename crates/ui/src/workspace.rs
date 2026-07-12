@@ -1,10 +1,10 @@
-//! Workspace lifecycle management (Phase 7, W3c) — save/rename/duplicate/
-//! delete/export/import user-defined panel layouts, plus tracking which
-//! workspace (built-in preset or user-saved) is currently active so it can
-//! be restored on next launch and reset back to its canonical shape on
+//! Workspace lifecycle management — save/rename/duplicate/delete/export/
+//! import user-defined panel layouts, plus tracking which workspace
+//! (built-in preset or user-saved) is currently active so it can be
+//! restored on next launch and reset back to its canonical shape on
 //! demand.
 //!
-//! ## The unified storage model (binding — see ADR-W3-01)
+//! ## The unified storage model
 //!
 //! [`WorkspaceLayout`] is the *one* shape both built-in presets
 //! (`layout::LayoutPreset`, materialized into data via
@@ -13,19 +13,18 @@
 //! with different fields — Save/Duplicate/Export all just capture or clone
 //! a `WorkspaceLayout`, regardless of whether its origin was a built-in
 //! preset or another saved workspace. This is the same "one canonical
-//! shape, no parallel second one" discipline `ADR-W0-01`/`ADR-W0-02`
-//! already established for selection state and recent-items — applied
-//! here to workspace state.
+//! shape, no parallel second one" discipline this crate already applies to
+//! selection state and recent-items.
 //!
 //! ## Never a second layout-construction pathway
 //!
 //! Every operation in this module that changes what's on screen —
 //! [`WorkspaceLayout::apply`], and by extension `apply_saved`/
 //! `reset_active_built_in` below — routes through the exact same
-//! `layout::rebuild_tree_from_modes` every other layout change already
-//! uses (W3a's persistence, `layout::apply_layout_preset`, the toolbar's
-//! Focus Mode toggle). Nothing in this module builds an `egui_tiles::Tree`
-//! directly.
+//! `layout::rebuild_tree_from_modes` every other layout change uses
+//! (persisted-layout restore on startup, `layout::apply_layout_preset`, the
+//! toolbar's Focus Mode toggle). Nothing in this module builds an
+//! `egui_tiles::Tree` directly.
 //!
 //! ## Untrusted input can never produce a broken docking tree
 //!
@@ -78,8 +77,8 @@ impl WorkspaceLayout {
     }
 
     /// Sanitizes an untrusted layout (one read from an imported `.ron`
-    /// file) so it can never produce a broken docking tree — this
-    /// milestone's own explicit requirement. Two concrete guards:
+    /// file) so it can never produce a broken docking tree. Two concrete
+    /// guards:
     ///
     /// - **Unknown panel names are dropped.** A workspace exported from a
     ///   future version of this app (a renamed or since-removed panel)
@@ -148,8 +147,7 @@ pub struct ExportedWorkspace {
 
 /// Owns every user-saved workspace (name → layout) plus which workspace is
 /// currently active. Persisted via `app::preferences::Preferences`, the
-/// same mechanism `RecentItemsService`/`panel_modes`/`layout_shares`
-/// already use (Phase 7, W0d/W3a).
+/// same mechanism `RecentItemsService`/`panel_modes`/`layout_shares` use.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkspaceService {
     saved: HashMap<String, WorkspaceLayout>,

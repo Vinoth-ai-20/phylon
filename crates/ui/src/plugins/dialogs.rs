@@ -175,12 +175,12 @@ fn keybinds_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) {
         });
 }
 
-/// First-run contextual hints (Phase 5, SX-9a) — deliberately *not* a full
-/// tour (no multi-step wizard, no forced sequence): one dismissible dialog
-/// pointing at the two things a first-time viewer has no way to discover on
-/// their own — the viewport's population-wide state-legibility signals
-/// (Epic 1) and the redesigned Inspector's progressive-disclosure sections
-/// (Epic 6). Shown automatically once per session (see
+/// First-run contextual hints — deliberately *not* a full tour (no
+/// multi-step wizard, no forced sequence): one dismissible dialog pointing
+/// at the two things a first-time viewer has no way to discover on their
+/// own — the viewport's population-wide state-legibility signals and the
+/// Inspector's progressive-disclosure sections. Shown automatically once
+/// per session (see
 /// `WorkbenchState::show_onboarding_hints`'s doc comment for exactly when),
 /// re-openable afterward via Help → Welcome Tips.
 fn onboarding_hints_dialog(ctx: &egui::Context, state: &mut crate::WorkbenchState) {

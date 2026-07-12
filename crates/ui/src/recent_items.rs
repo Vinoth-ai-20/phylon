@@ -1,16 +1,8 @@
-//! Reusable recent-items tracking (Phase 7, W0d) — a generic, capped,
-//! most-recently-used list, usable by any category of "things the user
-//! recently opened." Only `Files` has a real producer today (`SaveState`/
-//! `LoadState` in `crates/app/src/events.rs`); the other categories are
-//! named extension points, not built features — see `RecentCategory`'s
-//! doc comment.
-//!
-//! Replaces the pre-Phase-7 `WorkbenchState::recent_files: Vec<String>`,
-//! which was never actually populated by anything (a confirmed dead
-//! control — the "Open Recent" submenu could never render, and even if it
-//! had, clicking an entry opened a generic file picker instead of that
-//! entry's own path). This module is the fix, plus the reusable shape so
-//! the same bug pattern doesn't get re-invented per category.
+//! Reusable recent-items tracking — a generic, capped, most-recently-used
+//! list, usable by any category of "things the user recently opened." Only
+//! `Files` has a real producer today (`SaveState`/`LoadState` in
+//! `crates/app/src/events.rs`); the other categories are named extension
+//! points, not built features — see `RecentCategory`'s doc comment.
 //!
 //! ## Policies (binding for every consumer of this module)
 //!
@@ -26,9 +18,8 @@
 //!   an error condition.
 //! - **Missing-file behavior**: this module does zero filesystem I/O and
 //!   never removes an entry just because a file might be missing —
-//!   silently pruning history behind the user's back would be exactly the
-//!   kind of surprising behavior this milestone is fixing, not adding.
-//!   Checking whether a path still exists, and presenting a distinct
+//!   silently pruning history behind the user's back would be surprising
+//!   behavior. Checking whether a path still exists, and presenting a distinct
 //!   disabled/"missing" state for entries that don't, is the UI layer's
 //!   job (see `crates/ui/src/plugins/menu.rs`); explicit removal via
 //!   [`RecentItemsService::remove`] is always a user action, never
@@ -45,10 +36,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Which category of "recently used" list an item belongs to. Only
-/// [`RecentCategory::Files`] has a real producer as of Phase 7, W0d — the
-/// rest are named now so their storage/persistence shape already exists
-/// once a real source for them is built, rather than each needing a new
-/// ad hoc field added to `WorkbenchState` later.
+/// [`RecentCategory::Files`] has a real producer today — the rest are
+/// named now so their storage/persistence shape already exists once a
+/// real source for them is built, rather than each needing a new ad hoc
+/// field added to `WorkbenchState` later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RecentCategory {
     /// Simulation state save/load paths (`.bin` snapshots).
@@ -60,8 +51,7 @@ pub enum RecentCategory {
     /// Exported artifact paths (CSV/JSON/PNG) — not yet wired to a producer.
     Exports,
     /// Saved workspace/panel-layout presets — not yet wired to a producer;
-    /// pairs naturally with Epic W3's layout-persistence work once that
-    /// lands.
+    /// pairs naturally with `crate::workspace`'s layout-persistence model.
     WorkspaceLayouts,
 }
 
@@ -91,9 +81,9 @@ impl RecentItemsList {
 
 /// The single pathway for recording and reading recent-items state —
 /// `menu.rs` and any future consumer should only ever go through this, per
-/// this module's own doc-comment policy list. Mirrors the "one canonical
-/// mutation API" discipline `ADR-W0-01` established for selection state,
-/// applied here to recent-items state.
+/// this module's own doc-comment policy list. The same "one canonical
+/// mutation API" discipline `WorkbenchState::select` applies to selection
+/// state, applied here to recent-items state.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RecentItemsService {
     lists: HashMap<RecentCategory, RecentItemsList>,

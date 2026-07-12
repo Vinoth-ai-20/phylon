@@ -1,11 +1,63 @@
-//! GPU/surface bring-up (Phase 9, P9.6 file decomposition — extracted from
-//! `app.rs`, which had accumulated four distinct responsibilities: ECS/
-//! resource wiring (`PhylonApp::new`), GPU/surface bring-up (this module),
-//! entity picking (`PhylonApp::pick_entity`), and starter-species genome
-//! seeding (`species_seed`)). Everything here is about acquiring a
-//! `wgpu::Device`/`wgpu::Queue`, the four GPU compute pipelines, and —
-//! windowed only — a swapchain surface and the renderer/egui state that
-//! draws into it. Nothing here touches ECS resources or simulation state.
+//! # GPU/Surface Bring-Up
+//!
+//! Everything here is about acquiring a `wgpu::Device`/`wgpu::Queue`, the
+//! four GPU compute pipelines, and — windowed runs only — a swapchain
+//! surface and the renderer/egui state that draws into it. Nothing in this
+//! module touches ECS resources or simulation state; it is purely
+//! infrastructure bring-up, kept separate from `app.rs`'s ECS/resource
+//! wiring, entity picking, and starter-species seeding so each concern can
+//! be read (and changed) independently.
+//!
+//! ## Purpose
+//!
+//! Phylon can run either windowed (interactive workbench, with rendering)
+//! or headless (batch/scripted runs with no display). This module provides
+//! one code path for each: [`PhylonApp::init_gpu`] (windowed) and
+//! [`PhylonApp::init_gpu_headless`] (headless), sharing their common
+//! adapter/device/pipeline construction through `request_gpu_core` so the
+//! two modes cannot silently drift apart in how they build the GPU compute
+//! pipelines.
+//!
+//! ## Architecture
+//!
+//! - `GpuContext` is the long-lived handle stored on `PhylonApp::gpu`:
+//!   device, queue, and (windowed only) the surface, its configuration, and
+//!   the optional GPU timestamp-query resources used for profiling.
+//! - `GpuCore` is a private intermediate struct bundling everything
+//!   `request_gpu_core` builds identically for both windowed and headless
+//!   init (adapter, device, queue, the four compute pipelines, and the
+//!   optional timestamp-query set/buffers). It exists purely to let one
+//!   function serve both call sites; the two call sites differ only in a
+//!   handful of parameters (surface compatibility, device label, base
+//!   feature set, error messages).
+//!
+//! ## Lifecycle
+//!
+//! `init_gpu`/`init_gpu_headless` run once, after a window (or, headless,
+//! immediately at startup) is available — see `app.rs`'s module doc for
+//! where this fits in `PhylonApp`'s overall startup sequence. `resize` is
+//! called on every window-resize event thereafter to reconfigure the
+//! surface and renderer targets; there is no explicit teardown path, GPU
+//! resources are released when `PhylonApp` (and the `GpuContext` it owns)
+//! is dropped.
+//!
+//! ## Failure modes
+//!
+//! Both init functions return `Result` and surface failures (no suitable
+//! adapter, device creation failure, surface creation failure) as
+//! `anyhow::Error` with context describing which step failed; the caller
+//! decides whether to fall back to headless mode or abort. GPU timestamp
+//! queries are opportunistic — used only if the adapter reports both
+//! `TIMESTAMP_QUERY` and `TIMESTAMP_QUERY_INSIDE_ENCODERS` support, with
+//! `query_set`/`resolve_buffer`/`readback_buffer` left `None` otherwise (the
+//! rest of the app treats their absence as "profiling unavailable," not an
+//! error).
+//!
+//! ## Thread safety
+//!
+//! Adapter/device requests block the calling thread via `pollster::block_on`
+//! rather than being awaited asynchronously — acceptable because GPU init
+//! happens once, synchronously, during startup, not on a hot path.
 
 use std::sync::Arc;
 
@@ -15,21 +67,25 @@ use winit::window::Window;
 
 use crate::app::PhylonApp;
 
-/// # Hardware Graphics Context
+/// The retained `wgpu` graphics context: device, queue, and (windowed runs
+/// only) the swapchain surface and GPU profiling resources.
 ///
-/// ## 1. What Happens
-/// The `GpuContext` holds the underlying device handles (`wgpu::Device`, `wgpu::Queue`)
-/// and the swapchain (`wgpu::Surface`) required to interface with the physical GPU.
+/// ## Purpose
 ///
-/// ## 2. Why It Happens
-/// We cannot rely on a pure CPU simulation if we want to scale to 10,000 organisms.
-/// We need low-level access to the GPU to dispatch massive parallel compute shaders
-/// (for Physics and Diffusion) and to render the SDF organism skin.
+/// Running a simulation at organism counts in the thousands is not
+/// practical on the CPU alone — `GpuContext` is what lets Phylon dispatch
+/// its physics integration, reaction-diffusion fields, and CTRNN (the
+/// organism brain model) forward passes as parallel GPU compute shaders,
+/// and (windowed runs) render the resulting scene.
 ///
-/// ## 3. How It Happens
-/// Initialized once during `PhylonApp` startup via `wgpu::Instance`. It is kept alive
-/// for the duration of the application and passed by reference to the pipeline renderers
-/// each frame.
+/// ## Lifecycle
+///
+/// Constructed once, during startup, by [`PhylonApp::init_gpu`] (windowed)
+/// or [`PhylonApp::init_gpu_headless`] (headless) — see this module's
+/// top-level doc comment. Kept alive for the duration of the application on
+/// `PhylonApp::gpu` and passed by reference to the compute pipelines and
+/// renderers each frame; there is no explicit shutdown, resources are freed
+/// on drop.
 pub struct GpuContext {
     pub(crate) surface: Option<wgpu::Surface<'static>>,
     pub(crate) device: wgpu::Device,
@@ -42,10 +98,12 @@ pub struct GpuContext {
 
 /// The wgpu adapter/device/queue plus the 4 GPU compute pipelines and
 /// optional timestamp-query resources — everything `init_gpu` (windowed)
-/// and `init_gpu_headless` both construct identically. Extracted (Phase 7,
-/// W5b) since the only real differences between the two call sites were a
-/// handful of knobs (surface compatibility, device label, base feature
-/// set, error messages), not the construction logic itself.
+/// and `init_gpu_headless` both construct identically. Kept as one shared
+/// struct/function pair since the only real differences between the two
+/// call sites are a handful of knobs (surface compatibility, device label,
+/// base feature set, error messages), not the construction logic itself —
+/// duplicating that logic per call site would risk the two modes silently
+/// drifting apart (e.g. one gaining a feature flag the other doesn't get).
 struct GpuCore {
     adapter: wgpu::Adapter,
     device: wgpu::Device,
@@ -60,11 +118,11 @@ struct GpuCore {
 }
 
 /// Requests an adapter/device (opting into `TIMESTAMP_QUERY`/
-/// `TIMESTAMP_QUERY_INSIDE_ENCODERS` when the adapter supports both, same
-/// as before this extraction) and builds the 4 compute pipelines plus the
-/// timestamp query-set/buffers if timestamp queries are available.
-/// Verbatim extraction of the logic `init_gpu`/`init_gpu_headless`
-/// previously duplicated — no behavior changed, only named and shared.
+/// `TIMESTAMP_QUERY_INSIDE_ENCODERS` when the adapter supports both) and
+/// builds the 4 compute pipelines plus the timestamp query-set/buffers if
+/// timestamp queries are available. Shared by both `init_gpu` and
+/// `init_gpu_headless` so the windowed and headless code paths cannot
+/// silently diverge in how they build the GPU compute pipelines.
 fn request_gpu_core(
     instance: &wgpu::Instance,
     compatible_surface: Option<&wgpu::Surface>,
@@ -154,8 +212,13 @@ impl PhylonApp {
             ..Default::default()
         });
 
-        // SAFETY: The surface must not outlive the window. We wrap the window
-        // in an Arc and keep it alive for the duration of the application.
+        // SAFETY: `wgpu::Surface<'static>` borrows the window's raw
+        // window/display handles for as long as the surface exists, so the
+        // window must outlive the surface. `Arc<Window>` guarantees this:
+        // the same `Arc` is stored both in the surface (via the clone
+        // passed to `create_surface`) and on `PhylonApp::window`, so the
+        // window cannot be dropped while `PhylonApp` (and therefore the
+        // surface) is still alive.
         let surface = instance
             .create_surface(window.clone())
             .context("failed to create wgpu surface")?;

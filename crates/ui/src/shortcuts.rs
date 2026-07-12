@@ -48,9 +48,9 @@ pub struct ShortcutManager {
     pub deselect: KeyboardShortcut,
     /// Spawn a prototype organism at the cursor.
     pub spawn: KeyboardShortcut,
-    /// Toggle the Command Palette (Phase 2, M15).
+    /// Toggle the Command Palette.
     pub command_palette: KeyboardShortcut,
-    /// Toggle Global Search (Phase 7, W6a).
+    /// Toggle Global Search.
     pub global_search: KeyboardShortcut,
 }
 
@@ -163,14 +163,7 @@ impl ShortcutManager {
         // Raw, unmodified single-key shortcuts (only when egui doesn't want
         // keyboard input elsewhere, e.g. not while typing in a text field) —
         // a Blender-style scene-manipulation scheme, unadvertised in any
-        // menu today, preserved as-is from the previous `render.rs`
-        // implementation this method replaces.
-        //
-        // Phase 6, Epic J: G/C/V/J (Grab/Duplicate/Paste/Join Selection),
-        // plus Ctrl+Z/Ctrl+Y (Undo/Redo) above, were removed from here —
-        // each only ever pushed a `MenuAction` whose handler logged a
-        // warning and did nothing. X (Delete) and F (Toggle Stationary)
-        // are real and stay.
+        // menu today.
         if !ctx.wants_keyboard_input() {
             if ctx.input(|i| i.key_pressed(Key::X)) {
                 actions.push(MenuAction::DeleteSelection);
@@ -179,10 +172,10 @@ impl ShortcutManager {
                 actions.push(MenuAction::ToggleStationary);
             }
 
-            // Phase 9, P9.4 — Blender-style Frame Selected (`.`, the
-            // closest egui-portable stand-in for Numpad `.`, which egui's
-            // platform-agnostic `Key` enum doesn't distinguish from the
-            // main-row period) and the six axis-aligned preset views
+            // Blender-style Frame Selected (`.`, the closest egui-portable
+            // stand-in for Numpad `.`, which egui's platform-agnostic
+            // `Key` enum doesn't distinguish from the main-row period) and
+            // the six axis-aligned preset views
             // (`1`/`3`/`7`, `Ctrl+1`/`Ctrl+3`/`Ctrl+7` — Blender's own
             // Numpad 1/3/7 convention, same portability caveat).
             if ctx.input(|i| i.key_pressed(Key::Period)) {
@@ -215,17 +208,16 @@ impl ShortcutManager {
         }
 
         // Camera zoom — always active, no modifier, not gated by
-        // `wants_keyboard_input` (matches the previous implementation).
+        // `wants_keyboard_input`.
         if ctx.input(|i| i.key_pressed(Key::Plus) || i.key_pressed(Key::Equals)) {
             actions.push(MenuAction::CameraZoomIn);
         }
         if ctx.input(|i| i.key_pressed(Key::Minus)) {
             actions.push(MenuAction::CameraZoomOut);
         }
-        // Phase 9, P9.4: `Home` now means Blender's "Frame All" (fit the
-        // real current population, not a fixed default) — `Num0` still
-        // means the original hard reset (`CameraHome`), a distinct action
-        // now that the two are no longer synonyms.
+        // `Home` means Blender's "Frame All" (fit the real current
+        // population, not a fixed default) — `Num0` means the original
+        // hard reset (`CameraHome`), a distinct action from `Home`.
         if ctx.input(|i| i.key_pressed(Key::Home)) {
             actions.push(MenuAction::FrameAll);
         }
@@ -233,7 +225,7 @@ impl ShortcutManager {
             actions.push(MenuAction::CameraHome);
         }
 
-        // Camera mode toggle (Phase 8, ADR-P8-02) — unmodified, gated by
+        // Camera mode toggle — unmodified, gated by
         // `wants_keyboard_input` alongside X/F above (not a global zoom-
         // style binding, since it's a mode switch, not a continuous input).
         if !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(Key::Tab)) {

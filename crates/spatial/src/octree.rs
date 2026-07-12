@@ -174,34 +174,51 @@ impl OctNode {
 
 /// # Bounded Octree Index
 ///
-/// ## 1. What Happens
+/// ## Purpose
 /// `Octree` recursively splits a fixed cuboid region into eight octants
 /// wherever entity density exceeds `max_entities_per_node`, up to
 /// `max_depth`, giving logarithmic-depth radius queries over a sparse or
 /// unevenly distributed population without scanning empty space.
 ///
-/// ## 2. Why It Happens
+/// ## Architecture
+/// Insertion descends from the root, splitting a leaf into eight children
+/// (one per octant, in a fixed `(x, y, z)` sign bit-order) once
+/// it holds more than `max_entities_per_node` entities, stopping at
+/// `max_depth` regardless of count. Queries test each node's bounding box
+/// against the query sphere before descending, skipping entire subtrees that
+/// can't possibly contain a match.
+///
+/// ## Why an Octree (vs. a grid)
 /// [`UniformGrid`](crate::UniformGrid) and [`SpatialHash`](crate::SpatialHash)
 /// both assume a roughly uniform cell size tuned to the typical query
 /// radius — cheap for dense, evenly-spread populations, but wasteful for
 /// sparse, long-range queries (e.g. spectator-mode "nearest interesting
 /// organism" across a mostly-empty world): a uniform grid sized for
 /// close-range queries forces scanning many empty cells to cover a large
-/// radius. An octree's cell size adapts to local density instead.
+/// radius. An octree's cell size adapts to local density instead, so a
+/// large empty region costs only a handful of coarse nodes rather than many
+/// empty grid cells.
 ///
-/// Phase 8, Epic 8.9: the direct `Vec3` successor to the pre-8.9 `Quadtree`
-/// (which only ever had zero real callers — confirmed via the crate-wide
-/// audit before this rewrite — so this is a straight replacement, not a
-/// parallel type). The same accepted design/limitations carry over
-/// unchanged, just generalized from 4-way (quadrant) to 8-way (octant)
-/// splitting.
+/// ## Complexity
+/// Insert, update, and remove are `O(depth)` (bounded by `max_depth`).
+/// `query_radius` prunes subtrees whose bounding box doesn't intersect the
+/// query sphere, so its cost scales with how much of the tree the query
+/// sphere actually overlaps rather than total entity count — close to
+/// `O(log n + k)` for `k` matching entities in a well-balanced tree, degrading
+/// toward `O(n)` only if entities cluster so densely that `max_depth` is hit
+/// and a single leaf ends up holding far more than `max_entities_per_node`.
 ///
-/// ## 3. How It Happens
-/// Insertion descends from the root, splitting a leaf into eight children
-/// (one per octant) once it holds more than `max_entities_per_node`
-/// entities, stopping at `max_depth` regardless of count. Queries test each
-/// node's bounding box against the query sphere before descending, skipping
-/// entire subtrees that can't possibly contain a match.
+/// ## Design Decisions
+/// CPU-side spatial indexing (this type) uses a tree, while the GPU-side
+/// physics broad-phase (`gpu::physics_pipeline`) uses a fixed-size spatial
+/// hash instead — the two sides face different constraints. GPU compute
+/// buffers need a fixed layout decided at buffer-creation time, so a
+/// dynamically-shaped tree isn't a natural fit there; a dense grid sized to
+/// match this octree's finest resolution would cost far more GPU memory than
+/// the fixed hash table `gpu::physics_pipeline` actually allocates, most of
+/// it empty for a sparse population. On the CPU side, a tree's adaptive
+/// resolution is worth the extra pointer-chasing since queries there are
+/// less latency-sensitive and don't pay a fixed-buffer-size penalty.
 ///
 /// **Accepted limitation:** nodes never merge back on removal, so a tree
 /// that briefly reached a high population stays deeply split even after
@@ -441,10 +458,9 @@ mod tests {
         assert_eq!(results, vec![near]);
     }
 
-    /// The genuinely-3D correctness check this rewrite is for: two entities
-    /// share the same XY position but differ only in `Z` — a pre-8.9
-    /// `Quadtree` couldn't even represent this (no `Z` field at all), let
-    /// alone distinguish "near" from "far" by it.
+    /// A genuinely-3D correctness check: two entities share the same XY
+    /// position but differ only in `Z` — the octree must distinguish "near"
+    /// from "far" using all three axes, not just X/Y.
     #[test]
     fn query_radius_distinguishes_entities_by_z_alone() {
         let mut tree = small_tree();

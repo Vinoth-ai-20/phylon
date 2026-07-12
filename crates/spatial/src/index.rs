@@ -9,11 +9,10 @@ use common::Vec3;
 /// — [`UniformGrid`](crate::UniformGrid) for dense, uniformly distributed
 /// entities, [`SpatialHash`](crate::SpatialHash) for uneven density,
 /// [`Octree`](crate::Octree) for sparse long-range queries — without
-/// changing call-site code beyond construction. `Vec3`-based since Phase 8,
-/// Epic 8.9 (previously `Vec2`, widened alongside every index's own
-/// inherent methods in Epic 8.0/8.9) — confirmed via a workspace-wide
-/// search that no live caller uses any index through this trait, only
-/// through each type's own inherent methods directly.
+/// changing call-site code beyond construction. All positions are `Vec3`.
+/// Note that, per a workspace-wide search, no live caller currently uses any
+/// index through this trait — each type's own inherent methods (which this
+/// trait simply forwards to) are used directly instead.
 pub trait SpatialIndex {
     /// Inserts an entity at the given position.
     ///

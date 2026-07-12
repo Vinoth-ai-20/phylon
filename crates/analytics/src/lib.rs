@@ -1,11 +1,15 @@
 //! # Phylon Analytics
 //!
+//! ## Purpose
+//!
 //! Metrics collection, population history, diversity indices, spatial
 //! heatmaps, lineage tracking, and research report generation.
 //!
-//! The analytics crate is a pure consumer of the event bus — it never
-//! mutates simulation state. It accumulates time-series data and exposes
-//! query APIs for the UI and research crates.
+//! The analytics crate is a pure consumer of simulation state and events —
+//! it never mutates the simulation. It accumulates time-series data (see
+//! [`MetricsState`]) and a human-readable event log (see [`NarrationLog`])
+//! for the UI and research crates to query, and exposes export ([`export`])
+//! and graph-connectivity ([`graph`]) helpers for offline analysis.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -205,14 +209,10 @@ pub struct MetricsState {
     /// Snapshot of each currently-alive species's population count, as of
     /// the last [`MetricsState::record_diversity`] call — `(species_id,
     /// count)` pairs, sorted by count descending so the Metrics panel's
-    /// chart reads most-populous-first. Phase 5, SX-3b: `record_diversity`
-    /// already received per-species counts to compute Shannon/Simpson/
-    /// richness/turnover, but discarded the species-id↔count pairing
-    /// immediately after — nothing downstream could answer "which species,
-    /// and how many of each," only the aggregate indices. This is a
-    /// distribution snapshot, not a time series, so it's replaced wholesale
-    /// each sample rather than accumulated into a ring buffer, the same
-    /// pattern `age_distribution`/`generation_distribution` already use.
+    /// chart reads most-populous-first. This is a distribution snapshot, not
+    /// a time series, so it's replaced wholesale each sample rather than
+    /// accumulated into a ring buffer, the same pattern
+    /// `age_distribution`/`generation_distribution` already use.
     pub species_distribution: Vec<(u64, usize)>,
     /// Snapshot of every currently-alive organism's age in ticks, as of the
     /// last [`MetricsState::record_distributions`] call — a distribution,
@@ -344,15 +344,12 @@ impl MetricsState {
     /// previous sample's alive-species set.
     ///
     /// Takes one already-paired slice, not two separately-derived
-    /// `&[usize]`/`&[u64]` vectors (SX-3b) — the previous two-parameter
-    /// signature relied on callers deriving both from the same source
+    /// `&[usize]`/`&[u64]` vectors — deriving both from the same source
     /// (typically a `HashMap`'s `.keys()`/`.values()`, called separately)
-    /// and trusting they'd stay positionally aligned; a single paired slice
-    /// removes that assumption entirely, as well as letting this method
-    /// retain the per-species counts as [`MetricsState::species_distribution`]
-    /// (previously discarded immediately after computing the aggregate
-    /// indices below — nothing downstream could answer "which species, and
-    /// how many of each," only the aggregate numbers). Species IDs are kept
+    /// risks the two ending up positionally misaligned; a single paired
+    /// slice removes that risk entirely, and also lets this method retain
+    /// the per-species counts as [`MetricsState::species_distribution`], not
+    /// just the aggregate indices computed from them. Species IDs are kept
     /// as a generic `u64` (not `evolution::SpeciesId`) for the same
     /// decoupling reason [`shannon_index`]'s doc comment gives. Turnover is
     /// the symmetric difference of this sample's and the previous sample's
@@ -567,10 +564,9 @@ mod tests {
         );
     }
 
-    /// Phase 5, SX-3b: `species_distribution` must reflect the real
-    /// per-species counts, sorted most-populous-first, not just the
-    /// aggregate diversity indices the previous signature discarded them
-    /// into.
+    /// `species_distribution` must reflect the real per-species counts,
+    /// sorted most-populous-first, not just the aggregate diversity indices
+    /// derived from them.
     #[test]
     fn record_diversity_stores_species_distribution_sorted_by_count_descending() {
         let mut m = MetricsState::new();

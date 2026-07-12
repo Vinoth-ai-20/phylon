@@ -1,4 +1,4 @@
-//! # Phylon Application
+//! # Phylon Binary Entry Point
 //!
 //! The main binary entry point for the Phylon simulation.
 //!
@@ -13,16 +13,17 @@
 //!    `research.headless` is set, a headless GPU context and a manual tick
 //!    loop instead — see the `is_headless` branch below).
 //! 6. Initialise a `wgpu` surface on the window.
-//! 7. Run the event loop, calling `PhylonApp::update_simulation` each tick
-//!    (the per-tick system order lives in `simulation::update_simulation`;
-//!    Phase 6, Epic A removed the `SimulationScheduler` this step used to
-//!    construct but never advance).
+//! 7. Run the event loop, calling `PhylonApp::update_simulation` each tick —
+//!    see `simulation::update_simulation`'s module doc for the full per-tick
+//!    system order.
 //!
 //! ## Architecture note
 //!
 //! The `app` crate is the **composition root** — the only crate permitted to
 //! depend on everything. All other crates are decoupled from each other via
-//! the dependency rules in `docs/02_crate_dependency_graph.md`.
+//! the dependency rules in `docs/02_crate_dependency_graph.md`. See
+//! [`app`]'s module doc for the full architecture, data-flow, and
+//! determinism discussion of [`app::PhylonApp`].
 
 pub mod analytics_bridge;
 pub mod app;
@@ -30,7 +31,8 @@ pub mod batch;
 pub mod behavior_validation;
 pub mod capture;
 pub mod events;
-/// GPU/surface bring-up — extracted from `app.rs` (Phase 9, P9.6).
+/// GPU/surface bring-up — see this module's own doc comment for why it is
+/// kept separate from `app.rs`'s ECS/resource wiring and entity picking.
 pub mod gpu_init;
 pub mod interventions;
 pub mod learning_bridge;
@@ -40,7 +42,9 @@ pub mod render;
 pub mod replay;
 pub mod scripting;
 pub mod simulation;
-/// Starter-species genome/CPPN seeding — extracted from `app.rs` (Phase 9, P9.6).
+/// Starter-species genome/CPPN seeding — see this module's own doc comment
+/// for why it is kept separate from `app.rs`'s ECS/resource wiring and GPU
+/// bring-up.
 pub mod species_seed;
 pub mod systems;
 

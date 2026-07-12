@@ -1,30 +1,24 @@
 //! # User Preferences Persistence
 //!
-//! ## 1. What Happens
+//! ## Purpose
 //! `Preferences` is a small, `.ron`-serialized settings file — distinct from
 //! `config::PhylonConfig` (which describes one simulation *experiment*'s
 //! setup: tick rate, RNG seed, headless mode) — covering cosmetic,
 //! cross-session UI preferences a person would expect to persist: High
 //! Contrast Mode, the UI scale factor, whether the first-run onboarding
-//! hints dialog (Phase 5, SX-9a) has ever been shown, (Phase 7, W0d)
-//! recent-items history (`ui::RecentItemsService`), and (Phase 7, W3a) the
-//! docked/floating/closed layout of every named panel plus each dragged
-//! split ratio — none of the last three are purely cosmetic (losing them
-//! defeats the point of "recent" or "where I left my workspace"), but all
-//! share this mechanism since it's the same "small state that should
-//! survive a restart" shape.
+//! hints dialog has ever been shown, recent-items history
+//! (`ui::RecentItemsService`), and the docked/floating/closed layout of
+//! every named panel plus each dragged split ratio — none of the last three
+//! are purely cosmetic (losing them defeats the point of "recent" or
+//! "where I left my workspace"), but all share this mechanism since it's
+//! the same "small state that should survive a restart" shape.
 //!
-//! ## 2. Why It Happens
-//! Phase 6's audit found no application-preferences persistence mechanism
-//! existed anywhere in this codebase — `WorkbenchState::show_onboarding_hints`
-//! was, by necessity, session-scoped only (re-shown every restart), and
-//! toggling High Contrast Mode or the UI scale slider never survived closing
-//! the app. This closes that gap for the smallest, clearest set of settings
-//! actually worth remembering — not an attempt to persist every
+//! This module deliberately persists only the smallest, clearest set of
+//! settings actually worth remembering across restarts — not every
 //! `WorkbenchState` field (most of it, like camera position or selection, is
 //! legitimately session-only).
 //!
-//! ## 3. How It Happens
+//! ## Lifecycle
 //! Loaded once at [`crate::app::PhylonApp::new`] and applied to the initial
 //! [`ui::WorkbenchState`]. Saved at the two real exit paths this app has —
 //! `MenuAction::Quit` and the window's `CloseRequested` event (see
@@ -45,18 +39,18 @@ pub(crate) struct Preferences {
     pub(crate) high_contrast: bool,
     /// Mirrors `ui::WorkbenchState::ui_scale`.
     pub(crate) ui_scale: f32,
-    /// Whether the first-run onboarding hints dialog (Phase 5, SX-9a) has
-    /// ever been shown, across all sessions — distinct from
+    /// Whether the first-run onboarding hints dialog has ever been shown,
+    /// across all sessions — distinct from
     /// `WorkbenchState::show_onboarding_hints`, which only tracks whether
     /// it's showing *right now* in the current session.
     pub(crate) onboarding_seen: bool,
-    /// Mirrors `ui::WorkbenchState::recent_items` (Phase 7, W0d) — see
+    /// Mirrors `ui::WorkbenchState::recent_items` — see
     /// `ui::recent_items`'s module doc comment for the ordering/duplicate/
     /// cap/missing-file policy this field's contents are governed by.
     #[serde(default)]
     pub(crate) recent_items: ui::RecentItemsService,
-    /// Mirrors `ui::WorkbenchState::panel_modes` (Phase 7, W3a) — which
-    /// named panels are Docked/Floating/Closed. `#[serde(default = ...)]`
+    /// Mirrors `ui::WorkbenchState::panel_modes` — which named panels are
+    /// Docked/Floating/Closed. `#[serde(default = ...)]`
     /// (not a bare `#[serde(default)]`) so a preferences file predating
     /// this field, or one written before a panel existed, falls back to
     /// `ui::default_panel_modes()` rather than an empty map — an empty
@@ -66,16 +60,15 @@ pub(crate) struct Preferences {
     /// etc.) that default to `Closed`.
     #[serde(default = "ui::default_panel_modes")]
     pub(crate) panel_modes: std::collections::HashMap<String, ui::PanelMode>,
-    /// Mirrors `ui::WorkbenchState::layout_shares` (Phase 7, W3a) — each
-    /// dragged split ratio, keyed the same way `layout::extract_shares`
-    /// already keys them. An empty map here is always a safe, sensible
-    /// default (no dragged ratio recorded yet, so hardcoded defaults
-    /// apply) — a bare `#[serde(default)]` is correct, unlike
-    /// `panel_modes` above.
+    /// Mirrors `ui::WorkbenchState::layout_shares` — each dragged split
+    /// ratio, keyed the same way `layout::extract_shares` already keys
+    /// them. An empty map here is always a safe, sensible default (no
+    /// dragged ratio recorded yet, so hardcoded defaults apply) — a bare
+    /// `#[serde(default)]` is correct, unlike `panel_modes` above.
     #[serde(default)]
     pub(crate) layout_shares: std::collections::HashMap<String, f32>,
-    /// Mirrors `ui::WorkbenchState::workspaces` (Phase 7, W3c) — every
-    /// user-saved workspace plus which one (built-in or saved) was last
+    /// Mirrors `ui::WorkbenchState::workspaces` — every user-saved
+    /// workspace plus which one (built-in or saved) was last
     /// active. See `ui::workspace`'s module doc comment for the unified
     /// storage model this persists verbatim (it's already the "opaque,
     /// serializable blob" `Preferences` doesn't interpret).
@@ -224,11 +217,11 @@ mod tests {
 
     #[test]
     fn load_preferences_file_predating_layout_fields_falls_back_to_default_panel_modes() {
-        // Phase 7, W3a: a preferences file saved before this milestone has
-        // no `panel_modes`/`layout_shares` keys at all. `panel_modes` must
-        // fall back to `ui::default_panel_modes()` (Neural Viewer etc.
-        // Closed), not an empty map (which `rebuild_tree_from_modes` would
-        // treat as "every panel Docked" via its own per-key fallback).
+        // An older preferences file with no `panel_modes`/`layout_shares`
+        // keys at all must still load correctly. `panel_modes` must fall
+        // back to `ui::default_panel_modes()` (Neural Viewer etc. Closed),
+        // not an empty map (which `rebuild_tree_from_modes` would treat as
+        // "every panel Docked" via its own per-key fallback).
         let dir =
             std::env::temp_dir().join(format!("phylon_prefs_predate_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

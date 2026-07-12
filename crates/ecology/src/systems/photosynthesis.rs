@@ -41,8 +41,9 @@ pub fn photosynthesis_system(
             // Plants consume CO2 and Sunlight to make Glucose and O2
             let mut co2_needed = 4.0 * metabolism.mass * sunlight;
 
-            // Phase 3: Stop the Carbon Leak
-            // Do not absorb CO2 if the Glucose tank is full, otherwise the carbon is deleted.
+            // Do not absorb CO2 if the glucose tank is full, otherwise the
+            // carbon is deleted from the simulation instead of remaining in
+            // the atmosphere (the "carbon leak" this clamp prevents).
             let glucose_room = (chem.max_glucose - chem.glucose).max(0.0);
             co2_needed = co2_needed.min(glucose_room);
 

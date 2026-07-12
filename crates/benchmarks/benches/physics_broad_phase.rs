@@ -1,15 +1,7 @@
-//! Phase 8, Epic 8.10's own disclosed gap, closed here: the roadmap's
-//! stated verification for the GPU steric-hindrance broad-phase moving
-//! from a dense `128x128` grid to a fixed-size 3D spatial hash
-//! (ADR-P8-04) asked for "a new GPU broad-phase benchmark... at multiple
-//! population sizes, before/after" — deferred at the time since the ADR's
-//! core memory-safety concern (avoiding a ~128x blowup) was satisfied by
-//! construction (the hash table's total bucket count was chosen to exactly
-//! match the pre-8.10 dense grid's, not measured). This benchmark gives a
-//! real number for the hash-based design's own steady-state cost, so a
-//! future epic that revisits or tunes the broad-phase has a baseline to
-//! compare against, per this project's own "profile before optimizing"
-//! rule — it does not itself optimize anything.
+//! Measures the GPU steric-hindrance broad-phase's steady-state cost — the
+//! fixed-size 3D spatial hash used to find nearby particle nodes without an
+//! all-pairs check — so any future tuning of the broad-phase has a real
+//! baseline to compare against; it does not itself optimize anything.
 //!
 //! Mirrors `foraging_scaling.rs`'s own structure and population range
 //! (1,000 / 5,000 / 10,000) for direct comparability with the CPU-side
@@ -19,7 +11,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use gpu::physics_pipeline::{GpuParticleNode, GpuPhysicsSpring, PhysicsComputePipeline};
 
 /// Requests a minimal headless `wgpu` device — no surface, no rendering
-/// pipeline — mirroring `app::app::init_gpu_headless`'s own adapter/device
+/// pipeline — mirroring `PhylonApp::init_gpu_headless`'s own adapter/device
 /// request incantation (the only other place in this workspace that needs
 /// a surfaceless GPU device).
 fn create_headless_gpu() -> (wgpu::Device, wgpu::Queue) {
@@ -33,7 +25,7 @@ fn create_headless_gpu() -> (wgpu::Device, wgpu::Queue) {
         compatible_surface: None,
         force_fallback_adapter: false,
     }))
-    .expect("no GPU adapter available for benchmarking — see ADR-P8-09's CI-posture notes");
+    .expect("no GPU adapter available for benchmarking — this benchmark requires a real GPU and does not run in headless CI environments without one");
 
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {

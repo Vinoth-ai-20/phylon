@@ -1,8 +1,7 @@
-//! Hormone Viewer (Phase 4, `PHASE4_ROADMAP.md` milestone P4-R3) — shows the
-//! head's organism-wide `brain::Neuromodulators` reading alongside every
-//! other segment's `brain::HormoneLevel` (P4-F4), so a researcher can see
-//! the endocrine signal's actual spread across the body, not just the
-//! single scalar that existed before P4-F4.
+//! Hormone Viewer — shows the head's organism-wide `brain::Neuromodulators`
+//! reading alongside every other segment's `brain::HormoneLevel`, so a
+//! researcher can see the endocrine signal's actual spread across the
+//! body, not just a single organism-wide scalar.
 use crate::types::*;
 
 /// Renders the Hormone Viewer dock panel.

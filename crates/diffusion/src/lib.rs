@@ -1,4 +1,43 @@
-//! Continuous field simulation: chemical and atmospheric field diffusion via discrete Laplacian.
+//! # Phylon Diffusion
+//!
+//! ## Purpose
+//!
+//! This crate simulates chemical and biological signals — pheromones,
+//! ambient gases, hazards, developmental morphogens — as continuous fields
+//! that spread across the world and fade over time, rather than as discrete
+//! particles or messages. This technique is called **reaction-diffusion**:
+//! a value at every point in space diffuses into neighboring points (like
+//! heat spreading through metal) while simultaneously reacting — here,
+//! decaying at some rate and being replenished by emitters. It is the same
+//! mechanism ants use pheromone trails to model, and the same mechanism
+//! atmospheric gases (O2/CO2) use to spread from where they are produced or
+//! consumed.
+//!
+//! ## Design decision: 2D world-space planes, not a volumetric 3D grid
+//!
+//! Fields are stored as flat 2D grids (see [`CpuFieldState`],
+//! [`CpuHazardFieldState`]), not as 3D voxel volumes. A single 256x256 2D
+//! field layer costs 256KB of `f32` data; the equivalent 256x256x256
+//! volumetric field would cost 64MB — a 256x factor, multiplied again by
+//! however many independently-diffusing layers (pheromone, energy, O2, CO2,
+//! morphogen, ...) the simulation needs. Since organisms currently move on
+//! a plane, a 3D volume would spend the overwhelming majority of its memory
+//! and per-tick diffusion bandwidth simulating vertical space nothing
+//! samples. The 2D representation keeps the diffusion compute shader's
+//! working set small enough to update every layer every tick at interactive
+//! frame rates.
+//!
+//! ## Architecture
+//!
+//! The GPU computes the diffusion PDE (see [`DiffusionConfig`]) for every
+//! field layer every tick and writes the result into a shared buffer. That
+//! buffer is asynchronously copied back into CPU-resident snapshots
+//! ([`CpuFieldState`], [`CpuSignalFieldState`], [`CpuHazardFieldState`]) once
+//! per tick so that CPU-side ECS systems (organism senses, hazard damage,
+//! etc.) can sample the environment without touching the GPU directly.
+//! Organisms and other systems inject values into the fields via emitter
+//! components ([`Emitter`], [`SignalEmitter`]), which the GPU dispatch reads
+//! each tick.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -94,8 +133,8 @@ impl Default for CpuFieldState {
 
 impl CpuFieldState {
     /// Samples the field at a given world position for a specific layer.
-    /// Layer 0: Pheromones, 1: Energy, 2: O2, 3: CO2, 4: Morphogen (Phase 6,
-    /// Epic D, D1b — see [`FieldLayer::Morphogen`]).
+    /// Layer 0: Pheromones, 1: Energy, 2: O2, 3: CO2, 4: Morphogen (see
+    /// [`FieldLayer::Morphogen`]).
     pub fn sample(&self, pos: Vec2, layer: u32) -> f32 {
         let gx = (pos.x / 10.0) + (self.width as f32 / 2.0);
         let gy = (pos.y / 10.0) + (self.height as f32 / 2.0);
@@ -138,12 +177,13 @@ pub enum FieldLayer {
     O2 = 2,
     /// Spatial carbon dioxide layer.
     CO2 = 3,
-    /// Phase 6, Epic D (D1b, ADR-D1-01): the inter-organism/environmental
-    /// developmental-coupling layer — emitted into by developing organisms
-    /// (proportional to their own intra-organism `MorphogenLevel`, see
-    /// `organisms::morphogen_field`) and sampled by nearby developing
-    /// organisms' own decode. This is the "5th layer" ADR-D1-01 calls for;
-    /// the intra-organism signal itself (D1a) never touches the GPU.
+    /// The inter-organism/environmental developmental-coupling layer:
+    /// developing organisms emit into it in proportion to their own
+    /// intra-organism `MorphogenLevel` (see `organisms::morphogen_field`),
+    /// and nearby developing organisms sample it as part of their own
+    /// developmental decode. This lets neighboring organisms' development
+    /// influence each other spatially. Note that the intra-organism signal
+    /// itself never touches the GPU — only this environmental layer does.
     Morphogen = 4,
 }
 
@@ -297,7 +337,6 @@ impl CpuHazardFieldState {
 mod tests {
     use super::*;
 
-    /// Phase 6, Epic D (D1b)'s own named testing requirement: the new
     /// `FieldLayer::Morphogen` (index 4) must round-trip independently of
     /// the other 4 layers — no cross-channel bleed. `CpuFieldState::sample`'s
     /// layer offset is `layer * width * height`; this proves that offset

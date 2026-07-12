@@ -1,14 +1,12 @@
-//! Global Search overlay (Phase 7, W6a) — fuzzy-searchable list of every
-//! currently-alive organism, by diet or the same `{Idx, Gen}` identifier
-//! `inspector.rs`'s own header already shows (bevy_ecs's entity index/
-//! generation, not an evolutionary generation count — matching that
-//! existing label convention exactly rather than inventing a second
-//! meaning for "Gen"). Selecting a result routes through
-//! `WorkbenchState::select` — the sole canonical selection pathway
-//! (ADR-W0-01) — same as every other selection entry point.
+//! Global Search overlay — fuzzy-searchable list of every currently-alive
+//! organism, by diet or the same `{Idx, Gen}` identifier `inspector.rs`'s
+//! own header shows (bevy_ecs's entity index/generation, not an
+//! evolutionary generation count — matching that existing label convention
+//! exactly rather than inventing a second meaning for "Gen"). Selecting a
+//! result routes through `WorkbenchState::select` — the sole canonical
+//! selection pathway — same as every other selection entry point.
 //!
-//! ## Design note (written before implementation, per this milestone's own
-//! requirement)
+//! ## Design note
 //!
 //! - **What's searchable**: one entry per organism (head segment,
 //!   `physics::ParticleNode::segment_type == 0`), matched by a
@@ -25,8 +23,7 @@
 //!   exactly: no arrow-key result navigation and no Escape-to-close exist
 //!   for Command Palette either, so Global Search does not invent either
 //!   one only for itself — clicking a result or toggling the shortcut
-//!   again are the two ways out, consistent with the precedent this
-//!   milestone deliberately follows rather than diverges from.
+//!   again are the two ways out, consistent with that precedent.
 
 /// Population-wide search could otherwise render thousands of rows; capped
 /// the same way a real search UI would paginate, without adding pagination.

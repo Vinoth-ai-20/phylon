@@ -1,18 +1,16 @@
-//! Organism visual-instance builders (Phase 7, W2a) — the "what to draw"
-//! half of `render.rs`'s per-node and per-spring loops, extracted so those
-//! loops orchestrate (gather data, call a builder, push the result) rather
-//! than compute biological-visual semantics inline.
+//! Organism visual-instance builders — the "what to draw" half of
+//! `render.rs`'s per-node and per-spring loops, kept separate so those loops
+//! orchestrate (gather data, call a builder, push the result) rather than
+//! compute biological-visual semantics inline.
 //!
 //! Every function here is pure: it takes already-looked-up data (a
 //! component, a resolved position, a resolved scalar) and returns the
 //! instance(s) the caller should push — never a `World` query, never a
-//! `PhylonApp` field access. This is a verbatim extraction of `render.rs`'s
-//! prior inline logic (Phase 7 W2 is architectural separation, not a visual
-//! or behavioral change) — every threshold, color, and gating condition
-//! moves unchanged.
+//! `PhylonApp` field access. This keeps the mapping from biological/ECS
+//! state to visual instances testable and readable independent of the
+//! per-frame orchestration in `render.rs`.
 
-/// Pellet-like entity radii (Phase 7 W2b's `pellet_like_instances` call
-/// sites) — named and shared (Phase 8, Epic 8.4) so ray-vs-capsule picking
+/// Pellet-like entity radii — named and shared so ray-vs-capsule picking
 /// hit-tests against exactly the same radius the renderer draws, rather
 /// than a second, independently-tuned literal.
 pub(crate) const FOOD_PELLET_RADIUS: f32 = 2.5;
@@ -213,11 +211,10 @@ pub(crate) fn bone_highlight_instances(
     (hover, selected)
 }
 
-/// Which structural tier a spring's "main" skin/bone visual belongs to —
-/// the three near-duplicate branches `render.rs` used to fork on inline
-/// (passive tail / elastic muscle / rigid-or-rotational), now one enum
-/// driving one builder function instead of three copies of the same
-/// SDF-instance/debug-instance construction.
+/// Which structural tier a spring's "main" skin/bone visual belongs to
+/// (passive tail / elastic muscle / rigid-or-rotational) — one enum driving
+/// one builder function instead of three near-duplicate branches, each
+/// constructing its own SDF/debug instance.
 pub(crate) enum BoneKind {
     /// Thin, dimmed — a passive, non-fin ("tail") bone.
     PassiveTail,
@@ -287,11 +284,11 @@ pub(crate) fn bone_visual_instances(
 
 /// The four instances a point-entity ("pellet-like": food, mineral, or
 /// corpse) may produce — debug dot, "real" SDF dot, hover highlight, and
-/// selection highlight — every field of which was, before W2b, duplicated
-/// verbatim three times (once per entity kind) with only `debug_color`/
-/// `sdf_color`/`radius` differing. `radius` is shared across all four
-/// instances, matching the prior per-kind code (each kind used one literal
-/// for its debug/sdf/hover/selected radius alike).
+/// selection highlight. All three entity kinds share this one builder
+/// rather than each having its own near-duplicate construction, since only
+/// `debug_color`/`sdf_color`/`radius` differ between kinds. `radius` is
+/// shared across all four instances for a given kind (each kind uses one
+/// literal for its debug/sdf/hover/selected radius alike).
 pub(crate) struct PelletInstances {
     pub(crate) debug: Option<rendering::DebugInstance>,
     pub(crate) sdf: Option<rendering::CapsuleInstance>,

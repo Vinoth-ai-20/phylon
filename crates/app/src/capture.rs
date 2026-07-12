@@ -134,7 +134,7 @@ pub(crate) fn save_screenshot(image: &image::RgbaImage) -> Result<PathBuf> {
 
 /// Crops `image` to `(x, y, width, height)` (physical pixels, already
 /// clamped to the image bounds by the caller) and saves it as a timestamped
-/// PNG under `./screenshots/` (Phase 5, SX-7c) — same destination/naming as
+/// PNG under `./screenshots/` — same destination/naming as
 /// `save_screenshot`, since a chart export is just a narrower crop of the
 /// same whole-window capture, not a separate artifact type. Returns the path
 /// written.

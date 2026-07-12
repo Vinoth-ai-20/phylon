@@ -1,16 +1,14 @@
-//! Shared node-link graph canvas helpers (pan/zoom/hit-testing) — extracted
-//! from `plugins::neural_viewer` (Phase 3, M11) so the GRN Viewer panel can
-//! navigate a `genetics::RegulatoryNetwork` graph the same way Neural Viewer
-//! navigates a `Brain`/`Cppn` graph, instead of duplicating this math.
+//! Shared node-link graph canvas helpers (pan/zoom/hit-testing), used by
+//! `plugins::neural_viewer` (CTRNN/CPPN graphs) and `plugins::grn_viewer`
+//! (`genetics::RegulatoryNetwork` graphs) so each viewer navigates its own
+//! graph the same way, instead of duplicating this math.
 //!
-//! Extended (Phase 7, W2c) with the *layout-independent* rendering pieces
-//! that were duplicated identically across Neural Viewer's CTRNN/CPPN
-//! canvases and the GRN Viewer's canvas: canvas setup boilerplate, the
-//! node fill+stroke paint primitive, and the edge color/width formula. This
-//! module owns HOW to render a generic node-link graph; it never owns WHAT
-//! a node/edge means — layout algorithms, node classification, liveness
-//! indicators, and tooltip content all stay in each viewer, by design (see
-//! ADR-W2-01).
+//! Also owns the *layout-independent* rendering pieces shared across those
+//! canvases: canvas setup boilerplate, the node fill+stroke paint
+//! primitive, and the edge color/width formula. This module owns HOW to
+//! render a generic node-link graph; it never owns WHAT a node/edge means —
+//! layout algorithms, node classification, liveness indicators, and
+//! tooltip content all stay in each viewer, by design.
 
 /// Transforms a layout-space position into screen space via `view`'s
 /// current pan/zoom, anchored at `rect`'s center.
@@ -59,9 +57,8 @@ pub(crate) fn hit_test_node(
 }
 
 /// Shortest distance from `p` to the line segment `a`–`b` — the geometric
-/// core of [`hit_test_edge`]. Pure math, zero domain content (Phase 7,
-/// W2c — moved here from `plugins::neural_viewer`, its only prior user,
-/// purely for cohesion alongside `hit_test_node`; behavior is unchanged).
+/// core of [`hit_test_edge`]. Pure math, zero domain content — lives
+/// alongside `hit_test_node` for the same reason.
 fn dist_to_segment(p: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
     let ab = b - a;
     let len_sq = ab.length_sq();
@@ -98,8 +95,8 @@ pub(crate) fn hit_test_edge(
 
 /// Allocates a graph canvas's painter, applies pan/zoom input, and fills its
 /// background — the setup sequence every node-link graph canvas in this UI
-/// repeated identically before W2c, differing only in `height`/`background`.
-/// Returns the interaction `Response` (for later hover/hit-testing), the
+/// shares, differing only in `height`/`background`. Returns the
+/// interaction `Response` (for later hover/hit-testing), the
 /// `Painter` to draw into, and its `Rect` (for layout math and
 /// `apply_view`).
 pub(crate) fn begin_graph_canvas(
@@ -154,15 +151,14 @@ pub(crate) fn draw_node(
 }
 
 /// The edge color/width formula every node-link graph canvas in this UI
-/// applied identically: a weight's magnitude (clamped to a max of 3.0)
+/// applies identically: a weight's magnitude (clamped to a max of 3.0)
 /// linearly drives both alpha (80–220) and stroke width (0.5–2.5), while its
 /// sign picks between the caller's two base colors. Callers supply their own
 /// `positive_base`/`negative_base` (e.g. synapse excitatory/inhibitory vs.
 /// gene activator/repressor) — this function never picks a color itself,
-/// only shapes one given the caller's choice, so distinct domain vocabularies
-/// stay distinct (Phase 7, W2c re-audit deliberately did not merge
-/// `neural_viewer`'s and `grn_viewer`'s same-valued color constants — see
-/// ADR-W2-01).
+/// only shapes one given the caller's choice, so distinct domain
+/// vocabularies (`neural_viewer`'s and `grn_viewer`'s color constants) stay
+/// distinct even though the underlying formula is shared.
 pub(crate) fn weighted_edge_stroke(
     weight: f32,
     positive_base: egui::Color32,

@@ -1,11 +1,11 @@
 //! GPU compute pipeline for 2D field diffusion.
 
 /// Number of texture-array layers the diffusion field carries: Pheromones,
-/// Energy, O2, CO2, and (Phase 6, Epic D, D1b) Morphogen — see
-/// `diffusion::FieldLayer`. A single named constant so every hardcoded shape
-/// (texture depth, layer-view count, dispatch z-extent, uniform array size,
-/// staging buffer size) stays in lockstep when this ever changes again,
-/// rather than requiring an audit of scattered literal `4`s/`5`s.
+/// Energy, O2, CO2, and Morphogen — see `diffusion::FieldLayer`. A single
+/// named constant so every hardcoded shape (texture depth, layer-view count,
+/// dispatch z-extent, uniform array size, staging buffer size) stays in
+/// lockstep when this ever changes again, rather than requiring an audit of
+/// scattered literal `4`s/`5`s.
 pub const LAYER_COUNT: u32 = 5;
 
 /// Configuration for a single diffusion layer (e.g. Pheromones, Energy, O2, CO2, Morphogen).
@@ -541,17 +541,17 @@ mod tests {
         .expect("failed to create wgpu device for this headless test")
     }
 
-    /// Phase 6, Epic D (D1b)'s own standing rule for GPU-touching work —
-    /// "not just cargo test": a real wgpu device, a real compute dispatch,
-    /// a real readback. Proves `LAYER_COUNT = 5` actually round-trips end to
-    /// end (texture depth, dispatch z-extent, and the uniform layer array
-    /// all have to agree — a mismatch between any of these would silently
-    /// corrupt data or panic inside the shader, not just fail a plain value
-    /// comparison), and that an emission targeted only at the new Morphogen
-    /// layer (index 4) produces activity there without leaking into layers
-    /// 0-3 — the GPU-side half of the same "no cross-channel bleed"
-    /// requirement the CPU-side `diffusion` crate test proves for
-    /// `CpuFieldState`.
+    /// Exercises a real wgpu device, a real compute dispatch, and a real
+    /// readback rather than mocking any of it — GPU-touching logic like this
+    /// can silently break in ways a pure-CPU unit test can't catch. Proves
+    /// `LAYER_COUNT = 5` actually round-trips end to end (texture depth,
+    /// dispatch z-extent, and the uniform layer array all have to agree — a
+    /// mismatch between any of these would silently corrupt data or panic
+    /// inside the shader, not just fail a plain value comparison), and that
+    /// an emission targeted only at the Morphogen layer (index 4) produces
+    /// activity there without leaking into layers 0-3 — the GPU-side half of
+    /// the same "no cross-channel bleed" requirement the CPU-side
+    /// `diffusion` crate test proves for `CpuFieldState`.
     #[test]
     fn diffusion_pipeline_steps_all_5_layers_and_the_morphogen_layer_stays_isolated() {
         let (device, queue) = headless_device();

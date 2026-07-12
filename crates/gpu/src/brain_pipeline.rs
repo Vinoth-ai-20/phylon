@@ -1,4 +1,9 @@
-/// A GPU-friendly representation of a CTRNN Node.
+/// A GPU-friendly representation of one node of an organism's CTRNN
+/// (Continuous-Time Recurrent Neural Network) brain — the neural
+/// controller that reads sensory inputs and drives muscle actuation.
+/// `first_synapse`/`synapse_count` index into a flat, per-brain-batched
+/// [`GpuCtrnnSynapse`] array so the compute shader can iterate exactly this
+/// node's incoming synapses without per-organism indirection buffers.
 #[repr(C)]
 #[allow(missing_docs)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -11,7 +16,8 @@ pub struct GpuCtrnnNode {
     pub synapse_count: u32,
 }
 
-/// A GPU-friendly representation of a CTRNN Synapse.
+/// A GPU-friendly representation of one weighted connection between two
+/// [`GpuCtrnnNode`]s in a CTRNN brain.
 #[repr(C)]
 #[allow(missing_docs)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -29,7 +35,40 @@ struct BrainConfigUniform {
     _padding: [f32; 3],
 }
 
-/// Wrapper around the brain WGSL compute pipelines.
+/// # GPU Brain (CTRNN) Compute Pipeline
+///
+/// ## Purpose
+/// `BrainComputePipeline` integrates every organism's CTRNN brain
+/// (Continuous-Time Recurrent Neural Network — the neural controller that
+/// maps sensory inputs to muscle actuation signals) for one simulation tick,
+/// batched across the whole population in a single dispatch.
+///
+/// ## Data Flow
+/// Each tick: the caller gathers the current [`GpuCtrnnNode`]/
+/// [`GpuCtrnnSynapse`] arrays (every organism's brain state, concatenated)
+/// -> [`Self::dispatch`] uploads them to persistent GPU storage buffers and
+/// submits the `integrate_nodes` compute pass -> the updated node buffer is
+/// copied into a staging buffer and an asynchronous read-back begins -> the
+/// caller collects the result later via [`Self::resolve`], normally at the
+/// start of the next tick, and writes it back into each organism's brain
+/// state.
+///
+/// ## Design Decisions
+/// Readback is deferred by one tick (dispatch now, resolve at the start of
+/// the next tick) rather than blocking immediately after submission: this
+/// lets the GPU integrate every brain while the CPU concurrently runs other
+/// per-tick systems (sensing, ecology, reproduction), instead of the CPU
+/// idling on a `device.poll(Wait)` right after dispatch. [`Self::compute_step`]
+/// is kept as a blocking convenience for callers (e.g. tests) that need the
+/// result in the same call.
+///
+/// ## Determinism
+/// Node integration order within a dispatch is not guaranteed by the GPU
+/// scheduler; since each node's update depends only on its own state and its
+/// incoming synapses' (not on other nodes' post-update state within the same
+/// step), this doesn't affect the result — but bit-exact reproducibility
+/// across different GPUs or driver versions is still not guaranteed, only
+/// same-hardware, same-driver determinism.
 pub struct BrainComputePipeline {
     integrate_pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,

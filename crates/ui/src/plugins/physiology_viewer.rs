@@ -1,13 +1,12 @@
-//! Physiology Viewer + Organ Inspector (Phase 4, `PHASE4_ROADMAP.md`
-//! milestone P4-R1) — the first UI surface to show P4-F2's per-segment
-//! `metabolism::ChemicalEconomy` pools at all. Before this panel, that data
-//! existed only in ECS memory with no way for a researcher to see it.
+//! Physiology Viewer + Organ Inspector — the UI surface for per-segment
+//! `metabolism::ChemicalEconomy` pools, which otherwise exist only in ECS
+//! memory with no way for a researcher to see them.
 //!
-//! One table, one row per Body Graph position (walked via P4-F1's
-//! persistent `organisms::DevelopmentalGraph`) — this doubles as the "Organ
-//! Inspector" the milestone also asks for: each row *is* one organ/segment's
-//! full resource inspection, rather than a separate drill-down panel, since
-//! the whole table already fits the same screen.
+//! One table, one row per Body Graph position (walked via the persistent
+//! `organisms::DevelopmentalGraph`) — this doubles as an "Organ Inspector":
+//! each row *is* one organ/segment's full resource inspection, rather than
+//! a separate drill-down panel, since the whole table already fits the
+//! same screen.
 use crate::types::*;
 
 /// Renders the Physiology Viewer / Organ Inspector dock panel.

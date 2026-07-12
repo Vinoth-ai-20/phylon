@@ -1,6 +1,24 @@
 # Phase 9 — Workbench UX, Performance & Optimization Roadmap
 
-**Status: Phase 9 complete — P9.1 through P9.8 all implemented and verified.** Everything in this document is either a direct measurement or a code-cited finding — no claim here is a guess or an assumption carried over from prior phases' documentation.
+**Status: Phase 9 complete — P9.1 through P9.9 all implemented and verified.** Everything in this document is either a direct measurement or a code-cited finding — no claim here is a guess or an assumption carried over from prior phases' documentation.
+
+## P9.9 — Source Code Documentation Modernization: implemented, verified
+
+A repository-wide pass over every crate's source-code documentation, aimed at a single goal: a new contributor should be able to understand the architecture from the source code and `docs/` alone, without ever opening `docs/roadmap/archive/` or any phase-numbered historical document. Before this pass, ~842 lines across the workspace referenced development history directly ("Phase 5, SX-2a...", "Per ADR-P8-03...", "Epic 8.7 added...") — accurate at the time they were written, but requiring a reader to already know Phylon's development history to follow the reasoning.
+
+**Approach:** every doc comment, module doc, and inline comment in `crates/**/src/**/*.rs` was classified into one of four categories and handled accordingly — KEEP (architecture/algorithm/math/biology/determinism/safety content, clarified but not removed), REWRITE (phase/epic/ADR-labeled comments restated as timeless design rationale — *why* the current code is correct, never *when* it changed), REMOVE (pure historical narrative with zero surviving technical content), EXPAND (module-level Purpose/Architecture/Data-flow/Design-decisions/Determinism/Extension-points treatment for the architecturally central systems: `PhylonApp`, `simulation.rs`, `gpu_init.rs`, `species_seed.rs`, `Camera3d`/`viewport_input.rs`/`WorkbenchState`, `plugins/gizmos.rs`, `developmental_graph.rs`, `genetics::regulatory`/`cppn`, `growth_system`, `brain_wiring.rs`, `rendering::organism`/`picking`, `gpu::physics_pipeline`/`brain_pipeline`, `spatial::octree`/`hash`, `ecology`, `evolution`, `reproduction`, `brain`, `physics`, `diffusion`, `metabolism`, `events`, `storage::snapshot`/`replay`, `common`, `environment`).
+
+Every domain-specific/biological term (HOX code, CPPN, CTRNN, morphogen, apoptosis, gene regulatory network, Braitenberg wiring, neuromodulator, speciation, reaction-diffusion, the ATP/glucose/O2/CO2 economy) is now briefly explained on first use per file, so a Rust developer with no Phylon background can follow the code without external context.
+
+**Scope:** all 30 workspace crates, ~50,000 lines of source, split into 7 parallel review passes by domain (composition root; UI/camera/viewport; organism growth + genetics; GPU/rendering/spatial; ecology/evolution/reproduction/behavior/sensing/brain; physics/diffusion/metabolism/events/analytics/storage; and the small infra crates). Zero logic was changed anywhere — this was a doc-only pass, verified by identical test counts before and after.
+
+**Second-pass review** (after the main rewrite) swept the whole workspace again for stragglers the per-crate passes couldn't have caught (files outside their assigned scope, or narrative phrasing that survived without an explicit phase/epic label): found and fixed 13 remaining historical references, including two the crate-scoped agents had no mandate to touch (`crates/benchmarks/benches/*.rs` — outside every agent's `src/`-only scope) and several **user-visible UI string literals** carrying internal milestone codes directly in the interface (e.g. Inspector section headers reading "Per-Segment Detail (SX-6a)") — these are arguably a worse leak than a source comment, since an end user would see them with no context at all.
+
+**Verification:** `fmt`/`clippy --workspace --all-targets -D warnings`/`build --workspace`/`test --workspace` (identical pass/fail counts to before this pass across all 59 test-result blocks) all clean, `cargo doc --no-deps --document-private-items --workspace` clean (zero warnings, several broken intra-doc-link issues introduced by the new expanded docs were caught and fixed during the pass), and a windowed release smoke test (only the pre-existing, harmless `B0003` despawn-race warning, no panics). 132 files changed workspace-wide.
+
+**Disclosed limitation:** a documentation pass of this size cannot be exhaustively hand-verified line-by-line in one sitting. Verification here is: automated build/lint/test/doc-link checks (which catch broken references and logic regressions, not prose quality), a full repository grep sweep for residual historical markers (down to zero outside one confirmed false positive — an unrelated "Phase 0" referring to a sine-wave oscillation phase, not a development phase), and a targeted spot-check of the highest-risk phrasing patterns ("no longer", "used to", "replacing the previous...") across all 30 matches found. If you spot documentation that still reads as historical narrative or contradicts another module's description of the same system, that's a real gap this pass didn't catch, not an intentional choice.
+
+---
 
 ## P9.8 — `MANUAL_TESTING.md`: implemented
 
@@ -185,6 +203,8 @@ Ordered by measured impact and risk, per this project's own "never optimize with
 **Epic P9.7 — UI polish pass. ✅ Done** — see the results section near the top of this document. Scope confirmed with the user as a light consistency pass (not the separately-approved 13-milestone UI Architecture Refinement plan): tokenized `gizmos.rs`'s hand-picked panel/marker colors through the existing `theme::` system, and swapped the Camera menu's ad-hoc Unicode toggle glyphs for the Remix Icon font every other menu entry already uses.
 
 **Epic P9.8 — `MANUAL_TESTING.md`. ✅ Done** — see the results section near the top of this document. Authored last, once every other milestone's real feature set (not a guessed one) was known.
+
+**Epic P9.9 — Source Code Documentation Modernization. ✅ Done** — see the results section near the top of this document. Added after P9.1–P9.8 as a dedicated, repository-wide follow-on: every crate's source comments were classified (keep/rewrite/remove/expand) and de-historicized, so the source code itself — not `docs/roadmap/archive/` — is now the primary technical reference for a new contributor.
 
 ## 4. What this pass did not do, and why
 

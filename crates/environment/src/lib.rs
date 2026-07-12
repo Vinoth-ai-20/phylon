@@ -1,18 +1,72 @@
+//! # Phylon Environment
+//!
+//! Procedural world generation: continuous temperature/humidity noise fields
+//! and the discrete [`Biome`] classification derived from them.
+//!
+//! ## Purpose
+//!
+//! Organisms and the ecology system need a spatially-varying, deterministic
+//! notion of "what kind of place is this" — how fertile the ground is, how
+//! hot or cold, how wet — without simulating real climate. This crate
+//! generates that world once per coordinate, cheaply and reproducibly, from
+//! a seeded noise field rather than a hand-authored map.
+//!
+//! ## Architecture
+//!
+//! [`EnvironmentManager`] owns two independent `OpenSimplex` noise
+//! generators (temperature, humidity), both seeded from the experiment's RNG
+//! seed so that "the same seed" reproduces the same world layout, not just
+//! the same organism behavior. [`EnvironmentManager::get_temperature_at`] and
+//! [`EnvironmentManager::get_humidity_at`] sample those fields directly;
+//! [`EnvironmentManager::get_biome_at`] combines both samples through a
+//! simplified Whittaker biome-classification scheme to produce a discrete
+//! [`Biome`], which in turn determines fertility via [`Biome::fertility`].
+//!
+//! ## Design decisions
+//!
+//! Noise sampling is seeded, not random-per-call, and the manager is
+//! inserted into the ECS `World` as a `bevy_ecs` [`Resource`] so every system
+//! that reads environmental conditions (ecology, spawn placement) sees the
+//! same values for the same coordinate — the world layout itself is part of
+//! the simulation's deterministic state, not just organism behavior.
+//!
+//! When the world is toroidal (wraps at its boundaries), naively sampling 2D
+//! noise would produce a visible seam where the wrap occurs. Instead,
+//! coordinates are projected onto two independent circles and sampled from a
+//! 4D noise field (see the internal `eval_noise` helper's doc comment for the
+//! derivation), which tiles seamlessly by construction.
+
+#![warn(missing_docs)]
+#![warn(clippy::all)]
+
 use bevy_ecs::system::Resource;
 use noise::{NoiseFn, OpenSimplex};
 use serde::{Deserialize, Serialize};
 
-/// Biome classification for a coordinate.
+/// Discrete biome classification for a world coordinate, derived from local
+/// temperature and humidity via [`EnvironmentManager::get_biome_at`].
+///
+/// Each variant carries an implied fertility level (see [`Biome::fertility`])
+/// that the ecology system uses to calibrate resource/food density.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Biome {
+    /// Hot, humid — highest fertility.
     TropicalRainforest,
+    /// Moderate temperature, moderate-to-high humidity.
     TemperateForest,
+    /// Hot, dry — low fertility.
     Desert,
+    /// Below-freezing — lowest fertility.
     Tundra,
+    /// Moderate temperature, low-to-moderate humidity.
     Grassland,
+    /// Inland water body.
     Freshwater,
+    /// Ocean-adjacent water, high fertility.
     CoastalMarine,
+    /// Open ocean, away from coastal influence.
     DeepOcean,
+    /// Geothermally active water (vents) — non-photosynthetic fertility source.
     Hydrothermal,
 }
 

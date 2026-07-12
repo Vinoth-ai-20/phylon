@@ -1,15 +1,102 @@
-//! Viewport navigation gizmos (Phase 9, P9.5).
+//! Viewport navigation gizmos: on-screen indicators and controls that help
+//! orient the user in 3D space without being part of the simulation's own
+//! visual content.
 //!
-//! Per ADR-P9-02 (frozen after P9.3/P9.4): camera interaction and viewport
-//! visualization are separate responsibilities from here on. Every function
-//! in this module only *reads* camera/selection state and *issues commands*
-//! through the existing, already-frozen APIs (`Camera3d::world_to_screen`
-//! for projection, `MenuAction::SetCameraPreset`/`FrameSelected` for
-//! commands) — nothing here ever mutates `OrbitController`/`FlyController`
-//! directly, or adds new orientation math. All drawing is a plain egui
-//! overlay on the background layer, the same technique
-//! `render_behavior_glyphs`/`render_timed_effects` already use — no new
-//! wgpu/shader work, and the organism rendering pipeline is untouched.
+//! ## Purpose
+//!
+//! A 3D viewport with free orbit/fly camera movement needs orientation
+//! aids a fixed 2D top-down view never did: which way is up, where the
+//! camera pivot is, what the current projection mode is, how far away
+//! things are. This module draws all of that as a set of small, independent
+//! overlays — a world-origin crosshair, an orbit-pivot marker, a
+//! selection bounding box, an axis triad, a Blender-style navigation cube,
+//! and a compact scene-info readout.
+//!
+//! ## Architecture
+//!
+//! Camera interaction (mutating `OrbitController`/`FlyController`) and
+//! viewport visualization (this module) are kept as separate
+//! responsibilities. Every function here only *reads* camera/selection
+//! state and *issues commands* through existing APIs
+//! (`Camera3d::world_to_screen` for projection, `MenuAction::SetCameraPreset`
+//! for the navigation cube's clicks) — nothing here ever mutates
+//! `OrbitController`/`FlyController` directly or adds new orientation math.
+//! All drawing is a plain egui overlay on the background layer, the same
+//! technique `render_behavior_glyphs`/`render_timed_effects` use elsewhere
+//! in the renderer — no wgpu/shader work, and the organism rendering
+//! pipeline is untouched.
+//!
+//! ## Data flow
+//!
+//! `render_gizmos` is the single entry point, called once per frame from
+//! `app::render`'s overlay sequence, right after the last biological
+//! overlay and before transient UI chrome (Command Palette, Toasts). It
+//! reads the current `Camera3d` via `WorkbenchState::camera()` once, then
+//! calls each gizmo-drawing function in turn, converting world-space
+//! points to screen-space via `project` (which wraps
+//! `Camera3d::world_to_screen`) before handing them to egui's painter.
+//!
+//! ## Inputs
+//!
+//! `WorkbenchState` (camera, selection, clip-plane state), the ECS
+//! `world::World` (for the selection bounding box, which queries
+//! `physics::ParticleNode` for every body-segment entity sharing the
+//! selected organism's `organism_id`), and the current viewport rect in
+//! logical points.
+//!
+//! ## Outputs
+//!
+//! Only paint calls against `ctx.layer_painter` and pushes onto the
+//! `actions: &mut Vec<MenuAction>` output parameter (used solely by the
+//! navigation cube's preset buttons). No return value; no mutation of
+//! `WorkbenchState` or `world::World`.
+//!
+//! ## Design decisions
+//!
+//! The navigation cube is a simplified stand-in for a true rendered 3D
+//! view-cube (which would need real mesh geometry and its own pick-ray
+//! hit-testing) — a flat button cluster is functionally equivalent for the
+//! purpose a view-cube serves here (quick preset switching plus
+//! at-a-glance orientation feedback), and is disclosed as a simplification
+//! rather than presented as the real thing. See
+//! `render_navigation_cube`'s doc comment.
+//!
+//! ## Complexity / performance
+//!
+//! Every gizmo here is O(1) per frame except the selection bounding box,
+//! which is O(n) in the number of `ParticleNode` entities (one ECS query
+//! iteration to find the min/max extent of the selected organism's body).
+//! All other gizmos project a handful of fixed points and draw a few line
+//! segments — negligible relative to one frame's organism rendering cost.
+//!
+//! ## Determinism
+//!
+//! Purely presentational, like the rest of the camera/viewport layer —
+//! nothing here reads or writes simulation state that affects the
+//! deterministic simulation clock.
+//!
+//! ## Failure modes
+//!
+//! Every projection is `Option`-checked: a world point behind the camera or
+//! off-screen simply isn't drawn (`project` returns `None`, or the point
+//! fails `viewport_rect.contains`) rather than drawing garbage coordinates.
+//! The selection bounding box silently draws nothing if the selected entity
+//! has no `ParticleNode` (e.g. it was despawned this frame).
+//!
+//! ## Extension points
+//!
+//! A new gizmo is a new function following the same pattern (read state,
+//! project points via `project`, paint via `ctx.layer_painter`) added to
+//! `render_gizmos`'s call sequence.
+//!
+//! ## Related systems
+//!
+//! - `camera.rs` — `Camera3d::world_to_screen`, the projection this module
+//!   is built on.
+//! - `viewport_input.rs` — the input side; this module is purely the
+//!   output/visualization side.
+//! - `plugins/viewport.rs` — the main 3D viewport panel this overlay draws
+//!   on top of.
 
 use crate::camera::Camera3d;
 
@@ -60,19 +147,18 @@ fn preset_label(preset: crate::types::CameraPreset) -> &'static str {
 /// Semi-transparent panel background for this module's two floating
 /// overlays (nav cube, scene info) — routed through `theme::CHROME_BG`
 /// rather than an independent hand-picked literal, matching the same
-/// base-token-plus-alpha convention `render.rs`'s `toast_colors` already
-/// established for this codebase's other floating surfaces (Phase 9,
-/// P9.7 polish pass).
+/// base-token-plus-alpha convention `render.rs`'s `toast_colors` uses for
+/// this codebase's other floating surfaces.
 fn gizmo_panel_fill(alpha: u8) -> egui::Color32 {
     let c = crate::theme::CHROME_BG;
     egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), alpha)
 }
 
-/// Renders every gizmo this milestone adds, in one call — the single entry
+/// Renders every viewport navigation gizmo, in one call — the single entry
 /// point `app::render`'s overlay sequence should call, right after the last
 /// biological overlay (`render_timed_effects`) and before transient UI
-/// chrome (Command Palette, Toasts), matching the existing "biological
-/// content, then navigation chrome, then transient popups" paint order.
+/// chrome (Command Palette, Toasts): biological content, then navigation
+/// chrome, then transient popups.
 #[allow(clippy::too_many_arguments)]
 pub fn render_gizmos(
     ctx: &egui::Context,
@@ -202,9 +288,10 @@ fn render_pivot_indicator(
 }
 
 /// Selection bounding-box gizmo — a wireframe box around every
-/// `ParticleNode` sharing the selected entity's `organism_id`, using the
-/// same "walk the population, filter by organism_id" pattern
-/// `MenuAction::FrameSelected` already established (not a new query shape).
+/// `ParticleNode` sharing the selected entity's `organism_id` (the value
+/// that groups every body-segment entity belonging to one organism), using
+/// the same "walk the population, filter by organism_id" pattern
+/// `MenuAction::FrameSelected` already uses elsewhere.
 #[allow(clippy::too_many_arguments)]
 fn render_selection_bounding_box(
     ctx: &egui::Context,
@@ -339,8 +426,8 @@ fn render_axis_triad(ctx: &egui::Context, camera: &Camera3d, viewport_rect: egui
 /// (quick preset switching + at-a-glance orientation feedback), disclosed
 /// as a simplification rather than silently presented as the real thing.
 /// Clicking a button only ever pushes the same `MenuAction::SetCameraPreset`
-/// the keyboard shortcuts already use (per ADR-P9-02 — a command, not new
-/// camera logic).
+/// the keyboard shortcuts already use — a command, not new camera logic,
+/// consistent with this module never mutating the camera directly.
 fn render_navigation_cube(
     ctx: &egui::Context,
     camera: &Camera3d,
@@ -398,11 +485,11 @@ fn nav_cube_button(
     }
 }
 
-/// Scientific-context overlay (Phase 9, P9.5's "beyond Blender" addition) —
-/// a compact text readout beneath the navigation cube showing state a
-/// researcher benefits from seeing at a glance: coordinate convention,
-/// active projection, active navigation mode, and clip-plane status.
-/// Read-only — reports state, never changes it.
+/// Scientific-context overlay — a compact text readout beneath the
+/// navigation cube showing state a researcher benefits from seeing at a
+/// glance: coordinate convention, active projection, active navigation
+/// mode, and clip-plane status. Read-only — reports state, never changes
+/// it.
 fn render_scene_info_overlay(
     ctx: &egui::Context,
     state: &crate::WorkbenchState,

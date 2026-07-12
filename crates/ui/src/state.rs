@@ -1,3 +1,45 @@
+//! [`WorkbenchState`], the single struct holding all UI-side state for the
+//! Workbench application.
+//!
+//! ## Purpose
+//!
+//! `WorkbenchState` is the egui immediate-mode UI's persistent memory
+//! between frames: selection, camera, panel layout/visibility, viewport
+//! overlays, dialog/toast state, and every per-panel scratch value (search
+//! text, scrubber positions, pan/zoom of the various graph canvases). It is
+//! entirely UI-side — it never represents simulation state directly and is
+//! never read by simulation systems. The simulation's own state lives in
+//! `world::World` (an ECS, via `bevy_ecs`) and is queried fresh each frame,
+//! not cached here; the deliberate exceptions to that rule
+//! (`recent_selections`, `trajectory_history`) are noted individually below,
+//! since `world::World` itself has no memory of past frames/ticks.
+//!
+//! ## Architecture
+//!
+//! `render.rs` builds a fresh egui context each frame and dispatches to the
+//! panels under `plugins/`, each of which reads and mutates the relevant
+//! slice of `WorkbenchState`. There is one instance of this struct per
+//! running application; it is not `Clone` and not part of any save file —
+//! only the small, explicitly-persisted subset of its fields
+//! (`panel_modes`, `high_contrast`, `ui_scale`, `recent_items`, etc.) is
+//! written out via `app::preferences::Preferences` and restored on restart.
+//!
+//! Selection and camera-follow each have a single canonical mutation
+//! pathway rather than being set directly by every call site — see
+//! [`WorkbenchState::select`]/[`WorkbenchState::select_multiple`] for
+//! selection and [`WorkbenchState::set_follow`] for camera-follow. Camera
+//! state itself is a `crate::camera::CameraController`, accessed only
+//! through [`WorkbenchState::camera`], which is also where the
+//! perspective/orthographic projection toggle is applied.
+//!
+//! ## Extension points
+//!
+//! New per-panel UI state should live as a new field here (or a nested
+//! struct, as `MetricsSeriesOptions`/`GraphViewState` already are) rather
+//! than inside the simulation crates. If it needs to be a single canonical
+//! mutation like selection/follow, add a method here rather than exposing
+//! the field for direct external mutation.
+
 use bevy_ecs::entity::Entity;
 use egui_tiles::Tree;
 
@@ -38,15 +80,13 @@ pub enum PlaybackState {
 /// Central state for the entire Workbench UI.
 pub struct WorkbenchState {
     /// The entity currently selected by the user, if any — the "primary"
-    /// selection. Every pre-Phase-2 call site keeps reading/writing this
-    /// field exactly as before; it is unchanged by the addition of
-    /// `secondary_selected` below (see `docs/design/layout.md`'s Phase 2
-    /// UI Architecture note on the shared selection model).
+    /// selection. Single-entity consumers (the Inspector, viewport
+    /// highlight) read this field directly; it is always set alongside
+    /// `secondary_selected` by the same selection methods.
     pub selected_entity: Option<Entity>,
-    /// Additional entities selected alongside `selected_entity` (Phase 2,
-    /// M7) — populated by multi-select interactions (marquee-select,
-    /// ctrl+click) that didn't exist before this milestone. Empty for every
-    /// ordinary single-click selection, so single-select behavior is
+    /// Additional entities selected alongside `selected_entity` — populated
+    /// by multi-select interactions (marquee-select, ctrl+click). Empty for
+    /// every ordinary single-click selection, so single-select behavior is
     /// unaffected. Use [`WorkbenchState::all_selected`] to iterate the full
     /// selection (primary + secondary) rather than reading this field
     /// directly.
@@ -56,87 +96,82 @@ pub struct WorkbenchState {
     /// overwrites this unconditionally, so it cannot double as a hover
     /// signal set by other panels).
     pub hovered_entity: Option<Entity>,
-    /// An entity a non-viewport panel wants highlighted this frame (Phase
-    /// 2, M9 — hover cross-highlight), e.g. hovering a row in the Lineage
-    /// Explorer. Reset to `None` at the start of every `render_ui` call and
+    /// An entity a non-viewport panel wants highlighted this frame (hover
+    /// cross-highlight), e.g. hovering a row in the Lineage Explorer. Reset
+    /// to `None` at the start of every `render_ui` call and
     /// set by whichever panel's row the cursor is over; combined with
     /// `hovered_entity` (via `.or()`) wherever the viewport decides what to
     /// highlight, so the two never need to be the same field.
     pub panel_hover_entity: Option<Entity>,
     /// The last few distinct entities `selected_entity` has pointed at, most
-    /// recent first, capped at [`RECENT_SELECTIONS_CAPACITY`] (Phase 2, M13
-    /// — "Recent Selections"). Updated once per frame by
+    /// recent first, capped at [`RECENT_SELECTIONS_CAPACITY`] — "Recent
+    /// Selections". Updated once per frame by
     /// `render::track_recent_selections` diffing `selected_entity` against
-    /// the previous frame — deliberately not updated at each of
-    /// `selected_entity`'s ~20 existing write sites directly, so none of
-    /// them needed to change for this feature to work.
+    /// the previous frame, rather than at every individual selection-write
+    /// call site — this keeps the many places that set `selected_entity`
+    /// free of any responsibility for maintaining this history.
     pub recent_selections: std::collections::VecDeque<Entity>,
     /// `selected_entity`'s value as of the end of the previous frame, used
     /// only by `render::track_recent_selections` to detect a change.
     pub(crate) previous_selected_entity: Option<Entity>,
     /// Screen-space anchor of an in-progress marquee-select drag in the
-    /// viewport (Phase 2, M8), set once on `drag_started_by` and cleared on
+    /// viewport, set once on `drag_started_by` and cleared on
     /// `drag_stopped_by` — tracked explicitly rather than relying on
     /// `Response::interact_pointer_pos()` remaining valid across the exact
     /// frame the drag ends.
     pub marquee_drag_start: Option<egui::Pos2>,
     /// The cursor's current world-space position while over the viewport,
-    /// or `None` when the cursor is elsewhere (Phase 2, M10) — a baseline
-    /// "scientific tool" affordance (Blender/RenderDoc/ParaView all show
-    /// this) that was previously entirely absent; the status bar showed
-    /// only the *camera's* position, never the cursor's.
+    /// or `None` when the cursor is elsewhere — a baseline "scientific
+    /// tool" affordance (Blender/RenderDoc/ParaView all show this), shown in
+    /// the status bar alongside the camera's own position.
     pub cursor_world_pos: Option<common::Vec2>,
     /// Which gesture the viewport's left-button click-drag currently
-    /// performs (Phase 2 M8/M11; Phase 8 Epic 8.4 added `Lasso`) — replaces
-    /// the previous `measure_mode: bool`, toggled from the toolbar.
+    /// performs, toggled from the toolbar.
     pub marquee_mode: crate::MarqueeMode,
     /// Screen-space points accumulated during an in-progress lasso-select
-    /// drag (Phase 8, Epic 8.4), appended to while dragging in
-    /// `MarqueeMode::Lasso`, drained into a `MenuAction::SelectInLasso` and
-    /// cleared on `drag_stopped_by`.
+    /// drag, appended to while dragging in `MarqueeMode::Lasso`, drained
+    /// into a `MenuAction::SelectInLasso` and cleared on `drag_stopped_by`.
     pub lasso_points: Vec<egui::Pos2>,
     /// The last completed measurement: `(start, end, distance)` in world
     /// units, persisted (not just shown during the drag) until the next
     /// measurement or a mode toggle clears it.
     pub measure_result: Option<(common::Vec2, common::Vec2, f32)>,
-    /// Saved camera views (Phase 2, M12), most-recently-added last.
-    /// Session-only by design — see `CameraBookmark`'s doc comment.
+    /// Saved camera views, most-recently-added last. Session-only by
+    /// design — see `CameraBookmark`'s doc comment.
     pub bookmarks: Vec<crate::CameraBookmark>,
-    /// Whether the Command Palette overlay is open (Phase 2, M15).
+    /// Whether the Command Palette overlay is open.
     pub show_command_palette: bool,
     /// The Command Palette's current search text.
     pub command_palette_query: String,
-    /// Whether the Global Search overlay is open (Phase 7, W6a).
+    /// Whether the Global Search overlay is open.
     pub show_global_search: bool,
     /// Global Search's current search text.
     pub global_search_query: String,
-    /// `Some(prior panel_modes)` while Focus Mode (Phase 2, M16) is active,
-    /// restored on exit — `None` means Focus Mode is off. A toggle, not a
-    /// fourth `LayoutPreset`, since (unlike the 3 named presets, which are
-    /// one-way resets) it needs to remember and restore whatever arrangement
-    /// was active before it was turned on.
+    /// `Some(prior panel_modes)` while Focus Mode is active, restored on
+    /// exit — `None` means Focus Mode is off. A toggle, not a fourth
+    /// `LayoutPreset`, since (unlike the 3 named presets, which are one-way
+    /// resets) it needs to remember and restore whatever arrangement was
+    /// active before it was turned on.
     pub focus_mode_previous: Option<std::collections::HashMap<String, PanelMode>>,
-    /// Whether the viewport minimap overlay is shown (Phase 2, M17).
+    /// Whether the viewport minimap overlay is shown.
     pub show_minimap: bool,
-    /// Whether Spotlight mode is active (Phase 5, SX-5b) — dims every
-    /// organism except the selected entity, its connected body/colony
-    /// (reusing the same BFS `render.rs`'s selection highlight already
-    /// computes), and any other organism within its interaction radius.
-    /// Deliberately **not** named "Focus Mode" — that name is already taken
-    /// by `focus_mode_previous`/`layout::toggle_focus_mode` (Phase 2, M16),
-    /// an unrelated panel-layout fullscreen-viewport toggle. Reusing the
-    /// same name for a different concept would be a real, avoidable
-    /// confusion; picked a distinct one instead.
+    /// Whether Spotlight mode is active — dims every organism except the
+    /// selected entity, its connected body/colony (reusing the same BFS
+    /// `render.rs`'s selection highlight already computes), and any other
+    /// organism within its interaction radius. Deliberately **not** named
+    /// "Focus Mode" — that name is already taken by
+    /// `focus_mode_previous`/`layout::toggle_focus_mode`, an unrelated
+    /// panel-layout fullscreen-viewport toggle; reusing the same name for a
+    /// different concept would be a real, avoidable confusion.
     pub spotlight_mode: bool,
-    /// Whether High Contrast Mode is active (Phase 2, M18 — Accessibility
-    /// pass 2). Applied every frame via `theme::apply_style`.
+    /// Whether High Contrast Mode is active. Applied every frame via
+    /// `theme::apply_style`.
     pub high_contrast: bool,
-    /// Global UI scale factor (Phase 2, M18), applied via
-    /// `egui::Context::set_zoom_factor` every frame — scales the whole
-    /// interface (fonts, spacing, icons together), which egui's own zoom
-    /// mechanism already handles correctly, rather than reimplementing a
-    /// font-only scale that would leave layouts inconsistent at non-1.0
-    /// values.
+    /// Global UI scale factor, applied via `egui::Context::set_zoom_factor`
+    /// every frame — scales the whole interface (fonts, spacing, icons
+    /// together), which egui's own zoom mechanism already handles
+    /// correctly, rather than reimplementing a font-only scale that would
+    /// leave layouts inconsistent at non-1.0 values.
     pub ui_scale: f32,
     /// Simulation speed multiplier (1.0 = real time).
     pub simulation_speed: f32,
@@ -160,20 +195,18 @@ pub struct WorkbenchState {
     pub toolbar_visible: bool,
 
     // Viewport
-    /// The active 3D camera mode and its parameters (Phase 8, ADR-P8-02) —
-    /// replaces the pre-Phase-8 `camera_pos: Vec2` + `camera_zoom: f32`
-    /// pair. `Orbit` is the default; `Fly` is opt-in
-    /// (`MenuAction::ToggleCameraMode`). See `crate::camera` and
+    /// The active 3D camera mode and its parameters. `Orbit` is the
+    /// default; `Fly` is opt-in (`MenuAction::ToggleCameraMode`). See
+    /// `crate::camera` and
     /// [`WorkbenchState::camera`]/[`WorkbenchState::camera_pos_2d`]/
     /// [`WorkbenchState::camera_zoom_2d`].
     pub camera_controller: crate::camera::CameraController,
-    /// Phase 9, P9.4 — an in-progress smooth Frame Selected/Frame All
-    /// transition, if any; see `crate::frame_animation`'s module doc
-    /// comment for why this lives here rather than inside
-    /// `OrbitController` itself.
+    /// An in-progress smooth Frame Selected/Frame All transition, if any;
+    /// see `crate::frame_animation`'s module doc comment for why this lives
+    /// here rather than inside `OrbitController` itself.
     pub frame_animation: Option<crate::frame_animation::FrameAnimation>,
-    /// Phase 9, P9.4 — perspective/orthographic projection toggle. Applied
-    /// only inside [`WorkbenchState::camera`] (the single accessor every
+    /// Perspective/orthographic projection toggle. Applied only inside
+    /// [`WorkbenchState::camera`] (the single accessor every
     /// renderer/picking/interaction call site already reads through), not
     /// inside `OrbitController`/`FlyController` themselves — see that
     /// method's own doc comment.
@@ -196,8 +229,8 @@ pub struct WorkbenchState {
     pub skin_thickness: f32,
     /// Radius used when drawing structural nodes.
     pub node_radius: f32,
-    /// Horizontal clipping-plane state (Phase 8, Epic 8.5) — lets the user
-    /// slice into a dense population to see inside it.
+    /// Horizontal clipping-plane state — lets the user slice into a dense
+    /// population to see inside it.
     pub clip_plane: crate::ClipPlaneState,
 
     // Input
@@ -209,10 +242,9 @@ pub struct WorkbenchState {
     pub open_dialogs: Vec<String>,
     /// The canonical notification queue. Use `push_toast()` to add entries.
     pub notifications: Vec<Toast>,
-    /// Recently opened/saved items, by category (Phase 7, W0d) — see
+    /// Recently opened/saved items, by category — see
     /// `crate::recent_items`'s module doc comment for the ordering/
-    /// duplicate/cap/persistence policy. Replaces the pre-W0d
-    /// `recent_files: Vec<String>`, which nothing ever populated.
+    /// duplicate/cap/persistence policy.
     pub recent_items: crate::RecentItemsService,
 
     // Event log filter state
@@ -227,16 +259,16 @@ pub struct WorkbenchState {
     /// The entity the camera is currently following, if any.
     pub tracked_entity: Option<Entity>,
     /// Bounded recent-position history for whichever entity `tracked_entity`
-    /// currently points at (Phase 5, SX-4c — Inspector's "Relationships/
-    /// History" section). Reset whenever `tracked_entity` changes; sampled
-    /// once per *simulation tick* (not per render frame) by
-    /// `render::track_trajectory_history`, the same "diff once per frame,
-    /// don't touch existing write sites" pattern `track_recent_selections`
-    /// already established. This is UI-side derived history, not
-    /// simulation state — it cannot be read live from `world::World` (which
-    /// has no memory of past positions), so caching it here is a deliberate,
-    /// narrow exception to this crate's usual "never cache simulation data"
-    /// rule, the same exception `recent_selections` already is.
+    /// currently points at (Inspector's "Relationships/History" section).
+    /// Reset whenever `tracked_entity` changes; sampled once per
+    /// *simulation tick* (not per render frame) by
+    /// `render::track_trajectory_history`, diffing against the previous
+    /// frame the same way `track_recent_selections` does. This is UI-side
+    /// derived history, not simulation state — it cannot be read live from
+    /// `world::World` (which has no memory of past positions), so caching
+    /// it here is a deliberate, narrow exception to this crate's usual
+    /// "never cache simulation data" rule, the same exception
+    /// `recent_selections` already is.
     pub trajectory_history: std::collections::VecDeque<common::Vec2>,
     /// Which entity `trajectory_history` belongs to, and the last simulation
     /// tick a sample was recorded for — both used only by
@@ -244,8 +276,8 @@ pub struct WorkbenchState {
     /// or a new tick (sample).
     pub(crate) trajectory_entity: Option<Entity>,
     pub(crate) trajectory_last_tick: Option<u64>,
-    /// Which physiology layer's viewport overlay is active, if any (Phase 4,
-    /// P4-V2) — see `crate::types::PhysiologyOverlayLayer`.
+    /// Which physiology layer's viewport overlay is active, if any — see
+    /// `crate::types::PhysiologyOverlayLayer`.
     pub physiology_overlay: Option<crate::types::PhysiologyOverlayLayer>,
     /// Whether the simulation is currently paused.
     pub is_paused: bool,
@@ -255,40 +287,36 @@ pub struct WorkbenchState {
     pub show_docs: bool,
     /// Whether to show the Keybinds dialog.
     pub show_keybinds: bool,
-    /// Whether to show the first-run onboarding hints dialog (Phase 5,
-    /// SX-9a). Defaults `false` here (not at construction time — see below)
-    /// and is set `true` by `MenuAction::StartSimulation`'s handler
+    /// Whether to show the first-run onboarding hints dialog. Defaults
+    /// `false` here (not at construction time — see below) and is set
+    /// `true` by `MenuAction::StartSimulation`'s handler
     /// (`crates/app/src/events.rs`) the moment the user actually reaches
     /// the simulation view — `show_dialogs` also renders while
     /// `AppState::MainMenu` is active, and this dialog references the
     /// viewport, which doesn't exist yet there. Re-openable afterward via
     /// Help → Welcome Tips, same as About/Docs/Keybinds.
     ///
-    /// Phase 6, Epic J: that handler now gates the `true` assignment on
-    /// the `app` crate's `preferences::Preferences::onboarding_seen` (a
-    /// separate, persisted `.ron` flag — this field alone was always
-    /// session-scoped by construction and cannot itself remember across
-    /// restarts), closing the "session-scoped only" limitation SX-9a
-    /// originally disclosed.
+    /// That handler gates the `true` assignment on the `app` crate's
+    /// `preferences::Preferences::onboarding_seen` (a separate, persisted
+    /// `.ron` flag) — this field alone is session-scoped by construction
+    /// and cannot itself remember across restarts.
     pub show_onboarding_hints: bool,
     /// Whether to draw organism vision-cone overlays.
     pub show_vision_cones: bool,
-    /// Whether to draw organism name labels in the viewport (Phase 5,
-    /// SX-5a) — opt-in and density-aware: even when enabled, only the
-    /// selected/tracked organism plus the nearest `ORGANISM_LABEL_MAX_COUNT`
-    /// others to the camera center are labeled (`render::render_organism_labels`),
-    /// never the whole population — labeling every organism at typical
-    /// scales (hundreds to thousands) would be unreadable clutter, not a
-    /// signal, the exact failure mode this milestone's own name warns
-    /// against.
+    /// Whether to draw organism name labels in the viewport — opt-in and
+    /// density-aware: even when enabled, only the selected/tracked organism
+    /// plus the nearest `ORGANISM_LABEL_MAX_COUNT` others to the camera
+    /// center are labeled (`render::render_organism_labels`), never the
+    /// whole population — labeling every organism at typical scales
+    /// (hundreds to thousands) would be unreadable clutter, not a signal.
     pub show_organism_labels: bool,
     /// Whether to draw the world boundary outline (visual only — the
     /// simulation always hard-reflects organisms at the same bounds).
     pub show_world_boundary: bool,
     /// Whether to draw the low-opacity world-space scale grid (see
-    /// `render::render_scale_grid`). Defaults on (a permanent scale
-    /// reference was the audit's finding), but toggleable since a research
-    /// screenshot/recording may want a clean, grid-free viewport.
+    /// `render::render_scale_grid`). Defaults on as a permanent scale
+    /// reference, but toggleable since a research screenshot/recording may
+    /// want a clean, grid-free viewport.
     pub show_scale_grid: bool,
     /// Whether a GIF recording is currently in progress. The actual frame
     /// buffer lives in `PhylonApp` (app crate) — this is just a lightweight
@@ -298,19 +326,19 @@ pub struct WorkbenchState {
     /// started, for the toolbar's elapsed-time readout.
     pub recording_started_at: Option<f64>,
     /// Whether the left activity bar shows icon+label (discoverable, wider)
-    /// or icon-only (compact, narrow — the previous permanent behavior).
-    /// Defaults to expanded: an icon-only rail with only a hover tooltip was
-    /// the audit's top discoverability finding for first-time users.
+    /// or icon-only (compact, narrow). Defaults to expanded, since an
+    /// icon-only rail relies on a hover tooltip alone to convey each
+    /// section's purpose, which is a weaker signal for first-time users.
     pub activity_bar_expanded: bool,
     /// The active tab in the primary sidebar.
     pub active_tab: crate::SidebarTab,
     /// Which view the Lineage tab shows (Ancestry tree vs. Species groups).
     pub lineage_view: crate::LineageView,
-    /// Quick Organism Search text (Phase 2, M13) — filters the Lineage tab's
-    /// organism list by entity/species/diet substring match.
+    /// Quick Organism Search text — filters the Lineage tab's organism list
+    /// by entity/species/diet substring match.
     pub lineage_search: String,
     /// The body position (index into `0..organisms::MAX_SEGMENTS`) currently
-    /// expanded in the HOX Visualizer tab's detail view (Phase 3, M10).
+    /// expanded in the HOX Visualizer tab's detail view.
     pub hox_visualizer_selected_index: Option<usize>,
     /// The Replay Browser panel's currently-loaded bundle summary, if any
     /// (`None` until the user opens one via `MenuAction::OpenReplayBundle`).
@@ -341,34 +369,35 @@ pub struct WorkbenchState {
     /// after it snapped to a screen edge/corner on drag release.
     pub floating_snap_pos: std::collections::HashMap<String, egui::Pos2>,
 
-    /// Neural Viewer's CTRNN (phenotype) graph pan/zoom — persisted across
-    /// frames since the immediate-mode graph is otherwise stateless. A
-    /// 40-hidden-node genome is unreadable at a fixed 1:1 scale; this is the
-    /// Milestone 8 fix.
+    /// Neural Viewer's CTRNN (phenotype network — see the module doc of
+    /// whichever viewer plugin references it for a one-line gloss) graph
+    /// pan/zoom — persisted across frames since the immediate-mode graph is
+    /// otherwise stateless. A large hidden-node genome is unreadable at a
+    /// fixed 1:1 scale, hence the pan/zoom.
     pub neural_ctrnn_view: GraphViewState,
-    /// Neural Viewer's CPPN (genotype) graph pan/zoom — separate from
+    /// Neural Viewer's CPPN (genotype graph) pan/zoom — separate from
     /// `neural_ctrnn_view` since the two graphs are independently sized and
     /// scrolled.
     pub neural_cppn_view: GraphViewState,
-    /// GRN Viewer's graph pan/zoom (Phase 3, M11).
+    /// GRN Viewer's graph pan/zoom.
     pub grn_view: GraphViewState,
     /// GRN Viewer's selected body position — which position's morphogen
-    /// inputs feed the displayed `RegulatoryNetwork` (Phase 3, M11).
+    /// inputs feed the displayed `RegulatoryNetwork`.
     pub grn_position: usize,
     /// GRN Viewer's selected developmental step (time playback scrubber,
-    /// `0..=genetics::develop::DEVELOPMENT_STEPS`) — Phase 3, M11.
+    /// `0..=genetics::develop::DEVELOPMENT_STEPS`).
     pub grn_step: usize,
     /// Evolution Debugger's explicitly-picked comparison organism
     /// ("Organism B") — `None` means "use Organism A's lineage parent",
-    /// the default (Phase 3, M12).
+    /// the default.
     pub evo_debugger_entity_b: Option<Entity>,
     /// Evolution Debugger's organism-picker search text (filters the live
-    /// organism list by entity id substring) — Phase 3, M12.
+    /// organism list by entity id substring).
     pub evo_debugger_search: String,
     /// Shared Development Timeline scrubber position (an index into the
     /// selected organism's actual grown-position sequence, not a raw body
     /// position) — shared between the HOX Visualizer and GRN Viewer tabs
-    /// so scrubbing in one carries over to the other (Phase 3, M13).
+    /// so scrubbing in one carries over to the other.
     pub timeline_step: usize,
 
     /// Last-known split ratio for each named docking split, keyed by the
@@ -381,18 +410,18 @@ pub struct WorkbenchState {
     pub layout_shares: std::collections::HashMap<String, f32>,
 
     /// Metrics panel's per-series visibility toggles and running-mean
-    /// overlays (Phase 5, SX-7b) — pure display preference, not simulation
-    /// data, so it lives here rather than in `analytics::MetricsState`.
+    /// overlays — pure display preference, not simulation data, so it lives
+    /// here rather than in `analytics::MetricsState`.
     pub metrics_options: MetricsSeriesOptions,
 
     /// User-saved workspaces plus which workspace (built-in or saved) is
-    /// currently active (Phase 7, W3c) — see `crate::workspace`'s module
-    /// doc comment. `panel_modes`/`layout_shares` above remain the actual
-    /// rendered shape; this is metadata layered on top (which named
-    /// workspace, if any, produced that shape), never a second copy of it.
+    /// currently active — see `crate::workspace`'s module doc comment.
+    /// `panel_modes`/`layout_shares` above remain the actual rendered
+    /// shape; this is metadata layered on top (which named workspace, if
+    /// any, produced that shape), never a second copy of it.
     pub workspaces: crate::workspace::WorkspaceService,
 
-    /// Whether the Workspace Manager window (Phase 7, W3c) is open.
+    /// Whether the Workspace Manager window is open.
     pub show_workspace_manager: bool,
     /// The Workspace Manager's transient text-input flow, if any (saving a
     /// new workspace, renaming one, or duplicating one) — one field
@@ -440,14 +469,14 @@ impl Default for GraphViewState {
     }
 }
 
-/// Metrics panel's per-series visibility toggles and running-mean overlays
-/// (Phase 5, SX-7b), for the Demographics (5 diet series) and Diversity (4
-/// index series) plots — the two the roadmap names as needing toggles/stats.
-/// Every field defaults to visible/off so the plots look unchanged until a
-/// user actually opens the new controls.
+/// Metrics panel's per-series visibility toggles and running-mean overlays,
+/// for the Demographics (5 diet series) and Diversity (4 index series)
+/// plots. Every field defaults to visible/off so the plots look unchanged
+/// until a user actually opens the controls.
 #[derive(Debug, Clone, Copy)]
 pub struct MetricsSeriesOptions {
-    /// Demographics plot: Producers/Herbivores/Carnivores/Omnivores/Decomposers.
+    /// Demographics plot: one series per `Diet` category (an organism's
+    /// trophic role) — Producers/Herbivores/Carnivores/Omnivores/Decomposers.
     pub demographics_visible: [bool; 5],
     /// Diversity plot: Shannon/Simpson/Richness/Turnover.
     pub diversity_visible: [bool; 4],
@@ -487,10 +516,9 @@ pub enum EventLogFilter {
 
 /// Visibility mode for a named workspace panel.
 ///
-/// Phase 7, W3a: derives `Serialize`/`Deserialize` so `panel_modes` can be
-/// persisted as part of `app::preferences::Preferences` — layout survives
-/// an app restart the same way `high_contrast`/`ui_scale`/`recent_items`
-/// already do.
+/// Derives `Serialize`/`Deserialize` so `panel_modes` can be persisted as
+/// part of `app::preferences::Preferences` — layout survives an app restart
+/// the same way `high_contrast`/`ui_scale`/`recent_items` already do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum PanelMode {
     /// The panel is embedded in the egui_tiles docking tree.
@@ -650,25 +678,23 @@ impl Default for WorkbenchState {
 pub const RECENT_SELECTIONS_CAPACITY: usize = 8;
 
 /// Maximum number of position samples kept in
-/// `WorkbenchState::trajectory_history` (Phase 5, SX-4c) — at one sample
-/// per simulation tick and the default 60 Hz tick rate, this covers the
-/// last 5 seconds of real-time movement, a "recent trajectory," not a
-/// full-lifetime path (which would need unbounded memory for a
-/// long-running organism).
+/// `WorkbenchState::trajectory_history` — at one sample per simulation tick
+/// and the default 60 Hz tick rate, this covers the last 5 seconds of
+/// real-time movement, a "recent trajectory," not a full-lifetime path
+/// (which would need unbounded memory for a long-running organism).
 pub const TRAJECTORY_HISTORY_CAPACITY: usize = 300;
 
 /// Maximum number of non-selected/tracked organisms labeled at once by
-/// `render::render_organism_labels` (Phase 5, SX-5a) — the "density-aware"
-/// half of "opt-in, density-aware" labels: bounded regardless of total
-/// population, so enabling labels at 1000+ organisms doesn't render 1000+
-/// labels.
+/// `render::render_organism_labels` — the density-aware half of "opt-in,
+/// density-aware" labels: bounded regardless of total population, so
+/// enabling labels at 1000+ organisms doesn't render 1000+ labels.
 pub const ORGANISM_LABEL_MAX_COUNT: usize = 20;
 
 impl WorkbenchState {
     /// Every currently-selected entity: the primary `selected_entity` plus
-    /// every entity in `secondary_selected` (Phase 2, M7). New multi-select
-    /// consumers (marquee-select, quick search's "select all matches")
-    /// should iterate this rather than reading `selected_entity` alone.
+    /// every entity in `secondary_selected`. New multi-select consumers
+    /// (marquee-select, quick search's "select all matches") should
+    /// iterate this rather than reading `selected_entity` alone.
     pub fn all_selected(&self) -> impl Iterator<Item = Entity> + '_ {
         self.selected_entity
             .into_iter()
@@ -682,12 +708,12 @@ impl WorkbenchState {
     }
 
     /// Clears both the primary and secondary selection, and stops
-    /// following whatever was selected — Phase 7, W0b: there is nothing
-    /// left to follow once the selection is cleared, and this is the
-    /// counterpart to [`WorkbenchState::select`] for every caller that
-    /// wants to fully reset selection state in one call rather than
-    /// clearing `tracked_entity` separately (see that method's doc comment
-    /// for why `tracked_entity` has its own dedicated setter otherwise).
+    /// following whatever was selected — there is nothing left to follow
+    /// once the selection is cleared. This is the counterpart to
+    /// [`WorkbenchState::select`] for every caller that wants to fully
+    /// reset selection state in one call rather than clearing
+    /// `tracked_entity` separately (see that method's doc comment for why
+    /// `tracked_entity` has its own dedicated setter otherwise).
     pub fn clear_selection(&mut self) {
         self.selected_entity = None;
         self.secondary_selected.clear();
@@ -697,9 +723,9 @@ impl WorkbenchState {
     /// Replaces the entire selection with `entities` — the first becomes
     /// the new primary `selected_entity` (so single-entity readers like the
     /// Inspector keep working unchanged), the rest become
-    /// `secondary_selected`. Used by marquee-select (M8); an empty iterator
-    /// clears the selection. Phase 7, W0b: also opens the Inspector and
-    /// reveals the sidebar when the selection is non-empty, matching
+    /// `secondary_selected`. Used by marquee-select; an empty iterator
+    /// clears the selection. Also opens the Inspector and reveals the
+    /// sidebar when the selection is non-empty, matching
     /// [`WorkbenchState::select`]'s behavior — every selection entry point
     /// should produce the same visible result, not just single-entity ones.
     pub fn select_multiple(&mut self, entities: impl IntoIterator<Item = Entity>) {
@@ -712,35 +738,33 @@ impl WorkbenchState {
         }
     }
 
-    /// # The single selection pathway (Phase 7, W0b)
+    /// # The single selection pathway
     ///
     /// Every selection source — viewport click, the context menu's
     /// "Inspect" action, recent-selection chips, the Evolution Debugger's
     /// failure list, and any future source (global search, the lineage
     /// explorer, 3D picking) — should call this rather than setting
-    /// `selected_entity`/`active_tab`/`sidebar_visible` directly. Before
-    /// this milestone, viewport left-click and the context menu's
-    /// "Inspect" button independently implemented overlapping-but-
-    /// different versions of "select and show the Inspector" (see
-    /// `PHASE7_WORKBENCH_ROADMAP.md`'s W0a finding #1) — this method is
-    /// the fix, not a parallel third implementation.
+    /// `selected_entity`/`active_tab`/`sidebar_visible` directly. Routing
+    /// every selection source through one method keeps "select and show
+    /// the Inspector" a single, consistent behavior rather than each call
+    /// site reimplementing its own slightly different version of it.
     ///
     /// Deliberately never touches `tracked_entity`: selecting something to
     /// look at it and telling the camera to permanently follow it are two
-    /// different intents (W0a finding #2). Camera-follow is only ever set
-    /// via [`WorkbenchState::set_follow`], called from an explicit Follow
+    /// different intents. Camera-follow is only ever set via
+    /// [`WorkbenchState::set_follow`], called from an explicit Follow
     /// action (toolbar button, Inspector "Track" checkbox, or the context
     /// menu's "Track / Follow" item).
     ///
-    /// TODO(Phase 8): once a real cross-crate event channel exists, this
-    /// should emit a `SelectionChanged { old, new }` event instead of (or
-    /// in addition to) mutating state directly, so consumers other than
-    /// egui widgets (e.g. a future 3D viewport, or an out-of-process
-    /// research tool) can react to selection changes without polling
+    /// TODO: once a real cross-crate event channel exists, this should
+    /// emit a `SelectionChanged { old, new }` event instead of (or in
+    /// addition to) mutating state directly, so consumers other than egui
+    /// widgets (e.g. a future 3D viewport, or an out-of-process research
+    /// tool) can react to selection changes without polling
     /// `WorkbenchState` every frame. Not implemented now — no event bus
     /// exists in this crate yet, and inventing one solely for this would
-    /// be exactly the kind of premature architecture this project's own
-    /// discipline avoids. Left as a note for whoever scopes that bus.
+    /// be premature architecture. Left as a note for whoever scopes that
+    /// bus.
     pub fn select(&mut self, entity: Entity) {
         self.selected_entity = Some(entity);
         self.secondary_selected.clear();
@@ -748,41 +772,40 @@ impl WorkbenchState {
         self.sidebar_visible = true;
     }
 
-    /// The single camera-follow pathway (Phase 7, W0b) — the only method
-    /// that should ever set `tracked_entity`. Independent of selection:
-    /// following an entity does not require it to be `selected_entity`
-    /// (the spectator-mode "most interesting organism" logic in
-    /// `crate::render` follows an entity that was never explicitly
-    /// selected at all), and selecting an entity does not start following
-    /// it (see [`WorkbenchState::select`]'s doc comment).
+    /// The single camera-follow pathway — the only method that should
+    /// ever set `tracked_entity`. Independent of selection: following an
+    /// entity does not require it to be `selected_entity` (the
+    /// spectator-mode "most interesting organism" logic in `crate::render`
+    /// follows an entity that was never explicitly selected at all), and
+    /// selecting an entity does not start following it (see
+    /// [`WorkbenchState::select`]'s doc comment).
     ///
-    /// TODO(Phase 8): same note as `select` — a future `FollowChanged {
-    /// old, new }` event would let camera-follow consumers (e.g. a 3D
-    /// camera rig) react without polling. Not implemented now, same
-    /// reasoning: no event bus exists yet to hang it on.
+    /// TODO: same note as `select` — a future `FollowChanged { old, new }`
+    /// event would let camera-follow consumers (e.g. a 3D camera rig) react
+    /// without polling. Not implemented now, same reasoning: no event bus
+    /// exists yet to hang it on.
     pub fn set_follow(&mut self, entity: Option<Entity>) {
         self.tracked_entity = entity;
     }
 
     /// Zooms the camera by `factor` (`> 1.0` zooms in) — the zoom-then-
     /// clamp step every camera zoom input (menu actions, keyboard +/-,
-    /// mouse wheel, touchpad pinch) applies identically and independently
-    /// (Phase 7, W5c). Only meaningful in `Orbit` mode (adjusts distance,
-    /// clamped — see `camera::OrbitController::zoom_by`); a no-op in `Fly`
-    /// mode, which has no zoom concept, matching how the pre-Phase-8 camera
-    /// had no fly concept at all to begin with.
+    /// mouse wheel, touchpad pinch) applies identically and independently.
+    /// Only meaningful in `Orbit` mode (adjusts distance, clamped — see
+    /// `camera::OrbitController::zoom_by`); a no-op in `Fly` mode, which has
+    /// no zoom concept.
     pub fn zoom_by(&mut self, factor: f32) {
         if let crate::camera::CameraController::Orbit(orbit) = &mut self.camera_controller {
             orbit.zoom_by(factor);
         }
     }
 
-    /// Phase 9, P9.4 — starts a smooth Frame Selected/Frame All transition
-    /// to `target_focus`/`target_distance`, preserving the current
-    /// yaw/pitch (a re-center-and-re-distance, not a re-orientation). A
-    /// no-op in `Fly` mode, matching `zoom_by`'s own "no equivalent
-    /// concept in Fly mode" precedent — `FocusSelection`'s existing
-    /// `look_at`-based Fly handling is untouched and still covers Fly mode.
+    /// Starts a smooth Frame Selected/Frame All transition to
+    /// `target_focus`/`target_distance`, preserving the current yaw/pitch
+    /// (a re-center-and-re-distance, not a re-orientation). A no-op in
+    /// `Fly` mode, matching `zoom_by`'s "no equivalent concept in Fly
+    /// mode" pattern — `FocusSelection`'s `look_at`-based Fly handling
+    /// covers Fly mode separately.
     pub fn start_frame_animation(&mut self, target_focus: common::Vec3, target_distance: f32) {
         if let crate::camera::CameraController::Orbit(orbit) = &self.camera_controller {
             self.frame_animation = Some(crate::frame_animation::FrameAnimation::new(
@@ -794,8 +817,8 @@ impl WorkbenchState {
         }
     }
 
-    /// Phase 9, P9.4 — advances any in-progress `frame_animation` by `dt`
-    /// seconds, writing the interpolated focus/distance directly into the
+    /// Advances any in-progress `frame_animation` by `dt` seconds, writing
+    /// the interpolated focus/distance directly into the
     /// active `OrbitController` and clearing `frame_animation` once the
     /// transition finishes. Call once per rendered frame.
     pub fn tick_frame_animation(&mut self, dt: f32) {
@@ -813,14 +836,13 @@ impl WorkbenchState {
     }
 
     /// The `Camera3d` the active controller currently describes — the
-    /// single source every renderer/interaction system should read (Phase
-    /// 8, ADR-P8-02). Phase 9, P9.4: also where `is_orthographic` gets
-    /// applied — `OrbitController`/`FlyController` themselves always
-    /// produce a plain perspective `Camera3d` (untouched, per this
-    /// milestone's "camera math is frozen" boundary); this method is the
-    /// one place that overrides `ortho_half_height` afterward, so every
-    /// existing consumer of `WorkbenchState::camera()` gets orthographic
-    /// support automatically with no call-site changes.
+    /// single source every renderer/interaction system should read. Also
+    /// where `is_orthographic` gets applied:
+    /// `OrbitController`/`FlyController` themselves always produce a plain
+    /// perspective `Camera3d`; this method is the one place that overrides
+    /// `ortho_half_height` afterward, so every consumer of
+    /// `WorkbenchState::camera()` gets orthographic support automatically
+    /// with no call-site changes.
     pub fn camera(&self) -> crate::camera::Camera3d {
         let mut camera = self.camera_controller.camera();
         if self.is_orthographic {
@@ -852,15 +874,15 @@ impl WorkbenchState {
             .unwrap_or(common::Vec2::new(1280.0, 720.0))
     }
 
-    /// **Epic 8.1 transitional bridge** — the world-space XY point
-    /// currently at the center of the viewport, for renderers/UI code not
-    /// yet migrated to consume `Camera3d` directly (`SdfSkinRenderer`,
+    /// **Transitional bridge for still-2D renderers** — the world-space XY
+    /// point currently at the center of the viewport, for renderers/UI code
+    /// not yet migrated to consume `Camera3d` directly (`SdfSkinRenderer`,
     /// `DebugRenderer`, `FieldRenderer`, and every flat screen↔world
     /// formula in `ui::render`/`ui::plugins::viewport`/`ui::plugins::
-    /// toolbar` — all Epic 8.2's job to replace, not this one's). Exactly
-    /// reproduces the pre-Phase-8 `camera_pos` value whenever the camera is
-    /// in its default straight-down orientation, since the orbit focus
-    /// point is always exactly what's centered on screen.
+    /// toolbar`). Exactly reproduces a flat-camera `camera_pos` value
+    /// whenever the camera is in its default straight-down orientation,
+    /// since the orbit focus point is always exactly what's centered on
+    /// screen.
     pub fn camera_pos_2d(&self) -> common::Vec2 {
         let camera = self.camera();
         let viewport = self.viewport_size();
@@ -868,7 +890,7 @@ impl WorkbenchState {
         crate::camera::ray_intersect_z0(origin, dir).unwrap_or_else(|| camera.position.truncate())
     }
 
-    /// **Epic 8.1 transitional bridge** — see [`WorkbenchState::camera_pos_2d`].
+    /// **Transitional bridge for still-2D renderers** — see [`WorkbenchState::camera_pos_2d`].
     /// The effective pixels-per-world-unit scale at the `Z = 0` plane,
     /// directly at screen center, for the same not-yet-migrated flat
     /// renderers/screen math. Derived by measuring how far a single pixel's
@@ -920,12 +942,3 @@ impl WorkbenchState {
         self.notifications.retain(|t| t.expires_at > current_time);
     }
 }
-
-// Phase 6, Epic J: `WorkbenchCommand` (a ~90-line, fully parallel catalog of
-// UI-dispatchable commands — Undo/Redo/DuplicateSelected/FocusSelection/etc.)
-// was removed from here. Confirmed via a workspace-wide search that nothing
-// anywhere ever constructed, matched, or otherwise consumed it — a dead
-// enum, not a partially-wired one. It appears to have been an early sketch
-// superseded by `MenuAction` (`types.rs`) and the command palette's own
-// `(&str, MenuAction)` list (`plugins/command_palette.rs`), left behind
-// rather than deleted when that happened.

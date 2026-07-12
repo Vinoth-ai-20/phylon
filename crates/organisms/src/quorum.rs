@@ -1,3 +1,8 @@
+//! Quorum sensing / biofilm density-scaling aggregation: densely clustered
+//! organisms of the same diet gain a physical consequence (reduced
+//! hydration loss) from clustering, on top of whatever emergent
+//! quorum-*sensing* behavior evolution finds via the ambient signal field.
+
 use bevy_ecs::prelude::*;
 use common::Vec3;
 

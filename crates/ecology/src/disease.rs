@@ -45,14 +45,12 @@ pub struct Infection {
 
 /// # Per-Segment Infection Severity
 ///
-/// A single body segment's own local infection severity (Phase 4,
-/// `PHASE4_ROADMAP.md` milestone P4-F5) — extends the existing
-/// organism-wide [`Infection`] (which stays the authority on
+/// A single body segment's own local infection severity — extends the
+/// existing organism-wide [`Infection`] (which stays the authority on
 /// incubation/infectious/recovered state and ATP/health drain) with a
 /// spatial dimension: how strongly *this* segment, specifically, is
 /// affected right now. Attached to every non-head body segment, mirroring
-/// `metabolism::ChemicalEconomy::segment_default()`'s per-segment pattern
-/// (P4-F2).
+/// `metabolism::ChemicalEconomy::segment_default()`'s per-segment pattern.
 #[derive(Component, Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct SegmentInfection {
     /// Local severity, in `[0, 1]` — `0.0` is unaffected, `1.0` is maximal.
@@ -68,8 +66,8 @@ impl SegmentInfection {
 
 /// # Per-Segment Immune Resistance
 ///
-/// A body segment's own local immune clearance rate (Phase 4, P4-F5) —
-/// subtracted from [`SegmentInfection::severity`] each tick by
+/// A body segment's own local immune clearance rate — subtracted from
+/// [`SegmentInfection::severity`] each tick by
 /// `organisms::immune::segment_infection_system`, modeling localized immune
 /// defense independent of the organism-wide recovery roll
 /// [`disease_progression_system`] already performs.
@@ -278,8 +276,8 @@ pub fn disease_spread_system(
         }
     }
 
-    // Phase 4, P4-V1: not biologically tuned, same placeholder status as
-    // every other Phase 4 effect-duration constant.
+    // Not biologically tuned — a placeholder duration shared with the
+    // other short-lived floating-text effect durations in this crate.
     const INFECTION_EFFECT_DURATION_TICKS: u64 = 90;
 
     for (entity, virulence, transmissibility) in newly_infected {

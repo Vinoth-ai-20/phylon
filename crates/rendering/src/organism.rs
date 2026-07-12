@@ -1,23 +1,16 @@
 use crate::capsule_mesh::{build_capsule_mesh, CapsuleVertex};
 use wgpu::util::DeviceExt;
 
-/// # Capsule Instance
+/// Per-bone instance payload uploaded to the GPU for the capsule renderer.
 ///
-/// ## 1. What Happens
-/// `CapsuleInstance` holds the GPU-side per-bone payload for the mesh-based
-/// capsule renderer (Phase 8, ADR-P8-03) — the direct successor to
-/// `SdfBoneInstance`, widened from `Vec2` to `Vec3` endpoints.
-///
-/// ## 2. Why It Happens
-/// ADR-P8-03: a shared, tiny, procedurally-generated capsule mesh, instanced
-/// per bone via an oriented-look-at vertex shader — nearly the same
-/// *instance data* as the old `SdfBoneInstance`, only the *shader algorithm*
-/// (oriented rasterized mesh vs. metaball density accumulation) changes.
-///
-/// ## 3. How It Happens
-/// `capsule.wgsl`'s vertex shader reconstructs each mesh vertex's world
-/// position from `pos_a`/`pos_b`/`radius` directly — see that shader's own
-/// doc comment.
+/// One `CapsuleInstance` is produced per bone in an organism's body graph (or
+/// per point-entity, as a degenerate zero-length capsule): `pos_a`/`pos_b`
+/// are the bone's two endpoints in world space, and the shared capsule mesh
+/// (see [`crate::capsule_mesh`]) is stretched and oriented between them by
+/// `capsule.wgsl`'s vertex shader, which reconstructs each mesh vertex's
+/// world position directly from `pos_a`/`pos_b`/`radius` — see that shader's
+/// own doc comment for the exact formula. No per-instance rotation is stored
+/// on the CPU side.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CapsuleInstance {
@@ -29,8 +22,9 @@ pub struct CapsuleInstance {
     pub radius: f32,
     /// RGB tint.
     pub color: [f32; 3],
-    /// Vitality dimming factor in `[0, 1]` — see `SdfBoneInstance::health`'s
-    /// doc comment (unchanged rationale, carried over verbatim).
+    /// Vitality dimming factor in `[0, 1]` — `1.0` is fully healthy, lower
+    /// values darken the shaded fragment (see `capsule.wgsl`'s fragment
+    /// shader) so a struggling or dying organism visibly dims.
     pub health: f32,
 }
 
@@ -60,8 +54,7 @@ struct GpuCamera {
     view_proj: [[f32; 4]; 4],
     camera_pos: [f32; 3],
     _pad0: f32,
-    /// Clipping-plane state (Phase 8, Epic 8.5, ADR-P8-05's "clipping-plane
-    /// gizmo + shader clip test"): `x` = world-space height of a horizontal
+    /// Clipping-plane state: `x` = world-space height of a horizontal
     /// `Z`-plane, `y` = `1.0` if the clip test is enabled (`0.0` disables
     /// it, matching `capsule.wgsl`'s `fs_main`/`fs_highlight` check), `z` =
     /// `+1.0` to keep fragments *above* the plane or `-1.0` to keep those
@@ -72,10 +65,9 @@ struct GpuCamera {
     clip_params: [f32; 4],
 }
 
-/// Horizontal world-space clipping-plane state (Phase 8, Epic 8.5, ADR-P8-05)
-/// — lets the user slice through organism geometry to see inside a dense
-/// population. See `GpuCamera::clip_params`'s doc comment for the packed
-/// GPU representation.
+/// Horizontal world-space clipping-plane state — lets the user slice through
+/// organism geometry to see inside a dense population. See
+/// `GpuCamera::clip_params`'s doc comment for the packed GPU representation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClipPlane {
     /// Whether the clip test is active.
@@ -114,49 +106,91 @@ impl Default for ClipPlane {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct GpuLight {
-    /// The directional light's view-projection matrix (Epic 8.3) — used
-    /// both to render the shadow map (`vs_shadow`) and to sample it back
-    /// (`fs_main`'s `sample_shadow`). First field so `sun_dir`/`sunlight`
-    /// naturally pack into the remaining 16-byte slot after it with no
-    /// explicit padding (mirrors `GpuCamera`'s own layout reasoning).
+    /// The directional light's view-projection matrix — used both to render
+    /// the shadow map (`vs_shadow`) and to sample it back (`fs_main`'s
+    /// `sample_shadow`). First field so `sun_dir`/`sunlight` naturally pack
+    /// into the remaining 16-byte slot after it with no explicit padding
+    /// (mirrors `GpuCamera`'s own layout reasoning).
     light_view_proj: [[f32; 4]; 4],
     sun_dir: [f32; 3],
     sunlight: f32,
 }
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-/// Shadow map resolution — untuned-but-reasonable, same status as every
-/// other not-yet-measured constant introduced this phase.
+/// Shadow map resolution — untuned-but-reasonable; revisit if shadow acne or
+/// aliasing is observed at scale, but no measurement has called for a
+/// change yet.
 const SHADOW_MAP_SIZE: u32 = 2048;
 
 /// # Mesh-Based Capsule Organism Renderer
 ///
-/// ## 1. What Happens
+/// ## Purpose
 /// `OrganismRenderer` draws every organism/pellet bone as an instanced,
-/// depth-correct, lit capsule mesh — the Phase 8 (ADR-P8-03) replacement
-/// for the retired `SdfSkinRenderer`.
+/// depth-correct, lit capsule mesh. This is the sole renderer of organism
+/// bodies: a "bone" is one segment of an organism's persistent body graph
+/// (the tree of body segments an organism grows, defined in the `organisms`
+/// crate) — e.g. a torso, a limb, a fin — represented physically as a
+/// [`crate::capsule_mesh`] capsule (a cylinder with hemispherical caps)
+/// between two endpoints.
 ///
-/// ## 2. Why It Happens
-/// See ADR-P8-03 (`PHASE8_NATIVE_3D_ENGINE_ROADMAP.md`): the old 2-pass SDF
-/// metaball technique has no depth buffer, can't support PBR/shadows/LOD/
-/// clipping planes natively, and its "skeleton" already exists — the mesh
-/// pipeline reuses the exact same per-bone data, just rasterized instead of
-/// density-accumulated.
+/// ## Architecture
+/// The CPU side of the pipeline (outside this module, typically in `app`)
+/// walks each organism's body graph and its physics state (`ParticleNode`
+/// positions from `gpu::physics_pipeline`) to produce one [`CapsuleInstance`]
+/// per bone — `pos_a`/`pos_b` are the bone's two endpoint node positions,
+/// `radius` is its visual thickness, `color`/`health` carry appearance and
+/// vitality. A single shared, procedurally-generated capsule mesh
+/// ([`crate::capsule_mesh::build_capsule_mesh`]) is instanced once per bone;
+/// `capsule.wgsl`'s vertex shader orients and scales each instance from
+/// `pos_a`/`pos_b`/`radius` alone (no per-instance rotation/quaternion is
+/// stored or computed on the CPU).
 ///
-/// ## 3. How It Happens
-/// One shared, procedurally-generated capsule mesh (`capsule_mesh`) is
-/// instanced per bone; `capsule.wgsl`'s vertex shader orients/scales each
-/// instance from `pos_a`/`pos_b`/`radius` (no per-instance rotation stored).
-/// A real depth buffer (`Depth32Float`) is owned by this renderer — the
-/// first depth-consuming pass anywhere in the codebase (ADR-P8-03). Shading
-/// is single-light Cook-Torrance PBR (`capsule.wgsl`'s fragment shader),
-/// modulated by a directional shadow map (Epic 8.3): every frame first
-/// renders a depth-only pass of the same instances from the light's point
-/// of view (`shadow_texture`), then the main pass samples it back to
-/// determine which fragments are in shadow. One shared `PipelineLayout`
-/// (camera/light, highlight color, shadow map — 3 groups) backs all three
-/// pipelines (main, highlight, shadow-writing), so no pipeline layout is
-/// duplicated across them.
+/// ## Data Flow
+/// Each frame: the caller gathers the current tick's `CapsuleInstance` array
+/// on the CPU -> [`Self::render`] uploads it to a persistent, geometrically-
+/// grown GPU vertex buffer (reallocated only when the population outgrows
+/// its current capacity, not every frame) -> a
+/// depth-only shadow pass renders the same instances from the light's point
+/// of view -> the main color+depth pass draws them again with the shadow map
+/// bound, in one instanced indexed draw call covering every bone in the
+/// simulation.
+///
+/// ## Design Decisions
+/// Organisms are drawn as GPU-instanced capsule meshes rather than a
+/// screen-space SDF/metaball technique (accumulating a density field per
+/// pixel and thresholding it into a silhouette). Mesh instancing gives a
+/// real depth buffer — correct occlusion between organisms and against other
+/// scene geometry, which a 2D density-accumulation technique cannot
+/// provide — and supports physically-based shading, shadows, and a
+/// clipping plane as ordinary rasterization features rather than bespoke
+/// screen-space hacks. Shading is single-light Cook-Torrance PBR
+/// (`capsule.wgsl`'s fragment shader), modulated by a directional shadow
+/// map: every frame first renders a depth-only pass of the same instances
+/// from the light's point of view (`shadow_texture`), then the main pass
+/// samples it back to determine which fragments are in shadow. One shared
+/// `PipelineLayout` (camera/light, highlight color, shadow map — 3 groups)
+/// backs all three pipelines (main, highlight, shadow-writing), so no
+/// pipeline layout is duplicated across them.
+///
+/// ## Performance
+/// Instancing one shared, low-poly mesh avoids issuing one draw call per
+/// organism — the entire population draws in a single `draw_indexed` call
+/// per pass (main + shadow), so frame cost scales with total bone count
+/// via GPU-side vertex/fragment work rather than CPU-side draw-call
+/// submission overhead. The instance buffer only reallocates when the
+/// population outgrows its current capacity (doubling growth), not every
+/// frame.
+///
+/// ## Memory
+/// Owns a full-screen-sized depth texture (resized on window resize) and a
+/// fixed-size shadow-map depth texture (`SHADOW_MAP_SIZE`, independent of
+/// window size). Instance buffers for the main and highlight passes grow
+/// geometrically and are never shrunk.
+///
+/// ## Failure Modes
+/// No panics under normal operation; construction assumes a valid
+/// `wgpu::Device`/surface format. An empty instance slice is a valid no-op
+/// (no draw call is issued).
 pub struct OrganismRenderer {
     pipeline: wgpu::RenderPipeline,
     highlight_pipeline: wgpu::RenderPipeline,
@@ -295,7 +329,7 @@ impl OrganismRenderer {
             }],
         });
 
-        // Shadow map (Epic 8.3) — a fixed-size depth-only texture,
+        // Shadow map — a fixed-size depth-only texture,
         // rendered from the directional light's point of view each frame
         // and sampled back by the main pass's fragment shader. Unlike the
         // main scene's depth texture, this never resizes with the window.
@@ -323,7 +357,7 @@ impl OrganismRenderer {
             // A comparison sampler with linear filtering gives cheap,
             // standard bilinear-filtered PCF (one `textureSampleCompare`
             // tap, hardware-interpolated) — "basic shadow mapping," not a
-            // multi-tap PCF kernel this epic doesn't call for.
+            // multi-tap PCF kernel, which isn't needed here.
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
@@ -373,7 +407,7 @@ impl OrganismRenderer {
         // points needs every group, but declaring one consistent layout
         // (rather than a bespoke subset per pipeline) means every pipeline
         // binds the same 3 groups uniformly at draw time, and no pipeline
-        // layout is duplicated (Epic 8.3's own architecture rule).
+        // layout is duplicated.
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("OrganismPipelineLayout"),
             bind_group_layouts: &[&camera_bgl, &highlight_color_bgl, &shadow_bgl],
@@ -413,7 +447,7 @@ impl OrganismRenderer {
                 // independently verified per-triangle, and this mesh is
                 // small enough that drawing both faces costs nothing
                 // measurable — correctness (a visible, complete capsule)
-                // over a micro-optimization this epic doesn't need.
+                // over a micro-optimization that isn't needed here.
                 cull_mode: None,
                 ..Default::default()
             },
@@ -423,9 +457,9 @@ impl OrganismRenderer {
             cache: None,
         });
 
-        // Highlight pipeline: the "inverted hull" outline technique (this
-        // module's own architecture note in the roadmap) — draw only the
-        // *back* faces of a slightly inflated capsule, depth-tested against
+        // Highlight pipeline: the "inverted hull" outline technique — draw
+        // only the *back* faces of a slightly inflated capsule, depth-tested
+        // against
         // (not writing into) the main pass's already-populated depth
         // buffer, so the outline only shows past the main silhouette. Reuses
         // the same shared 3-group `pipeline_layout` as `pipeline` — group 2
@@ -467,10 +501,9 @@ impl OrganismRenderer {
         // Shadow pass: depth-only, writes into `shadow_texture` from the
         // light's point of view. A small constant + slope-scaled depth bias
         // mitigates shadow-acne self-shadowing artifacts on the capsule's
-        // curved surface; both are cheap, standard, untuned starting values
-        // (this epic's "measure before optimizing" rule applies to visual
-        // acne/peter-panning correction if the interactive pass finds it
-        // wrong, not to guessing a better constant up front).
+        // curved surface; both are cheap, standard, untuned starting values —
+        // adjust them if visual acne or peter-panning is observed, rather
+        // than guessing a better constant up front.
         // Its own minimal layout (group 0 only) — `vs_shadow` reads nothing
         // from groups 1/2, and critically must NOT declare group 2 (the
         // shadow map itself): binding `shadow_bind_group` in this same pass
@@ -590,7 +623,7 @@ impl OrganismRenderer {
     }
 
     /// Exposes this renderer's depth buffer view so other passes (e.g.
-    /// `DebugRenderer`'s camera-facing billboards, Epic 8.3) can depth-test
+    /// `DebugRenderer`'s camera-facing billboards) can depth-test
     /// against the same scene depth without owning a redundant depth
     /// texture of their own.
     pub fn depth_view(&self) -> &wgpu::TextureView {
@@ -799,8 +832,8 @@ impl OrganismRenderer {
     }
 
     /// Renders a highlight outline for the provided (already slightly
-    /// inflated by the caller, matching `SdfSkinRenderer::render_highlight`'s
-    /// existing convention) instances — depth-tested against, but not
+    /// inflated by the caller, so the outline reads as a ring around the
+    /// selected organism) instances — depth-tested against, but not
     /// overwriting, whatever `render()` already wrote to the depth buffer
     /// this frame (must be called after `render()` in the same frame).
     #[allow(clippy::too_many_arguments)]

@@ -373,9 +373,7 @@ fn ecology_panel(ui: &mut egui::Ui, world: &mut world::World) {
 
 // ─── Lineage panel ───────────────────────────────────────────────────────────
 
-/// Ancestry tree + species grouping over `evolution::LineageTracker` — both
-/// were fully tracked already (see `IMPLEMENTATION_STATUS.md`'s Epic 7/12
-/// findings) but had no UI surface until this milestone (Phase 2, M2/M3).
+/// Ancestry tree + species grouping over `evolution::LineageTracker`.
 fn lineage_panel(
     ui: &mut egui::Ui,
     state: &mut crate::WorkbenchState,
@@ -422,8 +420,8 @@ fn lineage_panel(
         }
     }
 
-    // Quick Organism Search (Phase 2, M13) — filters by a case-insensitive
-    // substring match against the entity's debug form, diet, or species ID.
+    // Quick Organism Search — filters by a case-insensitive substring
+    // match against the entity's debug form, diet, or species ID.
     // Applied to `records` directly, which means a matching child in the
     // Ancestry view can lose its (now-filtered-out) parent and render as a
     // root instead — an acceptable tradeoff for "find this organism fast,"
@@ -562,8 +560,8 @@ fn render_ancestry_tree(
 /// `utils::draw_segment_tree`: a leaf is a plain selectable row, a branch is
 /// a default-open `CollapsingHeader` whose own header click *also* selects
 /// the organism (not just its children's rows). Hovering either row shape
-/// sets `state.panel_hover_entity` (Phase 2, M9), which the viewport's
-/// highlight rendering already reads alongside its own cursor-picked hover.
+/// sets `state.panel_hover_entity`, which the viewport's highlight
+/// rendering reads alongside its own cursor-picked hover.
 fn draw_lineage_node(
     ui: &mut egui::Ui,
     state: &mut crate::WorkbenchState,
@@ -811,9 +809,9 @@ fn tuning_panel(ui: &mut egui::Ui, state: &mut crate::WorkbenchState, world: &mu
     ))
     .default_open(false)
     .show(ui, |ui| {
-        // Phase 8, Epic 8.5 (ADR-P8-05) — a horizontal world-space Z-plane
-        // the organism renderer clips fragments against, letting the user
-        // slice into a dense population to see inside it.
+        // A horizontal world-space Z-plane the organism renderer clips
+        // fragments against, letting the user slice into a dense
+        // population to see inside it.
         ui.checkbox(&mut state.clip_plane.enabled, "Enabled");
         ui.add_enabled_ui(state.clip_plane.enabled, |ui| {
             ui.add(
@@ -875,10 +873,9 @@ fn settings_panel(
             ui.checkbox(&mut state.show_world_boundary, "Show World Boundary");
         });
 
-    // Accessibility (Phase 2, M18 — Accessibility pass 2). Live colorblind
-    // preview was considered but deferred — see `theme::apply_style`'s doc
-    // comment for why (needs a real color-transform pipeline, tied to the
-    // same `palette`-crate trigger the Phase 2 roadmap already documents).
+    // A live colorblind preview would need a real color-transform
+    // pipeline (a `palette`-crate-based trigger) and is out of scope for
+    // this toggle — see `theme::apply_style`'s doc comment.
     egui::CollapsingHeader::new("Accessibility")
         .default_open(true)
         .show(ui, |ui| {

@@ -1,23 +1,44 @@
-//! Ray-vs-capsule picking (Phase 8, Epic 8.4) — replaces the flat, Z=0-
-//! plane-based "unproject then 2D nearest-point" picking technique with a
-//! real 3D ray cast against the exact capsule primitives (`pos_a`/`pos_b`/
-//! `radius`) the renderer already draws, reusing that same geometry rather
-//! than a separately-tuned pick radius.
+//! # Ray-vs-Capsule Picking
 //!
-//! Degenerate capsules (`pos_a == pos_b`, i.e. a sphere — food/mineral/
-//! corpse pellets and any point-entity) fall out of the same formula with
-//! no special-casing at the call site.
+//! ## Purpose
+//! Entity selection (mouse picking) needs to find which organism bone, if
+//! any, a screen-space click ray passes through. This module computes an
+//! exact 3D ray-vs-capsule intersection against the same `pos_a`/`pos_b`/
+//! `radius` primitives [`crate::organism::OrganismRenderer`] draws, so what
+//! the user sees on screen is exactly what's clickable — no separately-tuned
+//! pick radius or flattened 2D approximation.
+//!
+//! ## Geometry
+//! A capsule is the set of points within `radius` of a line segment (its
+//! "core", from `pos_a` to `pos_b`). Intersecting a ray with it reduces to a
+//! classic *closest point between two lines* problem: find the ray
+//! parameter `s` and segment parameter `t` that minimize the distance
+//! between a point on the ray (`ray_origin + s * ray_dir`) and a point on
+//! the core segment (`pos_a + t * (pos_b - pos_a)`), clamping `t` to `[0,
+//! 1]` so the closest point stays on the segment rather than its infinite
+//! extension. If that minimum distance is within `radius`, the ray hits the
+//! capsule at parameter `s`. Degenerate capsules (`pos_a == pos_b`, i.e. a
+//! sphere — food/mineral/corpse pellets and any point-entity) fall out of
+//! the same formula with no special-casing at the call site: the segment
+//! collapses to a point and `t` becomes irrelevant.
+//!
+//! This is a closest-approach test, not a full ray-vs-cylinder surface
+//! intersection — the returned `s` is where the ray comes nearest the
+//! capsule's core, not the exact point where it crosses the capsule's skin.
+//! That's sufficient (and cheaper) for picking: it correctly determines
+//! hit/miss and ranks multiple overlapping candidates by approximate depth,
+//! which is all a picking query needs.
 
-/// Ray parameter (distance along the ray, `t >= 0`) at the point of closest
+/// Ray parameter (distance along the ray, `s >= 0`) at the point of closest
 /// approach between `ray` and the capsule's core segment (`pos_a`-`pos_b`,
 /// inflated by `radius`), if that closest approach falls within `radius` of
-/// the segment — `None` if the ray misses the capsule entirely.
+/// the segment — `None` if the ray misses the capsule entirely. See this
+/// module's doc comment for the underlying closest-point-between-two-lines
+/// geometry.
 ///
-/// `ray_dir` must be normalized. The returned `t` is not the exact surface
-/// entry point (a full ray-vs-cylinder intersection), but the closest-
-/// approach distance along the ray — the standard, cheaper simplification
-/// used for interactive capsule picking (accurate enough to rank multiple
-/// overlapping candidates by depth, which is this function's only purpose).
+/// `ray_dir` must be normalized. The returned value is the closest-approach
+/// distance along the ray, not the exact surface entry point — see the
+/// module doc comment for why that's sufficient for picking.
 pub fn ray_capsule_hit(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,

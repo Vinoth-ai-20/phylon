@@ -38,8 +38,9 @@ impl CatastropheConfig {
     /// `network::MarlCommand::SetDifficulty` drives. Always recomputed from
     /// [`CatastropheConfig::default`]'s baseline, never multiplied against
     /// the current live value, so repeated calls with the same `level` are
-    /// idempotent instead of compounding (the same bug class
-    /// `organisms::biofilm_system` was designed to avoid).
+    /// idempotent instead of compounding — calling `set_difficulty(1.5)`
+    /// twice in a row must not produce a harder difficulty than calling it
+    /// once.
     pub fn set_difficulty(&mut self, level: f32) {
         let baseline = Self::default();
         let level = level.max(0.0);

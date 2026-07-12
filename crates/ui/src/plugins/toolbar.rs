@@ -117,10 +117,10 @@ pub fn toolbar_ui(
                 }
             });
 
-        // Colormap selector and World Boundary toggle moved to the View menu
-        // (Milestone 13) — they're configuration, not per-frame controls,
-        // and the audit flagged the toolbar as overcrowded with always-on
-        // controls that don't need constant visibility.
+        // Colormap selector and World Boundary toggle live in the View menu,
+        // not the toolbar — they're configuration, not per-frame controls,
+        // and don't need constant visibility competing with the controls
+        // that do.
 
         ui.separator();
 
@@ -169,10 +169,9 @@ pub fn toolbar_ui(
 
         ui.separator();
 
-        // Lasso-select (Phase 8, Epic 8.4) — mutually exclusive with
-        // Measure below and the default box-select, since all three share
-        // one click-drag gesture in `viewport.rs`, branching on
-        // `state.marquee_mode`.
+        // Lasso-select — mutually exclusive with Measure below and the
+        // default box-select, since all three share one click-drag
+        // gesture in `viewport.rs`, branching on `state.marquee_mode`.
         if ui
             .selectable_label(
                 state.marquee_mode == crate::MarqueeMode::Lasso,
@@ -188,9 +187,9 @@ pub fn toolbar_ui(
             };
         }
 
-        // Measure tool (Phase 2, M11) — toggling switches away from
-        // box-select/lasso by construction, since all three share one
-        // click-drag gesture in `viewport.rs`, branching on this mode.
+        // Measure tool — toggling switches away from box-select/lasso by
+        // construction, since all three share one click-drag gesture in
+        // `viewport.rs`, branching on this mode.
         if ui
             .selectable_label(
                 state.marquee_mode == crate::MarqueeMode::Measure,
@@ -208,8 +207,8 @@ pub fn toolbar_ui(
 
         ui.separator();
 
-        // Focus Mode (Phase 2, M16) — fullscreen viewport toggle, entirely
-        // UI-side (see `layout::toggle_focus_mode`'s doc comment).
+        // Focus Mode — fullscreen viewport toggle, entirely UI-side (see
+        // `layout::toggle_focus_mode`'s doc comment).
         if ui
             .selectable_label(
                 state.focus_mode_previous.is_some(),
@@ -223,17 +222,17 @@ pub fn toolbar_ui(
 
         ui.separator();
 
-        // Bookmarks (Phase 2, M12) — save/jump-to camera views. Entirely
-        // UI-side: camera position/zoom already live in `WorkbenchState`,
-        // so no `MenuAction`/ECS round-trip is needed to apply one.
+        // Bookmarks — save/jump-to camera views. Entirely UI-side: camera
+        // position/zoom already live in `WorkbenchState`, so no
+        // `MenuAction`/ECS round-trip is needed to apply one.
         ui.menu_button(
             format!("{} Bookmarks", egui_remixicon::icons::BOOKMARK_LINE),
             |ui| {
                 if ui.button("+ Save Current View").clicked() {
                     let camera = state.camera();
-                    // Phase 9, P9.4: record which mode (and, for Orbit, the
-                    // pivot) was active, so restoring reconstructs the same
-                    // mode instead of always forcing Fly — see
+                    // Record which mode (and, for Orbit, the pivot) was
+                    // active, so restoring reconstructs the same mode
+                    // instead of always forcing Fly — see
                     // `CameraBookmark::orbit_focus`'s doc comment.
                     let orbit_focus = if let crate::camera::CameraController::Orbit(orbit) =
                         &state.camera_controller
@@ -256,10 +255,10 @@ pub fn toolbar_ui(
                     for (i, bookmark) in state.bookmarks.iter().enumerate() {
                         ui.horizontal(|ui| {
                             if ui.button(&bookmark.label).clicked() {
-                                // Phase 9, P9.4: restore into whichever
-                                // mode was active at save time, not always
-                                // `Fly` — see `CameraBookmark::orbit_focus`'s
-                                // doc comment for the bug this fixes.
+                                // Restore into whichever mode was active at
+                                // save time, not always `Fly` — see
+                                // `CameraBookmark::orbit_focus`'s doc
+                                // comment.
                                 let snapshot = crate::camera::Camera3d {
                                     position: bookmark.position,
                                     orientation: bookmark.orientation,
@@ -318,8 +317,8 @@ pub fn toolbar_ui(
                 actions.push(MenuAction::CameraHome);
             }
             ui.separator();
-            // Camera mode (Phase 8, ADR-P8-02) — Orbit is the default;
-            // Fly is opt-in. Mirrors the Spectator toggle's
+            // Camera mode — Orbit is the default; Fly is opt-in. Mirrors
+            // the Spectator toggle's
             // `selectable_label` pattern immediately below.
             let is_fly = state.camera_controller.is_fly();
             let mode_text = if is_fly {
@@ -357,12 +356,11 @@ pub fn toolbar_ui(
                 }
             }
 
-            // Follow selected — Phase 7, W0b: a real toggle (was a
-            // one-directional button that could only turn following on)
-            // with a clear active visual state via `selectable_label`, so
-            // it's obvious at a glance whether the camera is currently
-            // following the selected organism, and it can be turned off
-            // from the same control that turned it on.
+            // Follow selected — a real toggle, with a clear active visual
+            // state via `selectable_label`, so it's obvious at a glance
+            // whether the camera is currently following the selected
+            // organism, and it can be turned off from the same control
+            // that turned it on.
             if let Some(selected) = state.selected_entity {
                 ui.separator();
                 let following = state.tracked_entity == Some(selected);

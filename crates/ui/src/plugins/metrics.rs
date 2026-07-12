@@ -1,14 +1,13 @@
 use crate::types::*;
 
-/// Window size (in samples) for the running-mean overlay (Phase 5, SX-7b) —
-/// referenced by `state::MetricsSeriesOptions`'s doc comment. 10 samples at
-/// the panel's typical sampling rate smooths frame-to-frame demographic
-/// noise without lagging far enough behind a real population swing to look
-/// misleading.
+/// Window size (in samples) for the running-mean overlay — referenced by
+/// `state::MetricsSeriesOptions`'s doc comment. 10 samples at the panel's
+/// typical sampling rate smooths frame-to-frame demographic noise without
+/// lagging far enough behind a real population swing to look misleading.
 pub(crate) const RUNNING_MEAN_WINDOW: usize = 10;
 
-/// Trailing running mean over `RUNNING_MEAN_WINDOW` samples (Phase 5,
-/// SX-7b), operating on `[sim_time_s, value]` pairs. The X value is copied
+/// Trailing running mean over `RUNNING_MEAN_WINDOW` samples, operating on
+/// `[sim_time_s, value]` pairs. The X value is copied
 /// from the *last* sample in each window (not re-averaged) so the overlay
 /// lines up with the raw line it's smoothing rather than lagging on both
 /// axes. A free function (not a closure inline in `metrics_ui`) so it has
@@ -27,25 +26,24 @@ pub(crate) fn running_mean(pts: &[[f64; 2]]) -> Vec<[f64; 2]> {
 
 /// Renders the Metrics Dashboard (a 2-column, 3-row grid of 6 time-series
 /// plots, plus one full-width snapshot bar chart below — Species
-/// Distribution, added Phase 5 SX-3b).
+/// Distribution).
 ///
-/// This is its own docked tile/tab (see `layout::rebuild_tree_from_modes`) —
-/// it used to also carry an internal "Metrics Dashboard / Event Log" tab bar
-/// and duplicate the Event Log content, which was redundant with the
-/// separate "Event Log" tile (rendered by `event_log::event_log_ui`) and
-/// made both "Metrics" and "Event Log" appear twice in the UI.
+/// This is its own docked tile/tab (see `layout::rebuild_tree_from_modes`),
+/// deliberately separate from the "Event Log" tile (rendered by
+/// `event_log::event_log_ui`) rather than an internal tab bar duplicating
+/// that content — each has its own dock slot, not two views of the same
+/// data.
 ///
-/// **Phase 5, Epic 7 (Scientific Visualization):** SX-7a added hazard/
-/// predation/lineage markers (from `analytics::NarrationLog`) on the
-/// Demographics time axis; SX-7b added per-series toggles and a running-mean
-/// overlay on Demographics/Diversity; SX-7c added per-chart PNG export.
+/// Includes hazard/predation/lineage markers (from `analytics::NarrationLog`)
+/// on the Demographics time axis, per-series visibility toggles and a
+/// running-mean overlay on Demographics/Diversity, and per-chart PNG export.
 ///
-/// **Future Scope (still explicitly out of scope — see
-/// `docs/design/design_system.md` / the roadmap's Milestone 7 note):**
-/// zoom/pan, time-range selection, smoothing beyond the one running-mean
-/// window, multiple Y-axes, and saved chart presets would make this a full
-/// scientific-analytics workspace rather than a dashboard — tracked as a
-/// follow-on initiative, not silently expanded here.
+/// **Future Scope (explicitly out of scope for now — see
+/// `docs/design/design_system.md`):** zoom/pan, time-range selection,
+/// smoothing beyond the one running-mean window, multiple Y-axes, and saved
+/// chart presets would make this a full scientific-analytics workspace
+/// rather than a dashboard — tracked as a follow-on initiative, not
+/// silently expanded here.
 #[allow(clippy::too_many_arguments)]
 pub fn metrics_ui(
     ctx: &egui::Context,
@@ -59,8 +57,8 @@ pub fn metrics_ui(
         return;
     };
 
-    // SX-7a: hazard/predation/lineage markers on the Demographics time axis
-    // — `NarrationLog`'s own doc comment names exactly this use case
+    // Hazard/predation/lineage markers on the Demographics time axis —
+    // `NarrationLog`'s own doc comment names exactly this use case
     // ("contextualizing why a population graph suddenly dropped"). Ticks are
     // converted to the same `sim_time` (seconds) unit the plots' X axis
     // already uses via `TickRate::dt()` — `MetricsState::sim_time` and
@@ -252,7 +250,7 @@ pub fn metrics_ui(
                                 );
                             }
                         }
-                        // SX-7a: hazard/predation/lineage markers.
+                        // Hazard/predation/lineage markers.
                         for (x, color, description) in &narrative_events {
                             plot_ui.vline(
                                 egui_plot::VLine::new(*x)
@@ -452,15 +450,13 @@ pub fn metrics_ui(
             });
         });
 
-        // Phase 5, SX-3b: population-by-species, a real gap — `SpeciesRegistry`
-        // (`evolution` crate) tracked species existence/founding but never
-        // live per-species population counts anywhere reachable by the UI;
-        // `analytics_bridge_system` computed per-species counts every sample
-        // purely to derive Shannon/Simpson/richness (above) and discarded
-        // the species-id↔count pairing immediately after. A snapshot
-        // distribution (like `colony_size_distribution` above), not a time
-        // series — bar chart, not a line, since "which species has how many
-        // members right now" is the question, not a trend. Reuses
+        // Population-by-species: `analytics_bridge_system` computes
+        // per-species counts every sample to derive Shannon/Simpson/richness
+        // (above); this reuses that same species-id/count pairing directly.
+        // A snapshot distribution (like `colony_size_distribution` above),
+        // not a time series — bar chart, not a line, since "which species
+        // has how many members right now" is the question, not a trend.
+        // Reuses
         // `CHART_RICHNESS` (already the "species" hue in the Diversity plot
         // above) rather than adding a new token for the same concept family.
         ui.add_space(crate::theme::SPACE_SM);
@@ -491,11 +487,11 @@ pub fn metrics_ui(
     });
 }
 
-/// One legend entry doubling as a per-series visibility toggle (Phase 5,
-/// SX-7b) — `widgets::chart_legend_dot`'s colored-dot-plus-label composed
+/// One legend entry doubling as a per-series visibility toggle —
+/// `widgets::chart_legend_dot`'s colored-dot-plus-label composed
 /// with a checkbox, rather than a second hand-rolled legend-row renderer.
-/// Kept local to this file since Demographics/Diversity are, per the
-/// roadmap, the only two plots the toggle applies to.
+/// Kept local to this file since Demographics/Diversity are the only two
+/// plots the toggle applies to.
 fn demographics_toggle(ui: &mut egui::Ui, visible: &mut bool, color: egui::Color32, label: &str) {
     ui.horizontal(|ui| {
         ui.checkbox(visible, "");
@@ -507,8 +503,8 @@ fn demographics_toggle(ui: &mut egui::Ui, visible: &mut bool, color: egui::Color
 }
 
 /// Small button placed just below a chart, capturing that specific chart's
-/// screen rect for `MenuAction::ExportChartPng` (Phase 5, SX-7c). The actual
-/// crop+encode happens later, in `crates/app/src/render.rs`, against the
+/// screen rect for `MenuAction::ExportChartPng`. The actual crop+encode
+/// happens later, in `crates/app/src/render.rs`, against the
 /// live swapchain texture — this only converts the rect from egui's logical
 /// points to physical pixels (the unit the GPU readback works in) and
 /// queues the action.

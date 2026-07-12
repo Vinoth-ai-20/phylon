@@ -1,4 +1,4 @@
-//! Workspace Manager overlay (Phase 7, W3c) — the UI surface for every
+//! Workspace Manager overlay — the UI surface for every
 //! workspace lifecycle operation (save/rename/duplicate/delete/export/
 //! import/reset/apply). Deliberately thin: every operation that mutates
 //! `WorkbenchState` is a plain function call into `crate::workspace`
@@ -7,7 +7,7 @@
 //! Export/Import — which need `app`-crate file I/O — go through
 //! `MenuAction`. This file owns no lifecycle logic itself, only
 //! presentation, the same "menu is a thin layer over the service" split
-//! `ADR-W0-02` already established for Recent Files.
+//! this crate also applies to Recent Files.
 
 use crate::types::*;
 use crate::workspace::ActiveWorkspace;

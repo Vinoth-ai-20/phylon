@@ -1,10 +1,35 @@
-//! Starter-species genome/CPPN seeding (Phase 9, P9.6 file decomposition —
-//! extracted from `app.rs`, which bundled ECS/resource wiring, GPU
-//! bring-up, entity picking, and this seeding logic in one file). Builds
-//! the hand-authored regulatory/brain CPPN templates and the founding
-//! population's `Genome`s that `PhylonApp::new` spawns via `world::World`
-//! — see `seed_ecosystem`'s own doc comment for why none of this is
-//! special-cased morphology generation (ADR-P3-02).
+//! # Starter-Species Genome Seeding
+//!
+//! Builds the hand-authored regulatory/brain CPPN (compositional
+//! pattern-producing network — a small neural network used here to
+//! generate developmental parameters as a function of gene position,
+//! rather than storing them directly) templates and the founding
+//! population's `Genome`s that `PhylonApp::new` spawns via `world::World`.
+//!
+//! ## Purpose
+//!
+//! The simulation needs a starting population before any evolution has
+//! happened. Rather than hand-authoring each starter organism's body plan
+//! directly, this module builds a small library of regulatory CPPNs — one
+//! per starter species archetype (worm, fish, branchy, omnivore,
+//! decomposer, producer) — each of which is decoded through the exact same
+//! `develop_at_position` pipeline every evolved organism's genome goes
+//! through. This means starter organisms are ordinary, evolvable genomes
+//! from tick 1, not specially privileged templates: `Genome::mutate` and
+//! reproduction's crossover operate on them identically to any organism
+//! born later in the run.
+//!
+//! ## Design decision: no special-cased morphology generation
+//!
+//! Nothing in this module hardcodes a segment-type sequence or reads
+//! `REGULATORY_GENE_ROLES` at runtime to force a specific shape. Each seed's
+//! `RegulatorySeedWeights` are found by sweeping/searching the weight space
+//! and selecting for measured properties (segment-type diversity, having at
+//! least one actuatable `Muscle` segment) — not by hand-picking weights to
+//! match an intended shape. This keeps the founding population inside the
+//! same genome representation and evaluation path as everything the
+//! simulation evolves afterward, so there is exactly one code path for
+//! "genome to body plan" to reason about, verify, and maintain.
 
 /// Per-seed tunable weights for [`seed_regulatory_cppn`]'s four independent
 /// local-activation domains (one per [`genetics::RegulatoryGeneRole`] region)
@@ -22,8 +47,8 @@ pub(crate) struct RegulatorySeedWeights {
     /// Weight on the bump centered over the Differentiation region (3-4).
     pub differentiation_weight: f32,
     /// Weight on the bump centered over the Effector region (5-6) — the
-    /// region SX-2a's first architecture starved (see this function's doc
-    /// comment's "second problem" section).
+    /// region most starved by a single-bump design (see this function's doc
+    /// comment for why each region needs its own independent bump).
     pub effector_weight: f32,
     /// Weight on the bump centered over the Pigment region (7-9).
     pub pigment_weight: f32,
@@ -36,82 +61,73 @@ pub(crate) struct RegulatorySeedWeights {
 }
 
 /// A seed regulatory CPPN with real combinatorial representational capacity
-/// (Phase 5, SX-2a — see `PHASE5_SX_ROADMAP.md` §11's full architectural
-/// analysis, ADR-P5-06 and ADR-P5-07).
+/// across every gene role region.
 ///
-/// **First problem this replaces (ADR-P5-06):** the very first seed was a
-/// single `Linear` output node with one incoming connection — since
+/// ## Why a monotonic (single-basis) network is insufficient
+///
 /// `RegulatoryNetwork::generate` derives every gene's bias and every
-/// gene-pair's edge weight from a *linear* function of gene index, its
-/// output was strictly monotonic in gene index. Since a 3-bit Hox code is
-/// read off three specific, adjacent gene indices, a monotonic bias function
-/// can only ever threshold to a non-decreasing or non-increasing bit
-/// sequence (`000,001,011,111` or `000,100,110,111`) — six of the eight
-/// possible `SegmentType` codes, including `Muscle` (`010`), were
-/// **structurally unreachable**, for any choice of the old `(bias, weight)`
-/// parameters. Measured directly (§11): the unmutated "mostly Muscle body"
-/// seed decoded `Germinal` at 100% of positions, and even the real
-/// spawn-time mutation regime never once produced a `Muscle` segment across
-/// 30 independent trials.
+/// gene-pair's edge weight by evaluating this CPPN as a function of gene
+/// index. If that function were purely linear in gene index, its output
+/// would be strictly monotonic — and since a 3-bit Hox code is read off
+/// three specific, adjacent gene indices, a monotonic bias function can only
+/// ever threshold to a non-decreasing or non-increasing bit sequence
+/// (`000,001,011,111` or `000,100,110,111`). Six of the eight possible
+/// `SegmentType` codes, including `Muscle` (`010`), would be **structurally
+/// unreachable** regardless of parameter tuning — no amount of retuning a
+/// linear function's slope/intercept can produce a non-monotonic bit
+/// pattern.
 ///
-/// **Second problem this replaces (ADR-P5-07):** the first fix added a
-/// single `Sigmoid` + `Gaussian` + `Sine` basis trio, with the `Gaussian`
-/// bump's *one* fixed center tuned to land on the Hox region (gene-index
-/// fraction ≈0.1) so `Muscle` became reachable. That single bump was the
-/// whole fix's local-activation budget — every other gene *role* (crucially
-/// `Effector`, at index fraction ≈0.55) sat far outside the bump's reach and
-/// collapsed to whatever the leftover Sigmoid+Sine terms gave, combined with
-/// the strongly negative `output_bias` needed to suppress off-peak Hox bits.
-/// Measured directly in a real headless run (§11): **363 of 364** sampled
-/// non-Producer organisms had zero actuatable effector springs, even though
-/// the isolated per-seed measurement (which mutates the *entire* CPPN,
-/// relocating the bump over generations) showed 31.2% `Muscle` reachability.
-/// The founding population never benefits from that drift — it uses the
-/// seed unmutated, where the one bump structurally cannot reach `Effector`.
+/// A single shared `Gaussian` bump (one local-activation "hotspot" in
+/// gene-index space) fixes reachability for whichever one region it's
+/// centered on, but every other gene *role* — crucially `Effector`, since
+/// that is what determines whether a segment can actually actuate — sits far
+/// outside that one bump's reach and collapses to whatever the flatter
+/// Sigmoid/Sine terms produce there. A single bump is a single, non-renewable
+/// local-activation budget: tuning it to help one region unavoidably comes
+/// at another region's expense.
 ///
-/// **The fix is modular, not another single retuned bump.** Gene *role* is
-/// already fully determined by gene *position* under the current fixed
-/// `REGULATORY_GENE_ROLES` table (Hox = 0-2, Differentiation = 3-4, Effector
-/// = 5-6, Pigment = 7-9) — there's no missing input dimension, only
-/// insufficient local-activation *capacity*. So this CPPN gives each region
-/// its own independently-weighted `Gaussian` bump, centered at that region's
-/// index-fraction midpoint, alongside the existing shared `Sigmoid`
-/// (monotonic gradient) and *two* `Sine` bases at different frequencies
-/// (coarse + fine periodic/repeated structure, rather than one). Every
-/// region's bump can be independently strengthened, weakened, or inverted
-/// (a negative weight is a local *repressor*, not just an activator) via its
-/// own `RegulatorySeedWeights` field, without starving any other region —
-/// this is what makes the fix "modular regulation, one evolvable genome"
-/// rather than a minimal patch: tuning `effector_weight` can no longer come
-/// at the expense of `hox_weight`, because they're separate connections.
+/// ## This design: one independent bump per gene-role region
 ///
-/// This scope's four bumps match today's four fixed `RegulatoryGeneRole`
-/// variants; a future role (organogenesis, physiology — explicitly listed as
-/// future compatibility targets) would need one more region bump added here,
-/// the same way this fix added four to the first version's one — not a
-/// restructuring, since the pattern ("one independently-weighted local bump
-/// per role region") generalizes directly.
+/// Gene *role* is already fully determined by gene *position* under the
+/// fixed `REGULATORY_GENE_ROLES` table (Hox = indices 0-2, Differentiation =
+/// 3-4, Effector = 5-6, Pigment = 7-9) — there is no missing input
+/// dimension, only insufficient local-activation *capacity* in a
+/// single-bump design. This CPPN instead gives each region its own
+/// independently-weighted `Gaussian` bump, centered at that region's
+/// index-fraction midpoint, alongside a shared `Sigmoid` (monotonic
+/// gradient) and *two* `Sine` bases at different frequencies (coarse + fine
+/// periodic/repeated structure). Every region's bump can be independently
+/// strengthened, weakened, or inverted (a negative weight acts as a local
+/// *repressor*, not just an activator) via its own `RegulatorySeedWeights`
+/// field — tuning `effector_weight` cannot come at the expense of
+/// `hox_weight`, because they route through separate connections to
+/// separate hidden nodes.
+///
+/// This gives four bumps, matching today's four fixed `RegulatoryGeneRole`
+/// variants. A future role (e.g. organogenesis or physiology) would need one
+/// more region bump added here, not a restructuring — the pattern ("one
+/// independently-weighted local bump per role region") generalizes directly.
 ///
 /// All bases still combine at one `Linear` output node, so
-/// `RegulatoryNetwork::generate`'s existing calling convention
+/// `RegulatoryNetwork::generate`'s calling convention
 /// (`evaluate(&[idx, idx])` for bias, `evaluate(&[i/total, j/total])` for
-/// edge weight) is completely unchanged — this is a richer function being
-/// queried the same way, not a change to how genes/edges are derived, and
-/// nothing here reads `REGULATORY_GENE_ROLES` at runtime (the region centers
-/// below are constants derived from that table by hand, not a live lookup) —
+/// edge weight) is unchanged by this richer internal structure. Nothing here
+/// reads `REGULATORY_GENE_ROLES` at runtime — the region centers below are
+/// constants derived from that table by hand, not a live lookup —
 /// deliberately, so this stays a plain, cheap, deterministic `Cppn` rather
-/// than a construction that depends on the table's exact contents at
-/// call-time.
+/// than a construction whose shape depends on the table's exact contents at
+/// call time.
 ///
-/// **Deliberately not tuned toward any specific `SegmentType`.** This
-/// function has no `Muscle`-specific or `Fin`-specific logic anywhere — the
-/// four region weights and two sine weights are swept per starter species
-/// purely for *diversity* (see each call site's own comment for what was
-/// empirically observed, not targeted), and the resulting network remains an
-/// ordinary, evolvable `Cppn` — mutation's existing `mutate_add_node`/
+/// ## Deliberately not tuned toward any specific `SegmentType`
+///
+/// This function has no `Muscle`-specific or `Fin`-specific logic anywhere
+/// — the four region weights and two sine weights are swept per starter
+/// species purely for *diversity* (see each call site's own comment for what
+/// was empirically observed, not targeted), and the resulting network
+/// remains an ordinary, evolvable `Cppn`: mutation's `mutate_add_node`/
 /// `mutate_add_connection`/per-connection jitter operate on it exactly as
 /// they would any other genome, with nothing special-cased for starter
-/// organisms (ADR-P3-02).
+/// organisms.
 pub(crate) fn seed_regulatory_cppn(w: RegulatorySeedWeights) -> genetics::Cppn {
     // Sigmoid basis: a smooth monotonic gradient, transitioning at the
     // midpoint of the gene-index range.
@@ -122,10 +138,12 @@ pub(crate) fn seed_regulatory_cppn(w: RegulatorySeedWeights) -> genetics::Cppn {
     // *adjacent* gene indices (0.1 apart) to produce a non-monotonic 3-bit
     // code, so it needs a narrow bump; Differentiation/Effector/Pigment each
     // cover 2-3 indices that should mostly move *together*, so a wider bump
-    // (which was tried shared at width 4.0 for all four and measured to
-    // collapse Hox discrimination — see §11's ADR-P5-07 entry) suits them
-    // better. sum = bias + weight*pos + weight*pos = bias + 2*weight*center
-    // at the peak, so bias = -2*weight*center places the peak at `center`.
+    // suits them better — sharing one width (narrow enough for Hox) across
+    // all four regions instead collapses Hox's own discrimination, since a
+    // width tuned for a 2-3-index-wide region is too wide to separate Hox's
+    // adjacent single-index steps. sum = bias + weight*pos + weight*pos =
+    // bias + 2*weight*center at the peak, so bias = -2*weight*center places
+    // the peak at `center`.
     const HOX_WIDTH: f32 = 10.0;
     const DIFFERENTIATION_WIDTH: f32 = 6.0;
     const EFFECTOR_WIDTH: f32 = 4.0;
@@ -166,10 +184,11 @@ pub(crate) fn seed_regulatory_cppn(w: RegulatorySeedWeights) -> genetics::Cppn {
             // collected output" here; `evaluate`'s node-computation loop
             // itself is index-range-based, not layer-gated, so they are
             // still fully computed) so only node 9's combined value is ever
-            // read. Getting this wrong (marking a basis node `layer: 1`) was
-            // this milestone's first implementation's own first bug (§11) —
-            // caught by directly inspecting `RegulatoryNetwork::generate`'s
-            // output, not assumed fixed.
+            // read. Marking a basis node `layer: 1` by mistake would make
+            // `RegulatoryNetwork::generate` read the wrong value (or the
+            // wrong number of values) — verify any change here by directly
+            // inspecting `RegulatoryNetwork::generate`'s output rather than
+            // assuming it's correct from the node layout alone.
             genetics::CppnNode {
                 activation: brain::ActivationFn::Sigmoid,
                 bias: SIGMOID_BIAS,
@@ -390,9 +409,11 @@ pub(crate) fn seed_regulatory_cppn(w: RegulatorySeedWeights) -> genetics::Cppn {
     }
 }
 
-/// The hand-built brain-wiring CPPN previously baked into `new_hox_driven`
-/// (retired, Phase 3 M4) — unrelated to Hox/body-plan decoding, so carried
-/// over unchanged as every seed genome's starting neural substrate.
+/// The hand-built brain-wiring CPPN used as every seed genome's starting
+/// neural substrate. This CPPN maps a (source, target) node-coordinate pair
+/// to a synapse weight/bias/time-constant — unrelated to the regulatory
+/// CPPN's Hox/body-plan decoding above, so every starter species shares this
+/// one brain-wiring template regardless of body plan.
 pub(crate) fn seed_brain_cppn() -> genetics::Cppn {
     genetics::Cppn {
         nodes: vec![
@@ -466,11 +487,10 @@ pub(crate) fn seed_ecosystem(
     tracker: &mut genetics::GlobalInnovationTracker,
     rng: &mut impl rand::Rng,
 ) {
-    // 1. Define Prototypes ("Seed Genomes" — Phase 3 M4, replacing the
-    // retired `new_hox_driven`/`HoxSequence` template mechanism).
+    // 1. Define Prototypes ("Seed Genomes").
     //
     // Each seed is an ordinary hand-authored `Genome` — no special-cased
-    // morphology generation (ADR-P3-02). Its body plan, branching, and
+    // morphology generation. Its body plan, branching, and
     // pigmentation all emerge from the same `develop_at_position` decode
     // pipeline every evolved organism goes through; `seed_regulatory_cppn`
     // just gives each species archetype a different starting point on that
@@ -484,11 +504,9 @@ pub(crate) fn seed_ecosystem(
     // retiring genome-stored color, not an oversight.
     let brain_template = seed_brain_cppn();
 
-    // Phase 5, SX-2a (ADR-P5-07): swept for *diversity* across the modular
-    // region-bump basis — see `seed_regulatory_cppn`'s doc comment — not
-    // hand-picked to hit any specific `SegmentType`. Measured diversity
-    // across all six, including effector-activation rate, is recorded in
-    // `PHASE5_SX_ROADMAP.md` §11.
+    // Swept for *diversity* across the modular region-bump basis — see
+    // `seed_regulatory_cppn`'s doc comment — not hand-picked to hit any
+    // specific `SegmentType`.
     let worm_genome = genetics::Genome::seed(
         genetics::GenomeId(1),
         common::EntityId(0),
@@ -515,26 +533,18 @@ pub(crate) fn seed_ecosystem(
         common::EntityId(0),
         brain_template.clone(),
         genetics::Cppn::new(),
-        // Phase 9, Goal 2 root-cause audit (re-tuned; see
-        // `phase9_movement_root_cause_diagnostic` below): the previous
-        // weights here decoded [Tail, Torso, Torso, Head, Torso, Torso,
-        // Torso, Tail, Tail, Tail] — the "effector active 10/10" this
-        // comment used to claim only ever measured raw
-        // `actuation_amplitude != 0` at every position (every position
-        // always produces *some* amplitude value, per
-        // `develop_at_position`), never whether that position actually
-        // decoded as `SegmentType::Muscle` (the only type that becomes an
-        // `Elastic`, actuatable spring — see `develop.rs`/
-        // `compile_segment`). The real bug this decode had: `Tail` at
-        // position 0 (i.e. `growth_system`'s first real segment, position
-        // 1, was still `Torso`, harmless) but every position had
-        // `apoptosis = true` — DEF-002's germ-line-protection pruning fired
-        // everywhere, so a real fish organism grew *zero* body past its
-        // head, regardless of Hox/Muscle content. Re-tuned unmutated
-        // decode (positions 1-9): [Head, Head, Muscle, Head, Head, Head,
-        // Head, Head, Head], none apoptotic, 1 real actuatable Muscle
-        // segment; ~65% of individuals retain >=1 actuatable effector after
-        // `spawn_pop`'s 10-round mutation pass at the corrected 0.1 rate.
+        // "Effector active" for a body plan means at least one position
+        // decodes as `SegmentType::Muscle` (the only type compiled into an
+        // `Elastic`, actuatable spring by `develop.rs`'s `compile_segment`)
+        // with a nonzero actuation amplitude *and* survives the germ-line-
+        // protection apoptosis check — a position with nonzero raw
+        // `actuation_amplitude` that gets pruned by apoptosis contributes no
+        // real body. These weights were tuned against both conditions
+        // together: unmutated decode (positions 1-9): [Head, Head, Muscle,
+        // Head, Head, Head, Head, Head, Head], none apoptotic, 1 real
+        // actuatable Muscle segment; ~65% of individuals retain >=1
+        // actuatable effector after `spawn_pop`'s 10-round mutation pass at
+        // its 0.1 rate.
         seed_regulatory_cppn(RegulatorySeedWeights {
             output_bias: -6.3154593,
             hox_weight: 7.676084,
@@ -551,17 +561,15 @@ pub(crate) fn seed_ecosystem(
         common::EntityId(0),
         brain_template.clone(),
         genetics::Cppn::new(),
-        // Phase 9, Goal 2 root-cause audit (re-tuned; see
-        // `phase9_movement_root_cause_diagnostic` below): the previous
-        // weights here had the exact same DEF-002 apoptosis defect as
-        // `fish_genome` above — every position except the two `Germinal`
-        // ends had `apoptosis = true`, so a real branchy organism also grew
-        // zero body past its head despite the Hox table showing 2 Muscle
-        // positions. Re-tuned unmutated decode (positions 1-9): [Ganglion,
-        // Germinal, Germinal, Germinal, Germinal, Germinal, Muscle, Muscle,
-        // Muscle], none apoptotic, 3 real actuatable Muscle segments; ~51%
-        // of individuals retain >=1 actuatable effector after `spawn_pop`'s
-        // 10-round mutation pass at the corrected 0.1 rate.
+        // Same apoptosis-survival requirement as `fish_genome` above: a
+        // Hox table showing Muscle positions is not sufficient on its own
+        // if the germ-line-protection apoptosis check prunes those
+        // positions before they can actuate. Unmutated decode (positions
+        // 1-9): [Ganglion, Germinal, Germinal, Germinal, Germinal,
+        // Germinal, Muscle, Muscle, Muscle], none apoptotic, 3 real
+        // actuatable Muscle segments; ~51% of individuals retain >=1
+        // actuatable effector after `spawn_pop`'s 10-round mutation pass at
+        // its 0.1 rate.
         seed_regulatory_cppn(RegulatorySeedWeights {
             output_bias: -4.885546,
             hox_weight: 11.249819,
@@ -639,22 +647,21 @@ pub(crate) fn seed_ecosystem(
             // producers. `mutation_rate` here must stay in line with
             // `reproduction`'s own per-birth mutation calls (0.1-0.2 — see
             // `crates/reproduction/src/lib.rs`'s `child_genome.mutate(...)`
-            // call sites), not a guaranteed full-strength pass: measured
-            // directly (Phase 9 Goal 2 root-cause audit — see
-            // `phase9_movement_root_cause_diagnostic` below), the previous
-            // `mutate(1.0, ...)` x10 — an outer gate of 1.0 means every one
-            // of the 10 rounds mutates at full strength, not 10 *chances* at
-            // a milder mutation — collapsed the seed regulatory CPPNs'
-            // actuatable-Muscle-segment rate from 100% down to ~11-23% for
-            // 3 of 5 starter presets (worm/omnivore/decomposer), which is
-            // this session's own real headless `PHYLON_MOTION_DIAGNOSTIC=1`
-            // observation of 0 actuatable effectors across every sampled
-            // organism, compounded further by per-generation reproduction
-            // mutating the same already-degraded lineages again. At
-            // `mutation_rate = 0.1` (matching reproduction's own asexual
-            // rate), the same 10-round loop still gives every individual a
-            // genuinely unique brain/body-plan while preserving a healthy
-            // majority (~60-80%) actuatable-effector rate.
+            // call sites), not a guaranteed full-strength pass: `mutate`'s
+            // first argument is an outer gate, so `mutate(1.0, ...)` makes
+            // every one of the 10 rounds mutate at full strength rather than
+            // giving 10 *chances* at a milder mutation. A full-strength,
+            // 10-round pass collapses the seed regulatory CPPNs'
+            // actuatable-Muscle-segment rate to a small minority of founders
+            // for several starter presets, and this degradation compounds
+            // further as later generations' reproduction mutates the same
+            // already-degraded lineages again. At `mutation_rate = 0.1`
+            // (matching reproduction's own asexual rate), the same 10-round
+            // loop still gives every individual a genuinely unique
+            // brain/body-plan while preserving a healthy majority (~60-80%)
+            // actuatable-effector rate — see the
+            // `starter_species_locomotion_viability` test module below for
+            // the measured numbers backing this.
             let mut ind_genome = genome.clone();
             if diet != ecology::Diet::Producer {
                 for _ in 0..10 {
@@ -728,27 +735,23 @@ pub(crate) fn seed_ecosystem(
 
 #[cfg(test)]
 mod starter_species_locomotion_viability {
-    //! Regression coverage for Phase 9 Goal 2's root-cause finding: every
-    //! non-Producer starter species must actually be capable of
-    //! muscle-driven locomotion, both unmutated and after `spawn_pop`'s
-    //! founder-diversity mutation pass. Two independent, measured defects
-    //! were found and fixed here (not guessed — see each call site's own
-    //! comment in `seed_ecosystem` for the full measurement):
+    //! Regression coverage: every non-Producer starter species must
+    //! actually be capable of muscle-driven locomotion, both unmutated and
+    //! after `spawn_pop`'s founder-diversity mutation pass. This guards two
+    //! distinct failure modes a bad regulatory seed can hit:
     //!
-    //! 1. `spawn_pop` mutated every founder genome 10 times at
-    //!    `mutation_rate = 1.0` (a guaranteed full-strength pass each
-    //!    round) before ever spawning it — 100x more aggressive than
-    //!    `reproduction`'s own per-birth convention (0.1-0.2, one call).
-    //!    Measured effect: collapsed the actuatable-effector rate from
-    //!    100% to single digits for otherwise-healthy presets. Fixed by
-    //!    matching reproduction's own 0.1 rate.
-    //! 2. `fish_genome`/`branchy_genome`'s regulatory seed weights caused
-    //!    DEF-002's germ-line-protection apoptosis check to fire on nearly
-    //!    every body position, pruning the entire body except the head —
-    //!    these two starter species grew no muscle-bearing body at all,
-    //!    independent of any mutation. Fixed by re-tuning their weights
-    //!    (search anchored near the originals, gated on: apoptosis-survives
-    //!    for >=4 positions AND >=1 real actuatable `Muscle` segment).
+    //! 1. `spawn_pop`'s mutation dosage (10 rounds at `mutation_rate = 0.1`,
+    //!    matching `reproduction`'s own per-birth convention) must not
+    //!    collapse the actuatable-effector rate — an outer gate as high as
+    //!    1.0 would make every round a guaranteed full-strength mutation
+    //!    instead of 10 chances at a milder one, degrading body plans much
+    //!    more aggressively than real reproduction ever does.
+    //! 2. A seed's regulatory weights must not cause the germ-line-
+    //!    protection apoptosis check to fire on nearly every body position —
+    //!    doing so prunes the entire body except the head, so the starter
+    //!    species grows no muscle-bearing body at all, independent of any
+    //!    mutation. Weights are gated on: apoptosis-survives for >=4
+    //!    positions AND >=1 real actuatable `Muscle` segment.
     use super::*;
     use rand::SeedableRng;
 
@@ -883,7 +886,7 @@ mod starter_species_locomotion_viability {
                 (muscle, effector),
                 (1, 1),
                 "preset {preset_name} must decode >=1 reachable, actuatable Muscle segment \
-                 unmutated (DEF-002 apoptosis must not prune the entire body)"
+                 unmutated (germ-line-protection apoptosis must not prune the entire body)"
             );
         }
     }

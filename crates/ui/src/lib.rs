@@ -10,19 +10,19 @@
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 
-/// The canonical 3D camera (Phase 8, ADR-P8-02) — `Camera3d`, its two
-/// controllers (`OrbitController`/`FlyController`), and the shared
+/// The canonical 3D camera — `Camera3d`, its two controllers
+/// (`OrbitController`/`FlyController`), and the shared
 /// screen-ray/plane-intersection primitives every renderer and input path
 /// consumes.
 pub mod camera;
 pub use camera::{Camera3d, CameraController, FlyController, OrbitController};
 
-/// Phase 9, ADR-P9-01 — the canonical viewport-interaction layer
-/// (`ViewportInput` + `apply_to_camera`), the only place any input source
-/// mutates the camera. See the module's own doc comment.
+/// The canonical viewport-interaction layer (`ViewportInput` +
+/// `apply_to_camera`), the only place any input source mutates the camera.
+/// See the module's own doc comment.
 pub mod viewport_input;
 
-/// Phase 9, P9.4 — smooth Frame Selected/Frame All camera transitions.
+/// Smooth Frame Selected/Frame All camera transitions.
 pub mod frame_animation;
 
 pub mod shortcuts;
@@ -42,14 +42,14 @@ pub use state::{
     WorkbenchState, WorkspaceNameDialog,
 };
 
-/// Reusable recent-items tracking (Phase 7, W0d) — see its own module doc
-/// comment for the ordering/duplicate/cap/persistence policy.
+/// Reusable recent-items tracking — see its own module doc comment for the
+/// ordering/duplicate/cap/persistence policy.
 pub mod recent_items;
 pub use recent_items::{RecentCategory, RecentItemsService};
 
-/// Workspace lifecycle management (Phase 7, W3c) — see its own module doc
-/// comment for the unified built-in/user-saved storage model and the
-/// "never a second layout-construction pathway" discipline.
+/// Workspace lifecycle management — see its own module doc comment for the
+/// unified built-in/user-saved storage model and the "never a second
+/// layout-construction pathway" discipline.
 pub mod workspace;
 pub use workspace::{ActiveWorkspace, ExportedWorkspace, WorkspaceLayout, WorkspaceService};
 
@@ -67,15 +67,15 @@ pub mod utils;
 pub mod widgets;
 
 /// Shared node-link graph canvas helpers (pan/zoom/hit-testing), used by
-/// Neural Viewer and, as of Phase 3 M11, the GRN Viewer.
+/// Neural Viewer and the GRN Viewer.
 pub(crate) mod graph_canvas;
 
-/// Shared `RegulatoryNetwork` display helpers, used by the GRN Viewer
-/// (Phase 3 M11) and Evolution Debugger (Phase 3 M12).
+/// Shared `RegulatoryNetwork` display helpers, used by the GRN Viewer and
+/// Evolution Debugger.
 pub(crate) mod regulatory_view;
 
-/// Shared Development Timeline scrubber (Phase 3 M13), used by HOX
-/// Visualizer and GRN Viewer.
+/// Shared Development Timeline scrubber, used by HOX Visualizer and GRN
+/// Viewer.
 pub(crate) mod timeline;
 
 /// Immediate-mode rendering logic.

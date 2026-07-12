@@ -1,3 +1,8 @@
+//! Sandbox mode: manual entity tagging, named presets, and procedural test
+//! fixtures for debugging and demonstration, independent of the
+//! genome/CPPN/regulatory-network growth pipeline the rest of this crate
+//! implements.
+
 use bevy_ecs::prelude::Component;
 use serde::{Deserialize, Serialize};
 

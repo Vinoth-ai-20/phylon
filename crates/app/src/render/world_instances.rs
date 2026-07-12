@@ -1,15 +1,13 @@
-//! Per-frame world-instance gathering (Phase 7, W2d) — answers "what's in
-//! the world this frame," the same way `organism_visuals` (its sibling
-//! module) answers "what does one entity look like." Extracted verbatim
-//! from `render.rs`'s prior inline body: every query, closure, and
-//! `organism_visuals` builder call moves unchanged — this milestone is
-//! architectural separation, not a behavior change.
+//! Per-frame world-instance gathering — answers "what's in the world this
+//! frame," the same way `organism_visuals` (its sibling module) answers
+//! "what does one entity look like." Kept separate from `render.rs` so
+//! ECS-querying/gathering and GPU-pass issuing can be read (and changed)
+//! independently.
 //!
 //! [`PhylonApp::gather_world_render_instances`] reads only `&self.world`/
-//! `&self.ui` (confirmed no `self` mutation anywhere in this body before
-//! this extraction) and returns the four instance lists the GPU passes in
+//! `&self.ui` and returns the four instance lists the GPU passes in
 //! `render()` consume. It touches no `wgpu` state — the actual drawing
-//! stays in `render()`, unchanged in order and content.
+//! stays in `render()`.
 
 use super::organism_visuals::{self, BoneKind};
 use crate::app::PhylonApp;
@@ -23,20 +21,19 @@ pub(crate) struct WorldRenderInstances {
     pub(crate) selected_bones: Vec<rendering::CapsuleInstance>,
 }
 
-/// Phase 9, P9.1 (performance foundation): the six intermediate lookup
-/// tables `gather_world_render_instances` builds every frame, hoisted out
-/// of that function's locals and into a field `PhylonApp` owns across
-/// frames — measured directly (a temporary FPS probe, since removed) to
-/// be one of the largest per-frame CPU costs at population scale, since
-/// every one of these was a fresh `HashMap::new()` (zero capacity, forcing
-/// repeated reallocation as it fills) on every single frame regardless of
-/// whether the population changed. `.clear()` (called at the top of
-/// `gather_world_render_instances`, see there) empties a `HashMap` without
-/// releasing its backing allocation, so after the first few frames these
-/// tables stop reallocating at all and just get reused at their
-/// steady-state capacity. This is intermediate/local-only state — never
-/// borrowed or returned across frames — so hoisting it costs nothing in
-/// correctness or clarity, only in one extra `PhylonApp` field.
+/// The six intermediate lookup tables `gather_world_render_instances` builds
+/// every frame, hoisted out of that function's locals and into a field
+/// `PhylonApp` owns across frames. A fresh `HashMap::new()` (zero capacity,
+/// forcing repeated reallocation as it fills) for each of these on every
+/// single frame is one of the largest per-frame CPU costs at population
+/// scale, regardless of whether the population actually changed between
+/// frames. `.clear()` (called at the top of `gather_world_render_instances`,
+/// see there) empties a `HashMap` without releasing its backing allocation,
+/// so after the first few frames these tables stop reallocating at all and
+/// just get reused at their steady-state capacity. This is
+/// intermediate/local-only state — never borrowed or returned across frames
+/// — so hoisting it costs nothing in correctness or clarity, only one extra
+/// `PhylonApp` field.
 #[derive(Default)]
 pub(crate) struct RenderInstanceScratch {
     node_positions: std::collections::HashMap<bevy_ecs::entity::Entity, [f32; 2]>,
@@ -92,10 +89,10 @@ impl PhylonApp {
         };
 
         let selected_component = self.ui.selected_entity.map(&mut get_connected_component);
-        // `panel_hover_entity` (Phase 2, M9) lets a non-viewport panel (e.g.
-        // the Lineage Explorer) drive the same highlight a viewport-hover
-        // would — `hovered_entity` itself stays viewport-picking-only since
-        // it's unconditionally overwritten every frame in `events.rs`.
+        // `panel_hover_entity` lets a non-viewport panel (e.g. the Lineage
+        // Explorer) drive the same highlight a viewport-hover would —
+        // `hovered_entity` itself stays viewport-picking-only since it's
+        // unconditionally overwritten every frame in `events.rs`.
         let hovered_component = self
             .ui
             .hovered_entity
@@ -135,11 +132,11 @@ impl PhylonApp {
             max_x >= cull_min_x && min_x <= cull_max_x && max_y >= cull_min_y && min_y <= cull_max_y
         };
 
-        // Build node position lookup for bone endpoint resolution.
-        // Phase 9, P9.1: reused across frames via `self.render_scratch`
-        // (see `RenderInstanceScratch`'s doc comment) — `.clear()` keeps
-        // the backing allocation instead of dropping and reallocating it
-        // every frame.
+        // Build node position lookup for bone endpoint resolution. Reused
+        // across frames via `self.render_scratch` (see
+        // `RenderInstanceScratch`'s doc comment) — `.clear()` keeps the
+        // backing allocation instead of dropping and reallocating it every
+        // frame.
         self.render_scratch.node_positions.clear();
         self.render_scratch.node_positions_3d.clear();
         self.render_scratch.entity_organism_id.clear();
@@ -147,16 +144,15 @@ impl PhylonApp {
         self.render_scratch.entity_avg_severity.clear();
         self.render_scratch.entity_growth_progress.clear();
         let node_positions = &mut self.render_scratch.node_positions;
-        // Phase 8 (ADR-P8-03): the mesh-based capsule renderer needs real
-        // `Vec3` endpoints (organisms still grow with `z` fixed at `0.0`
-        // until Epic 8.6, but the renderer itself is now genuinely 3D) —
-        // kept as a second map rather than widening `node_positions` itself
-        // since every other consumer of that map (culling, spotlight
-        // nearby-lookup, colony-link debug instances) is still flat 2D
-        // logic, unaffected by and out of scope for this epic.
+        // The mesh-based capsule renderer needs real `Vec3` endpoints
+        // (organisms still grow with `z` fixed at `0.0`, but the renderer
+        // itself is genuinely 3D) — kept as a second map rather than
+        // widening `node_positions` itself since every other consumer of
+        // that map (culling, spotlight nearby-lookup, colony-link debug
+        // instances) is still flat 2D logic.
         let node_positions_3d = &mut self.render_scratch.node_positions_3d;
 
-        // Per-node organism-id lookup (Phase 5, SX-3d) — `physics::ParticleNode.organism_id`
+        // Per-node organism-id lookup — `physics::ParticleNode.organism_id`
         // is already stored per node; no BFS/adjacency-map traversal is
         // needed to find colony (budding) links, only a same-tick
         // comparison of two nodes' `organism_id` on either end of a spring
@@ -164,14 +160,14 @@ impl PhylonApp {
         // `node_positions` below, at no extra query cost.
         let entity_organism_id = &mut self.render_scratch.entity_organism_id;
 
-        // Per-segment vitality lookup (Phase 5, SX-1c) — `metabolism::Health`
-        // lives only on an organism's head entity (`organisms::spawning`), not
-        // every segment, so this maps every segment entity in that organism's
+        // Per-segment vitality lookup — `metabolism::Health` lives only on
+        // an organism's head entity (`organisms::spawning`), not every
+        // segment, so this maps every segment entity in that organism's
         // `DevelopmentalGraph` to the same head-derived health fraction,
-        // mirroring `render_physiology_overlay`'s existing graph-walk pattern
-        // rather than inventing a new one. Absent from this map (sandbox
-        // structures with no `Health`) defaults to `1.0` (fully vital) at the
-        // lookup site below, not inserted here.
+        // mirroring `render_physiology_overlay`'s existing graph-walk
+        // pattern rather than inventing a new one. Absent from this map
+        // (sandbox structures with no `Health`) defaults to `1.0` (fully
+        // vital) at the lookup site below, not inserted here.
         let entity_health_fraction = &mut self.render_scratch.entity_health_fraction;
         let mut query_health_graphs = self
             .world
@@ -190,13 +186,12 @@ impl PhylonApp {
             }
         }
 
-        // Per-organism average infection severity lookup (Phase 5, SX-1d),
-        // keyed by head entity (the only entity `ecology::disease::Infection`
-        // lives on, mirroring `metabolism::Health`'s own placement) — walks
-        // the same `DevelopmentalGraph` used above for Health, averaging
+        // Per-organism average infection severity lookup, keyed by head
+        // entity (the only entity `ecology::disease::Infection` lives on,
+        // mirroring `metabolism::Health`'s own placement) — walks the same
+        // `DevelopmentalGraph` used above for Health, averaging
         // `SegmentInfection.severity` across segments rather than reading a
-        // single value, since severity is a genuinely per-segment quantity
-        // (P4-F5).
+        // single value, since severity is a genuinely per-segment quantity.
         let entity_avg_severity = &mut self.render_scratch.entity_avg_severity;
         let mut query_segment_infection = self
             .world
@@ -244,14 +239,16 @@ impl PhylonApp {
             let should_draw_debug =
                 self.ui.debug_structural && (selected_component.is_none() || is_in_selected);
 
-            // Low-health ring (Phase 5, SX-1c) — Primary tier, always visible,
-            // not gated behind `debug_structural` (unlike the category ring
-            // below, which stays debug-only). `Health` only exists on the
-            // head entity (`organisms::spawning`), so this naturally draws
-            // once per organism. Amber below 40%, red below 15%, per
+            // Low-health ring — Primary tier, always visible, not gated
+            // behind `debug_structural` (unlike the category ring below,
+            // which stays debug-only). `Health` only exists on the head
+            // entity (`organisms::spawning`), so this naturally draws once
+            // per organism. Amber below 40%, red below 15%, per
             // `docs/design/biological_visual_language.md`'s Health entry;
             // nothing drawn above 40% — absence is the encoding for the
-            // common healthy case, matching SX-1b's Idle precedent.
+            // common healthy case (matching how idle/nominal states
+            // elsewhere in this visual language are encoded by the absence
+            // of a badge, not an extra one).
             if let Some(health) = health {
                 if let Some(instance) = organism_visuals::health_ring_instance(
                     health,
@@ -262,15 +259,15 @@ impl PhylonApp {
                 }
             }
 
-            // Disease badge (Phase 5, SX-1d) — Primary tier, always visible,
-            // offset up-and-left from the head position so it never blends
-            // with the Health disk above into an ambiguous combined color
-            // (both are opaque-ish filled disks on the shared
-            // `debug_quad.wgsl` primitive — see this document's own note in
-            // `biological_visual_language.md`'s Disease entry on why this
-            // isn't a true concentric ring). No animation — a fully static
-            // function of current `Infection.state`/severity, per this
-            // milestone's explicit "no pulses" instruction.
+            // Disease badge — Primary tier, always visible, offset
+            // up-and-left from the head position so it never blends with
+            // the Health disk above into an ambiguous combined color (both
+            // are opaque-ish filled disks on the shared `debug_quad.wgsl`
+            // primitive — see `biological_visual_language.md`'s Disease
+            // entry for why this isn't a true concentric ring). No
+            // animation — a fully static function of current
+            // `Infection.state`/severity, consistent with this visual
+            // language's "no decorative pulsing" rule.
             if let Some(infection) = infection {
                 let avg_severity = entity_avg_severity.get(&entity).copied().unwrap_or(0.0);
                 let health_fraction = health.map_or(1.0, |h| {
@@ -305,15 +302,15 @@ impl PhylonApp {
             }
         }
 
-        // Developmental growth visual (Phase 5, SX-2d): a just-formed segment
-        // scales in from near-0 to full radius over a short fixed window,
-        // rather than popping into existence at full size. `SpawnTick`
-        // (reused, not a new component — see `organisms::systems::growth_system`'s
-        // doc comment) is looked up per spring's `node_b`, which is always
-        // the newer of the two endpoints under this codebase's own `Spring`
-        // convention (`node_a` is always the pre-existing parent/anchor;
-        // confirmed by reading every `Spring` construction site in
-        // `growth_system`/`producer_growth_system`, not assumed).
+        // Developmental growth visual: a just-formed segment scales in from
+        // near-0 to full radius over a short fixed window, rather than
+        // popping into existence at full size. `SpawnTick` (see
+        // `organisms::systems::growth_system`'s doc comment) is looked up
+        // per spring's `node_b`, which is always the newer of the two
+        // endpoints under this codebase's `Spring` convention (`node_a` is
+        // always the pre-existing parent/anchor — every `Spring`
+        // construction site in `growth_system`/`producer_growth_system`
+        // follows this).
         const GROWTH_FADE_IN_TICKS: u64 = 30; // 0.5s at 60Hz — brief, per the design doc
         let current_tick = self
             .world
@@ -333,15 +330,15 @@ impl PhylonApp {
             },
         ));
 
-        // Spotlight mode (Phase 5, SX-5b) — dims every organism except the
-        // selected entity, its connected body/colony (reusing the exact
-        // `selected_component` BFS already computed above for selection
-        // highlighting, not a second traversal), and any other organism
-        // whose head falls within the selected organism's interaction
-        // radius (`sensing::HeadVision.range`, falling back to `250.0` —
-        // the same fallback SX-4c/5a's nearby-organism lookups already use,
-        // for consistency). `None` (not gated at all) when the mode is off
-        // or nothing is selected, so this costs nothing in the common case.
+        // Spotlight mode — dims every organism except the selected entity,
+        // its connected body/colony (reusing the exact `selected_component`
+        // BFS already computed above for selection highlighting, not a
+        // second traversal), and any other organism whose head falls within
+        // the selected organism's interaction radius
+        // (`sensing::HeadVision.range`, falling back to `250.0` for
+        // consistency with other nearby-organism lookups elsewhere in this
+        // module). `None` (not gated at all) when the mode is off or
+        // nothing is selected, so this costs nothing in the common case.
         let spotlight_dim_entities: Option<std::collections::HashSet<bevy_ecs::entity::Entity>> =
             if self.ui.spotlight_mode {
                 self.ui.selected_entity.map(|selected| {
@@ -408,24 +405,24 @@ impl PhylonApp {
             .ecs
             .query::<(&physics::Spring, Option<&organisms::OrganismColor>)>();
         for (spring, opt_color) in query_springs_render.iter(&self.world.ecs) {
-            // Absent from the map (segments that existed before this
-            // milestone shipped, or non-organism structures) defaults to
-            // `1.0` — fully grown, not "always freshly spawned."
+            // Absent from the map (segments with no recorded `SpawnTick`,
+            // or non-organism structures) defaults to `1.0` — fully grown,
+            // not "always freshly spawned."
             let growth_scale = entity_growth_progress
                 .get(&spring.node_b)
                 .copied()
                 .unwrap_or(1.0);
 
-            // Colony/migration visualization (Phase 5, SX-3d) — a spring
-            // whose two endpoints belong to different organisms *is* a
-            // colony (budding) link, by the same definition
-            // `analytics_bridge_system`'s colony-connectivity graph already
-            // uses. Population-wide, always visible (not gated by
-            // selection) — Priority 4 (Ecological status) per the Numeric
-            // priority hierarchy, so drawn via `debug_instances` alongside
-            // Health/Disease, beneath the Priority-1 selection/hover
-            // highlight (unaffected — draw order for `debug_instances`
-            // itself was already fixed at SX-1e).
+            // Colony/migration visualization — a spring whose two endpoints
+            // belong to different organisms *is* a colony (budding) link,
+            // by the same definition `analytics_bridge_system`'s
+            // colony-connectivity graph uses. Population-wide, always
+            // visible (not gated by selection) — Priority 4 (Ecological
+            // status) per the numeric priority hierarchy, so drawn via
+            // `debug_instances` alongside Health/Disease, beneath the
+            // Priority-1 selection/hover highlight (see `render.rs`'s own
+            // comment on why `debug_instances` must draw before that
+            // highlight).
             if let (Some(&org_a), Some(&org_b), Some(&pa3), Some(&pb3)) = (
                 entity_organism_id.get(&spring.node_a),
                 entity_organism_id.get(&spring.node_b),

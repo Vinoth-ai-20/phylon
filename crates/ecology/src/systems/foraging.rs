@@ -21,7 +21,7 @@ const FORAGING_CELL_SIZE: f32 = 50.0;
 ///
 /// ## 3. How It Happens
 /// Broad-phase candidates come from a per-tick spatial grid keyed on each organism's core-entity
-/// position (replacing the previous full $O(N^2)$ pairwise scan); the exact minimum inter-segment
+/// position, avoiding a full $O(N^2)$ pairwise scan across the whole population; the exact minimum inter-segment
 /// distance check between a predator node $P_1$ and prey node $P_2$ still gates the interaction:
 ///
 /// $$ | \vec{P_1} - \vec{P_2} | \le R $$
@@ -31,18 +31,17 @@ const FORAGING_CELL_SIZE: f32 = 50.0;
 ///
 /// $$ G_{predator} = \min(G_{predator} + G_{prey} + ATP_{prey}, G_{max}) $$
 ///
-/// **Phase 5, SX-2c:** the moment of a successful organism-vs-organism meal
-/// (predation or herbivory — Phase 1 below) spawns a `TimedEffects`
-/// floating-text burst at the *eater's* position, the same trigger pattern
-/// `corpse_decay_system`'s "Decomposed" burst already establishes in this
-/// crate. Deliberately **not** extended to Phase 2 (pellet/mineral/corpse
-/// grazing) — that happens routinely, every tick, for a large fraction of
-/// the population, and would flood the viewport the same way logging every
-/// `BehaviorState` change would flood `NarrationLog` (an existing, deliberate
-/// restraint this milestone extends rather than overrides). Organism-vs-
-/// organism consumption is comparatively rare and narratively significant,
-/// matching "attack," specifically — this is a real distinction, not an
-/// arbitrary cut.
+/// The moment of a successful organism-vs-organism meal (predation or
+/// herbivory — the "organism vs. organism" pass below) spawns a
+/// `TimedEffects` floating-text burst at the *eater's* position, the same
+/// trigger pattern `corpse_decay_system`'s "Decomposed" burst uses elsewhere
+/// in this crate. Deliberately **not** extended to the "organism vs.
+/// environment" pass (pellet/mineral/corpse grazing) — that happens
+/// routinely, every tick, for a large fraction of the population, and would
+/// flood the viewport the same way logging every `BehaviorState` change
+/// would flood `NarrationLog`. Organism-vs-organism consumption is
+/// comparatively rare and narratively significant, matching "attack,"
+/// specifically — this is a real distinction, not an arbitrary cut.
 #[allow(clippy::too_many_arguments)]
 pub fn foraging_system(
     mut commands: Commands,
@@ -70,10 +69,12 @@ pub fn foraging_system(
             .push(node.position);
     }
 
-    // Phase 1: Organism vs Organism predation.
-    // Broad-phase via spatial grid (keyed on each organism's core-entity
-    // position) replaces the previous O(N^2) `iter_combinations_mut` scan;
-    // the exact minimum inter-segment distance check below is unchanged.
+    // Organism vs. organism predation.
+    // Broad-phase candidates come from a spatial grid keyed on each
+    // organism's core-entity position (an O(N) index build plus O(1)
+    // average-case radius queries, versus an O(N^2) all-pairs scan); the
+    // exact minimum inter-segment distance check below still gates the
+    // actual interaction.
     let organism_eat_radius = 40.0;
     // Generous margin over the eat radius to account for body extent beyond
     // the core node before the exact per-segment distance check narrows it.
@@ -138,9 +139,9 @@ pub fn foraging_system(
                         | (Diet::Herbivore | Diet::Omnivore, Diet::Producer)
                 );
 
-                // Phase 5, SX-2c: brief text (predation vs. herbivory read
-                // differently) at a fixed duration, colored by the eater's
-                // own `Diet::standard_color()` — never a new literal.
+                // Brief text (predation vs. herbivory read differently) at
+                // a fixed duration, colored by the eater's own
+                // `Diet::standard_color()` — never a new literal.
                 const FEEDING_EFFECT_DURATION_TICKS: u64 = 45;
                 let feeding_text = |eater: &Diet| -> &'static str {
                     if *eater == Diet::Carnivore {
@@ -189,7 +190,7 @@ pub fn foraging_system(
         }
     }
 
-    // Phase 2: Organism vs Environment (Pellets, Minerals, Corpses)
+    // Organism vs. environment (pellets, minerals, corpses).
     let eat_radius = 20.0;
 
     for (_entity, mut chem, diet, node) in organism_query.iter_mut() {

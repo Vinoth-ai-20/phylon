@@ -1,6 +1,6 @@
 //! Shared helpers for displaying a `genetics::RegulatoryNetwork` — used by
-//! `plugins::grn_viewer` and, as of Phase 3 M12, `plugins::evolution_debugger`
-//! (its mutation-diff view reuses the exact same network-building and
+//! `plugins::grn_viewer` and `plugins::evolution_debugger` (its
+//! mutation-diff view reuses the exact same network-building and
 //! gene-labeling logic rather than duplicating it).
 
 /// Builds and develops a `RegulatoryNetwork` for one (position, step) pair —
@@ -47,8 +47,8 @@ pub(crate) struct BiasDiffRow {
 }
 
 /// Compares two developed networks' per-gene biases — the core of every
-/// "mutation diff" view in this milestone and the next (GRN Viewer's
-/// parent comparison, Evolution Debugger's arbitrary-pair comparison).
+/// "mutation diff" view (GRN Viewer's parent comparison, Evolution
+/// Debugger's arbitrary-pair comparison).
 pub(crate) fn bias_diff_rows(
     self_network: &genetics::RegulatoryNetwork,
     other_network: &genetics::RegulatoryNetwork,

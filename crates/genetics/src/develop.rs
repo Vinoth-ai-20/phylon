@@ -1,28 +1,29 @@
 //! Positional decode of a [`RegulatoryNetwork`] into concrete developmental
-//! outputs (Phase 3, M4).
+//! outputs.
 //!
 //! Every body position — the head node spawned directly by
 //! `organisms::spawning::spawn_organism`, and every subsequent segment
 //! spawned by `organisms::growth_system` — is decoded through the exact same
 //! [`develop_at_position`] function. There is no special-cased "first
-//! segment" path: per ADR-P3-02, segment identity (and, as of this
-//! milestone, pigmentation) is always a decode of the regulatory network at
-//! a position, never a direct lookup or a template-specific branch.
+//! segment" path: segment identity, branching, actuation, and pigmentation
+//! are always a decode of the regulatory network at a position, never a
+//! direct lookup or a template-specific branch.
 
 use crate::cppn::Cppn;
 use crate::morphogen::external_inputs_for_position;
 use crate::regulatory::{RegulatoryGeneRole, RegulatoryNetwork, REGULATORY_GENE_ROLES};
 use crate::types::SegmentType;
 
-/// Number of developmental steps run before gene states are read — fixed,
-/// per ADR-P3-05 ("fixed step count, never iterate to convergence").
+/// Number of developmental steps run before gene states are read — fixed, so
+/// evaluation cost stays bounded and deterministic regardless of whether a
+/// given evolved regulatory topology would otherwise oscillate or never
+/// settle (see `RegulatoryNetwork::develop`'s doc comment).
 pub const DEVELOPMENT_STEPS: usize = 8;
 
 /// Fixed decode order from a 3-bit Hox combinatorial code to a
-/// [`SegmentType`]. As of Phase 3 M5, the code space (8, from 3 thresholded
-/// Hox genes) exactly matches `SegmentType`'s 8 variants — no modulo wrap is
-/// needed any more (`decode_segment_type` no longer collides codes 5-7 back
-/// onto 0-2, the way it did with only 5 variants).
+/// [`SegmentType`]. The code space (8, from 3 thresholded Hox genes) exactly
+/// matches `SegmentType`'s 8 variants, so every possible code maps to a
+/// distinct segment identity with no collisions.
 const SEGMENT_TYPES_BY_CODE: [SegmentType; 8] = [
     SegmentType::Head,
     SegmentType::Torso,
@@ -48,19 +49,25 @@ pub struct DevelopmentalOutputs {
     pub actuation_phase: f32,
     /// This position's emergent skin pigmentation, `[R, G, B]` in `[0, 1]`.
     pub pigment: [f32; 3],
-    /// Developmental apoptosis (Phase 3, M8; DEF-002): when `true`,
-    /// `organisms::growth_system` prunes this position — it is never
-    /// spawned, as if it had never formed. Germ-soma separation is folded
-    /// directly into this decode rather than a separate flag: a
-    /// `SegmentType::Germinal` position is never marked for apoptosis
-    /// regardless of the raw differentiation signal, mirroring real
-    /// biology's germ-line protection from programmed cell death.
+    /// Developmental apoptosis — programmed segment death: when `true`,
+    /// `organisms::growth_system` prunes this position, so it is never
+    /// spawned, as if it had never formed (named after the biological
+    /// process of programmed cell death that sculpts body shape during
+    /// real embryonic development, e.g. removing webbing between digits).
+    /// Germ-soma separation is folded directly into this decode rather than
+    /// a separate flag: a `SegmentType::Germinal` position is never marked
+    /// for apoptosis regardless of the raw differentiation signal,
+    /// mirroring real biology's protection of germ-line cells from
+    /// programmed cell death.
     pub apoptosis: bool,
 }
 
 /// Decodes a [`SegmentType`] from the Hox-designated gene states as a
-/// combinatorial binary code (each gene thresholded at `0.5`) — see
-/// ADR-P3-02. Order of `hox_states` must match [`REGULATORY_GENE_ROLES`]'s
+/// combinatorial binary code (each gene thresholded at `0.5`). A "Hox code"
+/// here is a short bit-string read off specific gene positions that
+/// determines a body segment's type — named after the biological Hox gene
+/// family, which performs the analogous role in real animal development.
+/// Order of `hox_states` must match [`REGULATORY_GENE_ROLES`]'s
 /// Hox-designated ordering. `hox_states.len()` beyond 3 genes would produce
 /// a code exceeding `SEGMENT_TYPES_BY_CODE`'s range; the modulo is kept as a
 /// defensive bound (not a design feature) rather than assuming callers never
@@ -72,25 +79,25 @@ pub fn decode_segment_type(hox_states: &[f32]) -> SegmentType {
     SEGMENT_TYPES_BY_CODE[code % SEGMENT_TYPES_BY_CODE.len()]
 }
 
-/// Applies unconditional germ-line protection (Phase 3 M8, DEF-002) to a raw
-/// apoptosis signal: a `SegmentType::Germinal` position is never marked for
-/// apoptosis, regardless of `apoptosis_signal` — mirroring real biology's
-/// germ-line protection from programmed cell death, applied here at the
-/// source so nothing downstream can forget it.
+/// Applies unconditional germ-line protection to a raw apoptosis signal: a
+/// `SegmentType::Germinal` position is never marked for apoptosis, regardless
+/// of `apoptosis_signal` — mirroring real biology's germ-line protection from
+/// programmed cell death, applied here at the source so nothing downstream
+/// can forget it.
 pub fn decode_apoptosis(apoptosis_signal: bool, segment_type: SegmentType) -> bool {
     apoptosis_signal && segment_type != SegmentType::Germinal
 }
 
 /// Returns the raw (pre-threshold) Hox-designated gene states at a body
 /// position — the same values [`develop_at_position`] thresholds into a
-/// combinatorial code internally, exposed here for research instrumentation
-/// (Phase 3, M10's HOX Visualizer) that wants to show *how close* a bit is
-/// to flipping, not just the final decoded [`SegmentType`]. A small, cheap,
-/// pure recomputation (development is already fast enough to run once per
-/// displayed position); not folded into `DevelopmentalOutputs` itself since
-/// that type is `Copy` and used pervasively by `organisms::growth_system` —
-/// adding a `Vec` field there would cost every existing call site a
-/// `.clone()` for no growth-time benefit.
+/// combinatorial code internally, exposed here for visualization/debugging
+/// tooling that wants to show *how close* a bit is to flipping, not just the
+/// final decoded [`SegmentType`]. A small, cheap, pure recomputation
+/// (development is already fast enough to run once per displayed position);
+/// not folded into `DevelopmentalOutputs` itself since that type is `Copy`
+/// and used pervasively by `organisms::growth_system` — adding a `Vec` field
+/// there would cost every existing call site a `.clone()` for no
+/// growth-time benefit.
 pub fn hox_states_at_position(
     regulatory_cppn: &Cppn,
     segment_index: usize,
@@ -124,17 +131,19 @@ pub fn develop_at_position(
 
 /// Runs development at one body-axis position, exactly like
 /// [`develop_at_position`], but folds an additional `life_stage_signal` into
-/// every gene's external input (Phase 4, P4-L1 — ADR-P4-03's re-entrant
-/// growth). `life_stage_signal = 0.0` reproduces `develop_at_position`'s
-/// output exactly (see this module's `life_stage_signal_zero_matches_develop_at_position`
-/// regression test) — `organisms::life_cycle::life_stage_system` resumes a
-/// maturing organism's growth with a nonzero signal, so the *new* positions
-/// it reaches as an adult are decoded under a genuinely different context
-/// than a juvenile-context decode of the same position index would have
-/// produced, which is what makes a life-stage transition a real
-/// developmental event rather than a deterministic continuation.
-/// `develop_at_position` is a thin wrapper over this function, not a
-/// separate implementation, so the two can never drift out of sync.
+/// every gene's external input, supporting re-entrant growth (an organism
+/// resuming development after reaching a new life stage, rather than only
+/// growing once as a juvenile). `life_stage_signal = 0.0` reproduces
+/// `develop_at_position`'s output exactly (see this module's
+/// `life_stage_signal_zero_matches_develop_at_position` regression test) —
+/// `organisms::life_cycle::life_stage_system` resumes a maturing organism's
+/// growth with a nonzero signal, so the *new* positions it reaches as an
+/// adult are decoded under a genuinely different context than a
+/// juvenile-context decode of the same position index would have produced,
+/// which is what makes a life-stage transition a real developmental event
+/// rather than a deterministic continuation. `develop_at_position` is a thin
+/// wrapper over this function, not a separate implementation, so the two can
+/// never drift out of sync.
 pub fn develop_at_position_with_life_stage(
     regulatory_cppn: &Cppn,
     segment_index: usize,
@@ -173,8 +182,8 @@ pub fn develop_at_position_with_life_stage(
         pigment_states.get(1).copied().unwrap_or(0.5),
         pigment_states.get(2).copied().unwrap_or(0.5),
     ];
-    // Phase 3 M8 (DEF-002): the Differentiation role's second gene — unused
-    // by any milestone until now — is the apoptosis signal.
+    // The Differentiation role's second gene is the raw apoptosis signal;
+    // `decode_apoptosis` then applies germ-line protection on top of it.
     let apoptosis_signal = differentiation_states.get(1).copied().unwrap_or(0.0) > 0.5;
     let apoptosis = decode_apoptosis(apoptosis_signal, segment_type);
 
@@ -212,9 +221,8 @@ mod tests {
 
     #[test]
     fn decode_segment_type_maps_all_8_codes_to_distinct_types() {
-        // Phase 3 M5: with 8 `SegmentType` variants matching the 3-bit Hox
-        // code's 8 possible values, every code should decode to a unique
-        // type — no more collisions from the pre-M5 modulo-5 wrap.
+        // 8 `SegmentType` variants match the 3-bit Hox code's 8 possible
+        // values one-for-one, so every code should decode to a unique type.
         let mut seen = std::collections::HashSet::new();
         for hi in [0.0_f32, 1.0] {
             for mid in [0.0_f32, 1.0] {
@@ -256,9 +264,8 @@ mod tests {
 
     #[test]
     fn apoptosis_never_fires_for_a_germinal_position() {
-        // Phase 3 M8 (DEF-002): germ-line protection is unconditional — a
-        // Germinal position stays protected even when the raw apoptosis
-        // signal fires.
+        // Germ-line protection is unconditional — a Germinal position stays
+        // protected even when the raw apoptosis signal fires.
         assert!(!decode_apoptosis(true, SegmentType::Germinal));
         assert!(!decode_apoptosis(false, SegmentType::Germinal));
     }
@@ -285,8 +292,8 @@ mod tests {
 
     #[test]
     fn life_stage_signal_zero_matches_develop_at_position() {
-        // Phase 4, P4-L1: `develop_at_position` must be exactly reproduced
-        // by the life-stage-aware function at signal 0.0 — this is the
+        // `develop_at_position` must be exactly reproduced by the
+        // life-stage-aware function at signal 0.0 — this is the
         // regression guarantee every existing call site (juvenile growth,
         // `simulate_growth_timeline`, the HOX/Evolution Debugger UI panels)
         // relies on implicitly by continuing to call `develop_at_position`

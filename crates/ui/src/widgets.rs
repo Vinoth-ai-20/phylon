@@ -13,9 +13,9 @@ use crate::theme;
 /// One key/value line in any inspector-style data grid — call inside an
 /// `egui::Grid` (each call is one row: two cells + `end_row()`).
 ///
-/// Consolidates what used to be three independent implementations:
-/// `sidebar.rs`'s private `grid_row`, `inspector.rs`'s hand-rolled
-/// `ui.label(format!(...))` pairs, and `dialogs.rs`'s `about_grid` rows.
+/// The single implementation for this pattern, shared by `sidebar.rs`,
+/// `inspector.rs`, and `dialogs.rs`'s about grid, so key/value styling can
+/// only ever be changed in one place.
 pub fn kv_row(ui: &mut egui::Ui, key: &str, val: &str) {
     ui.label(
         egui::RichText::new(key)

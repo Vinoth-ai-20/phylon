@@ -6,46 +6,49 @@ use std::collections::HashMap;
 
 /// # Fixed-Table Spatial Hash
 ///
-/// ## 1. What Happens
+/// ## Purpose
+/// A fixed-size spatial hash for broad-phase neighborhood queries over a
+/// population spread unevenly across a large or unbounded area — the CPU-side
+/// counterpart to `gpu::physics_pipeline`'s own fixed-size GPU spatial hash,
+/// though this type and that one are independent implementations serving
+/// different call sites.
+///
+/// ## Architecture
 /// `SpatialHash` divides space into the same kind of grid cells as
 /// [`UniformGrid`](crate::UniformGrid), but instead of one `HashMap` entry
 /// per populated cell, every cell hashes into one of a **fixed** number of
 /// buckets (`table_size`, rounded up to a power of two). Multiple distant
 /// cells may collide into the same bucket.
 ///
-/// ## 2. Why It Happens
+/// ## Why Fixed-Size Rather Than Dynamic
 /// `UniformGrid`'s per-cell `HashMap` entry count scales with the number of
 /// *occupied* cells — fine for a population clustered in one region, but a
 /// sparse population spread very unevenly across a large or unbounded area
-/// (the spec's chunked, infinite-expanding world model) can still end up
-/// with a large, cache-unfriendly set of scattered `HashMap` entries.
-/// `SpatialHash` trades exact per-cell bucketing for a flat, fixed-size
-/// `Vec<Vec<Entity>>` table — bounded memory and a single contiguous
-/// allocation regardless of how far entities are spread, at the cost of
-/// hash collisions occasionally grouping distant cells into one bucket
-/// (query correctness is unaffected — see below — only candidate-scan cost).
+/// can still end up with a large, cache-unfriendly set of scattered
+/// `HashMap` entries. `SpatialHash` trades exact per-cell bucketing for a
+/// flat, fixed-size `Vec<Vec<Entity>>` table — bounded memory and a single
+/// contiguous allocation regardless of how far entities are spread, at the
+/// cost of hash collisions occasionally grouping distant cells into one
+/// bucket (query correctness is unaffected — see below — only candidate-scan
+/// cost).
 ///
-/// ## 3. How It Happens
-/// A cell coordinate hashes into a bucket via a standard 2D integer mix
-/// (`hash(x, y) = (x * P1) XOR (y * P2), mod table_size`, `P1`/`P2` large
-/// primes — this is the same mixing function commonly used for spatial
-/// hashing, e.g. Optimized Spatial Hashing for Collision Detection). Query
-/// correctness holds despite collisions: every candidate entity found in a
-/// scanned bucket is still filtered by its exact stored position before
-/// being returned, exactly like `UniformGrid` — collisions only ever add
-/// extra candidates to filter, never drop real ones, and each bucket index
-/// touched by the query's cell range is visited exactly once (via a
-/// dedup'd set of bucket indices), so a collision never causes an entity to
-/// be returned twice.
+/// ## How It Happens
+/// A cell coordinate hashes into a bucket via a standard integer mix
+/// (`hash(x, y, z) = (x * P1) XOR (y * P2) XOR (z * P3), mod table_size`,
+/// `P1`/`P2`/`P3` large primes — this is the same mixing function commonly
+/// used for spatial hashing, e.g. Optimized Spatial Hashing for Collision
+/// Detection). Query correctness holds despite collisions: every candidate
+/// entity found in a scanned bucket is still filtered by its exact stored
+/// position before being returned, exactly like `UniformGrid` — collisions
+/// only ever add extra candidates to filter, never drop real ones, and each
+/// bucket index touched by the query's cell range is visited exactly once
+/// (via a dedup'd set of bucket indices), so a collision never causes an
+/// entity to be returned twice.
 ///
-/// Inherent methods below are the primary API — as of Phase 8 (ADR-P8-01),
-/// they take `Vec3` positions (previously `Vec2`, widened alongside
-/// [`crate::UniformGrid`]), with a 3rd-axis term folded into `cell_of`'s
-/// cell-key computation and `bucket_of`'s hash mix. The `SpatialIndex` trait
-/// (widened to `Vec3` in Phase 8, Epic 8.9, alongside [`crate::Octree`]'s
-/// introduction) is a thin pass-through over these same inherent methods —
-/// confirmed via a workspace-wide search that no live caller uses this type
-/// through the trait, only through these inherent methods directly.
+/// Inherent methods below are the primary API; the [`SpatialIndex`] trait
+/// impl is a thin pass-through over these same inherent methods — confirmed
+/// via a workspace-wide search that no live caller uses this type through
+/// the trait, only through these inherent methods directly.
 pub struct SpatialHash {
     cell_size: f32,
     table_size: usize,
@@ -60,7 +63,7 @@ impl SpatialHash {
     ///
     /// # Errors
     ///
-    /// Returns [`SpatialError::InvalidConfig`] if `cell_size â‰¤ 0`.
+    /// Returns [`SpatialError::InvalidConfig`] if `cell_size <= 0`.
     pub fn new(cell_size: f32, table_size_hint: usize) -> SpatialResult<Self> {
         if cell_size <= 0.0 {
             return Err(SpatialError::InvalidConfig {

@@ -1,12 +1,14 @@
-/// A GPU-friendly representation of a ParticleNode.
+/// A GPU-friendly representation of a `ParticleNode` — the physics
+/// representation of one point mass in an organism's body (point masses
+/// connected by [`GpuPhysicsSpring`] constraints form the soft-body
+/// skeleton that a body-graph bone's two endpoints are read from).
 ///
-/// Phase 8, Epic 8.10: `position`/`velocity`/`force` widened from `[f32; 2]`
-/// to `[f32; 3]`. The explicit `_pad*` fields mirror WGSL's own storage-
-/// buffer layout rule that a `vec3<f32>` struct member is 16-byte aligned
-/// (size 12, but the next field is pushed to the next 16-byte boundary) —
-/// `physics.wgsl`'s `ParticleNode` struct declares the same padding
-/// explicitly so the two layouts match byte-for-byte, required for
-/// `bytemuck`'s buffer casts to be sound.
+/// The explicit `_pad*` fields mirror WGSL's own storage-buffer layout rule
+/// that a `vec3<f32>` struct member is 16-byte aligned (size 12, but the
+/// next field is pushed to the next 16-byte boundary) — `physics.wgsl`'s
+/// `ParticleNode` struct declares the same padding explicitly so the two
+/// layouts match byte-for-byte, required for `bytemuck`'s buffer casts to
+/// be sound.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuParticleNode {
@@ -73,33 +75,57 @@ struct PhysicsConfigUniform {
 /// Broad-phase spatial-hash table size and per-bucket capacity for the
 /// steric-hindrance repulsion pass. MUST match `HASH_TABLE_SIZE`/
 /// `HASH_CELL_CAPACITY` in `physics.wgsl` — they size a fixed pair of
-/// buffers. Phase 8, Epic 8.10 (ADR-P8-04): chosen to match the pre-8.10
-/// dense `128 x 128` grid's total cell count (16384) exactly, so widening
-/// the broad-phase to a real 3rd axis costs no additional GPU memory —
-/// only the indexing function (hash mix, not direct 2D indexing) changed.
+/// buffers. `16384` matches a `128 x 128` cell grid's total cell count,
+/// giving the same fixed GPU memory footprint regardless of whether cells
+/// are indexed by a 2D or 3D hash mix.
 const HASH_TABLE_SIZE: u32 = 16384;
 const HASH_CELL_CAPACITY: u32 = 64;
 
 /// # GPU Physics Compute Pipeline
 ///
-/// ## 1. What Happens
-/// The `PhysicsComputePipeline` wraps the WebGPU WGSL shaders responsible for resolving
-/// the soft-body spring physics equations for all organisms simultaneously.
+/// ## Purpose
+/// `PhysicsComputePipeline` resolves the soft-body spring physics for every
+/// organism's body (point-mass [`GpuParticleNode`]s connected by
+/// [`GpuPhysicsSpring`] constraints) simultaneously on the GPU.
 ///
-/// ## 2. Why It Happens
-/// A simulation with 500 organisms, each having 10 nodes and 25 springs, requires
-/// ~12,500 spring evaluations per tick. CPU-based physics engines (like Rapier) struggle
-/// with thousands of soft-body constraints. Moving the $O(N)$ math to a GPU Compute
-/// Shader allows the engine to run the Symplectic Euler and Position-Based Dynamics (PBD)
-/// at 60 FPS without blocking the CPU.
+/// ## Why It Happens
+/// A simulation with hundreds of organisms, each with several nodes and
+/// springs, requires thousands of spring evaluations per tick — an $O(N)$
+/// cost per spring, but with a large enough constant factor (broad-phase
+/// repulsion, PBD iterations) that a CPU-side physics loop competes poorly
+/// with the rest of the per-tick simulation budget. Moving this math to a
+/// GPU compute shader lets it run in parallel across nodes/springs, freeing
+/// the CPU to run other systems concurrently (see [`Self::dispatch`]).
 ///
-/// ## 3. How It Happens
-/// The pipeline manages 5 distinct compute passes:
-/// 1. `MuscleActuation`: Modifies rest lengths based on Sine oscillators.
-/// 2. `ComputeForces`: Calculates Hooke's Law for elastic springs.
-/// 3. `Integrate`: Applies $F=MA$ and updates velocities (Symplectic Euler).
-/// 4. `PbdProjection`: Solves distance constraints for rigid segments.
-/// 5. `ApplyPbd`: Updates final positions.
+/// ## Data Flow
+/// Each tick: the caller gathers the current [`GpuParticleNode`]/
+/// [`GpuPhysicsSpring`] arrays from CPU-side organism state -> [`Self::dispatch`]
+/// uploads them to persistent GPU storage buffers, clears the per-tick atomic
+/// force accumulators and spatial-hash bucket counts, and submits the
+/// compute passes below -> the updated node buffer is copied into a staging
+/// buffer and an async read-back is kicked off -> the caller collects the
+/// result later via [`Self::resolve`], normally at the start of the next
+/// tick.
+///
+/// The pipeline manages 5 distinct compute passes, run in this order:
+/// 1. `MuscleActuation`: modifies spring rest lengths based on sine oscillators.
+/// 2. `ComputeForces`: applies Hooke's Law for elastic springs.
+/// 3. `BinNodes` + `Integrate`: bins nodes into the spatial hash for
+///    broad-phase repulsion, then applies $F=MA$ and updates velocities
+///    (Symplectic Euler), including steric-hindrance repulsion between
+///    nearby nodes.
+/// 4. `PbdProjection` + `ApplyPbd` (3 iterations): a Gauss-Seidel-style
+///    Position-Based Dynamics pass that resolves rigid distance constraints
+///    without the instability a stiff spring force would introduce.
+///
+/// ## Determinism
+/// The PBD projection loop iterates a fixed 3 times regardless of
+/// convergence, so results are deterministic *given* the same node/spring
+/// input order and dispatch shape. GPU work-item scheduling order is not
+/// itself guaranteed by wgpu/the underlying driver, so bit-exact
+/// reproducibility across different GPUs or driver versions is not
+/// guaranteed — only same-hardware, same-driver determinism should be
+/// assumed.
 pub struct PhysicsComputePipeline {
     muscle_actuation_pipeline: wgpu::ComputePipeline,
     compute_forces_pipeline: wgpu::ComputePipeline,
@@ -198,7 +224,7 @@ impl PhysicsComputePipeline {
                     },
                     count: None,
                 },
-                // atomic_forces_z (Phase 8, Epic 8.10 — 3rd force axis)
+                // atomic_forces_z (3rd force axis, for the Z dimension)
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -342,26 +368,19 @@ impl PhysicsComputePipeline {
         }
     }
 
-    /// # Physics Step Dispatch & Integration
+    /// Marshals the CPU-side `GpuParticleNode`/`GpuPhysicsSpring` arrays into
+    /// GPU storage buffers, dispatches the compute workloads, and performs a
+    /// **blocking** readback to the CPU before returning. Kept for callers
+    /// that need same-tick results (e.g. tests); the simulation's hot path
+    /// uses [`Self::dispatch`] + [`Self::resolve`] instead, which lets GPU
+    /// work for tick N overlap with CPU work and gets collected at the start
+    /// of tick N+1 instead of stalling the CPU immediately after submission.
     ///
-    /// ## 1. What Happens
-    /// `compute_step` marshals the CPU-side `GpuParticleNode` and `GpuPhysicsSpring` arrays
-    /// into GPU Storage Buffers, dispatches the compute workloads, and performs a **blocking**
-    /// readback to the CPU. Kept for callers that need same-tick results (e.g. tests); the
-    /// simulation's hot path uses [`Self::dispatch`] + [`Self::resolve`] instead, which lets the
-    /// GPU work for tick N overlap with CPU work and get collected at the start of tick N+1
-    /// instead of stalling the CPU immediately after submission.
-    ///
-    /// ## 2. Why It Happens
-    /// The ECS needs the updated physics positions to render the organisms and calculate
-    /// collision/foraging distance checks. While the GPU is incredibly fast at math, transferring
-    /// data across the PCIe bus is slow. We pack all nodes into a flat $1D$ array to minimize
-    /// buffer mapping overhead.
-    ///
-    /// ## 3. How It Happens
-    /// To resolve rigid structural constraints without exploding the simulation, we use
-    /// a Position-Based Dynamics (PBD) approach. The standard Hooke's Law integration runs first,
-    /// followed by a 3-iteration Gauss-Seidel style projection loop:
+    /// Position-Based Dynamics resolves rigid structural constraints without
+    /// the instability a stiff spring force would introduce: standard
+    /// Hooke's-Law force integration runs first, followed by a 3-iteration
+    /// Gauss-Seidel-style projection loop that directly corrects node
+    /// positions toward satisfying each spring's rest length,
     ///
     /// $$ \Delta \vec{p}_1 = \frac{w_1}{w_1 + w_2} (|\vec{p}_1 - \vec{p}_2| - d) \frac{\vec{p}_1 - \vec{p}_2}{|\vec{p}_1 - \vec{p}_2|} $$
     ///

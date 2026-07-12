@@ -1,12 +1,11 @@
-//! Cell Lineage Viewer / Development Replay (Phase 4, `PHASE4_ROADMAP.md`
-//! milestone P4-R5) — reads the selected organism's `evolution::LineageTracker`
-//! record (ancestry, generation, species) alongside its **persistent**
-//! `organisms::DevelopmentalGraph` (P4-F1), which is what makes this panel
-//! meaningfully different from Phase 3's `organisms::simulate_growth_timeline`
-//! replay the HOX/GRN Viewers already use: that replay is a stateless
-//! re-decode from the genome alone (no real entities), while this panel
-//! shows the organism's actual, currently-live anatomy — the same graph
-//! P4-F2 through P4-F5's physiology systems act on every tick.
+//! Cell Lineage Viewer / Development Replay — reads the selected organism's
+//! `evolution::LineageTracker` record (ancestry, generation, species)
+//! alongside its **persistent** `organisms::DevelopmentalGraph`, which is
+//! what makes this panel meaningfully different from the
+//! `organisms::simulate_growth_timeline` replay the HOX/GRN Viewers use:
+//! that replay is a stateless re-decode from the genome alone (no real
+//! entities), while this panel shows the organism's actual, currently-live
+//! anatomy — the same graph the physiology systems act on every tick.
 use crate::types::*;
 
 /// Renders the Cell Lineage Viewer dock panel.
@@ -47,8 +46,7 @@ pub fn lineage_viewer_ui(
 
     ui.add_space(crate::theme::SPACE_SM);
 
-    // Phase 5, SX-3c: a real multi-generation ancestor/descendant tree,
-    // replacing the previous "one raw parent id" row — see
+    // A real multi-generation ancestor/descendant tree — see
     // `evolution::LineageTracker::ancestors`/`children`'s doc comments for
     // why these two directions behave very differently in practice (a
     // parent is usually already dead-and-extracted; a child usually isn't).

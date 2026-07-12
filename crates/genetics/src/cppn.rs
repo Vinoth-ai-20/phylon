@@ -52,28 +52,50 @@ pub const DISJOINT_COEFFICIENT: f32 = 1.0;
 /// difference in [`Cppn::compatibility_distance`].
 pub const WEIGHT_DIFF_COEFFICIENT: f32 = 0.4;
 
-/// # Compositional Pattern Producing Network (NEAT Topology)
+/// # Compositional Pattern Producing Network (CPPN)
 ///
-/// ## 1. What Happens
-/// The `Cppn` is a specialized Artificial Neural Network architecture used to generate spatial
-/// patterns and morphological traits (like brain weights or skin color) as a function of
-/// geometry $(X, Y, \dots)$ rather than temporal inputs.
+/// A CPPN is a small feedforward neural network evaluated not over time, but
+/// as a pure function of position or index — e.g. "where along the body is
+/// this segment" or "which pair of genes is this". Everywhere this crate
+/// needs a smoothly-varying, evolvable value keyed by position (brain
+/// synapse weights, body morphology, regulatory-gene biases and edge
+/// weights), it queries a `Cppn` instead of consulting a lookup table.
 ///
-/// ## 2. Why It Happens
-/// In natural biology, DNA doesn't store a 1:1 blueprint of the brain. It stores a "recipe"
-/// that unfolds over space and time. A CPPN mathematically mimics this by taking spatial coordinates
-/// and outputting traits, creating smooth gradients, symmetries, and repeating motifs—crucial
-/// for generating complex, scalable biological structures with minimal genetic bytes.
+/// ## Why a network instead of a table
 ///
-/// ## 3. How It Happens
-/// The network is a Directed Acyclic Graph (DAG) evaluated via topological feedforward.
-/// For a node $N_i$ with activation function $f$, bias $b_i$, and incoming synapses $W_{j \to i}$:
+/// A lookup table (one entry per position/gene-pair) has no structure: every
+/// entry is independent, so mutating one entry can't smoothly reshape a
+/// whole gradient, symmetry, or repeating motif — and the table's size grows
+/// with the number of positions, not with the complexity of the pattern.
+/// A CPPN instead encodes the *rule* that produces the pattern: its topology
+/// and weights are the heritable, evolvable "genome"; the input position is
+/// a query into that rule, not a storage key. Small mutations to a CPPN's
+/// weights or topology therefore tend to produce small, smooth changes to
+/// the resulting body plan or brain — an evolutionarily useful property
+/// no plain lookup table gives you. This is directly modeled on real DNA,
+/// which doesn't store a 1:1 blueprint of the body either — it stores a
+/// compact "recipe" that unfolds over space and time.
+///
+/// ## Evaluation
+///
+/// The network is a directed acyclic graph (DAG), evaluated by processing
+/// nodes in topological (layer) order so every node's inputs are already
+/// computed by the time it's evaluated. For a node $N_i$ with activation
+/// function $f$, bias $b_i$, and incoming connections $W_{j \to i}$:
 ///
 /// $$ Output_i = f\left( b_i + \sum_{j} (Output_j \times W_{j \to i}) \right) $$
 ///
-/// The structure evolves using NEAT (NeuroEvolution of Augmenting Topologies). Mutations
-/// (`mutate_add_node`, `mutate_add_connection`) split edges and insert complexity over generations,
-/// tracked via global `innovation` numbers for historical crossover.
+/// ## Topology evolution (NEAT)
+///
+/// Structure evolves using NEAT (NeuroEvolution of Augmenting Topologies):
+/// [`Cppn::mutate_add_node`] splits an existing connection and inserts a new
+/// hidden node in its place, and [`Cppn::mutate_add_connection`] adds a new
+/// connection between two previously-unconnected nodes. Every structural
+/// mutation is tagged with a global, ever-increasing `innovation` number
+/// (see [`GlobalInnovationTracker`]), which is what lets
+/// [`Cppn::crossover`]/[`Cppn::compatibility_distance`] match up
+/// corresponding genes between two independently-evolved networks instead of
+/// comparing them positionally.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Cppn {
     /// The nodes in the CPPN.

@@ -1,13 +1,11 @@
-//! Life-stage transitions and re-entrant growth (Phase 4, `PHASE4_ROADMAP.md`
-//! milestone P4-L1, ADR-P4-03).
+//! Life-stage transitions and re-entrant growth.
 
 use crate::components::{GrowthState, LifeStage};
 use crate::developmental_graph::DevelopmentalGraph;
 use bevy_ecs::prelude::{Commands, Entity, Query, Without};
 
 /// Fraction of `metabolism::Age.max_lifespan` at which a `Juvenile` organism
-/// matures into an `Adult` — untuned placeholder, same status as every
-/// other Phase 4 rate/threshold constant introduced this phase.
+/// matures into an `Adult` — an untuned placeholder.
 const MATURITY_AGE_FRACTION: f32 = 0.1;
 
 /// Distance between adjacent spine nodes for resumed growth — must match
@@ -24,8 +22,8 @@ const RESUMED_BUD_INTERVAL: u64 = 30;
 ///
 /// ## 1. What Happens
 /// Promotes a `Juvenile` organism to `Adult` once it clears a maturity age
-/// threshold, and — the "re-entrant growth" ADR-P4-03 calls for —
-/// re-inserts a `GrowthState`, resumed from the organism's *current* body
+/// threshold, and — re-entrant growth — re-inserts a `GrowthState`, resumed
+/// from the organism's *current* body
 /// (via its persistent `DevelopmentalGraph`), so `growth_system` picks up
 /// growing it again from exactly where it left off — typically just past an
 /// early `Tail` decode, since `next_segment_index` was already advanced past
@@ -43,12 +41,11 @@ const RESUMED_BUD_INTERVAL: u64 = 30;
 /// possible size already), not a gap to patch.
 ///
 /// ## 2. Why It Happens
-/// Before this milestone, `growth_system`'s "grow once, wire a `Brain`,
-/// remove `GrowthState` forever" transition was strictly one-way — there
-/// was no life-cycle concept at all. ADR-P4-03 requires re-entrancy on the
-/// *same* entity (preserving lineage/identity continuity) rather than
-/// spawning a wholly separate "adult" organism, which it explicitly
-/// rejected as an alternative.
+/// Without this system, `growth_system`'s "grow once, wire a `Brain`,
+/// remove `GrowthState` forever" transition would be strictly one-way — no
+/// life-cycle concept at all. Re-entrancy happens on the *same* entity
+/// (preserving lineage/identity continuity) rather than spawning a wholly
+/// separate "adult" organism, which would break that continuity.
 ///
 /// ## 3. How It Happens
 /// Only organisms *not* currently mid-growth (`Without<GrowthState>` —
@@ -76,8 +73,8 @@ const RESUMED_BUD_INTERVAL: u64 = 30;
 /// first-ever completion. An in-place topology *extension* would need a
 /// `Brain`/`CtrnnNode` mutation API that doesn't exist today, and would
 /// raise open questions about what a hidden node "means" once the topology
-/// around it changes — this milestone does not attempt to resolve that;
-/// see `PHASE4_ROADMAP.md`'s P4-L1 execution log for the full reasoning.
+/// around it changes — resolving that is a possible future extension, not
+/// attempted here.
 ///
 /// **Known limitation, stated plainly:** any Hebbian-adapted synapse
 /// weights the juvenile brain accumulated via
@@ -124,13 +121,10 @@ pub fn life_stage_system(
             continue;
         };
 
-        // Forward (Phase 8, Epic 8.6, ADR-P8-06): direction from the
-        // second-to-last spine node toward the last one, so resumed growth
-        // continues the same way the body was already growing. A
-        // single-segment (head-only) body has no direction to infer —
-        // default to `+X`, matching the pre-8.6 `heading = 0.0` default
-        // exactly (`Vec3::new(0.0_f32.cos(), 0.0_f32.sin(), 0.0) ==
-        // Vec3::new(1.0, 0.0, 0.0)`).
+        // Forward: direction from the second-to-last spine node toward the
+        // last one, so resumed growth continues the same way the body was
+        // already growing. A single-segment (head-only) body has no
+        // direction to infer — default to `+X`.
         let forward = if spine.len() >= 2 {
             spine[spine.len() - 2]
                 .entity
@@ -310,10 +304,9 @@ mod tests {
 
     #[test]
     fn adult_growth_decodes_a_position_differently_than_a_juvenile_decode_would_have() {
-        // The roadmap's own verification ask for P4-L1: "a fixture-genome
-        // test asserting a life-stage transition actually changes decoded
-        // segment sequence." Uses the same hand-built, linearly-sensitive
-        // CPPN fixture `genetics::develop`'s own
+        // A fixture-genome test asserting a life-stage transition actually
+        // changes the decoded segment sequence. Uses the same hand-built,
+        // linearly-sensitive CPPN fixture `genetics::develop`'s own
         // `nonzero_life_stage_signal_can_change_the_decode` test relies on,
         // confirming `growth_system` actually threads a `LifeStage::Adult`
         // entity's signal through to `develop_at_position_with_life_stage`,

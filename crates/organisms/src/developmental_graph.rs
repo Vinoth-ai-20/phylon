@@ -1,55 +1,79 @@
-//! The Body Graph — see `PHASE3_ROADMAP.md`'s ADR-P3-04/ADR-P3-09 for its
-//! original (transient) design, and `PHASE4_ROADMAP.md`'s **ADR-P4-01** for
-//! why that decision is reversed as of Phase 4, milestone P4-F1.
+//! The Body Graph: an organism's persistent record of its own anatomy.
 //!
-//! **History, so the reversal is understood rather than just asserted:**
-//! Phase 3 made `DevelopmentalGraph` deliberately transient — built up one
-//! [`DevelopmentalNode`] per growth tick inside `GrowthState.graph`, dropped
-//! the moment growth completed. ADR-P3-04 reasoned this was safe because
-//! every node was a *pure function* of the genome and its body position;
-//! ADR-P3-09 went on to prove that claim with a passing cross-check test
-//! (`simulate_growth_timeline_matches_a_real_growth_system_run`), so nothing
-//! was ever lost by discarding the graph — it could always be perfectly
-//! reconstructed from the genome alone via [`simulate_growth_timeline`].
+//! # Purpose
 //!
-//! **Phase 4 breaks that precondition on purpose.** Later Phase 4 epics
-//! (physiology with injury/regeneration; life-stage re-differentiation)
-//! introduce runtime anatomical history that is *not* a pure function of
-//! genome + position — an organ's current condition can depend on damage
-//! taken and tissue regrown, not just what the genome would decode fresh.
-//! Once that's true, discarding the graph *would* lose real information, so
-//! ADR-P4-01 makes `DevelopmentalGraph` a real `bevy_ecs::Component`,
-//! attached to an organism's head entity for its entire life — the
-//! canonical, persistent anatomical model every future biological system
-//! (physiology, circulation, organ inspection, injury) should attach to
-//! rather than duplicate.
+//! [`DevelopmentalGraph`] is the canonical record of what an organism's body
+//! is actually made of: one [`DevelopmentalNode`] per grown segment (main
+//! spine position or lateral fin branch), each carrying its decoded
+//! [`genetics::SegmentType`], the full [`genetics::DevelopmentalOutputs`] it
+//! was decoded from, a link to its structural parent, and (once spawned)
+//! the live ECS entity that segment materialized as. It answers the
+//! question "what is this organism's body like right now" for every other
+//! biological system — transport, endocrine signalling, immune response,
+//! morphogen diffusion, brain wiring — that needs to walk the body's
+//! structure rather than duplicate it.
 //!
-//! [`simulate_growth_timeline`] is **not removed** — it remains the correct
-//! tool for replaying an organism's historical growth *order* (what
-//! happened during initial growth, for the Development Timeline panel).
-//! The persistent component this module now also provides answers a
-//! different question: what is this organism's anatomy *right now*. Both
-//! coexist; see ADR-P4-01 for why neither supersedes the other.
+//! # Why a persistent ECS component, not a transient value
 //!
-//! This milestone (P4-F1) is infrastructure only: the graph becomes
-//! persistent and gains a small, generic (non-biology-specific) query
-//! surface (see [`DevelopmentalGraph::root`], [`DevelopmentalGraph::children_of`],
-//! [`DevelopmentalGraph::node_at_position`]). It does not implement
-//! physiology, circulation, injury, regeneration, life stages, or any
-//! consumer of this data beyond `growth_system` itself continuing to build
-//! it — those are later Phase 4 milestones, gated behind this one.
+//! Every node's *content* (segment type, actuation, pigment) is decoded
+//! purely from the genome and a body position — see
+//! `genetics::develop_at_position` — so in principle the whole graph could
+//! be thrown away after growth and perfectly reconstructed later from the
+//! genome alone (this is exactly what [`simulate_growth_timeline`] does, for
+//! contexts — e.g. a Development Timeline panel — that only care about
+//! *historical growth order*, not live state).
 //!
-//! **Serialization is deliberately not implemented in this milestone.**
-//! Neither `DevelopmentalGraph`/`DevelopmentalNode` nor
-//! `genetics::DevelopmentalOutputs` derive `Serialize`/`Deserialize`.
-//! `crates/storage`'s `SimulationSnapshot` is a hand-built, explicit
-//! whitelist of components (`storage/src/snapshot.rs`), not a generic
-//! reflection-based dump — so this is safe (nothing breaks by omission) but
-//! has a real consequence, documented rather than silently accepted: an
-//! organism saved and reloaded via `SaveState`/`LoadState` loses its
-//! persistent Body Graph (falls back to not having the component at all,
-//! same as `GrowthState`/`Brain`'s internal state already do today). Adding
-//! save/load support is future work, not required for this milestone.
+//! But once an organism is alive, its anatomy accumulates history that is
+//! **not** a pure function of genome + position: injury and regeneration
+//! change a segment's condition, and life-stage transitions re-enter growth
+//! and can change what a position decodes to. Once that's true, throwing the
+//! graph away *would* lose real information that cannot be recomputed. So
+//! `DevelopmentalGraph` is a real `bevy_ecs::Component`, attached to an
+//! organism's head entity for its entire life, rather than a value scoped to
+//! `growth_system`'s execution — it is the one persistent anatomical model
+//! every biological system should attach to, instead of each maintaining its
+//! own private copy of "what segments does this organism have."
+//!
+//! [`simulate_growth_timeline`] and the live persistent graph therefore
+//! answer two different questions and both remain useful: the timeline
+//! replays *how* a body plan came to be (pure function of the genome, no
+//! ECS access, safe to call for any genome at any time); the persistent
+//! graph *is* the organism's current, possibly injury-modified anatomy.
+//!
+//! # Architecture
+//!
+//! The graph is a tree stored as a flat `Vec<DevelopmentalNode>`, with each
+//! node's `parent` field holding the index of its structural parent (`None`
+//! only for the root/head at index 0). This keeps the representation simple
+//! and cheap to append to during growth (`push` is O(1) amortized), at the
+//! cost of O(n) traversals for queries like [`DevelopmentalGraph::children_of`]
+//! or [`DevelopmentalGraph::graph_distance`] — acceptable since a body graph
+//! has at most `crate::MAX_SEGMENTS * 3` nodes (spine plus up to two fins per
+//! branch point), a small bound that makes even a full BFS cheap.
+//!
+//! The query surface deliberately stays small and generic (root lookup,
+//! children-of, position lookup, tree distance) rather than biology-specific
+//! (no organ lookup, no injury queries here) — those concerns belong to the
+//! systems that consume this graph (`transport`, `endocrine`, `immune`,
+//! `morphogen_field`, `brain_wiring`), not to the graph itself.
+//!
+//! # Design decisions
+//!
+//! - **Serialization is not implemented.** Neither `DevelopmentalGraph`/
+//!   `DevelopmentalNode` nor `genetics::DevelopmentalOutputs` derive
+//!   `Serialize`/`Deserialize`. `crates/storage`'s `SimulationSnapshot` is a
+//!   hand-built, explicit whitelist of components, not a generic
+//!   reflection-based dump — so omitting this component is safe (nothing
+//!   breaks), but it has a real consequence worth knowing: an organism saved
+//!   and reloaded via `SaveState`/`LoadState` loses its persistent Body
+//!   Graph, the same way `GrowthState`/`Brain`'s internal state already does
+//!   today. Adding save/load support is a plausible future extension.
+//! - **Distance is graph (topological), not Euclidean.** `graph_distance`
+//!   walks structural edges, deliberately not spatial position, since two
+//!   segments can be spatially close but developmentally distant (or vice
+//!   versa via a branch) — see [`DevelopmentalGraph::graph_distance`]'s doc
+//!   comment for the consumer (nearest-ganglion search in brain wiring) that
+//!   needs this distinction.
 
 use bevy_ecs::prelude::Component;
 use genetics::{DevelopmentalOutputs, SegmentType};
@@ -72,23 +96,23 @@ pub struct DevelopmentalNode {
     pub is_branch: bool,
     /// The body-axis position (`genetics::develop_at_position`'s
     /// `segment_index`) this node was decoded from — a branch node shares
-    /// its parent spine node's position (Phase 3, M13; added so a
-    /// Development Timeline scrubber can map a growth-order step back to
-    /// the position research panels already know how to display).
+    /// its parent spine node's position, so a Development Timeline scrubber
+    /// can map a growth-order step back to the position research panels
+    /// already know how to display.
     pub position: usize,
     /// The live `physics::ParticleNode` entity this position was
-    /// materialized as, if any (Phase 4, P4-F2) — lets a future system map
-    /// a graph index back to the physical/physiological entity carrying
-    /// this segment's actual state (e.g. its `metabolism::ChemicalEconomy`
-    /// pool). `None` for [`simulate_growth_timeline`]'s pure, ECS-free
-    /// reconstruction, which has no real entities to reference.
+    /// materialized as, if any — lets a future system map a graph index back
+    /// to the physical/physiological entity carrying this segment's actual
+    /// state (e.g. its `metabolism::ChemicalEconomy` pool). `None` for
+    /// [`simulate_growth_timeline`]'s pure, ECS-free reconstruction, which
+    /// has no real entities to reference.
     pub entity: Option<bevy_ecs::entity::Entity>,
 }
 
-/// The full sequence of decoded body positions for one organism — as of
-/// Phase 4 (ADR-P4-01), a real, persistent ECS component attached to the
-/// organism's head entity for its entire life, not a transient value
-/// scoped to `growth_system`'s execution.
+/// The full sequence of decoded body positions for one organism — a real,
+/// persistent ECS component attached to the organism's head entity for its
+/// entire life, not a transient value scoped to `growth_system`'s execution
+/// (see the module doc comment for why).
 #[derive(Component, Debug, Clone, Default)]
 pub struct DevelopmentalGraph {
     /// Every node decoded so far, in growth order.
@@ -131,10 +155,9 @@ impl DevelopmentalGraph {
 
     /// Every node whose `parent` is `Some(index)` — i.e. `index`'s direct
     /// structural children (both spine continuation and any branch nodes).
-    /// A small, generic traversal primitive: this milestone (P4-F1)
-    /// deliberately adds no biology-specific queries (organ lookup,
-    /// injury, etc.) — those are later Phase 4 milestones building on top
-    /// of this, per ADR-P4-01.
+    /// A small, generic traversal primitive: this module deliberately adds
+    /// no biology-specific queries (organ lookup, injury, etc.) — those
+    /// belong to the systems built on top of this graph.
     pub fn children_of(&self, index: usize) -> impl Iterator<Item = &DevelopmentalNode> {
         self.nodes.iter().filter(move |n| n.parent == Some(index))
     }
@@ -152,9 +175,8 @@ impl DevelopmentalGraph {
     /// the node's index within this graph rather than a reference — needed
     /// by [`DevelopmentalGraph::graph_distance`], which operates on indices
     /// (matching `DevelopmentalNode::parent`'s own indexing), not positions.
-    /// Added alongside `graph_distance` (Phase 6, Epic C, N1c) rather than
-    /// generalizing `node_at_position` itself, to avoid changing that
-    /// method's existing return type for every current call site.
+    /// Kept as a separate method rather than changing `node_at_position`'s
+    /// own return type, since existing call sites want a reference.
     pub fn index_at_position(&self, position: usize) -> Option<usize> {
         self.nodes
             .iter()
@@ -165,17 +187,15 @@ impl DevelopmentalGraph {
     /// graph's tree — a body-graph (topological) distance, deliberately
     /// not a Euclidean one, since two segments can be spatially close but
     /// developmentally distant (or vice versa via a branch). Used by
-    /// `organisms::systems::growth_system`'s brain-wiring step (Phase 6,
-    /// Epic C, N1c) to find the nearest `SegmentType::Ganglion` anchor for
-    /// a given body position.
+    /// `organisms::brain_wiring` to find the nearest `SegmentType::Ganglion`
+    /// anchor for a given body position.
     ///
     /// Implemented as a plain BFS over the undirected tree formed by
     /// `parent` links — this graph has at most `crate::MAX_SEGMENTS * 3`
     /// nodes (spine + up to 2 fins per branch point), so a BFS with no
     /// further optimization is more than fast enough and keeps this
-    /// generic query surface simple, matching P4-F1's own stated principle
-    /// (a small, non-biology-specific traversal primitive, not a
-    /// specialized shortest-path structure).
+    /// generic query surface simple, rather than needing a specialized
+    /// shortest-path structure.
     pub fn graph_distance(&self, a: usize, b: usize) -> usize {
         if a == b {
             return 0;
@@ -223,23 +243,20 @@ impl DevelopmentalGraph {
 /// pruned on `outputs.apoptosis`; a branch-eligible, branching position
 /// pushes two `Fin` nodes; growth stops after a grown `Tail` or at
 /// [`crate::MAX_SEGMENTS`]) so a research panel can replay "how this body
-/// plan came to be" for any organism, grown or not, without the transient
-/// [`DevelopmentalGraph`] `growth_system` builds ever needing to be
-/// persisted (Phase 3, M13 — see this module's doc comment).
+/// plan came to be" for any organism, grown or not, without needing the
+/// live [`DevelopmentalGraph`] to still exist.
 ///
-/// **Phase 6, Epic D (D1c) scope note:** this function calls
-/// `genetics::develop_at_position` — always a **zero-field-input** decode —
-/// not `develop_at_position_with_life_stage`. As of D1a/D1b, a real
-/// `growth_system` run folds a growing tip's own intra-organism
-/// `morphogen_field::MorphogenLevel` (D1a) and the world-space environmental
-/// Morphogen field (D1b) into every position's decode, neither of which this
-/// function has ever modeled or ever will: doing so would require a live,
-/// stateful field reading this pure `genome + position` reconstruction has
-/// no access to by design (see ADR-P3-04/ADR-P3-09's original "pure
-/// function" reasoning, which this scope note narrows rather than
-/// reverses). **This function is therefore a lower-bound / zero-field
-/// reference reconstruction, not a live-run-identical prediction**, whenever
-/// D1a/D1b's field state is nonzero — see
+/// **Scope note — this is a zero-field reconstruction, not a live-run
+/// prediction.** This function always calls `genetics::develop_at_position`
+/// (the zero-field-input decode), never `develop_at_position_with_life_stage`.
+/// A real `growth_system` run additionally folds a growing tip's own
+/// intra-organism `morphogen_field::MorphogenLevel` and the world-space
+/// environmental morphogen field into every position's decode — inputs this
+/// pure `genome + position` reconstruction has no access to by design (it
+/// takes only a genome, not a live simulation to read fields from). So this
+/// function is a lower-bound / zero-field reference reconstruction, not a
+/// guarantee of matching a live run exactly whenever those fields are
+/// nonzero — see
 /// `systems::tests::real_run_field_signal_divergence_from_the_pure_replay_is_bounded_and_quantified`
 /// for how large that divergence is actually measured to be, rather than
 /// just asserted equal/unequal.
@@ -301,9 +318,9 @@ pub fn simulate_growth_timeline(regulatory_cppn: &genetics::Cppn) -> Development
     graph
 }
 
-/// The physics parameters a decoded [`SegmentType`] compiles down to —
-/// extracted out of `growth_system`'s previously-inline match arms so this
-/// decode-to-physics mapping is independently testable (Phase 3, M6).
+/// The physics parameters a decoded [`SegmentType`] compiles down to — kept
+/// as its own function, separate from `growth_system`'s control flow, so
+/// this decode-to-physics mapping is independently testable.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CompiledSegment {
     /// The numeric code `physics::ParticleNode::segment_type` stores.
@@ -315,15 +332,14 @@ pub struct CompiledSegment {
 }
 
 /// Compiles a decoded [`SegmentType`] into the physics parameters
-/// `growth_system` needs to spawn its `ParticleNode`/`Spring`. As of Phase 3
-/// M9, `Vascular` has its own differentiated profile (DEF-003's
-/// differentiation-output half — a lower, transport-tissue-like stiffness
-/// and a `Passive` constraint, distinct from rigid structural `Torso`).
-/// `Ganglion`/`Germinal` still share Torso's stiffness — a neutral default,
-/// not a designed value; their differentiated physics is the rest of
-/// DEF-003 and germ-line-specific behavior beyond apoptosis protection
-/// (already wired in M8), deferred to later milestones (M14 stretch,
-/// respectively).
+/// `growth_system` needs to spawn its `ParticleNode`/`Spring`. `Vascular` has
+/// its own differentiated profile — a lower, transport-tissue-like stiffness
+/// and a `Passive` constraint, distinct from rigid structural `Torso` — since
+/// circulatory tissue is expected to flex rather than hold rigid shape.
+/// `Ganglion`/`Germinal` still share Torso's stiffness as a neutral default,
+/// not a deliberately designed value; giving them their own differentiated
+/// physics (beyond `Germinal`'s existing apoptosis protection — see
+/// `genetics::decode_apoptosis`) is a possible future extension.
 pub fn compile_segment(role: SegmentType) -> CompiledSegment {
     let particle_segment_type = match role {
         SegmentType::Head => 0,
@@ -359,26 +375,25 @@ pub fn compile_segment(role: SegmentType) -> CompiledSegment {
 }
 
 /// Whether a decoded segment type is eligible to sprout a lateral fin pair
-/// — only `Torso`/`Muscle` are (not `Head`/`Tail`, and not yet any of
-/// Phase 3 M5's new types, which have no designed branch behavior).
+/// — only `Torso`/`Muscle` are (not `Head`/`Tail`, nor `Vascular`/`Ganglion`/
+/// `Germinal`, which have no designed branch behavior).
 pub fn can_branch(role: SegmentType) -> bool {
     matches!(role, SegmentType::Torso | SegmentType::Muscle)
 }
 
 /// The lateral ("left"/"right" fin) direction for a bilaterally symmetric
-/// branch point (Phase 8, Epic 8.6, ADR-P8-06) — a proper 3D cross product
-/// of the body-fixed `dorsal` ("up") and `forward` (direction-of-travel)
-/// reference vectors, replacing the pre-8.6 `Vec2::new(-dir.y, dir.x)`
-/// construction that only had one well-defined answer in 2D (in 3D,
-/// "perpendicular to a direction" is an entire circle of vectors, not one —
-/// see the ADR's own Context section). One fin sprouts at `root + result *
-/// spread`, the other at `root - result * spread`.
+/// branch point — a 3D cross product of the body-fixed `dorsal` ("up") and
+/// `forward` (direction-of-travel) reference vectors. A naive 2D
+/// perpendicular formula like `Vec2::new(-dir.y, dir.x)` has only one
+/// well-defined answer in 2D, but in 3D "perpendicular to a direction" is an
+/// entire circle of vectors, not one — the cross product with a second
+/// reference vector (`dorsal`) is what picks out a single, well-defined
+/// direction from that circle. One fin sprouts at `root + result * spread`,
+/// the other at `root - result * spread`.
 ///
-/// Reproduces the pre-8.6 2D formula exactly whenever `dorsal == Vec3::Z`
+/// Reproduces the equivalent 2D formula exactly whenever `dorsal == Vec3::Z`
 /// and `forward` is confined to the XY plane (`forward.z == 0.0`) — true at
-/// every construction site in this crate today, since Epic 8.6's scope is
-/// making this math well-defined in 3D, not introducing a new growth-
-/// direction mechanism.
+/// every construction site in this crate today.
 pub fn bilateral_fin_direction(dorsal: common::Vec3, forward: common::Vec3) -> common::Vec3 {
     dorsal.cross(forward)
 }
@@ -388,10 +403,10 @@ mod tests {
     use super::*;
     use common::Vec3;
 
-    /// ADR-P8-06's own named regression check: for the default `Vec3::Z`
-    /// dorsal and any `forward` confined to the XY plane (every spawn site
-    /// in this crate today), the new cross-product formula must reproduce
-    /// the pre-8.6 `Vec2::new(-dir.y, dir.x)` construction exactly.
+    /// Regression check: for the default `Vec3::Z` dorsal and any `forward`
+    /// confined to the XY plane (every spawn site in this crate today), the
+    /// 3D cross-product formula must reproduce the equivalent
+    /// `Vec2::new(-dir.y, dir.x)` 2D construction exactly.
     #[test]
     fn bilateral_fin_direction_with_z_dorsal_matches_the_pre_8_6_2d_formula() {
         for heading_deg in [0, 30, 90, 137, 200, 315] {
@@ -539,10 +554,10 @@ mod tests {
         assert_eq!(graph.nodes[fin_b].parent, Some(torso));
     }
 
-    /// Phase 6, Epic C (N1c): a straight spine chain's graph distance must
-    /// be the real number of edges walked, not a raw index difference —
-    /// they'd coincide for a pure spine anyway, but this is the base case
-    /// the branch test below is contrasted against.
+    /// A straight spine chain's graph distance must be the real number of
+    /// edges walked, not a raw index difference — they'd coincide for a
+    /// pure spine anyway, but this is the base case the branch test below
+    /// is contrasted against.
     #[test]
     fn graph_distance_on_a_straight_spine_is_the_hop_count() {
         let mut graph = DevelopmentalGraph::new();
@@ -711,9 +726,9 @@ mod tests {
 
     #[test]
     fn vascular_has_its_own_differentiated_profile() {
-        // Phase 3 M9 (DEF-003): Vascular is no longer a Torso-stiffness
-        // placeholder — it's `Passive` (like Tail) but at its own,
-        // distinct stiffness, not equal to Torso's or Tail's.
+        // Vascular is not a Torso-stiffness placeholder — it's `Passive`
+        // (like Tail) but at its own, distinct stiffness, not equal to
+        // Torso's or Tail's.
         let vascular = compile_segment(SegmentType::Vascular);
         let torso = compile_segment(SegmentType::Torso);
         let tail = compile_segment(SegmentType::Tail);

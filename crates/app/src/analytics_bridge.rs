@@ -7,18 +7,13 @@ use bevy_ecs::prelude::*;
 /// uses, rather than paying the cost every tick.
 const ANALYTICS_SAMPLE_INTERVAL_TICKS: u64 = 60; // once per second at 60 Hz
 
-/// # Diversity, Distribution, and Colony-Connectivity Analytics Bridge
-///
-/// ## 1. What Happens
 /// Bridges `evolution::LineageTracker` (species/age/generation per
 /// currently-alive organism) and the inter-organism `physics::Spring` graph
-/// (colony links formed by `reproduction::ReproductionMode::Budding`, Epic
-/// 10) into `analytics::MetricsState` — computing Shannon/Simpson
-/// diversity, species richness/turnover, age/generation distributions, and
-/// colony size/diameter. These are the Epic 12 metrics the spec's Analytics
-/// Requirements section asks for.
+/// (colony links formed by `reproduction::ReproductionMode::Budding`) into
+/// `analytics::MetricsState` — computing Shannon/Simpson diversity, species
+/// richness/turnover, age/generation distributions, and colony
+/// size/diameter.
 ///
-/// ## 2. Why It Happens
 /// `analytics` deliberately doesn't depend on `evolution`/`physics` (see
 /// `analytics::shannon_index`'s doc comment) so it stays a decoupled
 /// math/storage crate, callable from contexts that don't have a live ECS
@@ -27,7 +22,6 @@ const ANALYTICS_SAMPLE_INTERVAL_TICKS: u64 = 60; // once per second at 60 Hz
 /// composition root, is that something, the same pattern `app::batch` uses
 /// to bridge `research`.
 ///
-/// ## 3. How It Happens
 /// A "colony" is a connected component of the graph formed by springs whose
 /// two endpoint nodes belong to *different* organisms (`ParticleNode.organism_id`
 /// differs) — ordinary intra-body springs (bones, muscles) connect nodes of
@@ -61,11 +55,11 @@ pub fn analytics_bridge_system(
             ages.push(atmosphere.ticks.saturating_sub(record.birth_tick));
             generations.push(record.generation);
         }
-        // Phase 5, SX-3b: a single paired `Vec` from one `.iter()` pass, not
-        // two separately-collected `.keys()`/`.values()` vectors — avoids
-        // relying on both iterators staying positionally aligned across two
-        // separate calls, and lets `record_diversity` retain the species-id
-        // to count pairing (previously discarded immediately after use).
+        // A single paired `Vec` from one `.iter()` pass, not two separately
+        // collected `.keys()`/`.values()` vectors — avoids relying on both
+        // iterators staying positionally aligned across two separate calls,
+        // and lets `record_diversity` retain the species-id to count
+        // pairing.
         let species_distribution: Vec<(u64, usize)> = species_counts
             .iter()
             .map(|(&id, &count)| (id, count))

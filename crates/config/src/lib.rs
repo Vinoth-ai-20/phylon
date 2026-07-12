@@ -270,15 +270,13 @@ impl Default for RenderConfig {
 /// research tool—sometimes it needs to run on a Linux cluster for 48 hours with
 /// no GPU, spitting out data to SQLite. This config enables those environments.
 ///
-/// Phase 6, Epic A: this struct previously also declared
-/// `autosave_interval_ticks` — a field with a default value and zero
-/// readers anywhere in `app`. Autosave has only ever been manual
-/// (`MenuAction::SaveState`); the field silently implied periodic autosave
-/// happened when it never did. Removed rather than wired up, since building
-/// a real periodic-autosave system (save-path/rotation policy, error
-/// handling, a tick-loop hook) is feature work, not the bug-fix this epic
-/// scopes — tracked as a future research-platform feature if a real need
-/// for it emerges, not silently dropped.
+/// Note: autosave is currently manual-only (triggered via
+/// `MenuAction::SaveState`) — there is no `autosave_interval_ticks` field or
+/// periodic-autosave system. Adding one is real feature work (a save-path
+/// and rotation policy, error handling, a tick-loop hook) rather than a
+/// config knob, so it is intentionally left out until a concrete need for
+/// periodic autosave arises, rather than exposing a field that silently does
+/// nothing.
 ///
 /// ## 3. How It Happens
 /// The `app` crate checks `headless`. If true, it skips initializing `winit` and
@@ -511,11 +509,12 @@ mod tests {
         assert_eq!(cfg.simulation.tick_rate, 60);
     }
 
-    /// Phase 6, Epic A: `ResearchConfig::autosave_interval_ticks` was
-    /// removed (a dead field with zero readers) from both the struct and
-    /// `data/default.ron`. This proves the real, checked-in config file
-    /// still parses cleanly after that edit — not just the in-memory
-    /// `Default` impl the other tests above exercise.
+    /// Proves the real, checked-in `data/default.ron` file parses cleanly
+    /// with the current `PhylonConfig` shape — not just the in-memory
+    /// `Default` impl the other tests above exercise. A schema change that
+    /// forgets to update the checked-in file (or introduces a required
+    /// field with no `#[serde(default)]`) fails here even if every other
+    /// test passes.
     #[test]
     fn real_default_ron_file_still_loads() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/default.ron");

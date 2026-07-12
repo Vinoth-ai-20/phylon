@@ -1,3 +1,9 @@
+//! Neural plasticity systems: neuromodulator updates driven by physiological
+//! state, and Hebbian weight adaptation (with periodic weak-synapse pruning)
+//! for the organism's CTRNN brain — the systems that let a brain change
+//! within a single organism's lifetime, on top of whatever topology
+//! evolution already produced.
+
 use bevy_ecs::prelude::{Query, Res};
 
 /// # Neuromodulator Update System

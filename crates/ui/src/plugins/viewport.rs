@@ -37,14 +37,12 @@ pub fn viewport_ui(
             let zoom_delta = ui.input(|i| i.zoom_delta());
             let camera = state.camera();
 
-            // Cursor world-space position (Phase 2, M10) — `None` unless the
-            // cursor is actually within this canvas's rect, so hovering a
-            // different panel doesn't leave a stale/wrong readout. Phase 8,
-            // ADR-P8-02: now goes through the one canonical
-            // `Camera3d::screen_to_ray` unproject, intersected with the
-            // `Z = 0` plane every organism/pellet still lives on, replacing
-            // one of the 3 independently hand-derived screen↔world
-            // transforms the Phase 8 audit found.
+            // Cursor world-space position — `None` unless the cursor is
+            // actually within this canvas's rect, so hovering a different
+            // panel doesn't leave a stale/wrong readout. Goes through the
+            // one canonical `Camera3d::screen_to_ray` unproject,
+            // intersected with the `Z = 0` plane every organism/pellet
+            // still lives on.
             state.cursor_world_pos = hover_pos.filter(|p| rect.contains(*p)).map(|p| {
                 let ppp = ctx.pixels_per_point();
                 let screen_pos =
@@ -57,7 +55,7 @@ pub fn viewport_ui(
 
             // Middle-button drag orbits/looks around (Orbit/Fly respectively
             // — see `app::render`'s interaction dispatch); left-button drag
-            // continues to pan, unchanged from pre-Phase-8 behavior.
+            // pans.
             let rotate_delta = if interact_response.dragged_by(egui::PointerButton::Middle) {
                 interact_response.drag_delta()
             } else {
@@ -101,13 +99,11 @@ pub fn viewport_ui(
                         .button(format!("{} Inspect", egui_remixicon::icons::SEARCH_LINE))
                         .clicked()
                     {
-                        // Phase 7, W0b: `MenuAction::SelectEntity`'s handler
-                        // now opens the Inspector/sidebar itself (via
-                        // `WorkbenchState::select`), so this button no
-                        // longer needs its own copy of that logic — it was
-                        // a second, slightly different implementation of
-                        // the same "select and inspect" behavior plain
-                        // viewport clicks lacked (see W0a's finding #1).
+                        // `MenuAction::SelectEntity`'s handler opens the
+                        // Inspector/sidebar itself (via
+                        // `WorkbenchState::select`), so this button needs
+                        // no separate "select and inspect" logic of its
+                        // own.
                         actions.push(MenuAction::SelectEntity(entity));
                         ui.close_menu();
                     }
@@ -203,15 +199,11 @@ pub fn viewport_ui(
             });
 
             // Double-click to focus the entity under the cursor (falling
-            // back to whatever's already selected) — Phase 7, W0b: this
-            // used to set `tracked_entity` directly, silently turning a
-            // "look at this once" gesture into permanent camera-follow.
-            // Now it's a one-shot snap only (`MenuAction::FocusSelection`,
-            // which already existed for the menu-triggered case — see its
-            // own doc comment), matching the milestone's explicit
-            // requirement that double-click focuses once and never enables
-            // persistent tracking. Follow remains a separate, always-
-            // explicit action (toolbar, Inspector, or context menu).
+            // back to whatever's already selected) — a one-shot snap only
+            // (`MenuAction::FocusSelection`, shared with the menu-triggered
+            // case — see its own doc comment). Never enables persistent
+            // camera-follow: Follow remains a separate, always-explicit
+            // action (toolbar, Inspector, or context menu).
             if interact_response.double_clicked() {
                 if let Some(entity) = state.hovered_entity.or(state.selected_entity) {
                     state.select(entity);
@@ -225,20 +217,17 @@ pub fn viewport_ui(
             let to_local_px = |p: egui::Pos2| {
                 common::Vec2::new((p.x - rect.min.x) * ppp, (p.y - rect.min.y) * ppp)
             };
-            // Real unproject (ADR-P8-02) — the second of the 3 duplicated
-            // screen↔world transforms the Phase 8 audit found, now going
-            // through `Camera3d::screen_to_ray` + the shared Z=0 plane
-            // intersection instead of its own hand-derived ortho inverse.
+            // Unproject via `Camera3d::screen_to_ray` + the shared Z=0
+            // plane intersection — the canonical screen→world transform,
+            // not a hand-derived ortho inverse.
             let to_world = |p: egui::Pos2| {
                 let (origin, dir) = camera.screen_to_ray(to_local_px(p), viewport_size_px);
                 crate::camera::ray_intersect_z0(origin, dir)
                     .unwrap_or_else(|| camera.position.truncate())
             };
-            // World→screen projection (the inverse direction) — now a real
-            // `Camera3d::world_to_screen` projection (Phase 8, Epic 8.4;
-            // previously a flat approximation fed by the `camera_pos_2d`/
-            // `camera_zoom_2d` bridge, before that method existed), local to
-            // this viewport's rect rather than the raw screen.
+            // World→screen projection (the inverse direction) — a real
+            // `Camera3d::world_to_screen` projection, local to this
+            // viewport's rect rather than the raw screen.
             let to_screen = |p: common::Vec2| {
                 camera
                     .world_to_screen(p.extend(0.0), viewport_size_px)
@@ -246,9 +235,9 @@ pub fn viewport_ui(
                     .unwrap_or(rect.center())
             };
 
-            // Box-select (Phase 2, M8) / Lasso-select (Phase 8, Epic 8.4) /
-            // Measure (Phase 2, M11) share one click-drag gesture, branching
-            // on `state.marquee_mode` (toggled from the toolbar) — the drag
+            // Box-select / Lasso-select / Measure share one click-drag
+            // gesture, branching on `state.marquee_mode` (toggled from the
+            // toolbar) — the drag
             // start is tracked explicitly in `state` (set on
             // `drag_started_by`, cleared on `drag_stopped_by`) rather than
             // relying on `interact_pointer_pos()` staying valid past the

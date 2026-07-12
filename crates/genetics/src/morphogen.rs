@@ -1,16 +1,22 @@
-//! Analytic morphogen gradients (Phase 3, M3).
+//! Analytic morphogen gradients.
 //!
-//! See `PHASE3_ROADMAP.md`'s ADR-P3-03: these are closed-form functions of
-//! position, not a diffused PDE field (that upgrade stays deferred as
-//! DEF-006). A real early-embryo gradient such as Bicoid in *Drosophila* is
+//! A morphogen is a simulated diffusible signal that provides positional
+//! information during growth — named after the biological concept (e.g.
+//! Bicoid in *Drosophila* embryos), where a concentration gradient tells
+//! cells at different positions "how far from the head/source am I", which
+//! they use to decide what to become.
+//!
+//! These are closed-form functions of position, not a diffused PDE field —
+//! a real PDE-based diffusion simulation would be more physically faithful
+//! but is unnecessary here: a real early-embryo gradient such as Bicoid is
 //! itself close to an exponential decay from a localized source, so a
-//! closed form is a reasonable first model, not a simplification purely for
-//! convenience.
+//! closed form is a reasonable direct model, not just a simplification for
+//! convenience. A full diffusion simulation remains a possible future
+//! upgrade if richer, non-monotonic gradient shapes are ever needed.
 //!
-//! **Scope of this milestone:** these functions compute [`RegulatoryNetwork`]
-//! `external_inputs` from a body-axis position. They are not yet called by
-//! `organisms::growth_system` (that wiring, plus reading Hox-designated
-//! genes for segment identity, is Phase 3 M4).
+//! These functions compute [`RegulatoryNetwork`] `external_inputs` from a
+//! body-axis position — see `crate::develop::develop_at_position`, which is
+//! what actually wires this into segment-identity decoding.
 //!
 //! [`RegulatoryNetwork`]: crate::regulatory::RegulatoryNetwork
 
@@ -40,10 +46,10 @@ pub fn distance_from_head_gradient(segment_index: usize, total_segments: usize) 
 
 /// Builds the `external_inputs` slice [`RegulatoryNetwork::step`]/[`develop`]
 /// expect: one value per gene, computed from this position's morphogen
-/// signals. For this milestone every gene receives the same combined signal
-/// (AP position plus the distance-from-head gradient) — which genes read
-/// which *specific* morphogen channel is a Phase 3 M4 decoding concern, not
-/// this milestone's.
+/// signals. Every gene currently receives the same combined signal (AP
+/// position plus the distance-from-head gradient); routing different genes
+/// to different morphogen channels is a possible future refinement, not
+/// needed by the current decode in `crate::develop`.
 ///
 /// [`RegulatoryNetwork::step`]: crate::regulatory::RegulatoryNetwork::step
 /// [`develop`]: crate::regulatory::RegulatoryNetwork::develop

@@ -110,8 +110,8 @@ pub fn status_bar_ui(
             );
         }
 
-        // Cursor world-space position (Phase 2, M10) — only takes strip
-        // space while the cursor is actually over the viewport.
+        // Cursor world-space position — only takes strip space while the
+        // cursor is actually over the viewport.
         if let Some(pos) = state.cursor_world_pos {
             ui.separator();
             crate::widgets::status_chip(
@@ -129,16 +129,16 @@ pub fn status_bar_ui(
         crate::widgets::status_chip(ui, egui_remixicon::icons::BUG_LINE, entity_count.to_string(), None);
         ui.separator();
 
-        // Phase 9, P9.1 (performance foundation): these population-wide
-        // counts were previously recomputed via 6 full-population ECS
-        // queries every single frame, unconditionally — the status bar has
-        // no visibility gate (unlike Metrics, which only pays this cost
-        // while its panel is open), so this ran regardless of whether the
-        // simulation was even paused. A status strip refreshing every
-        // `COUNT_REFRESH_INTERVAL` frames (~0.25s at 60Hz) is visually
+        // These population-wide counts are refreshed every
+        // `COUNT_REFRESH_INTERVAL` frames rather than every frame, since the
+        // status bar has no visibility gate (unlike Metrics, which only
+        // pays this cost while its panel is open) and would otherwise run 6
+        // full-population ECS queries unconditionally, every frame,
+        // regardless of whether the simulation was even paused. A status
+        // strip refreshing every ~0.25s at 60Hz is visually
         // indistinguishable from every-frame updates for slowly-changing
-        // population counts, while cutting this cost to a fraction of its
-        // former total. Cached in a `thread_local!`, matching the existing
+        // population counts, while cutting this cost to a fraction of the
+        // every-frame total. Cached in a `thread_local!`, matching the
         // `SYS`/memory-probe pattern immediately below in this same file.
         const COUNT_REFRESH_INTERVAL: u32 = 15;
         struct CachedCounts {
@@ -237,12 +237,13 @@ pub fn status_bar_ui(
 
         zone_separator(ui);
 
-        // ── Zone 3: Behavior (Phase 5, SX-8c) ────────────────────────────────
-        // Reuses the per-organism `BehaviorState`/`Infection` data SX-1b/1d
-        // already added (population-wide behavior glyphs, disease tint) —
-        // this is the same data aggregated into a status-bar count instead
-        // of a second query mechanism. `hunting_count`/`diseased_count`
-        // computed above, alongside the other Zone-2 counts (P9.1).
+        // ── Zone 3: Behavior ─────────────────────────────────────────────────
+        // Reuses the per-organism `BehaviorState`/`Infection` data behind
+        // the population-wide behavior glyphs and disease tint elsewhere in
+        // the viewport — this is the same data aggregated into a
+        // status-bar count instead of a second query mechanism.
+        // `hunting_count`/`diseased_count` are computed above, alongside
+        // the other Zone-2 counts.
         tight_row(ui, |ui| {
             ui.label(format!(
                 "{} Hunting: ",

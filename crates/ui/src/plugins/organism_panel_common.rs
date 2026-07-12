@@ -1,4 +1,4 @@
-//! Shared helper for every Phase 4 P4-R-tier physiology panel (Physiology,
+//! Shared helper for every physiology-family panel (Physiology,
 //! Circulation, Hormone, and Immune Viewers) — each is fundamentally "take
 //! the selected/tracked organism, walk its persistent Body Graph, show one
 //! specific component per segment," differing only in *which* component.
@@ -6,8 +6,8 @@
 //! each panel owns the second half (its own per-segment table).
 
 /// Resolves the currently selected-or-tracked organism's entity and a clone
-/// of its persistent `organisms::DevelopmentalGraph` (Phase 4, ADR-P4-01) —
-/// `None` if nothing is selected/tracked, or the entity has no Body Graph
+/// of its persistent `organisms::DevelopmentalGraph` — `None` if nothing
+/// is selected/tracked, or the entity has no Body Graph
 /// (e.g. it isn't a head node). Callers render their own "nothing to show"
 /// message on `None`, since the right hint text differs per panel.
 pub fn resolve_target_and_graph(
@@ -37,8 +37,8 @@ pub fn segment_identity_cells(
 }
 
 /// A checkbox toggling `state.physiology_overlay` between `None` and
-/// `Some(layer)` (Phase 4, P4-V2) — shared by the Circulation/Hormone/Immune
-/// Viewer panels, each of which has exactly one overlay layer it can turn
+/// `Some(layer)` — shared by the Circulation/Hormone/Immune Viewer panels,
+/// each of which has exactly one overlay layer it can turn
 /// on. Checking one layer's box implicitly turns off any other, since only
 /// one overlay is drawn at a time (see `ui::render::render_physiology_overlay`).
 pub fn viewport_overlay_toggle(

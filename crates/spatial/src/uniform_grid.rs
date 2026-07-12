@@ -34,12 +34,8 @@ use std::collections::HashMap;
 /// fixed-size bucket table when that growth pattern matters more than exact
 /// per-cell bucketing.
 ///
-/// Inherent methods below are the primary API — as of Phase 8 (ADR-P8-01),
-/// they take `Vec3` positions (previously `Vec2`, widened alongside
-/// `physics::ParticleNode`), with a 3rd-axis term folded into `cell_of`'s
-/// cell-key computation. The `SpatialIndex` trait (widened to `Vec3` in
-/// Phase 8, Epic 8.9, alongside [`crate::Octree`]'s introduction) is a thin
-/// pass-through over these same inherent methods — confirmed via a
+/// Inherent methods below are the primary API; the `SpatialIndex` trait impl
+/// is a thin pass-through over these same inherent methods — confirmed via a
 /// workspace-wide search that no live caller uses this type through the
 /// trait, only through these inherent methods directly.
 pub struct UniformGrid {

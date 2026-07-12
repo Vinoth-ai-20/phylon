@@ -1,21 +1,52 @@
 //! # Phylon Evolution
 //!
+//! ## Purpose
 //! Selection pressure, speciation, lineage tracking, fitness metrics, and
 //! hybridization barriers.
 //!
-//! Evolution in Phylon is **emergent** — there is no explicit fitness function.
-//! Survival and reproduction pressure exerted by the ecology system acts as
-//! the selection gradient.
+//! Evolution in Phylon is **emergent** — there is no explicit fitness
+//! function anywhere in this crate. Survival and reproduction pressure
+//! exerted by the ecology system (who gets eaten, who starves, who finds
+//! enough energy to reproduce) acts as the selection gradient; nothing here
+//! scores or ranks organisms directly.
 //!
-//! Speciation, by contrast, is explicit: [`SpeciesRegistry`] clusters
-//! organisms by [`genetics::Genome::distance`] (NEAT-style genetic
-//! compatibility), replacing the placeholder `SpeciesId(0)` every organism
-//! used to receive regardless of its genome.
+//! Speciation, by contrast, is explicit and is this crate's main job.
+//! **Speciation** is the process by which a population splits into
+//! genetically distinct groups that the simulation tracks as separate
+//! "species." Concretely, a "species" in Phylon is *not* a fixed taxonomic
+//! category — it's a cluster of organisms whose genomes ([`genetics::Genome`])
+//! are all within [`genetics::Genome::distance`] of a shared representative
+//! genome (NEAT-style genetic compatibility distance, the same clustering
+//! approach used by the NEAT neuroevolution algorithm). As mutation drifts a
+//! lineage's genome far enough from its species' representative, new
+//! organisms in that lineage stop matching and found a new species —
+//! speciation emerges from genetic drift, it isn't scheduled or triggered
+//! by any explicit event.
+//!
+//! ## Architecture
+//! Two resources do the work, updated independently every time an organism
+//! is born or dies:
+//!
+//! - [`LineageTracker`] is an in-memory table of [`LineageRecord`]s — one
+//!   per currently-tracked organism — recording its parent, lineage,
+//!   species, and birth/death ticks. The `app` crate calls
+//!   [`LineageTracker::register_birth`] when it resolves a
+//!   `reproduction::BirthRequest` into a spawned organism, and
+//!   [`LineageTracker::register_death`] when an organism dies. Completed
+//!   (dead) records are periodically drained via
+//!   [`LineageTracker::extract_completed_records`] to bound memory use —
+//!   this tracker is a rolling window over the *currently relevant* part of
+//!   the phylogenetic tree, not a permanent archive (permanent history
+//!   lives in the `storage` crate).
+//! - [`SpeciesRegistry`] assigns each newly spawned organism's genome a
+//!   [`SpeciesId`] via [`SpeciesRegistry::classify`], comparing it against
+//!   each existing species' representative genome and founding a new
+//!   species if no match is found within [`DEFAULT_COMPATIBILITY_THRESHOLD`].
 //!
 //! ## Not yet implemented
 //!
-//! Explicit selection/fitness metrics and hybridization barriers (declared
-//! in this module's original scope) have no code here yet — only lineage
+//! Explicit selection/fitness metrics and hybridization barriers (part of
+//! this crate's intended scope) have no code here yet — only lineage
 //! tracking and speciation are implemented so far.
 
 #![warn(missing_docs)]
@@ -157,7 +188,7 @@ impl LineageTracker {
 
     /// Walks upward from `entity` via each record's `parent_id`, up to
     /// `max_depth` hops, returning the chain from immediate parent to most
-    /// distant ancestor still resident in this tracker (Phase 5, SX-3c).
+    /// distant ancestor still resident in this tracker.
     ///
     /// **Stops as soon as a lookup misses**, not just at `max_depth` — a
     /// dead ancestor's record is extracted from this tracker (by
@@ -188,7 +219,7 @@ impl LineageTracker {
     }
 
     /// Returns every record whose `parent_id` is `entity` — direct children
-    /// only, one generation down (Phase 5, SX-3c). An `O(records)` scan (no
+    /// only, one generation down. An `O(records)` scan (no
     /// child-index is maintained, since this is a UI-panel-on-selection
     /// query, not a hot per-tick path — the same "compute on demand for the
     /// one selected entity" pattern `render_physiology_overlay` already
@@ -256,9 +287,9 @@ impl Default for LineageTracker {
 pub const DEFAULT_COMPATIBILITY_THRESHOLD: f32 = 3.0;
 
 /// Number of [`SpeciesRegistry::classify`] calls between automatic
-/// representative refreshes (DEF-022, `IMPLEMENTATION_STATUS.md`). Chosen
-/// as a coarse, infrequent cadence — refreshing is a drift correction, not
-/// a per-birth operation — not tuned against a specific population size.
+/// representative refreshes. Chosen as a coarse, infrequent cadence —
+/// refreshing is a drift correction, not a per-birth operation — not tuned
+/// against a specific population size.
 pub const REPRESENTATIVE_REFRESH_INTERVAL: u64 = 500;
 
 /// One tracked species: its assigned ID and the representative genome new
@@ -267,8 +298,8 @@ struct SpeciesRecord {
     id: SpeciesId,
     representative: genetics::Genome,
     /// The most recently classified member of this species since the last
-    /// refresh — becomes the new `representative` at the next refresh
-    /// (DEF-022). `None` if no member has joined since the last refresh.
+    /// refresh — becomes the new `representative` at the next refresh.
+    /// `None` if no member has joined since the last refresh.
     most_recent_member: Option<genetics::Genome>,
 }
 
@@ -294,9 +325,9 @@ struct SpeciesRecord {
 /// representative can grow unrepresentative of its current members as they
 /// keep mutating — every [`REPRESENTATIVE_REFRESH_INTERVAL`] classify calls,
 /// [`SpeciesRegistry::classify`] promotes each species's most recently
-/// classified member to be its new representative (DEF-022,
-/// `IMPLEMENTATION_STATUS.md`). This is a coarse "most recent member"
-/// refresh, not a true population centroid (which isn't well-defined for a
+/// classified member to be its new representative. This is a coarse
+/// "most recent member" refresh, not a true population centroid (which
+/// isn't well-defined for a
 /// NEAT-style CPPN graph) — a reasonable, simple correction for drift, not
 /// a claim of statistical centrality.
 #[derive(bevy_ecs::system::Resource)]
@@ -355,7 +386,7 @@ impl SpeciesRegistry {
     }
 
     /// Promotes each species's most-recently-classified member (since the
-    /// last refresh) to be its new representative (DEF-022). Species with
+    /// last refresh) to be its new representative. Species with
     /// no new member since the last refresh keep their current
     /// representative unchanged. Called automatically by
     /// [`SpeciesRegistry::classify`] every [`REPRESENTATIVE_REFRESH_INTERVAL`]
@@ -457,10 +488,10 @@ mod tests {
 
     #[test]
     fn regulatory_cppn_divergence_alone_founds_a_new_species() {
-        // Phase 3 M7: `Genome::distance` now sums a `regulatory_cppn` term
-        // too — two genomes identical in brain/morph but divergent enough
-        // in `regulatory_cppn` should classify as different species, which
-        // was impossible before this milestone (the term didn't exist).
+        // `Genome::distance` sums a `regulatory_cppn` term in addition to
+        // brain/morphology terms — two genomes identical in brain/morph but
+        // divergent enough in `regulatory_cppn` should still classify as
+        // different species.
         let mut registry = SpeciesRegistry::new(0.5);
         let mut g1 = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
         g1.regulatory_cppn = sample_cppn();
@@ -520,9 +551,9 @@ mod tests {
         assert!(registry.species[0].most_recent_member.is_none());
     }
 
-    /// Phase 5, SX-3c: walks a real 3-generation chain (grandparent →
-    /// parent → child), all still alive/tracked, proving `ancestors` climbs
-    /// more than one hop when the chain is actually resident.
+    /// Walks a real 3-generation chain (grandparent -> parent -> child),
+    /// all still alive/tracked, proving `ancestors` climbs more than one
+    /// hop when the chain is actually resident.
     #[test]
     fn ancestors_walks_multiple_live_generations() {
         let mut tracker = LineageTracker::new();
@@ -574,9 +605,9 @@ mod tests {
         assert_eq!(tracker.ancestors(c, 1).len(), 1);
     }
 
-    /// Phase 5, SX-3c: `children` finds direct offspring, and grandchildren
-    /// are reachable by calling `children` again on each child — proving the
-    /// descendant direction genuinely supports multi-generation traversal.
+    /// `children` finds direct offspring, and grandchildren are reachable
+    /// by calling `children` again on each child — proving the descendant
+    /// direction genuinely supports multi-generation traversal.
     #[test]
     fn children_finds_direct_offspring_and_grandchildren() {
         let mut tracker = LineageTracker::new();

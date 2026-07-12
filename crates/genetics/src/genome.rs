@@ -4,14 +4,13 @@ use crate::types::{GenomeId, Ploidy};
 use common::EntityId;
 use serde::{Deserialize, Serialize};
 
-/// Current `Genome::schema_version`. Bumped from 4 to 5 by the addition of
-/// `mutation_count` (Phase 5, SX-4b — Inspector's "MutationCount" row had
-/// nothing to read; `Genome` tracked no mutation history or count at all).
-/// No migration path exists from schema 4 or earlier, matching the
-/// project's established policy (bump and document the break; see
-/// `IMPLEMENTATION_STATUS.md`'s ADR-010) — bincode's positional encoding
-/// means a new field changes the byte layout regardless of `#[serde(default)]`,
-/// so old snapshots genuinely cannot load against this schema.
+/// Current `Genome::schema_version`. Bumped whenever a field is added to or
+/// removed from [`Genome`]'s layout. No migration path exists between schema
+/// versions — old snapshots saved under a previous version cannot be
+/// deserialized against the current `Genome` layout, because bincode's
+/// positional encoding means a new field changes the byte layout regardless
+/// of `#[serde(default)]`. The policy is to bump the version and document
+/// the break rather than maintain migration code for every past layout.
 pub const GENOME_SCHEMA_VERSION: u32 = 5;
 
 /// A diploid genome's second allele set — present only when
@@ -25,7 +24,7 @@ pub struct DiploidAlleles {
     pub brain_cppn: Cppn,
     /// The second allele's body-morphology CPPN.
     pub morph_cppn: Cppn,
-    /// The second allele's regulatory-network-generating CPPN (Phase 3, M1).
+    /// The second allele's regulatory-network-generating CPPN.
     pub regulatory_cppn: Cppn,
 }
 
@@ -53,27 +52,24 @@ pub struct Genome {
     /// Same first-allele-only caveat as `brain_cppn` — see
     /// [`Genome::expressed_morph_cppn`].
     pub morph_cppn: Cppn,
-    /// The CPPN generating a `regulatory::RegulatoryNetwork`'s weights
-    /// (Phase 3, M1 — see `PHASE3_ROADMAP.md`'s ADR-P3-01). Not yet wired
-    /// to growth/crossover/mutation/speciation-distance — those are
-    /// separate, later milestones (M2, M4, M7 respectively).
+    /// The CPPN generating a `regulatory::RegulatoryNetwork`'s weights (see
+    /// `crate::regulatory` for what this network does). Feeds growth,
+    /// crossover, mutation, and speciation distance, exactly like
+    /// `brain_cppn`/`morph_cppn`.
     ///
     /// Same first-allele-only caveat as `brain_cppn` — see
     /// [`Genome::expressed_regulatory_cppn`].
     pub regulatory_cppn: Cppn,
     /// How many times [`Genome::mutate`] has been called on this genome
-    /// since it was created (Phase 5, SX-4b). Resets to `0` for a fresh
-    /// genome from any constructor, including [`Genome::crossover`]'s child
-    /// — this counts mutations applied to *this specific organism's*
-    /// genome, not a cumulative lineage total (that would need walking
+    /// since it was created. Resets to `0` for a fresh genome from any
+    /// constructor, including [`Genome::crossover`]'s child — this counts
+    /// mutations applied to *this specific organism's* genome, not a
+    /// cumulative lineage total (that would need walking
     /// `evolution::LineageTracker`'s ancestry instead, a different metric).
     pub mutation_count: u32,
     /// The second allele set, present only when `ploidy` is
     /// [`Ploidy::Diploid`]. `None` for haploid genomes (the common case
-    /// today) — this field was added in schema version 3, so bincode
-    /// snapshots saved under schema version 2 cannot be deserialized
-    /// against the current `Genome` layout (no migration path exists yet;
-    /// see `docs` or the implementation roadmap's Epic 7 note).
+    /// today).
     pub second_allele: Option<DiploidAlleles>,
 }
 
@@ -97,9 +93,9 @@ impl Genome {
     /// haploid genomes' CPPNs as its two alleles — `self`'s fields (`id`,
     /// `origin`) are kept; only `allele_a`'s and `allele_b`'s CPPNs are used.
     ///
-    /// Each allele tuple is `(brain_cppn, morph_cppn, regulatory_cppn)` —
-    /// extended in Phase 3, M1 to carry the third CPPN so a diploid genome
-    /// is diploid at every gene locus, not just the original two.
+    /// Each allele tuple is `(brain_cppn, morph_cppn, regulatory_cppn)` — all
+    /// three CPPNs, so a diploid genome is diploid at every gene locus, not
+    /// just some of them.
     ///
     /// This is the only way to construct a [`Ploidy::Diploid`] genome today;
     /// `reproduction::reproduction_system`'s sexual-mating path still
@@ -162,9 +158,8 @@ impl Genome {
     }
 
     /// The regulatory-network-generating CPPN actually used for growth (via
-    /// `organisms::growth_system`, Phase 3 M4) and, as of M7, for
-    /// speciation distance — see [`Genome::expressed_brain_cppn`] for the
-    /// dominance rule.
+    /// `organisms::growth_system`) and for speciation distance — see
+    /// [`Genome::expressed_brain_cppn`] for the dominance rule.
     pub fn expressed_regulatory_cppn(&self) -> std::borrow::Cow<'_, Cppn> {
         match &self.second_allele {
             Some(alleles) => std::borrow::Cow::Owned(express_diploid(
@@ -176,18 +171,17 @@ impl Genome {
     }
 
     /// NEAT-style genetic-distance between two genomes' expressed phenotypes
-    /// — the sum of the brain, morphology, and (as of Phase 3 M7)
-    /// regulatory CPPNs' compatibility distances (see
-    /// [`Cppn::compatibility_distance`]). Diploid genomes are compared
-    /// on their expressed (dominance-resolved) CPPNs, so distance reflects
-    /// phenotype, not raw allele storage. Used by `evolution::SpeciesRegistry`
-    /// to cluster organisms into species without a hardcoded `SpeciesId`.
+    /// — the sum of the brain, morphology, and regulatory CPPNs'
+    /// compatibility distances (see [`Cppn::compatibility_distance`]).
+    /// Diploid genomes are compared on their expressed (dominance-resolved)
+    /// CPPNs, so distance reflects phenotype, not raw allele storage. Used
+    /// by `evolution::SpeciesRegistry` to cluster organisms into species
+    /// without a hardcoded `SpeciesId`.
     ///
-    /// Adding the `regulatory_cppn` term shifts every existing distance
-    /// value upward relative to pre-M7 behavior (see `PHASE3_ROADMAP.md`'s
-    /// §10 calibration note) — `evolution::DEFAULT_COMPATIBILITY_THRESHOLD`
-    /// may need retuning if species counts diverge unexpectedly from
-    /// pre-M7 runs.
+    /// Including the `regulatory_cppn` term means `evolution::DEFAULT_COMPATIBILITY_THRESHOLD`
+    /// must be calibrated against all three CPPNs' combined distance, not
+    /// just brain and morphology — retune it if species counts diverge
+    /// unexpectedly from expectations based on brain/morphology alone.
     pub fn distance(&self, other: &Genome) -> f32 {
         let brain_d = self.expressed_brain_cppn().compatibility_distance(
             &other.expressed_brain_cppn(),
@@ -211,15 +205,14 @@ impl Genome {
     }
 
     /// Creates a deterministic, hand-authored ("seed") genome from explicit
-    /// CPPNs — used for starter-scenario species (Phase 3 M4, replacing the
-    /// retired `new_hox_driven`/`HoxSequence` template mechanism).
+    /// CPPNs — used for starter-scenario species.
     ///
-    /// Per ADR-P3-02's directive: a seed organism is not a special-cased
-    /// morphology — it is an ordinary `Genome` that happens to have been
-    /// authored by hand rather than produced by mutation and selection. It
-    /// develops through exactly the same `organisms::growth_system` /
-    /// `develop_at_position` pipeline as any evolved organism; the only
-    /// difference is where its CPPN weights came from.
+    /// A seed organism is not a special-cased morphology — it is an ordinary
+    /// `Genome` that happens to have been authored by hand rather than
+    /// produced by mutation and selection. It develops through exactly the
+    /// same `organisms::growth_system` / `develop_at_position` pipeline as
+    /// any evolved organism; the only difference is where its CPPN weights
+    /// came from.
     pub fn seed(
         id: GenomeId,
         origin: EntityId,
@@ -287,8 +280,8 @@ impl Genome {
     /// For a diploid genome, the second allele is mutated independently —
     /// each allele copy accumulates its own mutations, exactly as separate
     /// chromosome copies would, rather than always mutating in lockstep.
-    /// As of Phase 3 M2, `regulatory_cppn` mutates under the same pass gate
-    /// as `brain_cppn`/`morph_cppn` — see `mutate_cppn_trio`.
+    /// `regulatory_cppn` mutates under the same pass gate as
+    /// `brain_cppn`/`morph_cppn` — see `mutate_cppn_trio`.
     pub fn mutate<R: rand::Rng>(
         &mut self,
         mutation_rate: f32,
@@ -313,11 +306,10 @@ impl Genome {
                 tracker,
             );
         }
-        // Phase 5, SX-4b: counts calls to `mutate`, not individual node/
-        // connection mutations within a call — Inspector's "MutationCount"
-        // row needed *some* real number; a full per-mutation-event history
-        // (what changed, when) is a larger, separate feature, not
-        // implemented here (see this milestone's roadmap entry).
+        // Counts calls to `mutate`, not individual node/connection mutations
+        // within a call. A full per-mutation-event history (what changed,
+        // when) would be a larger, separate feature — this is just a simple
+        // counter for display purposes.
         self.mutation_count += 1;
     }
 }
@@ -326,10 +318,9 @@ impl Genome {
 /// `regulatory` CPPN triplet — shared between `Genome::mutate`'s primary
 /// allele and (for diploid genomes) its second allele, so the two are
 /// mutated independently rather than the second allele silently never
-/// mutating. Named `_trio` (not `_pair`) since Phase 3 M2 extended this from
-/// two CPPNs to three; `regulatory_cppn` uses the identical mutation rates
-/// (5% add-node, 10% add-connection, per-connection jitter) as the other
-/// two — no separate tuning was judged necessary for this milestone.
+/// mutating. `regulatory_cppn` uses the identical mutation rates (5%
+/// add-node, 10% add-connection, per-connection jitter) as the other two —
+/// no separate tuning was judged necessary.
 /// Maximum per-mutation-pass drift applied to a connection's own
 /// `mutation_rate`, and the range it's clamped to — self-adaptation lets
 /// evolution itself tune how volatile each locus is, rather than fixing it
@@ -381,10 +372,10 @@ fn mutate_cppn_trio<R: rand::Rng>(
             mutate_connection(conn, rng);
         }
 
-        // Mutate Regulatory CPPN (Phase 3, M2) — same rates as brain/morph
-        // above; appended after them (rather than interleaved) so the
-        // pre-existing brain/morph mutation draw sequence for a given seed
-        // is disturbed as little as possible by this addition.
+        // Mutate Regulatory CPPN — same rates as brain/morph above; run
+        // after them (rather than interleaved) so a given seed's brain/morph
+        // mutation draw sequence stays stable regardless of what else is
+        // being mutated.
         if rng.gen::<f32>() < 0.05 {
             regulatory_cppn.mutate_add_node(&mut tracker.next_innovation, rng);
         }
@@ -470,9 +461,8 @@ mod tests {
 
     #[test]
     fn crossover_combines_regulatory_cppn_from_both_parents() {
-        // Phase 3 M2: real NEAT-style crossover now applies to this field,
-        // matching brain_cppn/morph_cppn (superseding M1's "carried over
-        // unchanged" placeholder). For a single-connection CPPN,
+        // NEAT-style crossover applies to this field exactly like
+        // brain_cppn/morph_cppn. For a single-connection CPPN,
         // `Cppn::crossover`'s per-gene coin flip means the result always
         // equals exactly one parent's weight, never a blend — so across
         // enough seeds, both parents' values should each appear at least
@@ -503,9 +493,8 @@ mod tests {
 
     #[test]
     fn mutate_changes_regulatory_cppn() {
-        // Phase 3 M2: real mutation now applies to this field (superseding
-        // M1's "unchanged" placeholder), using the same rates as
-        // brain_cppn/morph_cppn — see `mutate_cppn_trio`.
+        // Mutation applies to this field exactly like brain_cppn/morph_cppn
+        // — see `mutate_cppn_trio`.
         let mut g = Genome::new_minimal(GenomeId(1), EntityId(0));
         g.regulatory_cppn = sample_cppn(0.42);
         let before = g.regulatory_cppn.clone();
@@ -574,9 +563,9 @@ mod tests {
 
     #[test]
     fn diploid_second_allele_regulatory_cppn_crosses_and_mutates_too() {
-        // Phase 3 M2: verifies the diploid second-allele path for
-        // `regulatory_cppn` specifically — both `new_diploid`'s 3-tuple
-        // signature and `mutate_cppn_trio`'s per-allele call.
+        // Verifies the diploid second-allele path for `regulatory_cppn`
+        // specifically — both `new_diploid`'s 3-tuple signature and
+        // `mutate_cppn_trio`'s per-allele call.
         let mut g = Genome::new_diploid(
             GenomeId(1),
             EntityId(0),
@@ -700,10 +689,9 @@ mod tests {
         }
     }
 
-    /// Phase 5, SX-4b: Inspector's "MutationCount" row needed a real number
-    /// to read — this proves `mutate` actually increments it, once per
-    /// call, regardless of how many individual node/connection mutations
-    /// happened inside that call.
+    /// Proves `mutate` actually increments `mutation_count`, once per call,
+    /// regardless of how many individual node/connection mutations happened
+    /// inside that call.
     #[test]
     fn mutate_increments_mutation_count_once_per_call() {
         let mut genome = Genome::new_minimal(GenomeId(1), EntityId(0));

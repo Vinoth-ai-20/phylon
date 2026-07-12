@@ -44,14 +44,13 @@ pub fn menu_ui(
                 ui.close_menu();
             }
 
-            // Recent Files (Phase 7, W0d) — this block is presentation
-            // only: all ordering/duplicate/cap policy lives in
+            // Recent Files — this block is presentation only: all
+            // ordering/duplicate/cap policy lives in
             // `crate::RecentItemsService` (see its module doc comment).
-            // Previously this pushed a generic `MenuAction::LoadState`
-            // regardless of which entry was clicked (opening a fresh file
-            // picker instead of that entry's own path) — a confirmed,
-            // permanently-dead control, since `recent_files` was also
-            // never populated by anything. Both are fixed here.
+            // Each entry pushes `MenuAction::LoadStateFromPath` with its own
+            // path, not a generic `MenuAction::LoadState`, so clicking a
+            // specific recent file actually opens that file rather than a
+            // fresh file picker.
             let recent_files: Vec<String> = state
                 .recent_items
                 .items(crate::RecentCategory::Files)
@@ -163,15 +162,6 @@ pub fn menu_ui(
         });
 
         // ── EDIT ──────────────────────────────────────────────────────────
-        //
-        // Phase 6, Epic J: Undo/Redo and "Duplicate Selected" were removed
-        // from here (and every other place that advertised them) — their
-        // `MenuAction` handlers only ever logged a warning and did nothing.
-        // Undo/Redo would need a real command-history stack; duplicating an
-        // organism would need to clone its genome/lineage/diet through the
-        // same spawn path births use — both are genuine new subsystems, out
-        // of proportion for a UI-debt cleanup. Removed rather than left as
-        // a control that silently does nothing while claiming otherwise.
         ui.menu_button("Edit", |ui| {
             if ui.button("Delete Selected").clicked() {
                 actions.push(MenuAction::DeleteSelection);
@@ -196,8 +186,8 @@ pub fn menu_ui(
 
         // ── VIEW ──────────────────────────────────────────────────────────
         ui.menu_button("View", |ui| {
-            // Phase 9, P9.4 — Blender-style navigation actions, gathered
-            // in one submenu rather than scattered across "View" directly,
+            // Blender-style navigation actions, gathered in one submenu
+            // rather than scattered across "View" directly,
             // since these are one-shot camera commands, not view-state
             // toggles like the checkboxes below.
             ui.menu_button(
@@ -306,9 +296,9 @@ pub fn menu_ui(
             );
             ui.separator();
 
-            // Colormap selector — moved out of the always-visible toolbar
-            // (Milestone 13): it's a configuration choice, not a per-frame
-            // control, so it doesn't need constant screen real estate.
+            // Colormap selector lives in the View menu, not the always-visible
+            // toolbar: it's a configuration choice, not a per-frame control,
+            // so it doesn't need constant screen real estate.
             let current_colormap = world
                 .ecs
                 .get_resource::<HeatmapState>()
@@ -402,11 +392,10 @@ pub fn menu_ui(
             }
             ui.separator();
             ui.menu_button("Layout Presets", |ui| {
-                // Phase 7, W3b: one list (`LayoutPreset::ALL`) instead of a
-                // hardcoded button per preset, duplicated here and in the
-                // Windows menu below — adding a 7th preset in the future is
-                // now a one-line change to `LayoutPreset::ALL`, not two
-                // more duplicated button blocks.
+                // One list (`LayoutPreset::ALL`) instead of a hardcoded
+                // button per preset, so adding a new preset in the future
+                // is a one-line change to `LayoutPreset::ALL`, not
+                // duplicated button blocks here and in the Windows menu.
                 for preset in crate::layout::LayoutPreset::ALL {
                     if ui.button(preset.label()).clicked() {
                         crate::layout::apply_layout_preset(state, preset);
@@ -418,7 +407,7 @@ pub fn menu_ui(
                 crate::layout::apply_default_layout(state);
                 ui.close_menu();
             }
-            // Phase 7, W3c: opens the Workspace Manager overlay
+            // Opens the Workspace Manager overlay
             // (`plugins::workspace_manager`) — save/rename/duplicate/
             // delete/export/import/reset, all in one place rather than
             // growing this menu with a lifecycle-operation submenu per
@@ -610,11 +599,10 @@ pub fn menu_ui(
 
             ui.separator();
             ui.menu_button("Layout Presets", |ui| {
-                // Phase 7, W3b: one list (`LayoutPreset::ALL`) instead of a
-                // hardcoded button per preset, duplicated here and in the
-                // Windows menu below — adding a 7th preset in the future is
-                // now a one-line change to `LayoutPreset::ALL`, not two
-                // more duplicated button blocks.
+                // One list (`LayoutPreset::ALL`) instead of a hardcoded
+                // button per preset, so adding a new preset in the future
+                // is a one-line change to `LayoutPreset::ALL`, not
+                // duplicated button blocks here and in the Windows menu.
                 for preset in crate::layout::LayoutPreset::ALL {
                     if ui.button(preset.label()).clicked() {
                         crate::layout::apply_layout_preset(state, preset);
@@ -626,7 +614,7 @@ pub fn menu_ui(
                 crate::layout::apply_default_layout(state);
                 ui.close_menu();
             }
-            // Phase 7, W3c: opens the Workspace Manager overlay
+            // Opens the Workspace Manager overlay
             // (`plugins::workspace_manager`) — save/rename/duplicate/
             // delete/export/import/reset, all in one place rather than
             // growing this menu with a lifecycle-operation submenu per

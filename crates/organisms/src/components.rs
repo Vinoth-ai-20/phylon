@@ -40,13 +40,13 @@ pub struct Generation(pub u32);
 #[derive(Component, Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct SpawnTick(pub u64);
 
-/// An organism's current life stage (Phase 4, `PHASE4_ROADMAP.md` milestone
-/// P4-L1, ADR-P4-03). Every organism starts `Juvenile`; `organisms::life_cycle::life_stage_system`
-/// promotes it to `Adult` once it clears a maturity age threshold — at which
-/// point growth becomes re-entrant (see that system's doc comment). Only two
-/// stages exist for this milestone, deliberately: the roadmap calls for a
-/// life-stage state machine, not a specific number of stages, and two is the
-/// minimum that makes "a transition" meaningful at all.
+/// An organism's current life stage. Every organism starts `Juvenile`;
+/// `organisms::life_cycle::life_stage_system` promotes it to `Adult` once it
+/// clears a maturity age threshold — at which point growth becomes
+/// re-entrant (see that system's doc comment). Only two stages exist today,
+/// deliberately: this is a life-stage state machine, not tied to a specific
+/// number of stages, and two is the minimum that makes "a transition"
+/// meaningful at all.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum LifeStage {
     /// Not yet mature — the stage every organism is spawned in.
@@ -58,10 +58,9 @@ pub enum LifeStage {
 
 impl LifeStage {
     /// The `develop_at_position_with_life_stage` signal for this stage —
-    /// `0.0` for `Juvenile` reproduces `develop_at_position`'s original,
-    /// pre-P4-L1 decode exactly; `Adult`'s value is an untuned placeholder,
-    /// same status as every other Phase 4 rate/signal constant introduced
-    /// this phase, chosen only to be clearly nonzero.
+    /// `0.0` for `Juvenile` reproduces `develop_at_position`'s baseline
+    /// decode exactly; `Adult`'s value is an untuned placeholder, chosen
+    /// only to be clearly nonzero.
     pub fn developmental_signal(self) -> f32 {
         match self {
             LifeStage::Juvenile => 0.0,
@@ -73,16 +72,16 @@ impl LifeStage {
 /// Tracks the sequential growth of an organism from its regulatory genome.
 ///
 /// Each tick, `organisms::growth_system` decodes the next body position via
-/// `genetics::develop_at_position` (Phase 3, M4) and materialises the result
-/// as a spine node (and, if the position branches, a lateral fin pair).
-/// When growth is complete the brain is wired and `GrowthState` is removed.
+/// `genetics::develop_at_position` and materialises the result as a spine
+/// node (and, if the position branches, a lateral fin pair). When growth is
+/// complete the brain is wired and `GrowthState` is removed.
 ///
-/// As of Phase 4 (`PHASE4_ROADMAP.md`'s ADR-P4-01), the Body Graph itself is
-/// tracked in a sibling `crate::DevelopmentalGraph` component on the same
-/// entity, not a field here — `growth_system` writes to that component
-/// directly, so it survives this component's removal instead of being
-/// dropped along with it (the pre-Phase-4 behavior; see ADR-P3-04/ADR-P3-09
-/// for why that used to be fine, and ADR-P4-01 for why it no longer is).
+/// The Body Graph itself is tracked in a sibling `crate::DevelopmentalGraph`
+/// component on the same entity, not a field here — `growth_system` writes
+/// to that component directly, so it survives this component's removal
+/// instead of being dropped along with it. See `crate::developmental_graph`'s
+/// module doc for why the Body Graph must be a separate, persistent
+/// component.
 #[derive(Component, Debug, Clone)]
 pub struct GrowthState {
     /// The genome driving growth.
@@ -95,12 +94,12 @@ pub struct GrowthState {
     pub base_bud_interval: u64,
     /// The single spine node spawned by the previous gene — to attach the next one to.
     pub parent_spine_node: Option<bevy_ecs::entity::Entity>,
-    /// Position for the next spine node. `Vec3` since Phase 8 (ADR-P8-01) —
-    /// `z` stays `0.0` at every construction site: Epic 8.6 (ADR-P8-06) made
-    /// the `forward`/`dorsal` fin-placement math genuinely 3D-capable, but
-    /// deliberately did not introduce a new mechanism for growth to actually
-    /// leave the Z=0 plane (that would be a biological behavior change, out
-    /// of this epic's scope).
+    /// Position for the next spine node. A full `Vec3`, though `z` stays
+    /// `0.0` at every construction site today: the `forward`/`dorsal`
+    /// fin-placement math is genuinely 3D-capable (see
+    /// `crate::bilateral_fin_direction`), but nothing yet gives growth a
+    /// mechanism to actually leave the Z=0 plane (that would be a
+    /// deliberate biological behavior change, not a math limitation).
     pub current_pos: Vec3,
     /// Distance between adjacent spine nodes.
     pub segment_length: f32,
@@ -108,26 +107,24 @@ pub struct GrowthState {
     pub effectors: Vec<bevy_ecs::entity::Entity>,
     /// Set once a decoded segment is `SegmentType::Tail` — growth stops
     /// after that segment even if `next_segment_index` hasn't reached
-    /// `organisms::MAX_SEGMENTS` yet (Phase 3, M4; no special-cased length,
-    /// just an emergent stopping condition from the decode itself).
+    /// `organisms::MAX_SEGMENTS` yet; no special-cased length, just an
+    /// emergent stopping condition from the decode itself.
     pub is_organism_complete: bool,
-    /// Body-fixed forward (direction-of-travel) unit vector (Phase 8, Epic
-    /// 8.6, ADR-P8-06) — replaces the pre-8.6 `heading: f32` angle; computed
-    /// once at spawn/resume and reused, rather than re-deriving `(cos, sin,
-    /// 0)` at every use site. Still confined to the growth plane (`z ==
-    /// 0.0`) at every construction site in this crate today — Epic 8.6's
-    /// scope is making "left"/"right" fin placement well-defined in 3D, not
-    /// introducing a new growth-direction mechanism (a genuinely tilting
-    /// `forward` would be a biological behavior change, out of scope per
-    /// ADR-P8-06's own framing).
+    /// Body-fixed forward (direction-of-travel) unit vector — computed once
+    /// at spawn/resume and reused, rather than re-deriving `(cos, sin, 0)`
+    /// at every use site. Still confined to the growth plane (`z == 0.0`)
+    /// at every construction site in this crate today: the fin-placement
+    /// math (`crate::bilateral_fin_direction`) is genuinely 3D-capable, but
+    /// nothing introduces a mechanism for `forward` to actually tilt out of
+    /// plane (that would be a deliberate biological behavior change).
     pub forward: Vec3,
-    /// Body-fixed dorsal ("up") reference (Phase 8, Epic 8.6, ADR-P8-06) —
-    /// together with `forward`, disambiguates "left fin" vs. "right fin" via
+    /// Body-fixed dorsal ("up") reference — together with `forward`,
+    /// disambiguates "left fin" vs. "right fin" via
     /// `organisms::bilateral_fin_direction(dorsal, forward)`, a proper 3D
-    /// cross product that's well-defined now that a second, independent
-    /// reference vector exists (the pre-8.6 `perp = Vec2::new(-dir.y,
-    /// dir.x)` construction had no direct 3D generalization — see
-    /// ADR-P8-06). Every construction site in this crate sets this to
-    /// `Vec3::Z`, which reproduces the pre-8.6 2D fin placement exactly.
+    /// cross product that's well-defined given two independent reference
+    /// vectors (a naive 2D-only `perp = Vec2::new(-dir.y, dir.x)`
+    /// construction has no direct 3D generalization). Every construction
+    /// site in this crate sets this to `Vec3::Z`, which reproduces the
+    /// equivalent 2D fin placement exactly.
     pub dorsal: Vec3,
 }

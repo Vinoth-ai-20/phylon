@@ -207,9 +207,10 @@ fn compute_behavior(
 ///
 /// ## 1. What Happens
 /// The `behavior_system` bridges the cognitive and physical domains. It reads the integrated
-/// outputs from the GPU CTRNN neural networks and translates them into structural actuations
-/// (muscle contractions) and chemical pheromone emissions, while applying environmental
-/// temperature constraints.
+/// outputs from each organism's CTRNN (continuous-time recurrent neural network — see the
+/// `brain` crate for what that means and how it's integrated) and translates them into
+/// structural actuations (muscle contractions) and chemical pheromone emissions, while applying
+/// environmental temperature constraints.
 ///
 /// ## 2. Why It Happens
 /// Physical movement in a simulated fluid/environment requires forces. The neural network cannot
@@ -242,8 +243,8 @@ fn compute_behavior(
 ///
 /// ## Parallel/sequential split (determinism)
 ///
-/// As with `metabolism::metabolism_system` and `sensing::sensing_system`
-/// (Epic 6), the actual per-organism computation (Phases A-C above) is pure
+/// As with `metabolism::metabolism_system` and `sensing::sensing_system`,
+/// the actual per-organism computation (Phases A-C above) is pure
 /// — it depends only on that organism's own brain outputs, its effectors'
 /// current spring state, and read-only environment/config values — so it's
 /// computed in parallel via `compute_behavior`. The one piece of
@@ -274,8 +275,8 @@ pub fn behavior_system(
 ) {
     use rayon::prelude::*;
 
-    // Time step integration is now fully handled by the GPU compute pass.
-    const IDEAL_TEMP: f32 = 15.0; // Hardcoded for Phase 7 validation
+    // Time step integration is fully handled by the GPU compute pass.
+    const IDEAL_TEMP: f32 = 15.0; // Not biologically tuned to any specific organism or biome
     let signal_cost_per_unit = config
         .as_ref()
         .map_or(0.01, |c| c.signal_energy_cost_per_unit);

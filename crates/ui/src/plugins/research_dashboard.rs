@@ -3,13 +3,12 @@ use crate::types::*;
 /// Renders the Research Dashboard — lists every experiment report found
 /// under `data/experiments/` and a simple cross-experiment comparison.
 ///
-/// Completes the "Compare" stage of the research loop the Phase 2 roadmap
-/// found otherwise empty: `research::ExperimentReport`/`app::batch::run_batch`
-/// already existed, but a report was only ever persisted as Markdown prose
-/// (`report.md`) — nothing structured to read back. This milestone added
-/// `ExperimentReport::save_to_ron`/`load_from_ron` (mirroring
-/// `ExperimentManifest`'s existing pair) and wired `run_batch` to write
-/// `report.ron` alongside the Markdown, which is what this panel reads.
+/// Completes the "Compare" stage of the research loop:
+/// `research::ExperimentReport`/`app::batch::run_batch` persist a report as
+/// both Markdown prose (`report.md`, for a human to read) and structured
+/// data (`report.ron`, via `ExperimentReport::save_to_ron`/`load_from_ron`,
+/// mirroring `ExperimentManifest`'s existing pair) — this panel reads the
+/// `.ron` form back for comparison.
 #[allow(clippy::too_many_arguments)]
 pub fn research_dashboard_ui(
     _ctx: &egui::Context,
@@ -18,11 +17,10 @@ pub fn research_dashboard_ui(
     _world: &mut world::World,
     actions: &mut Vec<MenuAction>,
 ) {
-    // Export triggers (Phase 2, M14) — the underlying export functions
-    // (`storage::export_lineages_csv`/`export_events_csv`/
-    // `export_organisms_csv`) already existed with no UI path to them
-    // anywhere in the app; these just wire buttons to the `MenuAction`s
-    // `app::events.rs` now handles.
+    // Export triggers — these wire buttons to the `MenuAction`s
+    // `app::events.rs` handles, which call into
+    // `storage::export_lineages_csv`/`export_events_csv`/
+    // `export_organisms_csv`.
     ui.horizontal(|ui| {
         if ui
             .button(format!(

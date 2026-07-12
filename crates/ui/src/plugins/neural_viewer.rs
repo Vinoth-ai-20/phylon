@@ -2,19 +2,19 @@
 //! and the genotype (brain CPPN) of the currently selected/tracked organism
 //! as node-link graphs.
 //!
-//! Both graphs used to be split across two panels (CTRNN here, CPPN under
-//! the Genetics sidebar tab) — they're consolidated here since they're both
-//! "the brain", just at different levels (what evolution encodes vs. what
-//! actually runs).
+//! Both graphs are kept in one panel rather than split across two, since
+//! they're both "the brain," just at different levels: the CPPN is what
+//! evolution encodes (the genotype), the CTRNN is what actually runs each
+//! tick (the phenotype it produces).
 
 use crate::types::*;
 
-// `apply_view`/`handle_pan_zoom`/`hit_test_node` moved to `crate::graph_canvas`
-// (Phase 3, M11) so the GRN Viewer panel can reuse the same pan/zoom/hit-test
-// math instead of duplicating it. `begin_graph_canvas`/`draw_node`/
-// `weighted_edge_stroke`/`hit_test_edge` (Phase 7, W2c) are the
-// layout-independent rendering pieces this file, GRN Viewer, and future
-// graph viewers all share — see `graph_canvas`'s module doc comment.
+// `apply_view`/`handle_pan_zoom`/`hit_test_node` live in `crate::graph_canvas`
+// so the GRN Viewer panel can reuse the same pan/zoom/hit-test math instead
+// of duplicating it. `begin_graph_canvas`/`draw_node`/`weighted_edge_stroke`/
+// `hit_test_edge` are the layout-independent rendering pieces this file, GRN
+// Viewer, and future graph viewers all share — see `graph_canvas`'s module
+// doc comment.
 use crate::graph_canvas::{
     apply_view, begin_graph_canvas, draw_node, hit_test_edge, hit_test_node, weighted_edge_stroke,
     NodeShape,
@@ -478,9 +478,9 @@ fn draw_cppn_graph(
 
     let height = 200.0_f32.max(cppn.nodes.len() as f32 * 4.0).min(360.0);
     // A distinct blue-tinted background (vs. the CTRNN graph's neutral
-    // near-black) plus square nodes below is the CTRNN/CPPN visual
-    // differentiation this milestone adds beyond the plain text header —
-    // this is the *genotype* (evolved blueprint), not the running network.
+    // near-black) plus square nodes below visually differentiate this from
+    // the CTRNN canvas beyond the plain text header — this is the
+    // *genotype* (evolved blueprint), not the running network.
     let (response, painter, rect) = begin_graph_canvas(ui, height, CPPN_CANVAS_BG, view);
 
     // Group node indices by layer, preserving genome order within a layer.

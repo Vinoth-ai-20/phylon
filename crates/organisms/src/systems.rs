@@ -6,12 +6,12 @@ use common::Vec3;
 use rand::Rng;
 
 /// The decoded outcome for the next body position `growth_system` is about
-/// to grow — either it should be pruned (apoptotic, per Phase 3 M8's
-/// DEF-002 rule) or grown at `spawn_pos` with the decoded `outputs`.
-/// Phase 2 of `growth_system` (Phase 7, W5a) — verbatim extraction of the
-/// original inline decode step, so decode and apoptosis-checking are named
-/// and testable independent of the spawn machinery in
-/// [`spawn_grown_segment`].
+/// to grow — either it should be pruned (apoptotic — see
+/// `genetics::decode_apoptosis` for what this means) or grown at
+/// `spawn_pos` with the decoded `outputs`. Split out of `growth_system`'s
+/// control flow into its own named step ([`decode_next_segment`]) so
+/// decoding and apoptosis-checking are testable independent of the spawn
+/// machinery in [`spawn_grown_segment`].
 enum SegmentDecode {
     /// Apoptotic — this position is pruned, never spawned.
     Apoptotic,
@@ -38,19 +38,15 @@ fn decode_next_segment(
     // ── Grow the next body position ───────────────────────────────────────
     // Decoded via the regulatory network, not read from a stored gene —
     // the same `develop_at_position` call handles every position,
-    // including the head node `spawning::spawn_organism` already built
-    // (Phase 3 M4; see ADR-P3-02).
+    // including the head node `spawning::spawn_organism` already built.
     //
-    // Phase 6, Epic D (D1a): the growing tip's own current
-    // `morphogen_field::MorphogenLevel` (seeded at spawn, spread and
-    // decayed each tick by `morphogen_diffusion_system`) is folded into
-    // the exact same additive signal `develop_at_position_with_life_stage`
-    // already uses for `life_stage_signal` — re-auditing `genetics`
-    // before this milestone found that function already implements the
-    // "extra scalar folded into every gene's external input, 0.0
-    // reproduces the original" seam D1a's own sub-roadmap proposed
-    // building from scratch, so no new `genetics`-crate parameter is
-    // added here.
+    // The growing tip's own current `morphogen_field::MorphogenLevel`
+    // (seeded at spawn, spread and decayed each tick by
+    // `morphogen_diffusion_system`) is folded into the exact same additive
+    // signal `develop_at_position_with_life_stage` already uses for
+    // `life_stage_signal` — that function already implements the "extra
+    // scalar folded into every gene's external input, 0.0 reproduces the
+    // original" seam, so no new `genetics`-crate parameter is needed here.
     let field_signal = state
         .parent_spine_node
         .and_then(|tip| morphogen_query.get(tip).ok())
@@ -58,10 +54,8 @@ fn decode_next_segment(
         .unwrap_or(0.0);
 
     // ── Where the next segment will actually form ───────────────────────
-    // Computed here (rather than after the decode, as before D1b) purely
-    // because Epic D, D1b's environmental signal needs a world position
-    // to sample *before* calling `develop_at_position_with_life_stage`
-    // — the formula itself is unchanged from pre-D1b.
+    // Computed before the decode call below because the environmental
+    // signal (just below) needs a world position to sample from.
     let spawn_pos = if let Some(prev_entity) = state.parent_spine_node {
         if let Ok(parent_node) = node_query.get(prev_entity) {
             parent_node.position + state.forward * -state.segment_length
@@ -72,17 +66,15 @@ fn decode_next_segment(
         state.current_pos
     };
 
-    // Phase 6, Epic D (D1b, ADR-D1-01's inter-organism/environmental
-    // half): samples the world-space GPU diffusion field's Morphogen
-    // layer at the position the next segment is about to form at.
-    // Unlike `field_signal` (this organism's own intra-organism
-    // signal), this can carry a contribution from *other* developing
-    // organisms nearby — the actual inter-organism coupling
-    // ADR-P3-03's reversal trigger named. Folded into the same
-    // additive channel as `life_stage_signal`/`field_signal` for the
-    // same reason D1a gave: that channel already exists, is already
-    // tested, and 0.0 (no nearby signal) reproduces the pre-D1
-    // baseline exactly.
+    // Samples the world-space GPU diffusion field's Morphogen layer at the
+    // position the next segment is about to form at. Unlike `field_signal`
+    // (this organism's own intra-organism signal), this can carry a
+    // contribution from *other* developing organisms nearby — real
+    // inter-organism developmental coupling, not just self-signalling.
+    // Folded into the same additive channel as
+    // `life_stage_signal`/`field_signal` since that channel already exists,
+    // is already tested, and 0.0 (no nearby signal) reproduces the baseline
+    // with no environmental influence exactly.
     let environmental_signal = cpu_field
         .as_ref()
         .map(|field| {
@@ -100,10 +92,10 @@ fn decode_next_segment(
         life_stage_signal + field_signal + environmental_signal,
     );
 
-    // Phase 3 M8 (DEF-002): a position marked for apoptosis is pruned
-    // before organogenesis — it is never spawned, as if it had never
-    // formed (germ-line-protected positions can never reach this
-    // branch; see `genetics::decode_apoptosis`).
+    // A position marked for apoptosis (programmed segment death) is pruned
+    // before organogenesis — it is never spawned, as if it had never formed
+    // (germ-line-protected positions can never reach this branch; see
+    // `genetics::decode_apoptosis`).
     if outputs.apoptosis {
         SegmentDecode::Apoptotic
     } else {
@@ -111,12 +103,11 @@ fn decode_next_segment(
     }
 }
 
-/// Phase 3 of `growth_system` (Phase 7, W5a): given a non-apoptotic decode,
-/// compiles and spawns the new spine segment (`ParticleNode` + connecting
-/// `Spring`), sprouts a bilateral fin pair if the decode branches, and
-/// advances `state`/`graph` bookkeeping. Verbatim extraction of
-/// `growth_system`'s original inline body following the apoptosis check —
-/// no logic changed.
+/// Given a non-apoptotic decode, compiles and spawns the new spine segment
+/// (`ParticleNode` + connecting `Spring`), sprouts a bilateral fin pair if
+/// the decode branches, and advances `state`/`graph` bookkeeping. Split out
+/// of `growth_system`'s control flow into its own named step, following the
+/// apoptosis check in [`decode_next_segment`].
 #[allow(clippy::too_many_arguments)]
 fn spawn_grown_segment(
     commands: &mut Commands,
@@ -130,48 +121,45 @@ fn spawn_grown_segment(
     use genetics::SegmentType;
     use physics::{ParticleNode, Spring};
 
-    // Phase 3 M6: the decode-to-physics mapping lives in
-    // `developmental_graph::compile_segment` now — independently
-    // testable, and reusable by future research panels — rather than
-    // inline match arms here.
+    // The decode-to-physics mapping lives in
+    // `developmental_graph::compile_segment` — independently testable, and
+    // reusable by future research panels — rather than inline match arms
+    // here.
     let compiled = crate::compile_segment(outputs.segment_type);
     let seg_u32 = compiled.particle_segment_type;
     let stiffness = compiled.stiffness;
 
-    // Phase 4, P4-F2: every body segment gets its own small physiology
-    // pool, not just the head — `metabolism::ChemicalEconomy` is reused
-    // verbatim (not a new type) at a deliberately smaller scale (see
-    // `ChemicalEconomy::segment_default`'s doc comment). This is
-    // additive: `metabolism_system`'s query also requires `&Age`/
-    // `&Metabolism`, which no non-head segment carries, so this cannot
-    // change any existing organism-level metabolism/reproduction/
-    // foraging behavior — confirmed by this crate's full test suite
-    // still passing unmodified.
+    // Every body segment gets its own small physiology pool, not just the
+    // head — `metabolism::ChemicalEconomy` is reused verbatim (not a new
+    // type) at a deliberately smaller scale (see
+    // `ChemicalEconomy::segment_default`'s doc comment). This is additive:
+    // `metabolism_system`'s query also requires `&Age`/`&Metabolism`, which
+    // no non-head segment carries, so this cannot change any existing
+    // organism-level metabolism/reproduction/foraging behavior.
     let spine_node = commands
         .spawn((
             ParticleNode::new(spawn_pos, 1.0, seg_u32, entity.index()),
             OrganismColor(outputs.pigment),
             metabolism::ChemicalEconomy::segment_default(),
-            // Phase 4, P4-F4: every non-head segment also gets a
-            // `HormoneLevel` — `organisms::endocrine_diffusion_system`
-            // relaxes it toward its structural parent's channel
-            // reading each tick (see that system's doc comment).
+            // Every non-head segment also gets a `HormoneLevel` —
+            // `organisms::endocrine_diffusion_system` relaxes it toward its
+            // structural parent's channel reading each tick (see that
+            // system's doc comment).
             brain::HormoneLevel::default(),
-            // Phase 4, P4-F5: every non-head segment also gets its own
-            // infection severity/immune resistance —
-            // `organisms::segment_infection_system` spreads the
-            // organism-wide `Infection` (if any) out into these.
+            // Every non-head segment also gets its own infection
+            // severity/immune resistance — `organisms::segment_infection_system`
+            // spreads the organism-wide `Infection` (if any) out into these.
             ecology::disease::SegmentInfection::healthy(),
             ecology::disease::SegmentImmunity::baseline(),
-            // Phase 5, SX-2d: reuses the existing `SpawnTick` component
-            // (previously only attached to an organism's head at
-            // creation, `organisms::spawning`) rather than adding a new
-            // type — `crates/app/src/render.rs` reads this to fade/scale
-            // a just-formed segment in over a short fixed window.
+            // Reuses the existing `SpawnTick` component (previously only
+            // attached to an organism's head at creation,
+            // `organisms::spawning`) rather than adding a new type —
+            // `crates/app/src/render.rs` reads this to fade/scale a
+            // just-formed segment in over a short fixed window.
             crate::components::SpawnTick(atmosphere_ticks),
-            // Phase 6, Epic D (D1a): every newly-grown segment starts as
-            // the organism's new growing tip — see `morphogen_field`'s
-            // doc comment for why this is the emission/"reaction" term
+            // Every newly-grown segment starts as the organism's new
+            // growing tip — see `morphogen_field`'s doc comment for why
+            // this is the emission/"reaction" term
             // `morphogen_diffusion_system` then spreads and decays.
             crate::morphogen_field::MorphogenLevel {
                 concentration: crate::morphogen_field::MORPHOGEN_SEED_CONCENTRATION,
@@ -179,11 +167,10 @@ fn spawn_grown_segment(
         ))
         .id();
 
-    // Body Graph (Phase 3, M6; persistent as of Phase 4, ADR-P4-01):
-    // this spine node's parent is always the most recently pushed
-    // non-branch node — i.e. the last spine node, which is exactly
-    // `graph.nodes.len() - 1` immediately before this push, since
-    // branch nodes (below) never become anyone's structural parent.
+    // Body Graph: this spine node's parent is always the most recently
+    // pushed non-branch node — i.e. the last spine node, which is exactly
+    // `graph.nodes.len() - 1` immediately before this push, since branch
+    // nodes (below) never become anyone's structural parent.
     let parent_graph_index = graph.nodes.len().checked_sub(1);
     let current_position = state.next_segment_index;
     graph.push(
@@ -389,28 +376,75 @@ fn spawn_grown_segment(
 
 /// # Embryonic Growth & Morphogenesis System
 ///
-/// ## 1. What Happens
-/// The `growth_system` executes the procedural embryogenesis of an organism. Over multiple ticks,
-/// it decodes each body position through the regulatory network (`genetics::develop_at_position`,
-/// Phase 3 M4) and iteratively spawns the `ParticleNode`s and `Spring` constraints that make up
-/// the organism's physical body.
+/// ## Purpose
 ///
-/// ## 2. Why It Happens
-/// Spawning an entire complex multi-body organism in a single tick with perfect physics stability
-/// is mathematically impossible due to spring rest-length violations. By growing the organism
-/// one segment at a time (like a biological bud), the PBD physics solver has time to gently
-/// relax the tension, preventing numeric explosions ("fly-off").
+/// `growth_system` executes the procedural embryogenesis of an organism: it
+/// turns a genome into a physical, physics-simulated body, one segment per
+/// growth tick, until the body is complete and a brain is wired to it.
 ///
-/// ## 3. How It Happens
-/// The system acts as a state machine tracked by `GrowthState`:
-/// 1. Every $N$ ticks, it decodes the next body position via `genetics::develop_at_position`.
-/// 2. It spawns a new node at exactly $RestLength$ away from the `parent_spine_node`.
-/// 3. It attaches a `Rigid`, `Elastic`, or `Passive` spring to the parent, depending on the
-///    decoded segment type.
-/// 4. If the decoded position branches, it sprouts orthogonal fin nodes and connects them with
-///    `Elastic` muscles.
-/// 5. Once growth is complete (either `organisms::MAX_SEGMENTS` is reached, or a decoded segment
-///    is `Tail`), it wires the `Brain` CTRNN topology.
+/// ## Why growth is spread over many ticks
+///
+/// Spawning an entire complex multi-body organism in a single tick with
+/// perfect physics stability is effectively impossible — springs would be
+/// created already violating their rest-length constraints, and the PBD
+/// physics solver has no time to relax that tension before the next frame,
+/// causing numeric explosions ("fly-off"). By growing the organism one
+/// segment at a time (like a biological bud extending), the solver gets many
+/// ticks to settle each new segment before the next one attaches.
+///
+/// ## Data flow (per organism, per tick)
+///
+/// The system is a state machine tracked by [`crate::components::GrowthState`],
+/// re-entered every tick for every organism still growing:
+///
+/// 1. **Throttle.** If `ticks_until_next_bud > 0`, decrement it and skip this
+///    organism this tick — growth proceeds at a fixed cadence, not every
+///    tick, so the physics solver has real settling time between segments.
+/// 2. **Decode.** `decode_next_segment` evaluates the genome's expressed
+///    regulatory CPPN at the next body position (see `genetics::regulatory`
+///    and `genetics::develop` for what "decode" means: a small network is
+///    iterated for a few developmental steps and its settled gene states
+///    are read off as a Hox code, branching decision, actuation parameters,
+///    and pigment). Life-stage, intra-organism morphogen, and
+///    inter-organism/environmental morphogen signals are all folded
+///    additively into this decode, so a segment grown by an adult in a
+///    morphogen-rich environment can genuinely differ from the same
+///    position decoded fresh with none of those signals.
+/// 3. **Apoptosis check.** If the decode signals apoptosis (programmed
+///    segment death) — and the segment is not germ-line protected — the
+///    position is pruned: nothing is spawned, `next_segment_index` still
+///    advances, and growth continues at the position after it.
+/// 4. **Spawn.** `spawn_grown_segment` compiles the decoded `SegmentType`
+///    into physics parameters (via `developmental_graph::compile_segment`),
+///    spawns a `ParticleNode` at exactly `segment_length` away from the
+///    previous spine node, connects it with a `Rigid`/`Elastic`/`Passive`
+///    `Spring` depending on segment type, and — if the decode's branch
+///    output fires on an eligible (`Torso`/`Muscle`) segment — sprouts a
+///    bilateral fin pair connected by `Elastic` muscles in opposing phase
+///    (so they flap rather than move in lockstep). The new node is also
+///    pushed onto the organism's persistent [`crate::developmental_graph::DevelopmentalGraph`].
+/// 5. **Completion.** Growth ends when a decoded segment is `Tail`, or when
+///    `next_segment_index` reaches [`crate::MAX_SEGMENTS`], whichever comes
+///    first. On completion, `wire_brain_for_completed_organism` (see
+///    `crate::brain_wiring`) builds the organism's CTRNN brain topology from
+///    the now-complete body graph — brain wiring only ever happens once,
+///    right after growth finishes, never mid-growth.
+///
+/// ## Determinism
+///
+/// For a fixed genome and fixed sequence of per-tick inputs (morphogen
+/// levels, environmental field samples), growth is deterministic: the same
+/// genome grows the same body every time, because every decode is a pure
+/// function of the regulatory CPPN and its additive input signal, with no
+/// unseeded randomness anywhere in this system.
+///
+/// ## Related systems
+///
+/// - `genetics::develop_at_position_with_life_stage` — the decode function.
+/// - `crate::morphogen_field` — the intra-organism signal folded into step 2.
+/// - `crate::brain_wiring` — what runs at completion (step 5).
+/// - `crate::life_cycle::life_stage_system` — can resume growth after this
+///   system finishes, via the same decode function.
 #[allow(clippy::too_many_arguments)]
 pub fn growth_system(
     mut commands: Commands,
@@ -432,11 +466,10 @@ pub fn growth_system(
     cpu_field: Option<bevy_ecs::prelude::Res<diffusion::CpuFieldState>>,
 ) {
     for (entity, mut state, mut graph, life_stage) in query.iter_mut() {
-        // Phase 4, P4-L1: an organism without a `LifeStage` component (there
-        // shouldn't be any post-P4-L1, but this keeps the query total rather
-        // than panicking on an edge case) developmentally behaves as
-        // `Juvenile` — signal `0.0`, `develop_at_position`'s original
-        // behavior.
+        // An organism without a `LifeStage` component (shouldn't normally
+        // happen, but this keeps the query total rather than panicking on
+        // an edge case) developmentally behaves as `Juvenile` — signal
+        // `0.0`, matching `develop_at_position`'s baseline behavior.
         let life_stage_signal = life_stage
             .copied()
             .unwrap_or_default()
@@ -446,10 +479,10 @@ pub fn growth_system(
         // per organism, not per query, since growth/brain-wiring below
         // calls `.evaluate(...)`/`develop_at_position(...)` many times per
         // tick. `morph_cppn` is deliberately not queried here any more —
-        // Phase 3 M4 moved segment-identity decoding entirely onto
-        // `regulatory_cppn` (see ADR-P3-02); `morph_cppn` remains a crossed/
-        // mutated/distance-compared locus but has no growth-time consumer
-        // left, a known, documented piece of technical debt.
+        // segment-identity decoding lives entirely on `regulatory_cppn` now;
+        // `morph_cppn` remains a crossed/mutated/distance-compared locus but
+        // has no growth-time consumer left, a known, documented piece of
+        // technical debt.
         let expressed_regulatory_cppn = state.genome.expressed_regulatory_cppn();
         let expressed_brain_cppn = state.genome.expressed_brain_cppn();
 
@@ -474,9 +507,9 @@ pub fn growth_system(
             continue;
         }
 
-        // Phase 7, W5a: decode + apoptosis-check (sub-phase 2) and, if not
-        // pruned, segment growth/spawn (sub-phase 3) — see each function's
-        // own doc comment; this loop body is now purely a dispatcher.
+        // Decode + apoptosis-check, and if not pruned, segment growth/spawn
+        // — see each function's own doc comment; this loop body is purely
+        // a dispatcher over the two.
         match decode_next_segment(
             &state,
             life_stage_signal,
@@ -485,7 +518,7 @@ pub fn growth_system(
             &cpu_field,
             &expressed_regulatory_cppn,
         ) {
-            // Phase 3 M8 (DEF-002): a position marked for apoptosis is
+            // A position marked for apoptosis (programmed segment death) is
             // pruned before organogenesis — it is never spawned, as if it
             // had never formed (germ-line-protected positions can never
             // reach this branch; see `genetics::decode_apoptosis`).
@@ -616,9 +649,9 @@ pub fn producer_growth_system(
                         head_entity.index(),
                     ),
                     crate::components::OrganismColor([0.2, 0.9, 0.2]), // Bright green new leaf
-                    // Phase 5, SX-2d: same fade-in-on-spawn treatment as
-                    // `growth_system`'s new segments — a plant sprouting a
-                    // new leaf is the same kind of "growth" event.
+                    // Same fade-in-on-spawn treatment as `growth_system`'s
+                    // new segments — a plant sprouting a new leaf is the
+                    // same kind of "growth" event.
                     crate::components::SpawnTick(atmosphere.ticks),
                 ))
                 .id();
@@ -707,12 +740,12 @@ mod tests {
     /// Integration-level confirmation of the same graceful-degradation
     /// property: a real organism grown from a real genome ends up with a
     /// `Brain::node_regions` that is uniformly `Central` and non-empty —
-    /// proving N1b/N1c's new plumbing (`node_regions` built during wiring,
-    /// then written into the constructed `Brain`) actually reaches the real
-    /// component, not just `brain_wiring`'s own pure-function unit tests.
-    /// Still uniformly `Central` even with N1c's real Ganglion-detection logic
-    /// active, since `genetics::Genome::new_minimal`'s CPPN has never been
-    /// observed to decode a `SegmentType::Ganglion` segment (a real,
+    /// proving the region-tagging plumbing (`node_regions` built during
+    /// wiring, then written into the constructed `Brain`) actually reaches
+    /// the real component, not just `brain_wiring`'s own pure-function unit
+    /// tests. Still uniformly `Central` even with real Ganglion-detection
+    /// logic active, since `genetics::Genome::new_minimal`'s CPPN has never
+    /// been observed to decode a `SegmentType::Ganglion` segment (a real,
     /// disclosed limitation of the fixture, not a hidden assumption).
     #[test]
     fn growth_system_produces_a_brain_with_uniformly_central_regions_today() {
@@ -730,13 +763,11 @@ mod tests {
             .all(|region| *region == brain::RegionId::Central));
     }
 
-    /// N1b's own named determinism test requirement — matching every other
-    /// Phase 4/6 milestone's discipline. `growth_system`'s brain-wiring loop
-    /// has no RNG/`HashMap` involved (pure `Vec` iteration over a
-    /// deterministic CPPN evaluation), so this is expected to trivially
-    /// pass — but "expected to" is not the same as "verified," which is the
-    /// whole point of writing it down as a real test rather than an
-    /// assumption.
+    /// `growth_system`'s brain-wiring loop has no RNG/`HashMap` involved
+    /// (pure `Vec` iteration over a deterministic CPPN evaluation), so this
+    /// is expected to trivially pass — but "expected to" is not the same as
+    /// "verified," which is the whole point of writing it down as a real
+    /// test rather than an assumption.
     #[test]
     fn growth_system_brain_wiring_is_deterministic_for_the_same_genome() {
         fn wire_once() -> (Vec<brain::CtrnnNode>, Vec<brain::CtrnnSynapse>) {
@@ -768,11 +799,12 @@ mod tests {
 
     #[test]
     fn developmental_graph_survives_growth_completion_and_removal_of_growth_state() {
-        // Phase 4, ADR-P4-01's whole point: unlike pre-Phase-4 behavior
-        // (where the graph was nested in `GrowthState` and discarded the
-        // moment it was removed), the persistent `DevelopmentalGraph`
-        // sibling component must still be present, non-empty, and
-        // unchanged after `GrowthState` is gone.
+        // The whole point of the persistent Body Graph (see
+        // `developmental_graph`'s module doc): unlike a graph nested inside
+        // `GrowthState` (which would be discarded the moment it was
+        // removed), the persistent `DevelopmentalGraph` sibling component
+        // must still be present, non-empty, and unchanged after
+        // `GrowthState` is gone.
         let mut world = World::new();
         world.insert_resource(metabolism::GlobalAtmosphere::default());
         let genome = genetics::Genome::new_minimal(genetics::GenomeId(1), common::EntityId(0));
@@ -799,8 +831,8 @@ mod tests {
         assert_eq!(node_count_before, node_count_after);
     }
 
-    /// Phase 5, SX-2d: every newly-grown segment must carry a `SpawnTick`
-    /// matching the *current* tick, not `0` or the head's own spawn tick —
+    /// Every newly-grown segment must carry a `SpawnTick` matching the
+    /// *current* tick, not `0` or the head's own spawn tick —
     /// `crates/app/src/render.rs` reads this to fade/scale the segment in
     /// over a short window rather than popping it in at full size.
     #[test]
@@ -913,8 +945,7 @@ mod tests {
 
     #[test]
     fn growth_system_pushes_one_body_graph_node_per_segment() {
-        // Phase 3 M6 (persistent as of Phase 4, ADR-P4-01): the sibling
-        // `DevelopmentalGraph` component should accumulate exactly one
+        // The sibling `DevelopmentalGraph` component should accumulate exactly one
         // `DevelopmentalNode` per non-branching tick, tracking
         // `next_segment_index`'s growth 1:1 (this fixture's genome
         // deterministically never branches — `Cppn::new()`'s empty
@@ -939,8 +970,8 @@ mod tests {
 
     #[test]
     fn growth_system_records_a_real_entity_and_chemical_economy_per_segment() {
-        // Phase 4, P4-F2: every `DevelopmentalNode` grown by `growth_system`
-        // (not `simulate_growth_timeline`'s pure reconstruction) must carry
+        // Every `DevelopmentalNode` grown by `growth_system` (not
+        // `simulate_growth_timeline`'s pure reconstruction) must carry
         // `Some(entity)` pointing at the real `ParticleNode` entity spawned
         // for that position, and that entity must carry its own
         // `metabolism::ChemicalEconomy` pool — proving the graph index can
@@ -966,9 +997,8 @@ mod tests {
 
     #[test]
     fn growth_system_decode_changes_when_the_tips_morphogen_level_is_nonzero() {
-        // Phase 6, Epic D (D1a)'s own named testing requirement: a nonzero
-        // field reading must actually change decode output vs. a zero
-        // baseline. Reuses `genetics::develop::nonzero_life_stage_signal_can_change_the_decode`'s
+        // A nonzero field reading must actually change decode output vs. a
+        // zero baseline. Reuses `genetics::develop::nonzero_life_stage_signal_can_change_the_decode`'s
         // exact hand-built sensitive CPPN and signal magnitude (5.0), since
         // both life-stage and morphogen signals enter the same additive
         // channel (see this crate's `morphogen_field` module doc comment).
@@ -1037,9 +1067,9 @@ mod tests {
 
     #[test]
     fn growth_system_prunes_an_apoptotic_position_without_spawning_it() {
-        // Phase 3 M8 (DEF-002): a hand-built regulatory_cppn found (via a
-        // throwaway scan, not guessed) to decode position 1 as `Ganglion`
-        // (non-Germinal) with the apoptosis signal firing. `next_segment_index`
+        // A hand-built regulatory_cppn found (via a throwaway scan, not
+        // guessed) to decode position 1 as `Ganglion` (non-Germinal) with
+        // the apoptosis signal firing. `next_segment_index`
         // must still advance past the pruned position, but no `ParticleNode`/
         // graph entry should exist for it.
         use genetics::cppn::DEFAULT_MUTATION_RATE;
@@ -1110,31 +1140,30 @@ mod tests {
 
     #[test]
     fn simulate_growth_timeline_matches_a_real_growth_system_run() {
-        // Phase 3 M13's whole justification for not persisting the Body
-        // Graph (see `developmental_graph`'s doc comment) is that
-        // `simulate_growth_timeline` faithfully predicts what a real
+        // `simulate_growth_timeline`'s whole justification for not needing
+        // the live Body Graph to exist (see `developmental_graph`'s doc
+        // comment) is that it faithfully predicts what a real
         // `growth_system` run actually builds. This test is the direct
-        // proof: same genome (the M8 apoptosis fixture, which exercises
-        // real pruning — the simplest all-`Cppn::new()` fixture never
-        // prunes anything, so it wouldn't stress this claim), predicted
-        // timeline vs. the graph a real run actually produces, compared.
+        // proof: same genome (an apoptosis-exercising fixture — the
+        // simplest all-`Cppn::new()` fixture never prunes anything, so it
+        // wouldn't stress this claim), predicted timeline vs. the graph a
+        // real run actually produces, compared.
         //
-        // Phase 6, Epic D (D1a) note — re-audited and intentionally not
-        // fully restored to a byte-for-byte match: `growth_system` now folds
-        // the growing tip's own `morphogen_field::MorphogenLevel` into every
-        // segment's decode (see ADR-D1-01), which `simulate_growth_timeline`
+        // Not a byte-for-byte match, and that's expected: `growth_system`
+        // folds the growing tip's own `morphogen_field::MorphogenLevel`
+        // into every segment's decode, which `simulate_growth_timeline`
         // deliberately does not model (it remains the pure genome+position
         // reconstruction). This test's world never runs
         // `morphogen_diffusion_system`, so every segment after the first
         // reads its parent's *undecayed* seed concentration — a real,
         // reproducible divergence, not a bug. Exact node-for-node equality
-        // is retired as of this milestone; the two checks below (the
-        // field-free root and first segment still match exactly, and both
-        // graphs still complete to a sane, non-empty shape) are what
-        // remains a meaningful regression guard here. D1c's own job — a
-        // *quantified* measure of how far a live run diverges from the pure
-        // replay, so future regressions are caught by magnitude, not just
-        // pass/fail — is `real_run_field_signal_divergence_from_the_pure_replay_is_bounded_and_quantified`,
+        // isn't the guarantee here; the two checks below (the field-free
+        // root and first segment still match exactly, and both graphs still
+        // complete to a sane, non-empty shape) are what remains a
+        // meaningful regression guard. A *quantified* measure of how far a
+        // live run diverges from the pure replay, so future regressions are
+        // caught by magnitude, not just pass/fail, is
+        // `real_run_field_signal_divergence_from_the_pure_replay_is_bounded_and_quantified`,
         // below, using this exact same fixture.
         use genetics::cppn::DEFAULT_MUTATION_RATE;
         use genetics::{Cppn, CppnConnection, CppnNode};
@@ -1173,10 +1202,10 @@ mod tests {
 
         // Real run: seed the graph with the head node exactly as
         // `spawning::spawn_organism` does, then step growth_system to
-        // completion. As of Phase 4 (ADR-P4-01) the graph is a persistent
-        // sibling component, not nested in `GrowthState` — it's no longer
-        // necessary to capture it before `GrowthState` disappears, since it
-        // simply survives that removal now; just read it once growth ends.
+        // completion. The graph is a persistent sibling component, not
+        // nested in `GrowthState` — no need to capture it before
+        // `GrowthState` disappears, since it simply survives that removal;
+        // just read it once growth ends.
         let mut world = World::new();
         world.insert_resource(metabolism::GlobalAtmosphere::default());
         let head_outputs = genetics::develop_at_position(&regulatory_cppn, 0, crate::MAX_SEGMENTS);
@@ -1245,15 +1274,14 @@ mod tests {
 
     #[test]
     fn real_run_field_signal_divergence_from_the_pure_replay_is_bounded_and_quantified() {
-        // Phase 6, Epic D (D1c): `PHASE4_EPIC4_MORPHOGEN_ROADMAP.md` §3.1's
-        // own named requirement — a comparison test that *quantifies* how
-        // far a live run's decode diverges from `simulate_growth_timeline`'s
-        // pure zero-field replay, for a fixture genome with nonzero field
-        // input, "so future regressions are caught by magnitude, not just a
-        // binary pass/fail." Reuses the exact same M8 apoptosis-fixture CPPN
-        // as `simulate_growth_timeline_matches_a_real_growth_system_run`
-        // (same genome, same setup), so this is a direct continuation of
-        // that test's own finding, not a separate discovery.
+        // A comparison test that *quantifies* how far a live run's decode
+        // diverges from `simulate_growth_timeline`'s pure zero-field replay,
+        // for a fixture genome with nonzero field input, so future
+        // regressions are caught by magnitude, not just a binary pass/fail.
+        // Reuses the exact same apoptosis-fixture CPPN as
+        // `simulate_growth_timeline_matches_a_real_growth_system_run` (same
+        // genome, same setup), so this is a direct continuation of that
+        // test's own finding, not a separate discovery.
         use genetics::cppn::DEFAULT_MUTATION_RATE;
         use genetics::{Cppn, CppnConnection, CppnNode};
 
@@ -1373,12 +1401,11 @@ mod tests {
         }
     }
 
-    /// Phase 6, Epic A (milestone A2): `producer_growth_system` used
-    /// unseeded `fastrand::` for both its target-node pick and its spawn
-    /// offset. Same fixed seed, run twice from independently-constructed
-    /// `World`s, must now produce an identical new-node offset — proving the
-    /// `fastrand`→`SimRng` migration preserved determinism rather than
-    /// breaking it.
+    /// `producer_growth_system` draws its target-node pick and its spawn
+    /// offset from `common::SimRng`, not an unseeded global RNG. Same fixed
+    /// seed, run twice from independently-constructed `World`s, must
+    /// produce an identical new-node offset — proving growth is genuinely
+    /// reproducible from a seed, not incidentally deterministic.
     #[test]
     fn producer_growth_system_is_deterministic_for_a_given_seed() {
         fn run_once() -> common::Vec3 {

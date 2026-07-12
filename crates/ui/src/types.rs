@@ -12,19 +12,18 @@ pub enum UiError {
 impl common::PhylonError for UiError {}
 
 /// Which of the three mutually-exclusive gestures a left-button viewport
-/// drag currently performs (Phase 8, Epic 8.4 — adds `Lasso` alongside the
-/// pre-existing `Select`/`Measure` pair, replacing the previous
-/// `measure_mode: bool` now that there are 3 states, not 2).
+/// drag currently performs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MarqueeMode {
-    /// Rectangular frustum-based box-select (Phase 2 M8; Phase 8 Epic 8.4
-    /// upgraded this from a flat Z=0-plane rectangle to a real screen-space
-    /// frustum test).
+    /// Rectangular frustum-based box-select: each candidate is projected
+    /// through the camera's `view_proj` and tested against the drag
+    /// rectangle in screen space, so it works correctly regardless of
+    /// camera tilt.
     #[default]
     Select,
-    /// Freeform polygon lasso-select (Phase 8, Epic 8.4 — new).
+    /// Freeform polygon lasso-select.
     Lasso,
-    /// Distance measurement (Phase 2, M11).
+    /// Distance measurement.
     Measure,
 }
 
@@ -49,10 +48,10 @@ pub enum SidebarTab {
     /// Ancestry tree and species grouping over `evolution::LineageTracker`
     Lineage,
     /// Per-position Hox combinatorial code, decoded segment identity, and
-    /// morphogen gradients for the selected organism (Phase 3, M10).
+    /// morphogen gradients for the selected organism.
     HoxVisualizer,
     /// Regulatory network graph, developmental-step time playback, and
-    /// mutation-vs-parent comparison for the selected organism (Phase 3, M11).
+    /// mutation-vs-parent comparison for the selected organism.
     GrnViewer,
     /// Application Settings
     Settings,
@@ -68,34 +67,28 @@ pub enum LineageView {
     Species,
 }
 
-/// A saved camera view (Phase 2, M12 — "Bookmarks"), session-only per the
-/// Phase 2 roadmap's own risk note: there is no live tick-jumping in a
-/// running simulation to meaningfully tie a bookmark to a specific tick
-/// (replay's tick-seeking is a separate, non-interactive-UI mode — see
-/// `ReplayBrowserSummary`'s doc comment), so a bookmark here is a saved
-/// *camera position*, not a saved *moment in time*.
+/// A saved camera view ("Bookmarks"), session-only: there is no live
+/// tick-jumping in a running simulation to meaningfully tie a bookmark to a
+/// specific tick (replay's tick-seeking is a separate, non-interactive-UI
+/// mode — see `ReplayBrowserSummary`'s doc comment), so a bookmark here is
+/// a saved *camera position*, not a saved *moment in time*.
 #[derive(Debug, Clone)]
 pub struct CameraBookmark {
     /// User-facing label, e.g. "Predator cluster, south edge".
     pub label: String,
-    /// World-space camera eye position at the time of saving (Phase 8,
-    /// ADR-P8-02 — widened from `Vec2` alongside `orientation` below;
-    /// `zoom: f32` is dropped, superseded by `Camera3d`'s FOV/distance
-    /// model).
+    /// World-space camera eye position at the time of saving.
     pub position: common::Vec3,
     /// World-space camera orientation at the time of saving.
     pub orientation: common::Quat,
-    /// Phase 9, P9.4: `Some(focus)` if `Orbit` mode was active at save
-    /// time (its pivot point); `None` if `Fly` mode was active. Restoring
-    /// a bookmark uses this to reconstruct the *same* mode it was saved
-    /// in, rather than always forcing `Fly` — the previous behavior, and
-    /// a real, disclosed bug (a bookmark saved while orbiting used to
-    /// silently switch you to Fly mode on restore).
+    /// `Some(focus)` if `Orbit` mode was active at save time (its pivot
+    /// point); `None` if `Fly` mode was active. Restoring a bookmark uses
+    /// this to reconstruct the *same* mode it was saved in, rather than
+    /// always forcing `Fly`.
     pub orbit_focus: Option<common::Vec3>,
 }
 
 /// A lightweight, already-extracted summary of a loaded `.phylon-replay`
-/// bundle for the Replay Browser panel (Phase 2, M6) — holds only what's
+/// bundle for the Replay Browser panel — holds only what's
 /// needed to browse its recorded interventions, not the full
 /// `storage::replay::ReplayBundle` (which also carries a potentially large
 /// `initial_snapshot`), so this is safe to keep in `WorkbenchState` unlike
@@ -152,8 +145,8 @@ pub struct CanvasInteraction {
     /// The screen-space delta for a left-button pan/drag gesture this frame.
     pub drag_delta: egui::Vec2,
     /// The screen-space delta for a middle-button orbit/look gesture this
-    /// frame (Phase 8, ADR-P8-02) — drives `OrbitController::orbit` or
-    /// `FlyController::look` depending on the active camera mode. Kept as a
+    /// frame — drives `OrbitController::orbit` or `FlyController::look`
+    /// depending on the active camera mode. Kept as a
     /// separate field from `drag_delta` (rather than overloading it) since
     /// the two buttons drive genuinely different camera operations that can
     /// both be in flight independently.
@@ -186,7 +179,7 @@ pub enum AppState {
     Simulation,
 }
 
-/// One of the six axis-aligned Blender-style preset views (Phase 9, P9.4).
+/// One of the six axis-aligned Blender-style preset views.
 /// Each preset sets `OrbitController::yaw`/`pitch` to a fixed value —
 /// `focus`/`distance` are left exactly as they are, so a preset view only
 /// ever changes the viewing *angle*.
@@ -226,22 +219,22 @@ pub enum MenuAction {
     SaveState,
     /// Load a simulation state from disk.
     LoadState,
-    /// Load a simulation state from a specific, already-known path (Phase
-    /// 7, W0d) — used by the "Open Recent" menu, which (unlike
-    /// `LoadState`) must load the exact entry the user clicked rather than
-    /// opening a fresh file picker. Handled gracefully if the path no
-    /// longer exists (see `crates/ui/src/recent_items.rs`'s missing-file
-    /// policy) — never a panic.
+    /// Load a simulation state from a specific, already-known path — used
+    /// by the "Open Recent" menu, which (unlike `LoadState`) must load the
+    /// exact entry the user clicked rather than opening a fresh file
+    /// picker. Handled gracefully if the path no longer exists (see
+    /// `crates/ui/src/recent_items.rs`'s missing-file policy) — never a
+    /// panic.
     LoadStateFromPath(String),
-    /// Export a named saved workspace to a `.ron` file (Phase 7, W3c) — the
-    /// only workspace-lifecycle operation that needs `app`-crate file I/O;
-    /// every other lifecycle operation (save/rename/duplicate/delete/
-    /// apply/reset) only touches `WorkbenchState` and is called directly,
-    /// no `MenuAction` round-trip, matching `layout::apply_layout_preset`'s
+    /// Export a named saved workspace to a `.ron` file — the only
+    /// workspace-lifecycle operation that needs `app`-crate file I/O; every
+    /// other lifecycle operation (save/rename/duplicate/delete/apply/reset)
+    /// only touches `WorkbenchState` and is called directly, no
+    /// `MenuAction` round-trip, matching `layout::apply_layout_preset`'s
     /// existing precedent.
     ExportWorkspace(String),
-    /// Import a workspace from a `.ron` file (Phase 7, W3c). The imported
-    /// layout is sanitized before being added as a saved workspace — see
+    /// Import a workspace from a `.ron` file. The imported layout is
+    /// sanitized before being added as a saved workspace — see
     /// `ui::workspace::WorkspaceLayout::sanitized`'s doc comment.
     ImportWorkspace,
     /// Advance the simulation by one tick while paused.
@@ -280,8 +273,8 @@ pub enum MenuAction {
     ShowAbout,
     /// Show keybinds.
     ShowKeybinds,
-    /// Re-open the first-run onboarding hints dialog (Phase 5, SX-9a) —
-    /// Help → Welcome Tips, same re-open pattern as `ShowAbout`/`ShowDocumentation`.
+    /// Re-open the first-run onboarding hints dialog — Help → Welcome
+    /// Tips, same re-open pattern as `ShowAbout`/`ShowDocumentation`.
     ShowOnboardingHints,
     /// Zoom camera in.
     CameraZoomIn,
@@ -292,25 +285,23 @@ pub enum MenuAction {
     /// fits the *current* population's real extent instead of resetting
     /// to a fixed default.
     CameraHome,
-    /// Toggle between Orbit (default) and Fly camera modes (Phase 8,
-    /// ADR-P8-02).
+    /// Toggle between Orbit (default) and Fly camera modes.
     ToggleCameraMode,
-    /// Phase 9, P9.4 — smoothly frames the selected entity: re-centers and
-    /// re-distances (preserving yaw/pitch) so it fills a comfortable
-    /// fraction of the viewport. Orbit-mode only; a no-op if nothing is
-    /// selected or the camera is in Fly mode (use `FocusSelection` for the
-    /// Fly-mode equivalent).
+    /// Smoothly frames the selected entity: re-centers and re-distances
+    /// (preserving yaw/pitch) so it fills a comfortable fraction of the
+    /// viewport. Orbit-mode only; a no-op if nothing is selected or the
+    /// camera is in Fly mode (use `FocusSelection` for the Fly-mode
+    /// equivalent).
     FrameSelected,
-    /// Phase 9, P9.4 — smoothly frames the entire current population
-    /// (every `ParticleNode`'s bounding sphere), preserving yaw/pitch.
-    /// Orbit-mode only.
+    /// Smoothly frames the entire current population (every
+    /// `ParticleNode`'s bounding sphere), preserving yaw/pitch. Orbit-mode
+    /// only.
     FrameAll,
-    /// Phase 9, P9.4 — snaps to one of the six axis-aligned preset views
-    /// (Blender-style Numpad 1/3/7/Ctrl+1/3/7), preserving the current
-    /// focus/distance — only the viewing angle changes.
+    /// Snaps to one of the six axis-aligned preset views (Blender-style
+    /// Numpad 1/3/7/Ctrl+1/3/7), preserving the current focus/distance —
+    /// only the viewing angle changes.
     SetCameraPreset(CameraPreset),
-    /// Phase 9, P9.4 — toggles between perspective and orthographic
-    /// projection.
+    /// Toggles between perspective and orthographic projection.
     ToggleOrthographic,
     /// Transition to Simulation State
     StartSimulation,
@@ -352,22 +343,17 @@ pub enum MenuAction {
     OpenReplayBundle,
     /// Clear the Replay Browser's currently-loaded bundle summary.
     CloseReplayBundle,
-    /// Open a save dialog and export the `lineages` SQLite table to CSV
-    /// (Phase 2, M14).
+    /// Open a save dialog and export the `lineages` SQLite table to CSV.
     ExportLineagesCsv,
-    /// Open a save dialog and export the `events` SQLite table to CSV
-    /// (Phase 2, M14).
+    /// Open a save dialog and export the `events` SQLite table to CSV.
     ExportEventsCsv,
-    /// Open a save dialog and export a fresh organism snapshot to CSV
-    /// (Phase 2, M14).
+    /// Open a save dialog and export a fresh organism snapshot to CSV.
     ExportOrganismsCsv,
-    /// Open a save dialog and export `MetricsState` history to CSV
-    /// (Phase 2, M14).
+    /// Open a save dialog and export `MetricsState` history to CSV.
     ExportMetricsCsv,
-    /// Open a save dialog and export `MetricsState` history to JSON
-    /// (Phase 2, M14).
+    /// Open a save dialog and export `MetricsState` history to JSON.
     ExportMetricsJson,
-    /// Save one Metrics chart as a publication-quality PNG (Phase 5, SX-7c).
+    /// Save one Metrics chart as a publication-quality PNG.
     /// The rect is the chart's screen area in *physical pixels* (already
     /// converted from egui's logical points via `ctx.pixels_per_point()` at
     /// the call site in `metrics.rs`), since the actual capture crops the
@@ -387,9 +373,9 @@ pub enum MenuAction {
         /// Crop height, physical pixels.
         height: u32,
     },
-    /// Toggle the Command Palette overlay (Phase 2, M15).
+    /// Toggle the Command Palette overlay.
     ToggleCommandPalette,
-    /// Toggle the Global Search overlay (Phase 7, W6a).
+    /// Toggle the Global Search overlay.
     ToggleGlobalSearch,
 
     // Overlay — canonical command routed through HeatmapState
@@ -406,12 +392,11 @@ pub enum MenuAction {
     /// Select a specific entity.
     SelectEntity(bevy_ecs::entity::Entity),
     /// Select every organism whose head node projects into a screen-space
-    /// rectangle (Phase 2, M8 — marquee-select; Phase 8 Epic 8.4 upgraded
-    /// this from a flat Z=0-plane world-space rectangle to a real
-    /// frustum-based test: each candidate's `Vec3` position is projected
-    /// through the camera's own `view_proj` and tested against this
-    /// rectangle in screen space, working correctly regardless of camera
-    /// tilt or an entity's `Z`). `screen_min`/`screen_max` are viewport-
+    /// rectangle (marquee-select) — a real frustum-based test: each
+    /// candidate's `Vec3` position is projected through the camera's own
+    /// `view_proj` and tested against this rectangle in screen space,
+    /// working correctly regardless of camera tilt or an entity's `Z`.
+    /// `screen_min`/`screen_max` are viewport-
     /// local physical-pixel coordinates, normalized to true min/max before
     /// this is pushed; `viewport_size` is the viewport's pixel size at the
     /// time of the drag, needed to reconstruct the same projection.
@@ -424,8 +409,8 @@ pub enum MenuAction {
         viewport_size: common::Vec2,
     },
     /// Select every organism whose head node projects inside a closed
-    /// screen-space polygon (Phase 8, Epic 8.4 — lasso-select). `points`
-    /// are viewport-local physical-pixel coordinates, in drag order (need
+    /// screen-space polygon (lasso-select). `points` are viewport-local
+    /// physical-pixel coordinates, in drag order (need
     /// not be explicitly closed); `viewport_size` is the viewport's pixel
     /// size at the time of the drag.
     SelectInLasso {
@@ -475,17 +460,17 @@ pub enum ActiveHeatmap {
     CO2,
 }
 
-/// Which physiology layer's viewport overlay (Phase 4, P4-V2) is currently
-/// active, if any — toggled from the corresponding P4-R1-R4 Viewer panel's
+/// Which physiology layer's viewport overlay is currently active, if any —
+/// toggled from the corresponding Circulation/Hormone/Immune Viewer panel's
 /// "Show on viewport" control; `None` shows nothing. See
 /// `ui::render::render_physiology_overlay`'s doc comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PhysiologyOverlayLayer {
-    /// Per-segment ATP level, from `metabolism::ChemicalEconomy` (P4-F2/F3).
+    /// Per-segment ATP level, from `metabolism::ChemicalEconomy`.
     Circulation,
-    /// Per-segment hormone channel intensity, from `brain::HormoneLevel` (P4-F4).
+    /// Per-segment hormone channel intensity, from `brain::HormoneLevel`.
     Hormone,
-    /// Per-segment infection severity, from `ecology::disease::SegmentInfection` (P4-F5).
+    /// Per-segment infection severity, from `ecology::disease::SegmentInfection`.
     Immune,
 }
 
@@ -513,8 +498,8 @@ impl Default for HeatmapState {
     }
 }
 
-/// UI-owned clipping-plane state (Phase 8, Epic 8.5, ADR-P8-05) — a
-/// horizontal world-space `Z`-plane the organism renderer clips fragments
+/// UI-owned clipping-plane state — a horizontal world-space `Z`-plane the
+/// organism renderer clips fragments
 /// against, letting the user slice into a dense population to see inside
 /// it. Plain UI state (like `HeatmapState`) rather than a `rendering` type,
 /// since `ui` doesn't depend on `rendering` — `app`'s render loop converts

@@ -1,8 +1,7 @@
-//! Immune Viewer (Phase 4, `PHASE4_ROADMAP.md` milestone P4-R4) — shows the
-//! organism-wide `ecology::disease::Infection` state alongside every
-//! segment's `SegmentInfection`/`SegmentImmunity` (P4-F5), so a researcher
-//! can see how far an infection has actually spread through the body, not
-//! just whether the organism as a whole is infected.
+//! Immune Viewer — shows the organism-wide `ecology::disease::Infection`
+//! state alongside every segment's `SegmentInfection`/`SegmentImmunity`, so
+//! a researcher can see how far an infection has actually spread through
+//! the body, not just whether the organism as a whole is infected.
 use crate::types::*;
 
 /// Renders the Immune Viewer dock panel.

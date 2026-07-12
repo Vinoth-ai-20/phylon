@@ -1,28 +1,27 @@
-//! Per-segment immune response (Phase 4, `PHASE4_ROADMAP.md` milestone
-//! P4-F5) — extends `ecology::disease`'s organism-wide [`ecology::disease::Infection`]
-//! with a spatial dimension, using the same Body Graph edge-walking approach
-//! P4-F3's `transport::transport_system` established.
+//! Per-segment immune response — extends `ecology::disease`'s organism-wide
+//! [`ecology::disease::Infection`] with a spatial dimension, using the same
+//! Body Graph edge-walking approach `transport::transport_system`
+//! established.
 //!
 //! **Model:** the head's own [`ecology::disease::Infection`] (if
 //! `Infectious`) is the infection's source severity; each tick, that
 //! severity relaxes outward into every segment's own
 //! [`ecology::disease::SegmentInfection`] one-directionally — the same
-//! broadcast-not-conserved shape P4-F4's `endocrine` module uses, since
-//! "how infected is this tissue" isn't a physical quantity moved from the
-//! source the way glucose is. Each segment's own
-//! [`ecology::disease::SegmentImmunity`] then clears a fixed fraction of
-//! its severity every tick, independent of
+//! broadcast-not-conserved shape the `endocrine` module uses, since "how
+//! infected is this tissue" isn't a physical quantity moved from the source
+//! the way glucose is. Each segment's own [`ecology::disease::SegmentImmunity`]
+//! then clears a fixed fraction of its severity every tick, independent of
 //! the organism-wide recovery roll `ecology::disease_progression_system`
 //! already performs. A segment whose severity is nonzero drains a small
-//! amount of its own `metabolism::ChemicalEconomy.atp` — reusing P4-F2's
-//! per-segment pools to give this milestone a real, observable consequence
-//! rather than inert tracking state.
+//! amount of its own `metabolism::ChemicalEconomy.atp` — reusing the
+//! per-segment physiology pools every grown segment already carries to give
+//! infection a real, observable consequence rather than inert tracking
+//! state.
 //!
-//! **DEF-009 note:** a true diffused concentration-field disease model
-//! remains deferred to P4-D1 (per `PHASE4_ROADMAP.md`'s own disposition for
-//! DEF-009) — this milestone is intra-body spread of an existing
-//! proximity-transmitted infection, not a replacement for `disease_spread_system`'s
-//! inter-organism model.
+//! **Scope note:** a true diffused concentration-field disease model is a
+//! possible future extension, not implemented here — this module is
+//! intra-body spread of an existing proximity-transmitted infection, not a
+//! replacement for `disease_spread_system`'s inter-organism model.
 
 use crate::developmental_graph::DevelopmentalGraph;
 use bevy_ecs::prelude::{Entity, Query};

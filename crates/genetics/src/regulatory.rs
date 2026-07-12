@@ -1,68 +1,89 @@
-//! Gene Regulatory Network runtime (Phase 3, M1).
+//! Gene Regulatory Network (GRN) runtime.
 //!
-//! See `PHASE3_ROADMAP.md`'s ADR-P3-01 for the full reasoning; summarized
-//! here: the GRN is **not** a new execution engine. It's a third evolvable
-//! [`Cppn`] (`Genome::regulatory_cppn`) generating the weights of a small
-//! recurrent runtime network (`RegulatoryNetwork`) — the exact same
-//! two-tier "evolvable generator → iteratively-simulated runtime structure"
-//! pattern already proven by `brain_cppn` → `Brain`. Unlike `Brain`,
-//! `RegulatoryNetwork` is evaluated on the CPU only, over a small fixed
-//! number of *developmental* steps (not simulation ticks, and not once per
-//! frame for a whole population) — it has none of `Brain`'s GPU-integration
-//! requirements, since development happens once per organism, not every
-//! tick for up to 100,000 organisms simultaneously.
+//! # Purpose
 //!
-//! As of Phase 3 M4, this network **is** wired to `organisms::growth_system`
-//! — see `crate::develop::develop_at_position` for the per-position decode
-//! that turns a developed network's gene states into a `SegmentType`,
-//! branching decision, actuation parameters, and pigment.
+//! Real animal development doesn't read body-plan information from a static
+//! table. Instead, a network of genes turn each other on and off — activating
+//! and repressing one another — until the network settles into a pattern of
+//! expression levels that differs by position in the body, and *that*
+//! pattern of "which genes ended up expressed here" is what determines local
+//! anatomy. This module is a simplified computational analog of that process:
+//! a small, evolvable network of gene "nodes" wired together by signed
+//! activator/repressor edges, iterated for a few steps at a given body
+//! position until it settles, and then read out to decide what grows there.
+//!
+//! # Architecture: generator + runtime, not a bespoke engine
+//!
+//! A `RegulatoryNetwork` is not designed by hand and it is not itself part of
+//! the evolvable genome. Instead, `Genome::regulatory_cppn` is a [`Cppn`] (see
+//! `crate::cppn` for what a CPPN is and why one is used) that is queried, once
+//! per gene and once per gene pair, to produce that gene's bias and the
+//! signed weight of the edge between each pair of genes. [`RegulatoryNetwork::generate`]
+//! performs those queries and assembles the result into the small recurrent
+//! network defined below. This is the same two-tier "evolvable generator
+//! produces a runtime structure, which is then iteratively simulated" split
+//! already used for the organism's brain (`Genome::brain_cppn` generates
+//! synapse weights for a CTRNN — see `organisms::brain_wiring`); the
+//! regulatory network reuses the same pattern rather than inventing a new
+//! execution model. Unlike the brain's CTRNN, `RegulatoryNetwork` is
+//! evaluated on the CPU only, over a small fixed number of *developmental*
+//! steps — not simulation ticks, and not once per frame for a whole
+//! population. It runs once whenever a body position needs to be decoded
+//! (organism spawn, or a new segment during growth), not continuously, so it
+//! has none of the brain's GPU-integration requirements.
+//!
+//! # Data flow
+//!
+//! `crate::develop::develop_at_position` is the single entry point that ties
+//! this module to the rest of the crate: it builds a `RegulatoryNetwork` from
+//! `regulatory_cppn`, develops it for a fixed number of steps at one body
+//! position (with morphogen-derived external inputs — see `crate::morphogen`),
+//! and decodes the settled gene states into a `SegmentType`, branching
+//! decision, actuation parameters, and pigment. See that module for the
+//! decode logic; this module owns only the network itself.
 
 use crate::cppn::Cppn;
 use serde::{Deserialize, Serialize};
 
 /// Fixed semantic role of one gene (output node) in a [`RegulatoryNetwork`] —
-/// a fixed-index convention (analogous to `brain_cppn`'s fixed input/output
+/// a fixed-index convention (analogous to the brain CPPN's fixed input/output
 /// columns) made explicit via an enum + [`REGULATORY_GENE_ROLES`] table, so
 /// `crate::develop`'s decode knows which gene is which.
 ///
-/// The gene *count* is fixed for this milestone (matching
-/// [`REGULATORY_GENE_ROLES`]'s length) — evolvable growth of the output
-/// vocabulary itself is Phase 3 M5's explicit scope, not this one's.
+/// The gene *count* and role assignment are fixed today; evolvable growth of
+/// the output vocabulary itself (e.g. new roles, or a variable gene count)
+/// is a possible future extension, not implemented here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RegulatoryGeneRole {
-    /// Read positionally along the body axis to decide segment identity
-    /// (Phase 3 M4) — several Hox-designated genes together form a
-    /// combinatorial code, replacing the retired `HoxGene.segment` direct
-    /// lookup (see `PHASE3_ROADMAP.md`'s ADR-P3-02).
+    /// Read positionally along the body axis to decide segment identity.
+    /// Several Hox-designated genes together form a combinatorial bit-code —
+    /// named after the biological Hox gene family, which plays the same
+    /// segment-identity role in real animal development — decoded by
+    /// `crate::develop::decode_segment_type`.
     Hox,
     /// Read to decide broader cell-fate/organ output, beyond the fixed
-    /// segment-type vocabulary (Phase 3 M5). As of M4, index 0 of this
-    /// role drives the branching decision (see `crate::develop`).
+    /// segment-type vocabulary. Index 0 of this role drives the branching
+    /// decision and index 1 drives apoptosis (see `crate::develop`).
     Differentiation,
-    /// Drives a physical growth effector (Phase 3 M4): index 0 is muscle
-    /// actuation amplitude, index 1 is actuation phase (see
+    /// Drives a physical growth effector: index 0 is muscle actuation
+    /// amplitude, index 1 is actuation phase (see
     /// `crate::develop::develop_at_position`).
     Effector,
-    /// Drives per-segment skin pigmentation (Phase 3 M4, added alongside
-    /// Hox decoding once retiring `HoxSequence` — which had piggybacked
-    /// organism color onto the body-plan struct — raised the question of
-    /// where color should live now). Three Pigment-designated genes map
-    /// directly to R/G/B; since decoding runs once per body position, color
-    /// is a genuine per-segment emergent trait, not organism-wide stored
-    /// data — this is what makes gradients/stripes/spots possible later
-    /// without any architecture change, only richer `regulatory_cppn`
-    /// topologies.
+    /// Drives per-segment skin pigmentation. Three Pigment-designated genes
+    /// map directly to R/G/B; since decoding runs once per body position,
+    /// color is a genuine per-segment emergent trait rather than a single
+    /// organism-wide stored value — this is what makes gradients, stripes,
+    /// or spots possible purely from a richer `regulatory_cppn` topology,
+    /// with no change to this architecture.
     Pigment,
 }
 
-/// The initial regulatory-gene role table: 3 Hox-designated genes (enough
-/// for up to 2^3 = 8 combinatorial identities under a simple on/off
-/// reading — comfortably more than today's 5 fixed `SegmentType` variants),
-/// 2 Differentiation-designated genes, 2 Effector-designated genes
-/// (amplitude, phase), and 3 Pigment-designated genes (R, G, B).
-/// `RegulatoryNetwork::generate`'s `gene_count` argument is expected to
-/// match this table's length while this milestone's fixed-vocabulary scope
-/// holds.
+/// The regulatory-gene role table: 3 Hox-designated genes (enough for up to
+/// 2^3 = 8 combinatorial identities under a simple on/off reading — matching
+/// `SegmentType`'s 8 variants one-for-one), 2 Differentiation-designated
+/// genes, 2 Effector-designated genes (amplitude, phase), and 3
+/// Pigment-designated genes (R, G, B). `RegulatoryNetwork::generate`'s
+/// `gene_count` argument is expected to match this table's length.
 pub const REGULATORY_GENE_ROLES: &[RegulatoryGeneRole] = &[
     RegulatoryGeneRole::Hox,
     RegulatoryGeneRole::Hox,
@@ -76,20 +97,22 @@ pub const REGULATORY_GENE_ROLES: &[RegulatoryGeneRole] = &[
     RegulatoryGeneRole::Pigment,
 ];
 
-/// One regulatory gene's runtime state — analogous to `brain::CtrnnNode`,
-/// but evaluated on the CPU over developmental steps rather than uploaded
-/// to a GPU buffer every simulation tick (see this module's doc comment for
-/// why the two don't share an implementation).
+/// One regulatory gene's runtime state — conceptually analogous to a CTRNN
+/// neuron (see `organisms::brain_wiring`), but evaluated on the CPU over a
+/// handful of developmental steps rather than continuously on the GPU every
+/// simulation tick (see this module's doc comment for why the two don't
+/// share an implementation).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RegulatoryGeneNode {
     /// Current expression level (this gene's "activation potential").
     pub state: f32,
     /// Bias added before activation, generated from `regulatory_cppn`.
     pub bias: f32,
-    /// Activation function — fixed to `Sigmoid` for this milestone (a
-    /// natural threshold-response curve for gene expression; evolving the
-    /// choice per-gene, like `Cppn`'s nodes already do, is a straightforward
-    /// future extension, not required for M1).
+    /// Activation function — fixed to `Sigmoid` (a natural threshold-response
+    /// curve for gene expression: near-zero for a strongly repressed gene,
+    /// near-one for a strongly activated one). Evolving the choice per-gene,
+    /// the way a `Cppn`'s nodes already do, is a straightforward future
+    /// extension, not implemented here.
     pub activation: brain::ActivationFn,
 }
 
@@ -112,11 +135,12 @@ pub struct RegulatoryEdge {
 /// small, fixed number of developmental steps (see [`RegulatoryNetwork::develop`]).
 ///
 /// Deliberately **not** a `bevy_ecs::Component` and **not** `Serialize`d —
-/// unlike `Brain` (which persists for an organism's entire lifetime), this
-/// network is regenerated fresh from the genome whenever development needs
-/// to run and its *output* (differentiation decisions) is what gets baked
-/// into the Body Graph / physics representation (Phase 3 M4+); the network
-/// itself doesn't need to outlive that computation.
+/// unlike the organism's brain (which persists for its entire lifetime),
+/// this network is regenerated fresh from the genome every time development
+/// needs to run, and only its *output* (the decoded segment/branching/
+/// actuation/pigment decision) is what gets baked into the persistent body
+/// graph (see `organisms::developmental_graph`). The network itself doesn't
+/// need to outlive that one computation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RegulatoryNetwork {
     /// Every gene in the network, indexed positionally (index into this
@@ -129,14 +153,14 @@ pub struct RegulatoryNetwork {
 
 impl RegulatoryNetwork {
     /// Builds a `RegulatoryNetwork` of `gene_count` genes by querying
-    /// `regulatory_cppn` exactly the way `organisms::systems`'s brain
-    /// construction queries `brain_cppn`: once per gene index for that
-    /// gene's bias (`evaluate(&[i/total, i/total])`), and once per
-    /// gene-index pair for the edge weight between them
-    /// (`evaluate(&[i/total, j/total])`). A pair whose evaluated weight is
-    /// (numerically) exactly `0.0` is skipped — no edge is created — so the
-    /// network's edge *topology* itself is shaped by evolution of
-    /// `regulatory_cppn`, not fixed to a complete graph.
+    /// `regulatory_cppn` — the same "query a CPPN once per index/pair" pattern
+    /// `organisms::brain_wiring` uses to build a CTRNN's synapse weights from
+    /// `brain_cppn`: once per gene index for that gene's bias
+    /// (`evaluate(&[i/total, i/total])`), and once per gene-index pair for
+    /// the edge weight between them (`evaluate(&[i/total, j/total])`). A pair
+    /// whose evaluated weight is (numerically) exactly `0.0` is skipped — no
+    /// edge is created — so the network's edge *topology* itself is shaped
+    /// by evolution of `regulatory_cppn`, not fixed to a complete graph.
     pub fn generate(regulatory_cppn: &Cppn, gene_count: usize) -> Self {
         let total = gene_count.max(1) as f32;
 
@@ -191,11 +215,10 @@ impl RegulatoryNetwork {
     /// compute → reduce pattern documented across `metabolism`/`sensing`/
     /// `behavior`).
     ///
-    /// `external_inputs` supplies one additional additive input per gene
-    /// (e.g. a future morphogen-gradient reading, Phase 3 M3); a gene
-    /// beyond `external_inputs`'s length receives `0.0`. This milestone
-    /// does not yet attach real meaning to these inputs — tests exercise
-    /// this with an empty or all-zero slice.
+    /// `external_inputs` supplies one additional additive input per gene —
+    /// in practice a morphogen-gradient reading for the current body
+    /// position (see `crate::morphogen`); a gene beyond `external_inputs`'s
+    /// length receives `0.0`.
     pub fn step(&mut self, external_inputs: &[f32]) {
         let previous: Vec<f32> = self.nodes.iter().map(|n| n.state).collect();
 
@@ -235,10 +258,10 @@ impl RegulatoryNetwork {
     }
 
     /// Runs [`RegulatoryNetwork::step`] `steps` times in sequence — a fixed
-    /// step count, not "iterate until convergence" (per
-    /// `PHASE3_ROADMAP.md`'s risk table: a fixed count keeps evaluation cost
-    /// bounded and deterministic regardless of whether a given evolved
-    /// topology would otherwise oscillate or diverge).
+    /// step count, not "iterate until convergence": a fixed count keeps
+    /// evaluation cost bounded and deterministic regardless of whether a
+    /// given evolved topology would otherwise oscillate or never settle at
+    /// all.
     pub fn develop(&mut self, steps: usize, external_inputs: &[f32]) {
         for _ in 0..steps {
             self.step(external_inputs);

@@ -81,8 +81,8 @@ impl<'a> Behavior<String> for WorkbenchBehavior<'a> {
                 // Panel chrome: thin bar with title + Detach/Close buttons.
                 // For the Sidebar pane, show the active tab's icon/label
                 // (Inspector, Genetics, ...) instead of the literal tile name
-                // "Sidebar" — this is the one merged bar for every sidebar
-                // tab, replacing the heading each of them used to draw again
+                // "Sidebar" — this one bar is shared by every sidebar tab, so
+                // no individual tab needs to draw its own redundant heading
                 // just below it.
                 let chrome_title = if name == "Sidebar" {
                     format!(
@@ -372,13 +372,13 @@ fn chrome_button(
     .on_hover_text(tooltip)
 }
 
-/// The two panel tiers ADR-P5-05 defines (Phase 5, SX-8a/8b) — Viewport is
-/// the third, Primary tier, but it never reaches `chrome_bar` at all (see
+/// The two panel tiers this module's chrome styling distinguishes — Viewport
+/// is a third, Primary tier, but it never reaches `chrome_bar` at all (see
 /// `panel_chrome`'s early return for it), so there's no variant for it here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PanelTier {
     /// Content changes with the current selection: Sidebar (hosts
-    /// Inspector), Neural Viewer, and the P4-R-tier Physiology/Circulation/
+    /// Inspector), Neural Viewer, and the Physiology/Circulation/
     /// Hormone/Immune/Cell Lineage viewers.
     Contextual,
     /// Aggregate/session-wide content, not tied to a single selection:
@@ -387,7 +387,7 @@ enum PanelTier {
     Secondary,
 }
 
-/// Classifies a panel by `ALL_PANEL_NAMES` name into its ADR-P5-05 tier.
+/// Classifies a panel by `ALL_PANEL_NAMES` name into its chrome-styling tier.
 fn panel_tier(name: &str) -> PanelTier {
     match name {
         "Sidebar"
@@ -426,9 +426,9 @@ fn chrome_bar(
     ui.horizontal(|ui| {
         ui.add_space(crate::theme::SPACE_XS);
 
-        // SX-8b: the accent bar is the Contextual tier's structural tell —
-        // a colored rect, not text, so it reads even before the title glyph
-        // does. `hover()` sense since it's decorative, not interactive.
+        // The accent bar is the Contextual tier's structural tell — a
+        // colored rect, not text, so it reads even before the title glyph
+        // does. Not `hover()`-sensed since it's decorative, not interactive.
         if tier == PanelTier::Contextual {
             let (rect, _) = ui.allocate_exact_size(
                 egui::vec2(3.0, crate::theme::CHROME_HEIGHT - 6.0),
@@ -812,9 +812,10 @@ pub fn rebuild_tree_from_modes(
     // Browser above: defaults to Closed, shares the root row when docked.
     let evolution_debugger = is_docked("Evolution Debugger")
         .then(|| tiles.insert_pane("Evolution Debugger".to_string()));
-    // P4-R1-R5 physiology/lineage panels — same treatment as Research
-    // Dashboard/Replay Browser/Evolution Debugger above: default to Closed
-    // (see `apply_layout_preset`), sharing the root row when docked.
+    // Physiology/circulation/hormone/immune/lineage viewer panels — same
+    // treatment as Research Dashboard/Replay Browser/Evolution Debugger
+    // above: default to Closed (see `apply_layout_preset`), sharing the
+    // root row when docked.
     let physiology_viewer =
         is_docked("Physiology Viewer").then(|| tiles.insert_pane("Physiology Viewer".to_string()));
     let circulation_viewer = is_docked("Circulation Viewer")
@@ -976,11 +977,10 @@ fn collect_shares(
 }
 
 /// A named, fixed `PanelMode` configuration selectable from the Windows/View
-/// menus — see `docs/design/layout.md`'s Layout Presets section. Phase 7,
-/// W3b: this is the codebase's one and only "named workspace" model — see
-/// this milestone's own architectural note (`PHASE7_WORKBENCH_ROADMAP.md`)
-/// for why the previously-separate, entirely-unused `ui::state::Workspace`
-/// enum was deleted rather than repurposed as a second one.
+/// menus — see `docs/design/layout.md`'s Layout Presets section. This is
+/// the codebase's one and only "named workspace" model; user-saved
+/// workspaces (`crate::workspace`) are built on top of the same
+/// `WorkspaceLayout` shape rather than a second, parallel one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LayoutPreset {
     /// Sidebar + Viewport + Neural Viewer docked, Metrics/Event Log tabbed
@@ -1017,9 +1017,8 @@ pub enum LayoutPreset {
 
 impl LayoutPreset {
     /// Every preset, in menu-display order — the single list both the View
-    /// and Windows menus iterate over (Phase 7, W3b), so adding a 7th
-    /// preset in the future is a one-line change here, not two duplicated
-    /// button blocks.
+    /// and Windows menus iterate over, so adding a new preset in the future
+    /// is a one-line change here, not two duplicated button blocks.
     pub const ALL: [LayoutPreset; 6] = [
         LayoutPreset::Research,
         LayoutPreset::Analytics,
@@ -1043,13 +1042,12 @@ impl LayoutPreset {
 }
 
 /// Computes a built-in preset's canonical `WorkspaceLayout` — pure data, no
-/// `WorkbenchState` touched. Phase 7, W3c: extracted out of
-/// `apply_layout_preset` so a built-in preset's layout can be captured,
-/// duplicated into a saved workspace, or reset back to, without requiring
-/// a live `WorkbenchState` to compute it — see
-/// `crate::workspace`'s "unified storage model" doc comment for why this
-/// function, not a second data shape, is how built-ins participate in
-/// workspace lifecycle operations.
+/// `WorkbenchState` touched. Kept separate from `apply_layout_preset` so a
+/// built-in preset's layout can be captured, duplicated into a saved
+/// workspace, or reset back to, without requiring a live `WorkbenchState`
+/// to compute it — see `crate::workspace`'s "unified storage model" doc
+/// comment for why this function, not a second data shape, is how
+/// built-ins participate in workspace lifecycle operations.
 pub fn built_in_layout(preset: LayoutPreset) -> crate::workspace::WorkspaceLayout {
     let mut modes = std::collections::HashMap::new();
     for &name in ALL_PANEL_NAMES {
@@ -1060,12 +1058,9 @@ pub fn built_in_layout(preset: LayoutPreset) -> crate::workspace::WorkspaceLayou
             modes.insert("Neural Viewer".to_string(), PanelMode::Closed);
             modes.insert("Research Dashboard".to_string(), PanelMode::Closed);
             modes.insert("Replay Browser".to_string(), PanelMode::Closed);
-            // Phase 5, SX-8b: this preset's own doc comment (below, on
-            // `LayoutPreset::Research`) and §2.4 of the roadmap both say
-            // Evolution Debugger should be closed by default like the other
-            // debug/analysis panels here — it just wasn't, until now. Found
-            // by re-auditing this exact function while implementing the
-            // panel-tier system, not a change made speculatively.
+            // Evolution Debugger is a debug/analysis panel like Neural
+            // Viewer/Research Dashboard/Replay Browser above, so it should
+            // default to closed the same way they do.
             modes.insert("Evolution Debugger".to_string(), PanelMode::Closed);
             modes.insert("Physiology Viewer".to_string(), PanelMode::Closed);
             modes.insert("Circulation Viewer".to_string(), PanelMode::Closed);
@@ -1124,7 +1119,7 @@ pub fn built_in_layout(preset: LayoutPreset) -> crate::workspace::WorkspaceLayou
             modes.insert("Neural Viewer".to_string(), PanelMode::Closed);
             modes.insert("Research Dashboard".to_string(), PanelMode::Closed);
             modes.insert("Replay Browser".to_string(), PanelMode::Closed);
-            // Phase 5, SX-8b: same fix as `LayoutPreset::Research` above —
+            // Same reasoning as `LayoutPreset::Research` above —
             // Presentation is meant to be the most minimal preset, so it
             // can't be missing this while Research has it.
             modes.insert("Evolution Debugger".to_string(), PanelMode::Closed);
@@ -1138,7 +1133,7 @@ pub fn built_in_layout(preset: LayoutPreset) -> crate::workspace::WorkspaceLayou
         }
         LayoutPreset::Debug => {
             // Everything docked, including Neural Viewer, Research
-            // Dashboard, Replay Browser, and the P4-R-tier physiology/lineage
+            // Dashboard, Replay Browser, and the physiology/lineage viewer
             // panels — Placeholder Panel stays closed even here since it
             // carries no real content a researcher would want visible by
             // default.
@@ -1155,8 +1150,8 @@ pub fn built_in_layout(preset: LayoutPreset) -> crate::workspace::WorkspaceLayou
 /// Apply a named built-in layout preset: compute its canonical layout
 /// (`built_in_layout`), apply it (clearing any stale persisted split
 /// ratios — a preset is a deliberate reset, not a drag), rebuild the tree,
-/// and mark it the active workspace (Phase 7, W3c) so it can be restored
-/// on next launch and reset back to on demand.
+/// and mark it the active workspace so it can be restored on next launch
+/// and reset back to on demand.
 pub fn apply_layout_preset(state: &mut WorkbenchState, preset: LayoutPreset) {
     let layout = built_in_layout(preset);
     state.panel_modes = layout.panel_modes;
@@ -1178,7 +1173,7 @@ pub fn apply_default_layout(state: &mut WorkbenchState) {
     apply_layout_preset(state, LayoutPreset::Research);
 }
 
-/// Toggle Focus Mode (Phase 2, M16): closes every panel except the
+/// Toggle Focus Mode: closes every panel except the
 /// Viewport, remembering the prior arrangement in
 /// `WorkbenchState::focus_mode_previous` so a second toggle restores it
 /// exactly — a fullscreen-viewport toggle, not a fourth named preset.
@@ -1229,10 +1224,9 @@ pub fn remove_panel_from_tree(tree: &mut egui_tiles::Tree<String>, name: &str) {
 mod tests {
     use super::*;
 
-    /// Phase 5, SX-8b: §2.4 of the roadmap found that `LayoutPreset::Research`
-    /// left Evolution Debugger docked by default despite this same function's
-    /// own doc comment claiming it was treated like Research Dashboard/Replay
-    /// Browser (both correctly closed). Proves the fix, not just the comment.
+    /// `LayoutPreset::Research` must close Evolution Debugger by default,
+    /// consistent with the doc comment on that variant, which groups it
+    /// with Research Dashboard/Replay Browser (both also closed).
     #[test]
     fn research_preset_closes_evolution_debugger() {
         let mut state = WorkbenchState::default();
@@ -1268,9 +1262,10 @@ mod tests {
         );
     }
 
-    /// Phase 7, W3b: `LayoutPreset::ALL` must actually list every variant
-    /// (a hand-maintained array can silently fall out of sync with the enum
-    /// as variants are added) — this is the direct proof, not just a count.
+    /// `LayoutPreset::ALL` must actually list every variant — a
+    /// hand-maintained array can silently fall out of sync with the enum
+    /// as variants are added, so this checks each variant directly rather
+    /// than just comparing lengths.
     #[test]
     fn layout_preset_all_contains_every_variant_exactly_once() {
         let all = LayoutPreset::ALL;
@@ -1356,9 +1351,7 @@ mod tests {
     }
 
     /// Confirms Teaching and Presentation are genuinely different presets,
-    /// not a renamed copy of each other — the specific risk called out by
-    /// this milestone's own review ("verify every existing preset and
-    /// document what differentiates them").
+    /// not a renamed copy of each other.
     #[test]
     fn teaching_and_presentation_presets_differ() {
         let mut teaching = WorkbenchState::default();
@@ -1375,12 +1368,12 @@ mod tests {
         );
     }
 
-    /// Phase 5, SX-8a/8b: a spot-check of the tier classification driving
-    /// `chrome_bar`'s accent bar/title color — Sidebar (hosts Inspector) is
-    /// Contextual, Metrics (an aggregate dashboard) is Secondary. Not
-    /// exhaustive over all 14 panels (the classification is a static match,
-    /// not derived logic that could silently drift), just proof the two
-    /// tiers are reachable and distinct.
+    /// A spot-check of the tier classification driving `chrome_bar`'s
+    /// accent bar/title color — Sidebar (hosts Inspector) is Contextual,
+    /// Metrics (an aggregate dashboard) is Secondary. Not exhaustive over
+    /// every panel (the classification is a static match, not derived logic
+    /// that could silently drift), just proof the two tiers are reachable
+    /// and distinct.
     #[test]
     fn panel_tier_distinguishes_contextual_from_secondary() {
         assert_eq!(panel_tier("Sidebar"), PanelTier::Contextual);

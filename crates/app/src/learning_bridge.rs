@@ -1,13 +1,12 @@
 //! # MARL Command Bridge
 //!
-//! ## 1. What Happens
-//! Implements the four `network::MarlCommand` handlers that `main.rs`'s
-//! headless RL loop previously stubbed out: [`get_state`] returns a real
-//! organism's observation, [`set_actions`] actually drives that organism's
-//! behavior, [`reset`] actually resets the ecosystem, and [`set_difficulty`]
-//! scales hazard frequency/severity for curriculum learning.
+//! Implements the four `network::MarlCommand` handlers `main.rs`'s headless
+//! multi-agent reinforcement learning (MARL) loop dispatches to:
+//! [`get_state`] returns a real organism's observation, [`set_actions`]
+//! actually drives that organism's behavior, [`reset`] resets the
+//! ecosystem, and [`set_difficulty`] scales hazard frequency/severity for
+//! curriculum learning.
 //!
-//! ## 2. Why It Happens
 //! `learning`/`network` deliberately stay decoupled from `sensing`/`brain`/
 //! live `bevy_ecs::World` access (see `learning::ExternalAgent`'s doc
 //! comment) — `app`, the composition root, is where that decoupling gets
@@ -15,12 +14,13 @@
 //! `app::analytics_bridge`/`app::scripting` play for `research`/
 //! `analytics`/`plugins`.
 //!
-//! ## 3. How It Happens
 //! Exactly one organism carries `learning::ExternalAgent` at a time (see
-//! [`ensure_agent_assigned`]); [`get_state`] reads its `sensing::SensoryState`,
-//! [`set_actions`] writes its `brain::Brain::external_override` (see that
-//! method's doc comment for why this doesn't disable the organism's own
-//! CTRNN, just intercepts its read-out).
+//! [`ensure_agent_assigned`]); [`get_state`] reads its
+//! `sensing::SensoryState`, and [`set_actions`] writes its
+//! `brain::Brain::external_override` (see that method's doc comment for why
+//! this doesn't disable the organism's own CTRNN — continuous-time
+//! recurrent neural network, the organism brain model — just intercepts its
+//! read-out).
 
 use crate::app::PhylonApp;
 use bevy_ecs::prelude::*;

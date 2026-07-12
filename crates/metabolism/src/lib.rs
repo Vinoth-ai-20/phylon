@@ -1,4 +1,51 @@
-//! Energy management, ageing, respiration, starvation, and hunger systems.
+//! # Phylon Metabolism
+//!
+//! ## Purpose
+//!
+//! This crate models each organism's internal energy economy: how it turns
+//! raw fuel into usable energy, ages, and dies of starvation, suffocation,
+//! or old age. It also models a shared planetary atmosphere that organisms
+//! draw from and exhale into.
+//!
+//! ## The ATP/glucose/O2/CO2 economy
+//!
+//! Rather than a single "energy" scalar, each organism tracks four coupled
+//! quantities in [`ChemicalEconomy`]: glucose (stored fuel), O2 (oxygen),
+//! CO2 (a waste product), and ATP (immediately usable energy). Every tick,
+//! `compute_metabolism` runs a simplified version of cellular respiration:
+//! glucose and oxygen are consumed to produce ATP and CO2. This is a
+//! deliberately gamified stand-in for real biochemistry, not a literal
+//! simulation of the citric acid cycle or electron transport chain — the
+//! goal is to give evolution enough real dimensions (fuel storage vs. usable
+//! energy vs. a gas dependency) to produce distinct ecological niches
+//! (aerobic vs. anaerobic organisms, suffocation in oxygen-poor areas,
+//! starvation when fuel runs out), not to model biochemistry precisely.
+//!
+//! ## Architecture
+//!
+//! [`metabolism_system`] is the entry point, called once per tick. For each
+//! organism it: samples the local O2/CO2 concentration from the
+//! `diffusion` crate's spatial fields, runs the respiration reaction, and
+//! deducts a basal metabolic cost that scales super-linearly with body mass
+//! (Kleiber's Law), so evolving an arbitrarily large body has a real energy
+//! cost. If ATP reaches zero or age exceeds the organism's lifespan, the
+//! organism is marked [`Dead`] for cleanup elsewhere. [`GlobalAtmosphere`]
+//! tracks planetary O2/CO2 pools, day/night sunlight, temperature, and a
+//! slower seasonal cycle that modulates the day/night cycle's peak
+//! brightness — see [`day_night_cycle_system`] and
+//! [`atmosphere_homeostasis_system`].
+//!
+//! ## Determinism and parallelism
+//!
+//! Per-organism respiration is embarrassingly parallel (each organism's
+//! computation depends only on its own state and two read-only environment
+//! samples), so `metabolism_system` computes it via `rayon`. The one shared
+//! mutable state — `GlobalAtmosphere.o2`/`.co2` — is *not* accumulated
+//! directly from parallel workers, since floating-point addition is not
+//! associative and summing in whatever order threads happen to finish would
+//! make results depend on scheduling. Instead, results are collected in a
+//! fixed, deterministic order and applied sequentially. See
+//! [`metabolism_system`]'s doc comment for the full explanation.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -43,17 +90,14 @@ pub struct ChemicalEconomy {
 }
 
 impl ChemicalEconomy {
-    /// A small, per-body-segment resource pool (Phase 4, `PHASE4_ROADMAP.md`
-    /// milestone P4-F2) — deliberately much smaller than an organism's own
-    /// head-level pool (used organism-wide by `metabolism_system`,
-    /// `reproduction`, and `ecology::foraging_system`, all unaffected by
-    /// this milestone). These placeholder values are not tuned; they exist
-    /// so a future intra-body transport pass (P4-F3) has real per-segment
-    /// state to move resources between. `metabolism_system`'s query also
-    /// requires `&Age`/`&Metabolism`, which only the head entity carries —
-    /// so a segment with just this component is never picked up by it,
-    /// confirmed by this crate's own existing test suite still passing
-    /// unmodified after this milestone.
+    /// A small, per-body-segment resource pool — deliberately much smaller
+    /// than an organism's own head-level pool (used organism-wide by
+    /// `metabolism_system`, `reproduction`, and `ecology::foraging_system`).
+    /// These placeholder values are not tuned; they exist so a future
+    /// intra-body transport system has real per-segment state to move
+    /// resources between. `metabolism_system`'s query also requires
+    /// `&Age`/`&Metabolism`, which only the head entity carries — so a
+    /// segment with just this component is never picked up by it.
     pub fn segment_default() -> Self {
         Self {
             glucose: 100.0,
@@ -230,7 +274,9 @@ fn compute_metabolism(
     // Deduct ATP: superlinear scaling mass^1.2
     let mut active_base_rate = metabolism.base_rate;
 
-    // Phase 2: Metabolic Dormancy (Night/Scarcity Mode)
+    // Metabolic dormancy: plants slow their basal metabolism at night or
+    // during CO2 scarcity rather than paying full cost, since they have no
+    // way to actively forage for more fuel in the dark.
     if metabolism.is_plant && (sunlight < 0.2 || local_co2 < 10.0) {
         // Sleep through the night or CO2 droughts without burning entire Glucose supply.
         active_base_rate *= 0.2;
@@ -323,10 +369,10 @@ pub fn metabolism_system(
         .iter()
         .map(|(entity, node, chem, age, metabolism)| {
             // The world-space diffusion field stays a 2D plane by design
-            // (Phase 8, ADR-P8-05 — a naive volumetric extension would be a
-            // ~256x memory/bandwidth increase nothing has measured a need
-            // for), so sampling it truncates the node's 3D position down to
-            // its XY plane — not a bug, a deliberate, documented boundary.
+            // (see the `diffusion` crate's module docs for the
+            // memory/bandwidth tradeoff), so sampling it truncates the
+            // node's 3D position down to its XY plane — not a bug, a
+            // deliberate, documented boundary.
             let local_o2 = cpu_field
                 .as_ref()
                 .map_or(1000.0, |field| field.sample(node.position.truncate(), 2));
@@ -479,11 +525,10 @@ mod tests {
 
     #[test]
     fn metabolism_system_ignores_a_segment_missing_age_and_metabolism() {
-        // Phase 4, P4-F2: a plain `ChemicalEconomy` (no `Age`/`Metabolism`)
-        // — exactly what a non-head body segment now carries — must not be
-        // picked up by `metabolism_system`'s query, so per-segment pools
-        // introduced by this milestone can never accidentally trigger
-        // organism-level death/ageing logic.
+        // A plain `ChemicalEconomy` (no `Age`/`Metabolism`) — exactly what a
+        // non-head body segment carries — must not be picked up by
+        // `metabolism_system`'s query, so per-segment pools can never
+        // accidentally trigger organism-level death/ageing logic.
         let mut world = bevy_ecs::world::World::new();
         world.insert_resource(GlobalAtmosphere::default());
         world.spawn((

@@ -1,66 +1,54 @@
-//! # Phylon Application
+//! # Frame Rendering
 //!
-//! The main binary entry point for the Phylon simulation.
+//! This module owns [`PhylonApp::render`], called once per OS-requested
+//! frame redraw: it advances the simulation to catch up to real time (via
+//! `simulation::advance_simulation_for_frame`), gathers ECS state into
+//! renderable instances, and drives the GPU render passes (field/heatmap
+//! background, organism capsules, debug badges, selection highlights, egui)
+//! before presenting the frame.
 //!
-//! ## Responsibilities
-//!
-//! 1. Parse CLI arguments and locate the config file.
-//! 2. Initialise structured logging via `tracing_subscriber`.
-//! 3. Load `PhylonConfig` from `data/default.ron` (falls back to defaults).
-//! 4. Create a `winit` `EventLoop` and application window.
-//! 5. Initialise a `wgpu` surface on the window.
-//! 6. Run the event loop, calling `PhylonApp::update_simulation` each tick
-//!    (see `app.rs`'s top doc comment — Phase 6, Epic A removed the
-//!    `SimulationScheduler` this step previously constructed, since it was
-//!    never actually advanced by anything) and presenting a cleared frame
-//!    on each `RedrawRequested`.
-//!
-//! ## Architecture note
-//!
-//! The `app` crate is the **composition root** — the only crate permitted to
-//! depend on everything. All other crates are decoupled from each other via
-//! the dependency rules in `docs/02_crate_dependency_graph.md`.
+//! See `render::world_instances` and `render::organism_visuals` for how ECS
+//! state becomes renderable instance data — this file itself is the
+//! per-frame orchestration that calls into them and issues the actual GPU
+//! render passes.
 
 use anyhow::Result;
 
 use crate::app::PhylonApp;
 
-/// Organism visual-instance builders (Phase 7, W2a) — the "what to draw"
-/// half of this file's per-node/per-spring loops. See its own module doc
-/// comment for the extraction discipline. `pub(crate)` (Phase 8, Epic 8.4)
-/// so `app.rs`'s `pick_entity` can reuse its pellet-radius constants for
-/// ray-vs-capsule picking, rather than duplicating those literals.
+/// Organism visual-instance builders — the "what to draw" half of this
+/// file's per-node/per-spring loops. See its own module doc comment for the
+/// extraction discipline. `pub(crate)` so `app.rs`'s `pick_entity` can reuse
+/// its pellet-radius constants for ray-vs-capsule picking, rather than
+/// duplicating those literals.
 pub(crate) mod organism_visuals;
-/// Per-frame world-instance gathering (Phase 7, W2d) — the per-node/per-
-/// spring/per-pellet orchestration that calls `organism_visuals`'s
-/// builders, extracted out of `render()` itself. See its own module doc
-/// comment for the extraction discipline.
+/// Per-frame world-instance gathering — the per-node/per-spring/per-pellet
+/// orchestration that calls `organism_visuals`'s builders, kept separate
+/// from `render()` itself so gathering-what-to-draw and issuing-the-actual-
+/// GPU-passes can be read (and changed) independently.
 pub(crate) mod world_instances;
 
 impl PhylonApp {
-    /// # Main Frame Renderer and Time Integrator
+    /// Renders one frame: advances the simulation to catch up to real time,
+    /// gathers ECS state into render instances, and issues the GPU render
+    /// passes (field/heatmap background, organism capsules, debug badges,
+    /// selection highlights, egui), presenting the result.
     ///
-    /// ## 1. What Happens
-    /// The `render` method is called every time the OS requests a frame redraw. It handles camera
-    /// tracking, accumulates delta time, triggers biological simulation ticks to catch up to real-time,
-    /// and dispatches the final WGPU render passes (Splatting, Heatmaps, UI).
-    ///
-    /// ## 2. Why It Happens
-    /// Simulation physics must run at a fixed, deterministic timestep (`DT`, the configured
-    /// [`common::TickRate`]) to ensure biological processes (like energy decay or neuron
-    /// membrane potentials) do not destabilize. However, monitor refresh rates fluctuate. This
-    /// method decouples the render framerate from the biological tick rate using a
-    /// fixed-timestep accumulator algorithm.
-    ///
-    /// ## 3. How It Happens
-    /// The method utilizes an accumulator model:
+    /// Simulation physics runs at a fixed, deterministic timestep (`DT`, the
+    /// configured [`common::TickRate`]) to keep biological processes (energy
+    /// decay, neuron membrane potentials) numerically stable regardless of
+    /// how the monitor's refresh rate fluctuates. This method decouples the
+    /// render framerate from the biological tick rate using a
+    /// fixed-timestep accumulator, delegated to
+    /// `simulation::advance_simulation_for_frame`:
     ///
     /// $$ t_{accum} = t_{accum} + (speed \times \Delta t_{frame}) $$
     ///
-    /// While $t_{accum} \ge 1.0$, the engine calls `update_simulation()` to step the ECS forward by
-    /// the fixed `DT` seconds, decrementing $t_{accum}$. Once caught up, it builds the WGPU
-    /// `CommandEncoder`, executes the Gaussian Splat and Heatmap render passes, and renders the `egui`
-    /// contexts.
+    /// While $t_{accum} \ge 1.0$, the engine calls `update_simulation()` to
+    /// step the ECS forward by the fixed `DT` seconds, decrementing
+    /// $t_{accum}$. Once caught up, it builds the `wgpu::CommandEncoder`,
+    /// executes the field/splat and organism render passes, and renders the
+    /// `egui` UI on top.
     pub(crate) fn render(&mut self) -> Result<()> {
         if self.gpu.is_none() || self.physics_compute.is_none() {
             return Ok(());
@@ -68,9 +56,9 @@ impl PhylonApp {
 
         // 1. Camera Tracking
 
-        // Phase 9, P9.4: advances any in-progress Frame Selected/Frame All
-        // transition — see `last_camera_animation_instant`'s own doc
-        // comment for why this uses its own dedicated timing field.
+        // Advances any in-progress Frame Selected/Frame All transition —
+        // see `last_camera_animation_instant`'s own doc comment for why
+        // this uses its own dedicated timing field.
         let now = std::time::Instant::now();
         let camera_animation_dt = (now - self.last_camera_animation_instant).as_secs_f32();
         self.last_camera_animation_instant = now;
@@ -84,9 +72,8 @@ impl PhylonApp {
                 .get(&self.world.ecs, tracked)
             {
                 // Smoothly follow the target — only meaningful in `Orbit`
-                // mode (lerps the focus point), matching the pre-Phase-8
-                // camera, which had no `Fly`-equivalent concept at all to
-                // define this for.
+                // mode (lerps the focus point); `Fly` mode has no
+                // equivalent "focus point" concept to follow.
                 if let ui::camera::CameraController::Orbit(orbit) = &mut self.ui.camera_controller {
                     orbit.focus = orbit.focus.lerp(node.position, 0.1);
                 }
@@ -97,12 +84,12 @@ impl PhylonApp {
         }
 
         // 2-5. Fixed-timestep simulation catch-up + this frame's perf/
-        // demographic telemetry (Phase 7, W2d — extracted to
-        // `simulation::advance_simulation_for_frame`; see its doc comment).
+        // demographic telemetry — see
+        // `simulation::advance_simulation_for_frame`'s doc comment.
         self.advance_simulation_for_frame();
 
-        // 6. Gather rendering instances (Phase 7, W2d — extracted to
-        // `render::world_instances`; see its module doc comment).
+        // 6. Gather rendering instances — see `render::world_instances`'s
+        // module doc comment.
         let world_instances = self.gather_world_render_instances();
         let debug_instances = world_instances.debug_instances;
         let capsule_instances = world_instances.capsule_instances;
@@ -185,10 +172,11 @@ impl PhylonApp {
             egui_context = Some(ctx);
         }
 
-        // Process native interactions from the transparent canvas — Phase
-        // 9, ADR-P9-01: routed through the one canonical
-        // `ui::viewport_input` layer (egui adapter + `ViewportController`)
-        // instead of interpreting `CanvasInteraction` directly here.
+        // Process native interactions from the transparent canvas, routed
+        // through the one canonical `ui::viewport_input` layer (egui
+        // adapter + `ViewportController`) rather than interpreting
+        // `CanvasInteraction` directly here, so there is exactly one place
+        // that translates raw input into camera/viewport behavior.
         let viewport_input =
             ui::viewport_input::ViewportInput::from_canvas_interaction(&interaction);
         ui::viewport_input::apply_to_camera(&mut self.ui, &viewport_input, scale);
@@ -205,10 +193,10 @@ impl PhylonApp {
                 label: Some("Frame"),
             });
 
-        // Get sunlight for background color (and, since Epic 8.2, the new
-        // capsule renderer's directional-light intensity — ADR-P8-03's
-        // Lighting section: "the same scalar now also drives light
-        // intensity").
+        // Get sunlight for background color — the same scalar also drives
+        // the organism renderer's directional-light intensity below, so
+        // day/night lighting on the background and on organisms stays in
+        // sync.
         let mut clear_color = wgpu::Color {
             r: 0.001,
             g: 0.001,
@@ -263,11 +251,10 @@ impl PhylonApp {
         // outside the actual world bounds.
         const WORLD_BOUNDS: f32 = 1500.0;
 
-        // Hoisted above the heatmap/field section (Epic 8.5) so
-        // `FieldConfig`'s plane-slice sampler can reuse the same
-        // `Camera3d`/`view_proj` every other renderer already uses, instead
-        // of the flat `camera_pos_2d`/`camera_zoom_2d` bridge this shader
-        // previously depended on.
+        // Computed above the heatmap/field section so `FieldConfig`'s
+        // plane-slice sampler can reuse the same `Camera3d`/`view_proj`
+        // every other renderer uses, rather than needing its own separate
+        // flat 2D camera projection.
         let aspect = if screen_h > 0.0 {
             screen_w / screen_h
         } else {
@@ -414,9 +401,8 @@ impl PhylonApp {
             .map(|c| [c.width as f32, c.height as f32])
             .unwrap_or([view_w, view_h]);
 
-        // ── Organism rendering — mesh-based capsule instancing (Phase 8,
-        // ADR-P8-03), replacing the retired 2-pass SDF metaball renderer.
-        // Always run if there are bones.
+        // ── Organism rendering — mesh-based capsule instancing. Always run
+        // if there are bones.
         if !capsule_instances.is_empty() {
             if let Some(organism_renderer) = self.organism_renderer.as_mut() {
                 let clip_plane = self.ui.clip_plane;
@@ -440,17 +426,16 @@ impl PhylonApp {
             }
         }
 
-        // Phase 5, SX-1e: `debug_instances` (Health/Disease/Category badges —
-        // Priority 2/3/5 biological signals) now draws *before* the
-        // hover/selection highlight, not after. Re-auditing the previous
-        // order found it drew debug instances last, meaning a low-health
-        // ring or disease badge would paint *over* (and could visually
+        // `debug_instances` (Health/Disease/Category badges — Priority
+        // 2/3/5 biological signals) must draw *before* the hover/selection
+        // highlight, not after: drawing debug instances last would let a
+        // low-health ring or disease badge paint *over* (and visually
         // obscure) the Priority-1 selection/hover outline wherever they
-        // overlapped — a direct violation of "higher-priority signals must
-        // always remain readable." Selection/hover now always paints last.
-        // Debug badges (Epic 8.3): camera-facing billboards, depth-tested
-        // against `OrganismRenderer`'s shared depth buffer — only rendered
-        // once that renderer exists (it owns the only depth buffer in the
+        // overlap — a violation of "higher-priority signals must always
+        // remain readable." Selection/hover always paints last, below.
+        // Debug badges are camera-facing billboards, depth-tested against
+        // `OrganismRenderer`'s shared depth buffer — only rendered once
+        // that renderer exists (it owns the only depth buffer in the
         // frame).
         if !debug_instances.is_empty() {
             if let (Some(debug_renderer), Some(organism_renderer)) = (
@@ -487,23 +472,21 @@ impl PhylonApp {
 
         if !selected_bones.is_empty() {
             if let Some(organism_renderer) = self.organism_renderer.as_mut() {
-                // Phase 6, Epic J (ADR-P5-08): this was a continuous
-                // wall-clock sine oscillation (`0.6 + 0.4 *
-                // (total_sim_time * 3.0).sin()`) — the one remaining
-                // decorative animation this project's own visual-language
-                // rules prohibit ("no decorative pulsing... every
-                // animation must be driven by a real, current simulation
-                // value"), since `total_sim_time` carries no biological
-                // meaning and oscillates identically whether the selected
-                // organism is thriving or dying. Fixed, not
-                // Health-fraction-driven: `docs/design/biological_visual_
-                // language.md`'s numeric priority hierarchy places
-                // Selection at Priority 1, the highest — tying it to
-                // Health (Priority 2) would blur that ordering and create
-                // a second, competing Health signal (SX-1c already owns
-                // opacity-by-health-fraction). A static, maximum-alpha
-                // outline keeps Selection unambiguous and undiminished, as
-                // ADR-P5-08 itself required of any replacement.
+                // Deliberately a fixed value, not a wall-clock sine
+                // oscillation and not Health-fraction-driven. This
+                // project's visual-language rules prohibit decorative
+                // pulsing — every animation must be driven by a real,
+                // current simulation value, and a wall-clock oscillation
+                // would carry no biological meaning, animating identically
+                // whether the selected organism is thriving or dying. It
+                // is also deliberately *not* tied to Health: `docs/design/
+                // biological_visual_language.md`'s numeric priority
+                // hierarchy places Selection at Priority 1, the highest —
+                // tying its alpha to Health (Priority 2) would blur that
+                // ordering and create a second, competing Health signal
+                // (opacity-by-health-fraction is already used elsewhere for
+                // that). A static, maximum-alpha outline keeps Selection
+                // unambiguous and undiminished.
                 let pulse = 1.0;
                 organism_renderer.render_highlight(
                     &gpu.device,
@@ -621,10 +604,9 @@ impl PhylonApp {
             }
         }
 
-        // Chart PNG export readback (Phase 5, SX-7c) — same timing
-        // constraint as the screenshot above (must run before `present()`),
-        // just cropped to one Metrics chart's rect instead of the whole
-        // window.
+        // Chart PNG export readback — same timing constraint as the
+        // screenshot above (must run before `present()`), just cropped to
+        // one Metrics chart's rect instead of the whole window.
         if let Some((x, y, width, height)) = self.pending_chart_export.take() {
             if capture_size.0 > 0 && capture_size.1 > 0 {
                 match crate::capture::read_texture_to_image(

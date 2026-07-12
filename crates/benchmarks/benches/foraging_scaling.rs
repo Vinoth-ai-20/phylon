@@ -1,14 +1,9 @@
-//! Phase 7, W7 — a genuinely missing measurement this epic's own re-audit
-//! found: `ecology::foraging_system` (the most complex per-tick ecology
-//! system — an O(N) broad-phase spatial-grid rebuild plus nested predation/
-//! consumption resolution, reorganized into its own file at Phase 7, W5a)
-//! had zero benchmark coverage despite running every simulation tick.
-//! `crates/benchmarks` previously only measured `scheduler` (unused by the
-//! live app) and `metabolism_system`'s rayon parallelism — nothing measured
-//! the actual ecology/predation hot path. This benchmark exists so a future
-//! optimization epic has real before/after numbers to work from, per Phase
-//! 7's own "profile before optimizing" rule — it does not itself optimize
-//! anything.
+//! Measures `ecology::foraging_system` — the most complex per-tick ecology
+//! system, an O(N) broad-phase spatial-grid rebuild plus nested predation/
+//! consumption resolution — since it runs every simulation tick and has no
+//! other benchmark coverage in this crate. This benchmark exists to give any
+//! future optimization work real before/after numbers to measure against; it
+//! does not itself optimize anything.
 
 use bevy_ecs::system::RunSystemOnce;
 use bevy_ecs::world::World;

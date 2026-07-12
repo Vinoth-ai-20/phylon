@@ -1,4 +1,39 @@
-//! Reproduction strategies, birth events, offspring dispersal, and malformed offspring handling.
+//! # Phylon Reproduction
+//!
+//! ## Purpose
+//! Governs how an organism becomes eligible to reproduce, what it costs, and
+//! how a child's [`Genome`] is derived from one parent (asexual/budding) or
+//! two (sexual crossover).
+//!
+//! ## Data Flow
+//! 1. Each tick, [`reproduction_system`] scans every organism with a
+//!    [`ReproductionStrategy`] component. An organism becomes eligible once
+//!    its `ChemicalEconomy` glucose and ATP both clear `energy_threshold`
+//!    and its reproduction cooldown has expired.
+//! 2. For [`ReproductionMode::Asexual`] and [`ReproductionMode::Budding`],
+//!    eligibility alone is enough: the parent's energy is deducted
+//!    immediately and a [`BirthRequest`] event is sent with a clone of the
+//!    parent's genome (mutated, unless budding — see
+//!    [`BirthRequest::is_budding`]).
+//! 3. For [`ReproductionMode::Sexual`], an eligible organism is only queued
+//!    as a mating candidate; a second pass matches nearby candidates (within
+//!    a fixed radius, via a spatial grid) with a compatible brain topology,
+//!    performs NEAT crossover on their genomes, and sends the
+//!    [`BirthRequest`].
+//! 4. [`BirthRequest`] is deliberately **not** resolved into a spawned
+//!    organism here — the event is written by this system and consumed
+//!    later (by the `app` crate, which allocates the new entity, its
+//!    physics body, and registers it with `evolution::LineageTracker`).
+//!
+//! ## Design decisions
+//! Spawning is deferred through an event rather than calling into a spawn
+//! function directly because building a new organism's physics body (nodes,
+//! springs) needs mutable access to ECS `Commands` and several unrelated
+//! resource types that `reproduction_system`'s own query set doesn't (and
+//! shouldn't) borrow — routing through an event, resolved in a later system,
+//! avoids a borrow/ordering conflict between "decide who reproduces" and
+//! "materialize the new organism" and keeps the two concerns independently
+//! testable.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -74,9 +109,8 @@ pub struct BirthRequest {
     pub parent_id: Option<bevy_ecs::entity::Entity>,
     /// The genome for the new child.
     pub genome: Genome,
-    /// The position to spawn the child. `Vec3` since Phase 8 (ADR-P8-01)
-    /// — a simulation-space spawn location, same migration as
-    /// `events::TimedEffect::position`.
+    /// The position to spawn the child — a simulation-space location, the
+    /// same coordinate representation `events::TimedEffect::position` uses.
     pub position: Vec3,
     /// The diet inherited from the parent.
     pub diet: ecology::Diet,

@@ -19,13 +19,14 @@ pub enum Ploidy {
 
 /// Represents a distinct morphological segment in the procedural soft-body growth phase.
 ///
-/// Phase 3 M5 broadened this from 5 to 8 variants so all 8 codes a 3-gene
-/// Hox combinatorial decode can produce (`genetics::decode_segment_type`)
-/// map to a distinct identity, instead of wrapping back onto `Head`/`Torso`/
-/// `Muscle` via modulo. `Vascular` (M9) and `Germinal` (M8, via apoptosis
-/// protection — see `genetics::decode_apoptosis`) now have differentiated
-/// behavior; `Ganglion`'s neural-centralization behavior remains an enum-only
-/// placeholder, deferred to the M5 stretch goal (M14).
+/// Each body position is assigned one of these 8 variants by decoding a
+/// 3-bit combinatorial "Hox code" — a short bit-string read off three
+/// designated genes in the regulatory network, named after the biological
+/// Hox gene family that plays the analogous body-segment-identity role in
+/// real animals — via `genetics::decode_segment_type`. There are exactly 8
+/// variants because a 3-bit code has exactly 8 possible values and every
+/// value should map to a distinct, meaningful identity rather than
+/// wrapping back onto an earlier variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SegmentType {
     /// Front sensory segment.
@@ -38,15 +39,17 @@ pub enum SegmentType {
     Tail,
     /// Lateral proto-limb or fin for branched swimmers.
     Fin,
-    /// Transport/circulatory tissue (Phase 3 M5; DEF-003's differentiated
-    /// physics — lower stiffness, `Passive` constraint — wired in M9).
+    /// Transport/circulatory tissue: lower stiffness than `Torso`, and a
+    /// `Passive` physics constraint rather than an actuated one.
     Vascular,
-    /// Neural-cluster tissue, a precursor to centralized nervous structure
-    /// (Phase 3 M5; differentiated behavior is DEF-003's neural
-    /// centralization half, deferred to the M5 stretch goal, M14).
+    /// Neural-cluster tissue, a precursor to a centralized nervous
+    /// structure. Currently an enum-only placeholder — see
+    /// `organisms::brain_wiring` for how brain topology is actually wired
+    /// today; dedicated `Ganglion` behavior is a future extension.
     Ganglion,
-    /// Germ-line/reproductive tissue (Phase 3 M5; DEF-002's germ-soma
-    /// separation — unconditional protection from developmental apoptosis —
-    /// wired in M8, see `genetics::decode_apoptosis`).
+    /// Germ-line/reproductive tissue. Unconditionally protected from
+    /// developmental apoptosis — see `genetics::decode_apoptosis` — mirroring
+    /// real biology's germ-soma separation (germ-line cells are shielded
+    /// from the programmed cell death that shapes the rest of the body).
     Germinal,
 }

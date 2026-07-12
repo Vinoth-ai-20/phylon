@@ -1,13 +1,22 @@
-//! Phase 9, P9.4 — smooth "Frame Selected" / "Frame All" camera transitions.
+//! Smooth "Frame Selected" / "Frame All" camera transitions.
 //!
-//! Deliberately **not** part of `camera.rs`: per this phase's own rule that
-//! P9.3 was the last milestone allowed to touch `Camera3d`/
-//! `OrbitController`/`FlyController`'s own math, this module only ever
+//! ## Purpose
+//!
+//! Snapping the camera instantly to a new focus/distance when the user
+//! triggers "Frame Selected" or "Frame All" is visually jarring; this
+//! module provides a short, eased interpolation from wherever the camera
+//! currently is to a computed target, driven once per rendered frame.
+//!
+//! ## Architecture
+//!
+//! Deliberately **not** part of `camera.rs`: `FrameAnimation` only ever
 //! *reads* `OrbitController`'s existing public `focus`/`distance` fields
 //! from the outside and writes new values into them each frame — it adds
-//! no method, no field, and no orientation/orbit math to those three
-//! types. A short, eased interpolation from wherever the camera currently
-//! is to a computed target, driven once per rendered frame.
+//! no method, no field, and no orientation/orbit math to `Camera3d`/
+//! `OrbitController`/`FlyController` themselves. `WorkbenchState` owns the
+//! `Option<FrameAnimation>` (see `state.rs`'s `frame_animation` field) and
+//! drives it via `start_frame_animation`/`tick_frame_animation`, writing
+//! the interpolated values into the active `OrbitController` each frame.
 
 use common::Vec3;
 

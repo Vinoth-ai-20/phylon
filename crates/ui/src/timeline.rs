@@ -1,12 +1,12 @@
-//! Shared Development Timeline scrubber (Phase 3, M13) — used by both HOX
-//! Visualizer and GRN Viewer so scrubbing through an organism's actual
-//! growth order in one panel carries over to the other (`WorkbenchState`'s
-//! single `timeline_step` field is shared between them).
+//! Shared Development Timeline scrubber — used by both HOX Visualizer and
+//! GRN Viewer so scrubbing through an organism's actual growth order in one
+//! panel carries over to the other (`WorkbenchState`'s single
+//! `timeline_step` field is shared between them).
 //!
-//! Per `PHASE3_ROADMAP.md`'s ADR-P3-04, this scrubber does **not** read any
-//! persisted Body Graph — there isn't one; `organisms::simulate_growth_timeline`
-//! deterministically reconstructs the full growth order from the genome
-//! alone, on demand, exactly like every other Phase 3 research panel's data.
+//! This scrubber does **not** read a persisted Body Graph:
+//! `organisms::simulate_growth_timeline` deterministically reconstructs the
+//! full growth order from the genome alone, on demand, the same way the
+//! HOX/GRN Viewers derive their own displayed data.
 
 /// The ordered sequence of body positions a genome's organism would
 /// actually grow (skipping pruned positions) — spine positions only;

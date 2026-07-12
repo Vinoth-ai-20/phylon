@@ -6,11 +6,14 @@
 //! between multiple crates. Unit tests live in their respective crates;
 //! integration tests that require multiple crates belong here.
 //!
-//! ## Phase 0 tests
+//! ## Coverage in this crate
 //!
-//! - Scheduler advances ticks correctly.
-//! - Config loads defaults without errors.
-//! - Event bus publish/drain round-trip.
+//! - The `scheduler` crate's tick accumulator and its `EventBus` integration
+//!   (independent of the ECS event path below).
+//! - `config` loading its compile-time defaults without errors.
+//! - `events::PhylonEvent` working correctly as a native
+//!   `bevy_ecs::event::Events<T>` resource — the actual event-delivery path
+//!   the running `app` binary uses.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -60,16 +63,14 @@ mod integration {
     }
 }
 
-/// Phase 4, P4-E1: proves `events::PhylonEvent` works as a native
-/// `bevy_ecs::event::Events<T>` resource on the simulation `World` — the
-/// delivery path the running `app` binary actually uses (see
-/// `crates/app/src/app.rs`'s resource registration and
-/// `crates/app/src/systems.rs`'s `process_deaths_system`/
+/// Proves `events::PhylonEvent` works as a native `bevy_ecs::event::Events<T>`
+/// resource on the simulation `World` — the delivery path the running `app`
+/// binary actually uses (see `crates/app/src/app.rs`'s resource registration
+/// and `crates/app/src/systems.rs`'s `process_deaths_system`/
 /// `interaction_event_log_system`), as opposed to the crossbeam-channel
 /// `EventBus` the `scheduler_integrates_with_event_bus` test above exercises.
-/// Per `PHASE4_ROADMAP.md`'s own verification plan for this milestone: "An
-/// integration test publishing a `PhylonEvent` and confirming it's drained
-/// and consumed exactly once — the first such test in the codebase."
+/// Confirms an event published via `World::send_event` is drained and
+/// consumed by a reader system exactly once.
 #[cfg(test)]
 mod phylon_event_ecs_wiring {
     use bevy_ecs::prelude::*;

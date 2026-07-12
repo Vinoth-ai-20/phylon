@@ -1,7 +1,6 @@
-//! Cross-system ecology tests (Phase 7, W5d) — extracted verbatim from
-//! `lib.rs`'s `foraging_feeding_effect_tests` module. Kept as one file
-//! (rather than distributed per-system) since it already spans multiple
-//! systems (`foraging_system`, `catastrophe_system`, `food_spawner_system`).
+//! Cross-system ecology tests. Kept as one file (rather than distributed
+//! per-system) since these tests span multiple systems (`foraging_system`,
+//! `catastrophe_system`, `food_spawner_system`).
 
 use crate::*;
 use bevy_ecs::system::RunSystemOnce;
@@ -28,10 +27,9 @@ fn base_world() -> World {
     world
 }
 
-/// Phase 5, SX-2c: a successful organism-vs-organism predation should
-/// spawn a real `TimedEffects` burst at the predator's position — the
-/// gap this milestone closes (previously nothing marked the moment of
-/// the attack itself, only the prey's eventual death).
+/// A successful organism-vs-organism predation should spawn a real
+/// `TimedEffects` burst at the predator's position, distinct from any
+/// effect marking the prey's eventual death.
 #[test]
 fn predation_spawns_a_feeding_effect_at_the_predator_position() {
     let mut world = base_world();
@@ -103,14 +101,12 @@ fn no_effect_when_out_of_range() {
     assert!(world.resource::<events::TimedEffects>().active.is_empty());
 }
 
-/// Phase 6, Epic A: `catastrophe_system` used to read a per-call
-/// `Local<u64>` tick counter that reset to `0` on every `run_system_once`
-/// invocation, so `elapsed = tick - start_tick` was always `0` regardless
-/// of how many real ticks had passed — a hazard could never reach
-/// `impending_duration` and would stay `Impending` forever. This proves
-/// the fix: a hazard whose `start_tick` is far enough in the past
-/// (measured via the real `GlobalAtmosphere::ticks` counter) must
-/// transition to `Active` the moment `catastrophe_system` runs.
+/// Guards against `catastrophe_system` computing `elapsed` from a tick
+/// counter that never advances (see that system's doc comment for why a
+/// `Local` counter would silently do this under `run_system_once`): a
+/// hazard whose `start_tick` is far enough in the past, measured via the
+/// real `GlobalAtmosphere::ticks` counter, must transition to `Active` the
+/// moment `catastrophe_system` runs.
 #[test]
 fn hazard_transitions_to_active_once_impending_duration_has_really_elapsed() {
     let mut world = World::new();
@@ -201,15 +197,14 @@ fn food_spawner_system_is_deterministic_for_a_given_seed() {
     assert_eq!(run_once(), run_once());
 }
 
-/// Phase 6, Epic J (Milestone J5): `Diet::Omnivore`'s color was changed
-/// specifically to increase separation from `Diet::Carnivore` under a
-/// Deuteranopia simulation (see `docs/design/accessibility.md`). This
-/// doesn't re-run the full colorblindness simulation (that measurement
-/// tool was a throwaway example, deleted after use, per this project's
-/// convention) — it's a cheap, permanent guard against silently
-/// reverting to the old amber value or picking a new one that's
-/// trivially identical to Carnivore in plain sRGB terms, which would
-/// undo this milestone's fix without any test catching it.
+/// `Diet::Omnivore`'s color is deliberately a bright saturated yellow
+/// rather than the more intuitive amber, specifically to increase
+/// separation from `Diet::Carnivore` under a Deuteranopia (red-green color
+/// blindness) simulation — see [`crate::Diet::standard_color`]'s doc
+/// comment and `docs/design/accessibility.md`. This doesn't re-run the
+/// full colorblindness simulation; it's a cheap, permanent guard against
+/// silently reverting to the old amber value or picking a new color that's
+/// trivially identical to Carnivore in plain sRGB terms.
 #[test]
 fn omnivore_color_is_not_the_old_amber_and_stays_visibly_distinct_from_carnivore() {
     let omnivore = Diet::Omnivore.standard_color();
@@ -218,7 +213,7 @@ fn omnivore_color_is_not_the_old_amber_and_stays_visibly_distinct_from_carnivore
     let old_amber = [1.0, 0.482, 0.0];
     assert_ne!(
         omnivore, old_amber,
-        "Omnivore must not silently revert to the pre-Phase-6 amber that collided with Carnivore under deuteranopia"
+        "Omnivore must not silently revert to the old amber that collided with Carnivore under deuteranopia"
     );
 
     let distance = ((omnivore[0] - carnivore[0]).powi(2)

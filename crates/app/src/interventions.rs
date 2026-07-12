@@ -19,10 +19,9 @@ impl PhylonApp {
             self.world.ecs.despawn(entity);
         }
 
-        // Reset tracking (Phase 7, W0b: routed through the single
-        // selection pathway, which also clears `secondary_selected` — a
-        // pre-existing gap this fixes for free, since a stale multi-select
-        // referencing just-despawned entities was never cleared here).
+        // Routed through the single selection-clearing pathway, which also
+        // clears `secondary_selected` — otherwise a stale multi-select could
+        // keep referencing entities that were just despawned above.
         self.ui.clear_selection();
 
         // Reset time/atmosphere/metrics — without this, a "fresh"
@@ -83,13 +82,12 @@ impl PhylonApp {
         if preset.evolvable {
             let diet = preset.diet.unwrap_or(ecology::Diet::Herbivore);
             // Evolvable presets get a seed regulatory genome matching the
-            // corresponding starter species' body-plan tendency (Phase 3
-            // M4 — see `species_seed::seed_ecosystem`'s doc comment; pigmentation is
-            // emergent, so this no longer forces the diet's canonical
-            // color the way the retired `HoxSequence`-driven path did).
-            // Phase 5, SX-2a (ADR-P5-07): mirrors `seed_ecosystem`'s own
-            // swept `RegulatorySeedWeights` combinations for the
-            // corresponding starter species — see
+            // corresponding starter species' body-plan tendency — see
+            // `species_seed::seed_ecosystem`'s doc comment. Pigmentation is
+            // emergent, so this does not force the diet's canonical color.
+            // The weights below mirror `seed_ecosystem`'s own swept
+            // `RegulatorySeedWeights` combinations for the corresponding
+            // starter species — see
             // `crate::species_seed::seed_regulatory_cppn`'s doc comment.
             let weights = match name {
                 "Herbivore (Evolvable)" => crate::species_seed::RegulatorySeedWeights {

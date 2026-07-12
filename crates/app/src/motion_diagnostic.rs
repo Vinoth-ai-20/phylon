@@ -1,18 +1,20 @@
-//! Runtime Motion Diagnostic (Phase 5, `PHASE5_SX_ROADMAP.md` milestone
-//! SX-1a) — measures, rather than assumes, whether organisms actually move
-//! and by how much. **Finding, from a real headless run (see this
-//! milestone's execution-log entry for exact numbers): 100% of non-Producer,
-//! brain-wired organisms sampled had zero actuatable (`Elastic`/`Rotational`)
-//! effector springs at all** — not a physics, brain-output, or rendering
-//! problem, and not the `muscle_actuation.wgsl` positive-only-gate asymmetry
-//! this milestone set out to check (that gate is moot when there is nothing
-//! to actuate in the first place). The population-wide effector-count
-//! summary this module logs is what surfaced this.
+//! # Runtime Motion Diagnostic
+//!
+//! Measures, rather than assumes, whether organisms actually move and by
+//! how much — an opt-in, purely observational instrument for investigating
+//! locomotion-fidelity questions (e.g. "why do organisms appear static") by
+//! logging real per-organism movement and effector-actuation numbers,
+//! rather than guessing whether the cause is a physics bug, a neural-output
+//! problem, or something else entirely (e.g. every effector spring on the
+//! sampled population having zero actuation amplitude, which looks
+//! identical to a physics bug from the outside but has a completely
+//! different fix).
 //!
 //! **Purely observational.** This module reads existing `Brain`/`MotorSystem`/
 //! `Spring`/`ParticleNode` state and logs it — it does not duplicate or
-//! reimplement any of `behavior`/`brain`/`physics`'s logic, per this phase's
-//! architectural rule against parallel systems.
+//! reimplement any of `behavior`/`brain`/`physics`'s own logic, so there is
+//! no risk of this diagnostic and the real systems drifting apart on what
+//! "actuation" or "movement" means.
 //!
 //! **Opt-in, zero-cost when off:** gated behind the `PHYLON_MOTION_DIAGNOSTIC`
 //! environment variable, checked once at startup (not per-tick) via
@@ -21,17 +23,16 @@
 //!
 //! **Why state lives in a `Resource`, not `Local`:** the live app drives
 //! every system via `bevy_ecs::system::RunSystemOnce::run_system_once`
-//! (see `crates/app/src/simulation.rs`'s doc comment), which constructs a
-//! fresh, ephemeral `SystemState` on every call — a `Local<T>` parameter is
-//! reset to its default every single tick, not persisted across ticks the
-//! way it would be under a real `bevy_ecs::schedule::Schedule`. An earlier
-//! version of this module used `Local<u64>`/`Local<HashMap<..>>` for its
-//! tick counter and per-organism accumulators and, as a result, never once
-//! advanced past tick 0 in practice — confirmed by adding a debug counter
-//! and observing it during a real headless run (see this milestone's
-//! execution-log entry for the actual numbers). `MotionDiagnosticState`
-//! below fixes this by living in the ECS `World` as a `Resource`, which
-//! *does* persist across separate `run_system_once` calls.
+//! (see `crate::simulation`'s module doc), which constructs a fresh,
+//! ephemeral `SystemState` on every call — a `Local<T>` parameter is reset
+//! to its default every single tick, not persisted across ticks the way it
+//! would be under a real `bevy_ecs::schedule::Schedule`. A tick counter or
+//! per-organism accumulator stored as `Local` would therefore never
+//! advance past its initial value across ticks, since each
+//! `run_system_once` call sees a fresh default rather than the previous
+//! tick's value. `MotionDiagnosticState` below avoids this by living in the
+//! ECS `World` as a `Resource`, which *does* persist across separate
+//! `run_system_once` calls.
 
 use bevy_ecs::prelude::*;
 
@@ -55,8 +56,8 @@ impl MotionDiagnosticConfig {
 }
 
 /// Ticks between logged windows — once per second at the default 60Hz tick
-/// rate, matching every other Phase 4/5 "placeholder constant" precedent for
-/// how coarse a sampling interval is acceptable.
+/// rate, coarse enough to keep the diagnostic's logging overhead negligible
+/// while still resolving movement trends over a human-readable timescale.
 const WINDOW_TICKS: u64 = 60;
 
 /// How many organisms (with a wired `Brain` + `MotorSystem`) to sample per
@@ -90,25 +91,23 @@ pub struct MotionDiagnosticState {
     accumulators: std::collections::HashMap<Entity, SampleAccumulator>,
 }
 
-/// # Motion Diagnostic System
+/// Logs real per-organism movement and effector-actuation numbers once per
+/// window (see `WINDOW_TICKS`), for up to `SAMPLE_COUNT` organisms.
 ///
-/// ## 1. What Happens
-/// Once per second (`WINDOW_TICKS`), for up to `SAMPLE_COUNT` organisms,
-/// logs: total path length traveled, net displacement, max instantaneous
-/// speed, the organism's live `Brain` output vector, and how many of its
-/// effector springs currently have positive vs. negative
-/// `actuation_amplitude` — the exact split `muscle_actuation.wgsl`'s
-/// positive-only gate (identified during this phase's audit) treats
-/// asymmetrically.
+/// For each sampled organism, logs: total path length traveled, net
+/// displacement, max instantaneous speed, the organism's live `Brain`
+/// output vector, and how many of its effector springs currently have
+/// positive vs. negative `actuation_amplitude` — `muscle_actuation.wgsl`'s
+/// actuation logic treats these two signs asymmetrically, so a population
+/// skewed heavily toward one sign is itself diagnostically meaningful, not
+/// only the raw effector count.
 ///
-/// ## 2. Why It Happens
-/// SX-1a: before designing any locomotion-fidelity fix, this phase's own
-/// roadmap requires real measurements, not a guess about whether "organisms
-/// appear static" is a physics bug, a neural-output problem, or (per the
-/// audit's own dominant finding) purely a visual-communication gap. This
-/// system produces the numbers that distinguish those cases.
+/// Before treating "organisms appear static" as any specific kind of bug,
+/// this system produces the numbers that distinguish the real possibilities
+/// (no actuatable effectors at all, effectors present but not actuating,
+/// actuating but too weakly to visibly move, or actually moving but hard to
+/// perceive visually) instead of guessing.
 ///
-/// ## 3. How It Happens
 /// Accumulates per-organism path length/speed every tick via
 /// `MotionDiagnosticState` (reset per window, persisted across the whole
 /// run via the ECS `Resource` mechanism — see this module's doc comment),
@@ -116,7 +115,7 @@ pub struct MotionDiagnosticState {
 /// boundary. Sampling is by entity insertion order (first `SAMPLE_COUNT`
 /// encountered each window) — not statistically randomized, but sufficient
 /// to distinguish "no organism moves" from "organisms move a measurable
-/// amount," which is this milestone's actual question.
+/// amount."
 pub(crate) fn motion_diagnostic_system(
     config: Res<MotionDiagnosticConfig>,
     mut state: ResMut<MotionDiagnosticState>,
@@ -136,10 +135,10 @@ pub(crate) fn motion_diagnostic_system(
 
     // Sample non-Producer organisms preferentially — `Diet::Producer`
     // seeds are deliberately short, static, effector-less bodies (see
-    // `app.rs`'s producer seed genome comment: "decodes Tail at the head
-    // node — a short, static seed"), so sampling the first N entities
-    // encountered (which skew Producer, spawned in bulk) would measure
-    // "do plants move" rather than this milestone's actual question.
+    // `species_seed.rs`'s producer seed genome comment), so sampling the
+    // first N entities encountered (which skew Producer, spawned in bulk)
+    // would measure "do plants move" rather than the question this
+    // diagnostic actually exists to answer.
     let sample: Vec<_> = query
         .iter()
         .filter(|(_, _, _, _, diet)| **diet != ecology::Diet::Producer)
@@ -149,9 +148,10 @@ pub(crate) fn motion_diagnostic_system(
 
     // One-time-per-window population summary: how many non-Producer,
     // brain-wired organisms exist right now, and what fraction of them have
-    // zero actuatable (Elastic/Rotational) effector springs at all — tests
-    // whether "no effectors" is a sampling artifact or a population-wide
-    // body-plan phenomenon.
+    // zero actuatable (Elastic/Rotational) effector springs at all —
+    // distinguishes "no effectors" as a sampling artifact (a few sampled
+    // organisms happen to have none) from a population-wide body-plan
+    // phenomenon (most/all organisms have none).
     if state.tick.is_multiple_of(WINDOW_TICKS) {
         let mobile_diet_total = query
             .iter()
@@ -168,7 +168,7 @@ pub(crate) fn motion_diagnostic_system(
             tick = state.tick,
             mobile_diet_total,
             mobile_diet_zero_effectors,
-            "SX-1a population effector summary"
+            "motion_diagnostic population effector summary"
         );
     }
 
@@ -223,7 +223,7 @@ pub(crate) fn motion_diagnostic_system(
             effector_count = motor.effectors.len(),
             positive_amplitude_effectors = positive_amplitude_count,
             negative_amplitude_effectors = negative_amplitude_count,
-            "SX-1a motion sample"
+            "motion_diagnostic sample"
         );
     }
 

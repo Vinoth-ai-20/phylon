@@ -12,8 +12,8 @@
 
 /// Fixed ceiling on how many body segments `growth_system` will grow for
 /// any organism, and the `total_segments` denominator `genetics::develop`'s
-/// positional decode uses (Phase 3, M4). Growth can still end earlier than
-/// this if a decoded segment is `Tail` — see `growth_system`'s doc comment.
+/// positional decode uses. Growth can still end earlier than this if a
+/// decoded segment is `Tail` — see `growth_system`'s doc comment.
 pub const MAX_SEGMENTS: usize = 15;
 
 /// Tools for sandbox mode, presets, and procedural generation.
@@ -27,18 +27,17 @@ pub use components::{
     SpawnTick,
 };
 
-/// The Body Graph (Phase 3, M6) — a persistent ECS component as of Phase 4,
-/// `PHASE4_ROADMAP.md`'s ADR-P4-01 (superseding `PHASE3_ROADMAP.md`'s
-/// ADR-P3-04, which made it transient).
+/// The Body Graph: a persistent ECS component recording an organism's grown
+/// body structure — see the module doc for why it must persist across ticks
+/// rather than being rebuilt on demand.
 pub mod developmental_graph;
 pub use developmental_graph::{
     bilateral_fin_direction, can_branch, compile_segment, simulate_growth_timeline,
     CompiledSegment, DevelopmentalGraph, DevelopmentalNode,
 };
 
-/// Brain-wiring for a just-completed organism — a separate concern from
-/// body growth (Phase 9, P9.6 file decomposition), used internally by
-/// [`systems`].
+/// Brain-wiring for a just-completed organism — a separate concern from body
+/// growth, used internally by [`systems`].
 mod brain_wiring;
 
 /// Organism ECS systems.
@@ -62,26 +61,22 @@ pub use quorum::{biofilm_system, BiofilmConfig};
 pub mod spawning;
 pub use spawning::{spawn_organism, spawn_proto_fish};
 
-/// Intra-body resource transport along the persistent Body Graph (Phase 4,
-/// P4-F3).
+/// Intra-body resource transport along the persistent Body Graph.
 pub mod transport;
 pub use transport::transport_system;
 
-/// Per-region endocrine signalling along the persistent Body Graph (Phase 4,
-/// P4-F4).
+/// Per-region endocrine signalling along the persistent Body Graph.
 pub mod endocrine;
 pub use endocrine::endocrine_diffusion_system;
 
-/// Per-segment immune response along the persistent Body Graph (Phase 4,
-/// P4-F5).
+/// Per-segment immune response along the persistent Body Graph.
 pub mod immune;
 pub use immune::segment_infection_system;
 
-/// Intra-organism morphogen diffusion along the persistent Body Graph
-/// (Phase 6, Epic D, milestone D1a).
+/// Intra-organism morphogen diffusion along the persistent Body Graph.
 pub mod morphogen_field;
 pub use morphogen_field::{morphogen_diffusion_system, MorphogenLevel};
 
-/// Life-stage transitions and re-entrant growth (Phase 4, P4-L1).
+/// Life-stage transitions and re-entrant growth.
 pub mod life_cycle;
 pub use life_cycle::life_stage_system;

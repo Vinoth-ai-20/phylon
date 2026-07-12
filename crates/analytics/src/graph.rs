@@ -35,11 +35,10 @@ impl AdjacencyList {
 /// component).
 ///
 /// ## 2. Why It Happens
-/// A "colony" (per the spec's graph connectivity analysis requirement) is
-/// exactly a connected component of the budding-spring graph (see
-/// `reproduction::ReproductionMode::Budding`, Epic 10) — this is the
-/// primitive that lets `colony_size_distribution` and other colony-level
-/// analytics exist at all.
+/// A "colony" is exactly a connected component of the budding-spring graph
+/// (see `reproduction::ReproductionMode::Budding`) — this is the primitive
+/// that lets `colony_size_distribution` and other colony-level analytics
+/// exist at all.
 ///
 /// ## 3. How It Happens
 /// Breadth-first search from every not-yet-visited node, assigning the same
@@ -93,10 +92,9 @@ pub fn colony_size_distribution(components: &[usize]) -> Vec<usize> {
 /// [`connected_components`]).
 ///
 /// ## 2. Why It Happens
-/// Per the spec's "graph connectivity analysis (colony cohesion, network
-/// diameter)" — diameter is a cohesion proxy: a colony that's a tight
-/// cluster has a small diameter relative to its size, while a long chain of
-/// budded organisms has a diameter close to its member count.
+/// Diameter is a cohesion proxy for a colony: a tight cluster has a small
+/// diameter relative to its size, while a long chain of budded organisms
+/// has a diameter close to its member count.
 ///
 /// ## 3. How It Happens
 /// BFS from every node *within the starting node's component only* (found

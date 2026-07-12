@@ -1,27 +1,68 @@
 //! # Phylon Physics
 //!
-//! Particle-spring soft-body dynamics, collision detection and response,
-//! and force integration for the Phylon simulation.
+//! ## Purpose
 //!
-//! The physics model is node-and-edge based: organisms are represented as
-//! networks of point masses connected by spring constraints. This natively
-//! supports modular body plans, tissue deformation, and amputation mechanics.
+//! This crate simulates the physical bodies of organisms: point masses
+//! ([`ParticleNode`]) connected by spring constraints ([`Spring`]), integrated
+//! forward in time under gravity, damping, collisions, and muscular
+//! actuation. It answers the question "given the forces acting on an
+//! organism's body this tick, where does every part of that body end up?"
+//!
+//! ## Architecture: why particles-and-springs, not rigid bodies
+//!
+//! Most game-engine physics represents creatures as trees of rigid boxes
+//! or capsules joined by hinge/ball joints. Phylon instead represents every
+//! organism as a graph of point masses ("nodes") connected by spring
+//! constraints ("edges") — closer to a soft-body cloth or jelly simulation
+//! than a ragdoll. This is a deliberate tradeoff:
+//!
+//! - Real organisms are soft, deformable, and asymmetric; a rigid-body
+//!   skeleton constrains the space of possible body plans and gaits far
+//!   more than a spring network does.
+//! - Structural failure falls out of the same mechanism used for normal
+//!   movement: a spring that is stretched past `breaking_strain` simply
+//!   despawns, which reads naturally as amputation/tissue tearing without
+//!   any special-cased "damage" system.
+//! - Muscles, bones, and fat are all just springs with different stiffness,
+//!   damping, and (for muscles) a rest length that the organism's neural
+//!   network can actuate — one constraint type, three roles (see
+//!   [`ConstraintType`]).
+//!
+//! The cost of this approach is that it requires an explicit numerical
+//! integrator (see below) rather than relying on an engine's built-in rigid
+//! body solver, and that stiff spring networks can go numerically unstable
+//! if the timestep or stiffness constants are not chosen carefully.
 //!
 //! ## Integrator
 //!
-//! The default integrator is **Symplectic Euler** (semi-implicit), selected
-//! for its energy-conserving properties in oscillatory spring networks.
-//! Velocity Verlet is available as an alternative for experiments requiring
-//! higher accuracy.
+//! The default integrator is **Symplectic (semi-implicit) Euler**: velocity
+//! is updated from the accumulated force *before* using that new velocity
+//! to update position. This ordering approximately conserves the energy of
+//! an oscillating spring system over long runs, unlike Explicit Euler (which
+//! updates position from the old velocity first and steadily injects energy,
+//! eventually exploding). Velocity Verlet is a plausible alternative for
+//! experiments that need higher positional accuracy, at the cost of an extra
+//! force evaluation per step.
 //!
 //! ## Collision detection
 //!
-//! - **Broad phase**: Uniform Grid Spatial Hash (O(1) per entity in dense scenes).
-//! - **Narrow phase**: Node-level circle intersection tests.
+//! - **Broad phase**: a uniform grid spatial hash, giving roughly O(1)
+//!   neighbor lookups per entity even in dense scenes, instead of the O(N^2)
+//!   cost of testing every node against every other node.
+//! - **Narrow phase**: node-level circle intersection tests.
 //!
-//! ## Phase 0 scope
+//! ## Determinism
 //!
-//! Type signatures only. Implementation: Phase 2.
+//! Given the same seed and the same sequence of inputs, the CPU integration
+//! path in this crate ([`physics_integration_system`], [`spring_force_system`])
+//! must produce bit-identical results across runs — this is what makes
+//! replays (see the `storage` crate) reproducible. The primary simulation
+//! path additionally uses WebGPU compute shaders for O(N^2) collision and
+//! constraint solving for performance; GPU floating-point execution order is
+//! not guaranteed to match the CPU path bit-for-bit, so the CPU systems in
+//! this file are kept as the deterministic fallback used for unit tests,
+//! headless CI, and validation runs where bit-reproducibility matters more
+//! than throughput.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -58,10 +99,11 @@ impl common::PhylonError for PhysicsError {}
 /// $$ P_{t+1} = P_t + V_{t+1} dt $$
 #[derive(Component, Debug, Clone, Default)]
 pub struct ParticleNode {
-    /// Current position in simulation space. `Vec3` since Phase 8
-    /// (ADR-P8-01) — prior to Epic 8.6's growth-orientation redesign,
-    /// every organism still grows with `z` fixed at `0.0`, so this is a
-    /// deliberate "2D-embedded-in-3D" intermediate state, not a bug.
+    /// Current position in simulation space. Stored as a full `Vec3` even
+    /// though organism growth currently keeps `z` fixed at `0.0` for every
+    /// node — the world is planar today, but the field is 3D so the type
+    /// does not need to change if/when growth gains a vertical axis. This
+    /// is a deliberate "2D-embedded-in-3D" state, not a bug.
     pub position: Vec3,
     /// Current velocity.
     pub velocity: Vec3,
@@ -212,7 +254,9 @@ pub fn spring_force_system(
             let diff = node_b.position - node_a.position;
             let dist = diff.length();
 
-            // Check breaking strain
+            // Compare against the *base* (genome) length, not the current
+            // (muscle-actuated) rest_length, so that a contracted muscle
+            // doesn't falsely register as "overstretched".
             if dist > spring.base_length * spring.breaking_strain {
                 springs_to_break.push(entity);
                 continue;

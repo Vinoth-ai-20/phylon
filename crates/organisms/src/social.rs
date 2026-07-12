@@ -1,3 +1,7 @@
+//! Colonial/social coordination: boids-style flocking and cooperative pack
+//! hunting, both implemented as additive nudges layered on top of each
+//! organism's own CTRNN-brain-driven behavior, never a replacement for it.
+
 use bevy_ecs::prelude::*;
 use common::Vec3;
 

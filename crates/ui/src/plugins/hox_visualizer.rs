@@ -1,34 +1,25 @@
-//! HOX Visualizer panel (Phase 3, M10) — per-position Hox combinatorial
-//! code, decoded segment identity, and morphogen gradients for the
-//! selected organism, following `PHASE3_ROADMAP.md` §8's design.
+//! HOX Visualizer panel — per-position Hox combinatorial code, decoded
+//! segment identity, and morphogen gradients for the selected organism.
 //!
-//! At the time this panel was built (Phase 3, M10), `organisms::GrowthState`'s
-//! Body Graph was transient (ADR-P3-04) and gone by the time an organism was
-//! an adult — so this panel deliberately re-runs the same deterministic,
-//! side-effect-free `genetics::develop_at_position` pipeline directly from
-//! the organism's `Genome` component, for every position, purely for
-//! display, rather than reading any growth-time graph state.
+//! This panel deliberately re-runs the same deterministic, side-effect-free
+//! `genetics::develop_at_position` pipeline directly from the organism's
+//! `Genome` component, for every position, purely for display, rather than
+//! reading `organisms::DevelopmentalGraph` (the persistent developmental
+//! record also available on the entity). Recomputing on demand works
+//! identically for an organism still mid-growth as for a finished adult,
+//! which the persisted graph alone would not — a fresh decode has no
+//! notion of growth-in-progress vs. complete, so it needs no special
+//! casing either way. Reading the persisted graph instead would only be
+//! worth it if this panel needed runtime-history data a fresh decode can't
+//! reconstruct (e.g. reflecting injury after development).
 //!
-//! **Correction (Phase 4, milestone P4-F1):** `organisms::DevelopmentalGraph`
-//! is now a persistent sibling component (`PHASE4_ROADMAP.md`'s ADR-P4-01)
-//! that *does* survive adulthood. This panel's logic is intentionally left
-//! unchanged here — P4-F1 is infrastructure-only, and switching this panel
-//! to read the persisted graph instead of recomputing is a visualization
-//! change out of that milestone's scope. The recompute-on-demand approach
-//! also still has a real advantage the persisted graph doesn't replace: it
-//! works identically for an organism still mid-growth, not just a finished
-//! adult. Revisit this panel's data source only as part of whichever future
-//! milestone actually needs the persisted graph's runtime-history data
-//! (e.g. reflecting injury) that a fresh decode can no longer reconstruct.
+//! Morphogen Visualization is folded into this same tab as a heatmap strip
+//! beneath the body preview, an overlay on the body preview rather than a
+//! separate dock panel.
 //!
-//! Morphogen Visualization (§8's second panel) is folded into this same tab
-//! as a heatmap strip beneath the body preview, per its own spec: "Overlay
-//! on the HOX Visualizer/body preview, not a separate dock panel."
-//!
-//! Deliberately out of scope for this milestone (documented, not silently
-//! dropped): "produced organs" per-segment and deep cross-linking to
-//! Lineage Explorer's mutation history (a text pointer to the Lineage tab
-//! is provided instead of duplicating its data model).
+//! Deliberately out of scope: "produced organs" per-segment detail and deep
+//! cross-linking to Lineage Explorer's mutation history (a text pointer to
+//! the Lineage tab is provided instead of duplicating its data model).
 
 use bevy_ecs::entity::Entity;
 

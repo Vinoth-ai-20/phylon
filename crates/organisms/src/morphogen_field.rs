@@ -1,9 +1,12 @@
-//! Intra-organism morphogen diffusion (Phase 6, Epic D, milestone D1a — see
-//! `PHASE4_EPIC4_MORPHOGEN_ROADMAP.md`'s ADR-D1-01). Gives the growing tip of
-//! an organism a real, decaying, graph-propagated signal that influences
-//! *later* positions' own decode — the intra-organism half of ADR-D1-01's
-//! split (the inter-organism/environmental half, a 5th world-space diffusion
-//! layer, is D1b, not implemented here).
+//! Intra-organism morphogen diffusion. A morphogen is a simulated diffusible
+//! signal that provides positional information during growth — named after
+//! the biological concept (e.g. the Bicoid gradient in *Drosophila*
+//! embryos), where a concentration gradient tells cells at different
+//! positions how to differentiate. This module gives the growing tip of an
+//! organism a real, decaying, graph-propagated signal that influences
+//! *later* positions' own decode — the intra-organism half of the
+//! morphogen model (an inter-organism/environmental half exists too, as a
+//! world-space GPU diffusion layer sampled directly by `organisms::systems::growth_system`).
 //!
 //! **Why this is a "reaction-diffusion" system and not another
 //! `transport_system`/`endocrine_diffusion_system` copy:** those two move or
@@ -16,20 +19,18 @@
 //! `endocrine_diffusion_system` needs, since neither models a signal that
 //! fades on its own).
 //!
-//! **Where the signal actually reaches development:** re-auditing
-//! `genetics::develop.rs` before writing this milestone found that
-//! `develop_at_position_with_life_stage` (Phase 4, P4-L1, ADR-P4-03) already
-//! added exactly the seam D1a's own sub-roadmap proposed inventing — a scalar
-//! folded additively into every regulatory gene's external input, with `0.0`
-//! reproducing `develop_at_position`'s original output exactly. Rather than
-//! adding a second, parallel parameter to `genetics`, `organisms::systems::growth_system`
-//! simply adds this system's field reading into the same `life_stage_signal`
-//! before calling that existing function — see this crate's execution-log
-//! entry for why this is a scope simplification the sub-roadmap's author
-//! couldn't have known about, not a deviation from its intent. This also
-//! means `genetics::develop_at_position`/`simulate_growth_timeline` are
-//! untouched by D1a, so the divergence-guard concern D1c's sub-roadmap text
-//! raised does not apply to this milestone at all.
+//! **Where the signal actually reaches development:** `genetics::develop`'s
+//! `develop_at_position_with_life_stage` already provides exactly the seam
+//! this needs — a scalar folded additively into every regulatory gene's
+//! external input, with `0.0` reproducing `develop_at_position`'s original
+//! output exactly. Rather than adding a second, parallel parameter to
+//! `genetics`, `organisms::systems::growth_system` simply adds this system's
+//! field reading into the same additive signal channel before calling that
+//! existing function. This also means `genetics::develop_at_position`/
+//! `simulate_growth_timeline` are untouched by this system, so they remain a
+//! pure, zero-field reference reconstruction — see
+//! `developmental_graph::simulate_growth_timeline`'s doc comment for what
+//! that implies about matching a live run exactly.
 
 use crate::developmental_graph::DevelopmentalGraph;
 use bevy_ecs::prelude::{Component, Entity, Query};

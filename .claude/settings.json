@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(cargo doc *)",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(grep -n '\\\\[`ViewportInput\\\\|\\\\[`apply_to_camera\\\\|\\\\[`FrameAnimation\\\\|\\\\[`render_gizmos\\\\|\\\\[`project\\\\]\\\\|\\\\[`render_navigation_cube' crates/ui/src/viewport_input.rs crates/ui/src/frame_animation.rs crates/ui/src/plugins/gizmos.rs crates/ui/src/camera.rs)",
+      "Bash(grep -n '\\\\[`' crates/ui/src/state.rs)"
     ]
   }
 }

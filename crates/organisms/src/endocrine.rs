@@ -1,10 +1,11 @@
-//! Per-region endocrine signalling (Phase 4, `PHASE4_ROADMAP.md` milestone
-//! P4-F4) — propagates the head's [`brain::Neuromodulators`] reading out to
-//! every other body segment's own [`brain::HormoneLevel`], along the same
-//! persistent Body Graph edges P4-F3's `transport::transport_system` walks.
+//! Per-region endocrine signalling — propagates the head's
+//! [`brain::Neuromodulators`] reading out to every other body segment's own
+//! [`brain::HormoneLevel`], along the same persistent Body Graph edges
+//! `transport::transport_system` walks.
 //!
-//! **Why this is a different model from P4-F3's transport:** glucose/o2/atp
-//! are physical stuff — moving some to a neighbor means the source has less.
+//! **Why this is a different model from `transport`'s resource exchange:**
+//! glucose/o2/atp are physical stuff — moving some to a neighbor means the
+//! source has less.
 //! A hormone reading is not consumed by being sensed elsewhere — the head's
 //! own `Neuromodulators` state is unaffected by how far its signal has
 //! reached. So each edge here is one-directional: the downstream segment's
@@ -18,7 +19,7 @@ use brain::{HormoneLevel, Neuromodulators};
 use std::collections::HashMap;
 
 /// Fraction of the gap to a segment's upstream parent closed per tick —
-/// untuned placeholder, same status as `transport::TRANSPORT_RATE`.
+/// an untuned placeholder, same status as `transport::TRANSPORT_RATE`.
 const ENDOCRINE_RATE: f32 = 0.2;
 
 /// A snapshot of the three channels [`Neuromodulators`]/[`HormoneLevel`]
@@ -60,8 +61,8 @@ impl From<&HormoneLevel> for Channels {
 /// `HormoneLevel`).
 ///
 /// ## 2. Why It Happens
-/// `Neuromodulators` (Phase 2/3) was always an organism-wide scalar with no
-/// spatial concept — a distant segment "felt" a stress/reward signal exactly
+/// `Neuromodulators` was always an organism-wide scalar with no spatial
+/// concept — a distant segment "felt" a stress/reward signal exactly
 /// as fast and exactly as strongly as the head itself did, which has no
 /// physical analogue (real endocrine signalling takes time and attenuates
 /// over distance from the source). This system gives that signal an actual

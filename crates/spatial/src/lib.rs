@@ -17,9 +17,7 @@
 //!   unevenly across a large or unbounded area.
 //! - **[`Octree`]** — sparse, logarithmic-depth structure over a fixed
 //!   bounded region, for long-range queries on static or slow-moving
-//!   objects. `Vec3`-native since Phase 8, Epic 8.9 (the direct successor
-//!   to the pre-8.9 `Quadtree`, which had zero real callers — see this
-//!   type's own doc comment).
+//!   objects.
 //!
 //! ## Dependency rules
 //!

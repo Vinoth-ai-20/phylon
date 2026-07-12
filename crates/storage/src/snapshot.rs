@@ -1,12 +1,49 @@
 #![allow(missing_docs)]
 
+//! # Snapshot: full simulation state, for save/load
+//!
+//! ## Purpose
+//!
+//! A snapshot ([`SimulationSnapshot`]) is a complete, self-contained copy of
+//! everything needed to resume a simulation exactly where it left off:
+//! every organism's body (nodes and springs), genome, brain, physiology,
+//! every food/mineral/corpse entity, and the diffusion field data. This is
+//! the `.phylon` save-file format — contrast with `replay`, which records
+//! only the interventions applied to a run, not the state itself (see that
+//! module's doc comment).
+//!
+//! ## Why a snapshot instead of relying on Bevy's own serialization
+//!
+//! Bevy's ECS does not support turnkey serialization: raw `Entity` IDs are
+//! not stable across a save/restore cycle (a freshly loaded world assigns
+//! entirely new IDs), and not every component is (or should be)
+//! `Serialize`. [`SimulationSnapshot::from_world`] instead explicitly
+//! queries out each component type it cares about into flat, plain-data
+//! `Snapshot*` structs, remapping `Entity` references (e.g. a spring's two
+//! endpoint nodes, or a developmental graph node's owning entity) to stable
+//! `u64` IDs that survive the round trip.
+//! [`SimulationSnapshot::restore_world`] reverses this: it clears the
+//! world, respawns every entity from scratch, and rewrites those `u64` IDs
+//! back into the fresh `Entity` values Bevy assigns.
+//!
+//! ## Determinism
+//!
+//! A restored world is only useful if it behaves identically to the
+//! original from that point on, so every field that influences future
+//! simulation steps must round-trip exactly — including full 3D position
+//! and velocity (see [`SerializedVec3`]) and the complete physiology state
+//! (chemical economy, age, disease, hormones, etc.), not just the visually
+//! obvious fields. A component that's silently dropped on save produces a
+//! world that *looks* the same on reload but behaves differently, which is
+//! a determinism bug, not a cosmetic one.
+
 use serde::{Deserialize, Serialize};
 
 /// Screen/UI-resolved 2D values that are genuinely 2D at the point they're
-/// recorded — a hazard's world-space center (ADR-P8-05: the hazard field
-/// stays a flat plane) or a replay-recorded spawn-click position
-/// ([`crate::replay::ReplayAction`]) — never a live entity's world
-/// position (see [`SerializedVec3`] for that).
+/// recorded — a hazard's world-space center (the hazard field is a flat
+/// plane by design, like the diffusion crate's other fields) or a
+/// replay-recorded spawn-click position ([`crate::replay::ReplayAction`]) —
+/// never a live entity's world position (see [`SerializedVec3`] for that).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SerializedVec2 {
     pub x: f32,
@@ -25,11 +62,12 @@ impl From<SerializedVec2> for common::Vec2 {
     }
 }
 
-/// A live entity's world-space position/velocity (Phase 8, Epic 8.13,
-/// ADR-P8-08) — replaces `SerializedVec2` for every field that used to
-/// truncate a real `Vec3` down to 2D on save and re-extend it with `z =
-/// 0.0` on restore. `SchemaVersion::CURRENT` bumped from 4 to 5 for this
-/// change — see that constant's own doc comment.
+/// A live entity's world-space position/velocity, stored at full 3D
+/// precision — `SerializedVec2` is reserved for genuinely 2D data (see its
+/// own doc comment); using it for a 3D field would silently truncate to
+/// `z = 0.0` on save and lose real position data on restore.
+/// `SchemaVersion::CURRENT` bumped from 4 to 5 for this type — see that
+/// constant's own doc comment.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SerializedVec3 {
     pub x: f32,
@@ -87,9 +125,9 @@ pub struct SnapshotNode {
     pub genome: Option<genetics::Genome>,
     pub brain: Option<brain::Brain>,
 
-    // Phase 6, Epic E — physiology/graph state that previously silently
-    // vanished on save/load (see this module's `SimulationSnapshot` doc
-    // comment's Epic E note). All per-segment; `Option` because most only
+    // Physiology/graph state — see this module's `SimulationSnapshot` doc
+    // comment for why every field here must round-trip, not just the
+    // visually obvious ones. All per-segment; `Option` because most only
     // exist on the head (`chemical_economy`/`morphogen_level` are the
     // exception, carried by every segment).
     pub chemical_economy: Option<metabolism::ChemicalEconomy>,
@@ -176,22 +214,21 @@ pub struct SnapshotCorpse {
 /// every entity, carefully rewriting `node_a` and `node_b` entity references in the `Spring`s
 /// to match the new Bevy Entity IDs.
 ///
-/// ## 4. Phase 6, Epic E note — physiology/graph coverage
-/// Until this milestone, `from_world`/`restore_world` only ever round-tripped position/
-/// velocity/mass/segment_type/color/diet/category/genome/brain — every other per-segment or
-/// per-organism physiological component (`metabolism::ChemicalEconomy`/`Age`/`Metabolism`/
-/// `Health`/`Hydration`/`BodyTemperature`, `brain::HormoneLevel`/`Neuromodulators`,
-/// `ecology::disease::{Infection,SegmentInfection,SegmentImmunity}`,
-/// `organisms::{Generation,SpawnTick,LifeStage,MorphogenLevel,DevelopmentalGraph}`) was silently
-/// discarded on save/load — confirmed by none of those types deriving `Serialize` at all before
-/// this milestone. In practice this meant a reloaded organism's `metabolism_system` query (which
-/// requires `ChemicalEconomy`+`Age`+`Metabolism`) simply never matched it again: a "loaded"
-/// organism looked identical visually but had silently stopped metabolizing entirely. This
-/// milestone closes that gap by adding `Serialize`/`Deserialize` directly to each of those
-/// (small, plain-data) component types in their own home crates — the same pattern this crate
-/// already used for `organisms::{Generation,SpawnTick,LifeStage}`/`OrganismColor` — rather than
-/// duplicating their shape into bespoke wrapper structs here, keeping this file's job to
-/// entity-id remapping and optional-field plumbing, not field-by-field re-declaration.
+/// ## 4. Physiology/graph coverage
+/// `from_world`/`restore_world` round-trip position/velocity/mass/segment_type/color/diet/
+/// category/genome/brain, plus every per-segment or per-organism physiological component:
+/// `metabolism::ChemicalEconomy`/`Age`/`Metabolism`/`Health`/`Hydration`/`BodyTemperature`,
+/// `brain::HormoneLevel`/`Neuromodulators`,
+/// `ecology::disease::{Infection,SegmentInfection,SegmentImmunity}`, and
+/// `organisms::{Generation,SpawnTick,LifeStage,MorphogenLevel,DevelopmentalGraph}`. If any of
+/// these were silently dropped, a reloaded organism's `metabolism_system` query (which requires
+/// `ChemicalEconomy`+`Age`+`Metabolism`) would simply stop matching it: a "loaded" organism would
+/// look identical visually but have silently stopped metabolizing entirely. Coverage is achieved
+/// by deriving `Serialize`/`Deserialize` directly on each of those (small, plain-data) component
+/// types in their own home crates — the same pattern used for
+/// `organisms::{Generation,SpawnTick,LifeStage}`/`OrganismColor` — rather than duplicating their
+/// shape into bespoke wrapper structs here, keeping this file's job to entity-id remapping and
+/// optional-field plumbing, not field-by-field re-declaration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationSnapshot {
     pub schema_version: u32,
@@ -229,12 +266,12 @@ impl SimulationSnapshot {
         )>();
 
         let mut entity_map = std::collections::HashMap::new();
-        // Parallel index map (Phase 6, Epic E) so the many small
-        // second-pass queries below can fill in a given entity's already-
-        // pushed `SnapshotNode` in place, without needing one giant query
-        // tuple — Bevy's `WorldQuery` tuple impls have a practical arity
-        // ceiling, and this crate's own physiology/graph state alone is
-        // already ~15 additional optional components.
+        // Parallel index map so the many small second-pass queries below
+        // can fill in a given entity's already-pushed `SnapshotNode` in
+        // place, without needing one giant query tuple — Bevy's
+        // `WorldQuery` tuple impls have a practical arity ceiling, and this
+        // crate's own physiology/graph state alone is already ~15
+        // additional optional components.
         let mut entity_to_index = std::collections::HashMap::new();
 
         for (e, node, color, diet, category, repro, brain) in node_query.iter(world) {
@@ -244,8 +281,8 @@ impl SimulationSnapshot {
 
             nodes.push(SnapshotNode {
                 id,
-                // Phase 8, Epic 8.13 (ADR-P8-08): full `Vec3` fidelity —
-                // no truncation, unlike the pre-8.13 `SerializedVec2`.
+                // Full `Vec3` fidelity — no truncation, unlike the older
+                // `SerializedVec2` this field replaced.
                 position: node.position.into(),
                 velocity: node.velocity.into(),
                 mass: node.mass,
@@ -527,11 +564,11 @@ impl SimulationSnapshot {
                 entity_cmds.insert(brain.clone());
             }
 
-            // Phase 6, Epic E: restore every previously-lost physiology
-            // component. `Neuromodulators` is reconstructed via `::new`
-            // (seeded from this same node's restored ATP, or `0.0` if this
-            // node never had a `ChemicalEconomy`) and then its 3 public
-            // channels are overwritten from the snapshot — see
+            // Restore every physiology component. `Neuromodulators` is
+            // reconstructed via `::new` (seeded from this same node's
+            // restored ATP, or `0.0` if this node never had a
+            // `ChemicalEconomy`) and then its 3 public channels are
+            // overwritten from the snapshot — see
             // `SnapshotNode::neuromodulator_channels`'s doc comment for why
             // it isn't a direct `Neuromodulators` round-trip.
             if let Some(chem) = &node.chemical_economy {
@@ -668,13 +705,13 @@ mod tests {
     use super::*;
     use bevy_ecs::world::World;
 
-    /// Phase 6, Epic E's own named verification requirement: a save-then-
-    /// load round-trip test asserting the previously-lost fields survive.
-    /// Builds a small organism (head + one body segment) carrying every
-    /// component this milestone newly covers, snapshots it, restores it
-    /// into a fresh `World`, and confirms each value survived — not just
-    /// that the snapshot *contains* the data (that would only prove
-    /// `from_world`, not the full round-trip `restore_world` completes).
+    /// A save-then-load round-trip test asserting every physiology/graph
+    /// field survives. Builds a small organism (head + one body segment)
+    /// carrying every physiology/graph component this snapshot format
+    /// covers, snapshots it, restores it into a fresh `World`, and confirms
+    /// each value survived — not just that the snapshot *contains* the data
+    /// (that would only prove `from_world`, not the full round-trip
+    /// `restore_world` completes).
     #[test]
     fn save_then_load_round_trip_preserves_previously_lost_physiology_and_graph_state() {
         let mut world = World::new();
@@ -682,9 +719,8 @@ mod tests {
         let head = world
             .spawn((
                 physics::ParticleNode {
-                    // Non-zero `z` (Phase 8, Epic 8.13) proves the
-                    // round trip preserves full 3D fidelity, not just
-                    // the pre-8.13 truncate-to-2D/re-extend-with-0.0
+                    // Non-zero `z` proves the round trip preserves full 3D
+                    // fidelity, not a truncate-to-2D/re-extend-with-0.0
                     // behavior.
                     position: common::Vec3::new(1.0, 2.0, 5.0),
                     velocity: common::Vec3::ZERO,
@@ -847,8 +883,7 @@ mod tests {
             .next()
             .expect("restored head entity should carry every previously-lost component");
 
-        // Phase 8, Epic 8.13's own named verification requirement: real 3D
-        // data survives the round trip, not just the pre-8.13 flat 2D case.
+        // Real 3D data survives the round trip, not just a flat 2D case.
         assert_eq!(node.position, common::Vec3::new(1.0, 2.0, 5.0));
 
         assert_eq!(chem.glucose, 111.0);

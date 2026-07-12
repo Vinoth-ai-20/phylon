@@ -1,7 +1,6 @@
-//! Ecology systems, one file per system (Phase 7, W5d) — previously all 6
-//! lived inline in `lib.rs` alongside their component types. No logic
-//! changed, only relocated; each module's own doc comment documents its
-//! system in full, exactly as it read in `lib.rs` before this split.
+//! Ecology systems, one file per system. Each module's own doc comment
+//! documents its system in full: what it does, why it exists, and how it
+//! works.
 
 /// Catastrophe/hazard-field lifecycle and organism energy drain.
 pub mod catastrophe_system;

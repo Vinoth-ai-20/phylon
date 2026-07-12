@@ -35,8 +35,8 @@ pub fn render_ui(
     state.cleanup_toasts();
     track_recent_selections(state);
     track_trajectory_history(state, world);
-    // Accessibility pass 2 (Phase 2, M18) — reactive every frame so toggling
-    // either setting in the Settings tab takes effect immediately.
+    // Reapplied every frame (not just on toggle) so changing high-contrast
+    // or UI scale in the Settings tab takes effect immediately.
     crate::theme::apply_style(ctx, state.high_contrast);
     ctx.set_zoom_factor(state.ui_scale.clamp(0.5, 3.0));
     // Reset each frame; whichever panel's row the cursor is over this frame
@@ -46,11 +46,9 @@ pub fn render_ui(
 
     // ── Global keyboard shortcuts ────────────────────────────────────────────
     // `ShortcutManager::consume_all` (crate::shortcuts) is the single active
-    // shortcut system — it used to be shadowed by a separate, hardcoded
-    // `process_shortcuts` here that silently made several menu-advertised
-    // shortcuts (Ctrl+M/L/B, speed up/down, Ctrl+Z/Y) dead, since egui's
-    // `ShortcutManager` instance was only ever read for menu hint text, never
-    // executed.
+    // shortcut system: every menu-advertised shortcut (Ctrl+M/L/B, speed
+    // up/down, Ctrl+Z/Y, etc.) is dispatched from here, not reimplemented
+    // ad hoc per call site.
     state.shortcuts.consume_all(ctx, &mut actions);
 
     // ── Main Menu screen ─────────────────────────────────────────────────────
@@ -174,37 +172,39 @@ pub fn render_ui(
         render_world_boundary(ctx, state, interact_response.rect);
     }
 
-    // ── Minimap overlay (Phase 2, M17) ───────────────────────────────────────
+    // ── Minimap overlay ──────────────────────────────────────────────────────
     if state.show_minimap {
         render_minimap(ctx, state, world, interact_response.rect);
     }
 
-    // ── Organism labels (Phase 5, SX-5a) ─────────────────────────────────────
-    // Priority 5 (cosmetic/identity, lowest) per the Numeric priority
-    // hierarchy — drawn before every other biological overlay so labels
-    // never sit on top of (obscure) a Behavior glyph, Health/Disease badge,
-    // or Death/Reproduction burst; those all paint after this.
+    // ── Organism labels ──────────────────────────────────────────────────────
+    // Priority 5 (cosmetic/identity, lowest) per the biological visual
+    // language's numeric priority hierarchy (`docs/design/
+    // biological_visual_language.md`) — drawn before every other biological
+    // overlay so labels never sit on top of (obscure) a Behavior glyph,
+    // Health/Disease badge, or Death/Reproduction burst; those all paint
+    // after this.
     if state.show_organism_labels {
         render_organism_labels(ctx, state, world, interact_response.rect);
     }
 
-    // ── Trajectory trail (Phase 5, SX-5c) ────────────────────────────────────
+    // ── Trajectory trail ─────────────────────────────────────────────────────
     // Priority 4 (Ecological status), tied to the tracked entity only —
-    // reuses `state.trajectory_history`, the data SX-4c's Inspector
-    // Relationships/History section already populates every tick; this is
-    // the viewport-visual half of that same feature, not a second tracking
+    // reuses `state.trajectory_history`, the same data the Inspector's
+    // Relationships/History section populates every tick; this is the
+    // viewport-visual half of that same feature, not a second tracking
     // mechanism. No separate toggle: tracking an entity (`tracked_entity`)
     // is already the opt-in gesture.
     if state.tracked_entity.is_some() {
         render_trajectory_trail(ctx, state, interact_response.rect);
     }
 
-    // ── Behavior-state glyph overlay (Phase 5, SX-1b) ───────────────────────
+    // ── Behavior-state glyph overlay ─────────────────────────────────────────
     // Population-wide, not opt-in — per `docs/design/biological_visual_language.md`'s
     // Behavior entry, a Priority-4 state.
     render_behavior_glyphs(ctx, state, world, interact_response.rect);
 
-    // ── Physiology science overlay (Phase 4, P4-V2) ─────────────────────────
+    // ── Physiology science overlay ───────────────────────────────────────────
     // Priority 4 (Tertiary/opt-in detail) — drawn before the Priority 2/3
     // timed-effect overlay below, for the same reason Behavior is: it must
     // never paint over a Death/Reproduction burst.
@@ -212,34 +212,30 @@ pub fn render_ui(
         render_physiology_overlay(ctx, state, world, interact_response.rect);
     }
 
-    // ── Timed interaction-effect overlay (Phase 4, P4-V1) ───────────────────
-    // Renders `events::TimedEffects` — the data-side framework P4-E1 built
-    // but deliberately left unrendered (see that milestone's execution log).
-    // Phase 5, SX-1e: moved to *last* among the biological overlays — Death/
-    // Reproduction bursts are Priority 2/3, strictly above Behavior's and
-    // Physiology's Priority 4, so they must paint on top of both, never
-    // underneath. Re-audited the previous order (this call preceded both)
-    // and found it violated the mandatory priority hierarchy: a Behavior
-    // glyph or Physiology ring could visually sit on top of (obscure) a
-    // same-position death/birth burst. Painter calls composite in call order
-    // within the same egui layer, so this reorder is the entire fix — no new
-    // drawing logic.
+    // ── Timed interaction-effect overlay ─────────────────────────────────────
+    // Renders `events::TimedEffects`. Drawn *last* among the biological
+    // overlays — Death/Reproduction bursts are Priority 2/3, strictly above
+    // Behavior's and Physiology's Priority 4, so they must paint on top of
+    // both, never underneath. Painter calls composite in call order within
+    // the same egui layer, so overlay call order is itself the mechanism
+    // that enforces the priority hierarchy — there is no separate z-index
+    // to set.
     render_timed_effects(ctx, state, world, interact_response.rect);
 
-    // ── Viewport navigation gizmos (Phase 9, P9.5) ──────────────────────────
+    // ── Viewport navigation gizmos ───────────────────────────────────────────
     // Navigation chrome, not biological content — paints after every
     // biological overlay above (so it's never obscured by one), but before
     // the transient UI popups below (Command Palette/Toasts stay on top of
-    // everything, matching their existing "pure UI chrome" precedent).
+    // everything, as pure UI chrome always does).
     crate::plugins::gizmos::render_gizmos(ctx, state, world, interact_response.rect, &mut actions);
 
-    // ── Command Palette overlay (Phase 2, M15) ──────────────────────────────
+    // ── Command Palette overlay ──────────────────────────────────────────────
     crate::plugins::command_palette::command_palette_ui(ctx, state, &mut actions);
 
-    // ── Workspace Manager overlay (Phase 7, W3c) ────────────────────────────
+    // ── Workspace Manager overlay ────────────────────────────────────────────
     crate::plugins::workspace_manager::workspace_manager_ui(ctx, state, &mut actions);
 
-    // ── Global Search overlay (Phase 7, W6a) ────────────────────────────────
+    // ── Global Search overlay ────────────────────────────────────────────────
     crate::plugins::global_search::global_search_ui(ctx, world, state);
 
     // ── Toast notifications overlay ─────────────────────────────────────────
@@ -251,12 +247,12 @@ pub fn render_ui(
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Pushes `selected_entity` onto `recent_selections` whenever it changes
-/// from the previous frame (Phase 2, M13) — deliberately done here, once per
-/// frame, rather than at each of `selected_entity`'s ~20 existing write
-/// sites, so none of them needed to change. Deselecting (a change to `None`)
-/// is not recorded — only a change *to* some entity counts as "selecting"
-/// it. A re-selection of an already-most-recent entity is a no-op rather
-/// than a duplicate push.
+/// from the previous frame — deliberately done here, once per frame,
+/// diffing against the previous frame rather than at each individual
+/// selection-write call site, so none of them need to know about this
+/// feature. Deselecting (a change to `None`) is not recorded — only a
+/// change *to* some entity counts as "selecting" it. A re-selection of an
+/// already-most-recent entity is a no-op rather than a duplicate push.
 fn track_recent_selections(state: &mut crate::WorkbenchState) {
     if state.selected_entity != state.previous_selected_entity {
         if let Some(entity) = state.selected_entity {
@@ -278,7 +274,7 @@ fn track_recent_selections(state: &mut crate::WorkbenchState) {
 /// unless it's changed since the last sample avoids capturing dozens of
 /// near-duplicate points per real second at typical frame rates, which
 /// would waste almost all of the bounded buffer on redundant data while the
-/// simulation is paused or between ticks). Phase 5, SX-4c.
+/// simulation is paused or between ticks).
 ///
 /// Resets the history whenever `tracked_entity` changes (including to
 /// `None`) — a trail belongs to one entity at a time, not a blended path
@@ -315,19 +311,19 @@ fn track_trajectory_history(state: &mut crate::WorkbenchState, world: &mut world
 /// # Trajectory Trail
 ///
 /// ## 1. What Happens
-/// Draws `state.trajectory_history` (populated by `track_trajectory_history`,
-/// SX-4c) as a short, fading polyline behind the tracked entity — oldest
-/// samples nearly transparent, newest fully opaque.
+/// Draws `state.trajectory_history` (populated by `track_trajectory_history`)
+/// as a short, fading polyline behind the tracked entity — oldest samples
+/// nearly transparent, newest fully opaque.
 ///
 /// ## 2. Why It Happens
-/// Population-wide trails would be visual noise, not signal (this
-/// milestone's own framing) — hundreds of overlapping paths would obscure
-/// the viewport rather than clarify it. Limited to the one entity the
-/// researcher already opted into tracking, the same restraint
-/// `render_physiology_overlay` already applies to per-segment detail.
+/// Population-wide trails would be visual noise, not signal — hundreds of
+/// overlapping paths would obscure the viewport rather than clarify it.
+/// Limited to the one entity the researcher already opted into tracking,
+/// the same restraint `render_physiology_overlay` applies to per-segment
+/// detail.
 ///
 /// ## 3. How It Happens
-/// No new data — this is the visual half of SX-4c's already-populated
+/// No new data — this is the visual half of the already-populated
 /// `trajectory_history`, not a second tracking mechanism. Segment alpha
 /// scales linearly by position in the buffer (oldest→newest), so the trail
 /// visibly fades rather than cutting off abruptly at its start.
@@ -692,15 +688,12 @@ fn render_vision_cones(
 ///
 /// ## 1. What Happens
 /// Draws every currently-active `events::TimedEffects::FloatingText` at its
-/// world position, converted to screen space — the rendering P4-E1's
-/// `TimedEffects` framework deliberately deferred (see that milestone's
-/// module doc comment: "Epic 8's job").
+/// world position, converted to screen space.
 ///
 /// ## 2. Why It Happens
-/// P4-E1 proved the data-side framework works (a real predation death spawns
-/// a real, correctly-expiring `TimedEffect`) but drawing it was explicitly
-/// out of scope, per ADR-P4-05's Epic 6/Epic 8 split. This is that drawing
-/// step, for whichever event types by then have a real producer (see
+/// `events::TimedEffects` is a data-side framework (a real predation death
+/// spawns a real, correctly-expiring `TimedEffect`); this is the drawing
+/// step for whichever event types have a real producer (see
 /// `crates/app/src/systems.rs` for the current producers: predation,
 /// reproduction, disease transmission, decomposition).
 ///
@@ -709,8 +702,7 @@ fn render_vision_cones(
 /// `render_vision_cones` above. Text fades linearly over its last third of
 /// remaining lifetime rather than popping off abruptly, using
 /// `TimedEffects`' own `expires_at_tick` and the current tick (read from
-/// `metabolism::GlobalAtmosphere`, the same tick source every P4-F/E-tier
-/// system this phase already uses).
+/// `metabolism::GlobalAtmosphere`, the shared tick source).
 fn render_timed_effects(
     ctx: &egui::Context,
     state: &crate::WorkbenchState,
@@ -786,12 +778,12 @@ fn render_timed_effects(
 /// with a badge on every resting organism — absence *is* the encoding.
 ///
 /// ## 2. Why It Happens
-/// SX-1a/SX-2a's investigation found Phylon's dominant readability problem
-/// isn't motion, it's communication: nothing in the viewport currently
-/// reflects what an organism is *doing*. `BehaviorState` is already computed
-/// every tick by `behavior::behavior_system` and already shown live in the
-/// Inspector — this overlay is the same data, population-wide, in the one
-/// place a researcher is actually looking most of the time.
+/// Phylon's dominant viewport readability problem isn't motion, it's
+/// communication: nothing in the viewport otherwise reflects what an
+/// organism is *doing*. `BehaviorState` is already computed every tick by
+/// `behavior::behavior_system` and already shown live in the Inspector —
+/// this overlay is the same data, population-wide, in the one place a
+/// researcher is actually looking most of the time.
 ///
 /// ## 3. How It Happens
 /// Same world→screen transform and background-layer `Painter` pattern as
@@ -800,8 +792,8 @@ fn render_timed_effects(
 /// `behavior::behavior_system`'s own query tuple), so this is a single flat
 /// query, no per-organism graph walk needed. The glyph is drawn via
 /// `egui_remixicon`, matching every panel's existing icon usage, at a fixed
-/// size — no decorative animation, per this phase's engineering rule (the
-/// glyph's *presence*, not any motion on it, carries the meaning).
+/// size — no decorative animation, since the glyph's *presence*, not any
+/// motion on it, carries the meaning.
 fn render_behavior_glyphs(
     ctx: &egui::Context,
     state: &crate::WorkbenchState,
@@ -851,15 +843,14 @@ fn render_behavior_glyphs(
         };
 
         let screen_pos = to_screen(node.position.truncate());
-        // Phase 9, P9.1 (performance foundation): skip the (comparatively
-        // expensive) egui text-shaping call for glyphs that fall outside
-        // the viewport — measured to be a real per-frame cost at
+        // Skip the (comparatively expensive) egui text-shaping call for
+        // glyphs that fall outside the viewport — a real per-frame cost at
         // population scale. Purely a screen-space visibility cull, not a
         // user-facing toggle: this overlay stays "population-wide, not
         // opt-in" per `docs/design/biological_visual_language.md`'s
-        // Behavior entry — an off-screen glyph was already invisible
+        // Behavior entry — an off-screen glyph is already invisible
         // (clipped), so skipping its layout/shaping changes no rendered
-        // output, only what CPU work off-screen organisms cost.
+        // output, only how much CPU work off-screen organisms cost.
         const GLYPH_CULL_MARGIN: f32 = 20.0;
         if !viewport_rect.expand(GLYPH_CULL_MARGIN).contains(screen_pos) {
             continue;
@@ -885,20 +876,17 @@ fn render_behavior_glyphs(
 /// center.
 ///
 /// ## 2. Why It Happens
-/// Opt-in, per the roadmap's own framing — most research sessions don't
-/// want a label on every organism at once. "Density-aware" is the other
-/// half: even with labels enabled, the count actually drawn is bounded
-/// regardless of total population (hundreds to thousands at typical
-/// scales), so turning this on doesn't turn the viewport into unreadable
-/// text clutter — the exact failure this milestone's own name warns
-/// against.
+/// Opt-in: most research sessions don't want a label on every organism at
+/// once. "Density-aware" is the other half: even with labels enabled, the
+/// count actually drawn is bounded regardless of total population (hundreds
+/// to thousands at typical scales), so turning this on doesn't turn the
+/// viewport into unreadable text clutter.
 ///
 /// ## 3. How It Happens
 /// Nearest-to-camera-center selection reuses the same "sort by distance,
-/// take N" shape `inspector_ui`'s Relationships section already established
-/// for its nearby-organisms list (SX-4c) — a different distance origin
-/// (camera center here, vs. a specific organism there), same pattern, not a
-/// new one invented for this milestone.
+/// take N" shape `inspector_ui`'s Relationships section uses for its
+/// nearby-organisms list — a different distance origin (camera center here,
+/// vs. a specific organism there), same pattern.
 fn render_organism_labels(
     ctx: &egui::Context,
     state: &crate::WorkbenchState,
@@ -978,22 +966,23 @@ fn render_organism_labels(
 /// Graph segment's world position, sized/colored by whichever physiology
 /// layer `state.physiology_overlay` is set to (Circulation → ATP level,
 /// Hormone → dominant channel, Immune → infection severity) — toggled from
-/// the corresponding P4-R1-R4 Viewer panel's own "Show on viewport" control.
+/// the corresponding Viewer panel's own "Show on viewport" control.
 ///
 /// ## 2. Why It Happens
-/// P4-R1-R4's panels are tables in a side dock — useful for precise values,
-/// but they don't show *where on the body* something is happening at a
-/// glance. ADR-P4-05 frames Epic 8's visualization needs (blood flow, ATP
-/// transport, hormone diffusion, immune activity) as viewport-space
-/// overlays, the same category as P4-V1's timed effects, not another table.
+/// The Circulation/Hormone/Immune Viewer panels are tables in a side dock —
+/// useful for precise values, but they don't show *where on the body*
+/// something is happening at a glance. This overlay puts blood flow, ATP
+/// transport, hormone diffusion, and immune activity into viewport space,
+/// the same category as the timed-effects overlay, rather than requiring a
+/// side panel to see them.
 ///
 /// ## 3. How It Happens
 /// **Disclosed scope simplification:** this draws current per-segment
 /// *magnitude* as a static colored ring, not animated directional flow
-/// particles along Body Graph edges — matching Circulation Viewer's own
-/// "levels, not flow rate" disclosure (P4-R2). A future milestone could add
-/// particle-trail animation along edges if that fidelity is wanted; this is
-/// a real, live, per-segment visualization, not a placeholder.
+/// particles along Body Graph edges — matching the Circulation Viewer's own
+/// "levels, not flow rate" disclosure. Particle-trail animation along edges
+/// could be added later if that fidelity is wanted; this is a real, live,
+/// per-segment visualization, not a placeholder.
 fn render_physiology_overlay(
     ctx: &egui::Context,
     state: &crate::WorkbenchState,
@@ -1207,9 +1196,11 @@ fn render_world_boundary(
 /// Fixed size of the minimap's inset square, in screen points.
 const MINIMAP_SIZE: f32 = 160.0;
 
-/// Draws a fixed-size overview map in the viewport's bottom-right corner
-/// (Phase 2, M17): every organism's head position as a Diet-colored dot, plus
-/// a rectangle showing the main camera's currently-visible world extent.
+/// Draws a fixed-size overview map in the viewport's bottom-right corner:
+/// every organism's head position as a `Diet`-colored dot (an organism's
+/// trophic category — producer/herbivore/carnivore/omnivore/decomposer),
+/// plus a rectangle showing the main camera's currently-visible world
+/// extent.
 /// Unlike `render_scale_grid`/`render_world_boundary`, this has its own
 /// independent world→minimap-space transform (always shows the *whole*
 /// bounded world, regardless of the main camera's zoom).

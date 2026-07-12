@@ -1,17 +1,17 @@
-//! Circulation Viewer (Phase 4, `PHASE4_ROADMAP.md` milestone P4-R2) — shows
-//! the same per-segment `metabolism::ChemicalEconomy` pools P4-R1's
-//! Physiology Viewer does, framed around what P4-F3's `organisms::transport_system`
-//! actually moves between them (glucose/o2/atp/co2), with the Body Graph's
-//! parent/child structure shown alongside each row so a researcher can read
-//! the table as "what's flowing along this edge," not just a flat list.
+//! Circulation Viewer — shows the same per-segment
+//! `metabolism::ChemicalEconomy` pools the Physiology Viewer does, framed
+//! around what `organisms::transport_system` actually moves between them
+//! (glucose/o2/atp/co2), with the Body Graph's parent/child structure shown
+//! alongside each row so a researcher can read the table as "what's flowing
+//! along this edge," not just a flat list.
 //!
 //! **Disclosed scope limitation:** `organisms::transport::TRANSPORT_RATE`
 //! and `relax_toward_equilibrium` are private to that module (deliberately —
 //! see `transport.rs`'s own doc comment) — this panel shows current
 //! per-segment *levels*, not a live per-tick *flow rate*, since exposing the
-//! latter would need new `pub` API in `organisms::transport` that P4-R2
-//! doesn't otherwise need. A future milestone could add that if flow-rate
-//! visualization turns out to matter.
+//! latter would need new `pub` API in `organisms::transport` this panel
+//! doesn't otherwise need. Flow-rate visualization could be added later if
+//! it turns out to matter.
 use crate::types::*;
 
 /// Renders the Circulation Viewer dock panel.

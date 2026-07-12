@@ -4,23 +4,19 @@ use common::Vec2;
 
 /// System that manages catastrophes, updates the hazard field, and drains energy from organisms in active hazards.
 ///
-/// Phase 6, Epic A (re-audit finding, folded into this milestone rather than
-/// deferred): this system previously used `Local<u64>` for `local_tick`, the
-/// same anti-pattern SX-1a's diagnostic already named and fixed elsewhere —
-/// the live app drives every system via `run_system_once` (a fresh
-/// `SystemState` per call), so a `Local<u64>` silently reset to `0` on every
-/// single tick, meaning `tick` here was **always `Tick(1)`**. Since hazard
-/// lifecycle transitions are computed as `elapsed = tick - start_tick`, and
-/// both sides of that subtraction were always `Tick(1)`, `elapsed` was
-/// always `0` — hazards spawned into `Impending` state and then **never
-/// transitioned to `Active` and never expired**, regardless of
-/// `impending_duration`/`active_duration`. Fixed by reading
-/// `metabolism::GlobalAtmosphere::ticks` (already the canonical live tick
-/// counter this exact bug class was fixed with at SX-7a), which
-/// `metabolism::day_night_cycle_system` increments earlier in the same
-/// tick's system order (confirmed via `crates/app/src/simulation.rs`) — so
-/// no new resource was introduced, just reuse of the one that already
-/// exists.
+/// Hazard lifecycle transitions (`Impending` -> `Active` -> expired) are
+/// computed as `elapsed = current_tick - start_tick`, so `current_tick` must
+/// be a value that actually advances from call to call. This system reads it
+/// from `metabolism::GlobalAtmosphere::ticks` — the canonical live tick
+/// counter, incremented once per tick by `metabolism::day_night_cycle_system`
+/// earlier in the same tick's system order — rather than tracking its own
+/// local counter. A `bevy_ecs::system::Local` tick counter would silently
+/// reset every time this system is invoked via `run_system_once` (which
+/// constructs a fresh `SystemState` per call, as the live app does), making
+/// `elapsed` permanently `0` and hazards stuck in `Impending` forever
+/// regardless of `impending_duration`/`active_duration`. Any future system
+/// that needs "how many ticks have passed" should reuse
+/// `GlobalAtmosphere::ticks` for the same reason.
 #[allow(clippy::too_many_arguments)]
 pub fn catastrophe_system(
     mut manager: ResMut<crate::catastrophe::CatastropheManager>,
@@ -85,9 +81,10 @@ pub fn catastrophe_system(
     // Apply energy drain to organisms in active hazards
     for (mut chem, node, mut corpse_opt) in organisms.iter_mut() {
         let mut in_hazard = false;
-        // The hazard field is a 2D plane by design (ADR-P8-05, same boundary
-        // as metabolism's diffusion-field sampling), so we truncate the
-        // node's 3D position down to its XY plane for this comparison.
+        // The hazard field is a 2D plane by design (matching the boundary
+        // metabolism's diffusion-field sampling already uses), so we
+        // truncate the node's 3D position down to its XY plane for this
+        // comparison.
         let node_pos_2d = node.position.truncate();
         for (center, radius) in &active_hazards {
             if node_pos_2d.distance(*center) <= *radius {

@@ -1,3 +1,9 @@
+//! A **fungal network** here is a simulated decomposer system, analogous to
+//! a real fungal mycelium network: it draws energy out of corpses and
+//! transports/redistributes it as fresh soil nutrients some distance away,
+//! rather than energy only ever moving directly from a corpse into whichever
+//! organism happens to be standing on it.
+
 use bevy_ecs::prelude::*;
 use rand::Rng;
 

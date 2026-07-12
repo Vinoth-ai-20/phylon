@@ -1,7 +1,6 @@
-//! Confirms Epic 6's rayon-parallelized `metabolism_system` actually
-//! accelerates at scale, not just compiles — the roadmap's stated
-//! acceptance bar for parallelism epics, distinct from the correctness
-//! check already covered by
+//! Confirms the rayon-parallelized `metabolism_system` actually accelerates
+//! at scale, not just compiles — distinct from the correctness check already
+//! covered by
 //! `metabolism::tests::metabolism_is_deterministic_regardless_of_thread_count`.
 
 use bevy_ecs::system::RunSystemOnce;

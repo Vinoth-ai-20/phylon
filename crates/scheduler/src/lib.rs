@@ -22,30 +22,29 @@
 //!   It must never perform blocking I/O directly — that is the responsibility
 //!   of the `storage` and `network` crates via tokio channels.
 //!
-//! ## Phase 0 scope
+//! ## Implementation scope
 //!
-//! In Phase 0 the scheduler operates as a bare tick counter with timing.
-//! System dispatch callbacks are registered as boxed closures. In Phase 1+
-//! this will be upgraded to `bevy_ecs`-style system graphs.
+//! The scheduler operates as a self-contained tick counter with timing and
+//! boxed-closure system dispatch (see [`SystemFn`]). It does not use
+//! `bevy_ecs` system graphs internally — callers register plain closures
+//! against a [`SystemOrder`] phase instead.
 //!
-//! ## Current status (Phase 7, W1a — decided, not silently dropped)
+//! ## Current status: not wired into the live app
 //!
-//! **Not used by the live app.** `app::simulation::update_simulation` drives
-//! every real tick directly (Phase 6, Epic A removed the `SimulationScheduler`
-//! `app` previously constructed here, since nothing ever advanced it — see
-//! `app/src/main.rs`'s own top doc comment). This crate is retained
-//! deliberately, not as dead weight, for two real, still-exercised
-//! consumers: `benchmarks`' `scheduler_throughput` criterion benchmark, and
-//! `tests`' `scheduler_integrates_with_event_bus` integration test — both
+//! **This crate's [`SimulationScheduler`] is not used by the running `app`
+//! binary.** `app::simulation::update_simulation` drives every real
+//! simulation tick directly against the `bevy_ecs::World`, without going
+//! through this crate. This crate is retained deliberately, not as dead
+//! weight, for two real, still-exercised consumers: `benchmarks`'
+//! `scheduler_throughput` criterion benchmark, and `tests`'
+//! `scheduler_integrates_with_event_bus` integration test — both
 //! measure/exercise this scheduler's own tick-accumulator and event-bus
 //! integration in isolation, independent of whether the live app uses it.
-//! `research`'s previously-declared dependency on this crate was unused
-//! (confirmed by an exhaustive grep — zero references) and has been
-//! removed. If a future milestone needs a real `bevy_ecs`-system-graph
-//! scheduler again, this crate's design principles above remain a valid
-//! starting point — but reviving it as the live app's driver is a decision
-//! for that milestone to make explicitly, not an assumption this comment
-//! makes for it.
+//! `research` has no dependency on this crate. If a future need arises for
+//! a real `bevy_ecs`-system-graph scheduler as the live app's driver, this
+//! crate's design principles above remain a valid starting point, but that
+//! would be a deliberate design decision to make at that time, not something
+//! implied by this crate's continued existence.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -187,14 +186,14 @@ pub struct TickStats {
 
 /// Type alias for a registered system callback.
 ///
-/// In Phase 0, systems are registered as boxed closures. The closure receives:
+/// Systems are registered as boxed closures rather than `bevy_ecs` systems,
+/// keeping this crate's dispatch mechanism independent of the ECS. The
+/// closure receives:
 /// - The current [`Tick`] value.
 /// - A shared reference to the [`EventBus`] so systems can publish events.
 ///
 /// The return value is `Ok(())` on success or a string error message. The
 /// scheduler converts the string into a [`SchedulerError::SystemError`].
-///
-/// This API will be replaced by `bevy_ecs` system scheduling in Phase 1.
 pub type SystemFn = Box<dyn FnMut(Tick, &EventBus) -> Result<(), String> + Send>;
 
 /// # Deterministic Tick Scheduler

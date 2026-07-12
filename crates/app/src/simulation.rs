@@ -1,13 +1,85 @@
+//! # Per-Tick Simulation Update
+//!
+//! This module owns [`PhylonApp::update_simulation`], the function that
+//! advances the entire simulated world — organisms, ecology, physics,
+//! diffusion fields — by exactly one fixed-size timestep, and
+//! [`PhylonApp::advance_simulation_for_frame`], which decides how many such
+//! ticks to run for a given rendered frame.
+//!
+//! ## Purpose
+//!
+//! Phylon runs its simulation on a fixed timestep (`common::TickRate::dt()`)
+//! decoupled from the variable-length wall-clock frame time that drives
+//! rendering. This module is where that decoupling happens and where the
+//! fixed, deterministic order of per-tick systems is defined.
+//!
+//! ## Architecture: why a fixed system order instead of a bevy_ecs schedule
+//!
+//! Systems here are invoked directly, in a hardcoded sequence, via
+//! `World::run_system_once` rather than declared as a `bevy_ecs::Schedule`
+//! with dependency edges. This is a deliberate simplicity/determinism
+//! tradeoff: the ordering constraints between systems (e.g. "sensing must
+//! see this tick's positions, not last tick's" or "brain readback must be
+//! resolved before neuromodulator update reads it") are encoded as source
+//! order in one function, readable top-to-bottom, rather than as a
+//! declarative graph that must be traced through scheduler metadata to
+//! understand execution order.
+//!
+//! ## Data flow (one tick)
+//!
+//! 1. **GPU readback resolution** — physics/brain results dispatched *last*
+//!    tick are collected and written into the ECS first, so this tick's
+//!    systems observe them as their starting state.
+//! 2. **Neural plasticity** — neuromodulator channels update from this
+//!    tick's metabolic state, then Hebbian weight adaptation (and,
+//!    periodically, pruning) runs against the CTRNN (continuous-time
+//!    recurrent neural network — the organism brain model) node states just
+//!    resolved in step 1.
+//! 3. **Biology** — organism growth and sensory data gathering.
+//! 4. **Neural compute** — batched ECS `Brain` data is mapped to
+//!    `GpuCtrnnNode` buffers and dispatched to the GPU for numerical
+//!    integration via Euler's method, asynchronously; the result is
+//!    collected at the start of the *next* tick (step 1):
+//!    $$ y_{i}(t + DT) = y_{i}(t) + \frac{DT}{\tau_i} \left( -y_i + \sum_{j} w_{ji} \sigma(y_j + \theta_j) + I_i \right) $$
+//! 5. **Behavior & physics** — node forces are accumulated and integrated
+//!    into velocity/position vectors, dispatched asynchronously the same
+//!    way as brain compute.
+//! 6. **Spatial dynamics** — pheromones and gases diffuse across a
+//!    `texture_2d_array`-backed field.
+//!
+//! Dispatching brain/physics asynchronously lets their GPU work for tick N
+//! overlap with tick N's CPU-side ECS systems instead of stalling the CPU
+//! immediately after submission; the tradeoff is a one-tick lag between when
+//! a value is computed and when dependent systems observe it (e.g.
+//! `behavior_system` acts on brain state that is one tick behind the neural
+//! integration dispatched this same tick) — at the default 60 Hz tick rate
+//! this is about 16 ms.
+//!
+//! ## Determinism
+//!
+//! Every system in this ordering that needs randomness draws from the
+//! single `common::SimRng` resource (see `app.rs`'s module doc). Because the
+//! system order here is fixed source code rather than a scheduler's
+//! (potentially run-dependent) topological sort, a given RNG seed plus this
+//! fixed order together fully determine the simulation trajectory.
+//!
+//! ## Performance
+//!
+//! [`SimTickScratch`] holds cross-tick scratch buffers for the GPU node/
+//! spring gathering below, reused instead of reallocated every tick — see
+//! its own doc comment. The per-frame wall-clock time budget that bounds how
+//! many ticks run per frame lives in
+//! [`PhylonApp::advance_simulation_for_frame`], not here.
+
 use crate::app::PhylonApp;
 use crate::systems::*;
 use bevy_ecs::system::RunSystemOnce;
 
-/// Phase 9, P9.1 (performance foundation): cross-tick scratch storage for
-/// `update_simulation`'s GPU node/spring buffer gathering — measured
-/// directly to be a real per-tick allocation cost at population scale
-/// (fresh, zero-capacity `HashMap`/`Vec` every tick, up to
-/// `max_ticks_per_frame` times per rendered frame). `.clear()` (called at
-/// the top of `update_simulation`, see there) empties these without
+/// Cross-tick scratch storage for `update_simulation`'s GPU node/spring
+/// buffer gathering. A fresh, zero-capacity `HashMap`/`Vec` allocated every
+/// tick is a measurable cost at population scale, especially since a single
+/// rendered frame can run up to `max_ticks_per_frame` ticks. `.clear()`
+/// (called at the top of `update_simulation`) empties these without
 /// releasing their backing allocation, so after the first few ticks they
 /// stop reallocating and are reused at steady-state capacity — the same
 /// pattern `render::world_instances::RenderInstanceScratch` uses for the
@@ -21,41 +93,18 @@ pub(crate) struct SimTickScratch {
 }
 
 impl PhylonApp {
-    /// # Discrete Biological Update Loop
+    /// Advances the entire simulated world — organisms, ecology, physics,
+    /// diffusion fields — by exactly one fixed discrete timestep
+    /// (`common::TickRate::dt()`). See this module's top-level doc comment
+    /// for the full per-tick system order, data flow, and determinism
+    /// rationale.
     ///
-    /// ## 1. What Happens
-    /// The `update_simulation` method advances the entire biological, ecological, and physical
-    /// state of the world by exactly one discrete timestep (`DT`, the configured
-    /// [`common::TickRate`]). It orchestrates the strict ordering of sensing, brain evaluation,
-    /// behavior, physics integration, and spatial diffusion.
-    ///
-    /// ## 2. Why It Happens
-    /// Strict deterministic execution ordering is ecologically critical. If physics ran before
-    /// sensing, an organism's brain would evaluate stale spatial data. Furthermore, performance
-    /// dictates that heavy tensor operations (like CTRNN brain evaluation) must be batched and
-    /// uploaded to the GPU compute shaders rather than evaluated linearly on the CPU.
-    ///
-    /// ## 3. How It Happens
-    /// The ECS `World` executes systems sequentially:
-    /// 1. **GPU readback resolution**: physics/brain results dispatched *last* tick are collected
-    ///    and written into the ECS first, so this tick's systems see them as their starting state.
-    /// 2. **Neural plasticity**: neuromodulator channels update from this tick's metabolic state,
-    ///    then Hebbian weight adaptation (and, periodically, pruning) runs against the CTRNN node
-    ///    states just resolved in step 1 — see `organisms::hebbian_plasticity_system`.
-    /// 3. **Biology**: Organism growth and sensory data gathering.
-    /// 4. **Neural Compute**: Batched ECS `Brain` data is mapped to `GpuCtrnnNode` buffers and
-    ///    dispatched to the GPU for numerical integration via Euler's method — asynchronously;
-    ///    the result is collected at the start of the *next* tick (see step 1):
-    ///    $$ y_{i}(t + DT) = y_{i}(t) + \frac{DT}{\tau_i} \left( -y_i + \sum_{j} w_{ji} \sigma(y_j + \theta_j) + I_i \right) $$
-    /// 5. **Behavior & Physics**: Node forces are accumulated and integrated into velocity/position
-    ///    vectors, dispatched asynchronously the same way as brain compute.
-    /// 6. **Spatial Dynamics**: Pheromones and gases diffuse across the `texture_2d_array`.
-    ///
-    /// Dispatching brain/physics asynchronously means their GPU work for tick N overlaps with
-    /// tick N's CPU-side ECS systems instead of stalling the CPU immediately after submission;
-    /// the tradeoff is a one-tick lag between when a value is computed and when dependent systems
-    /// observe it (e.g. `behavior_system` acts on brain state that's one tick behind the neural
-    /// integration dispatched this same tick) — at the default 60 Hz `tick_rate` this is ~16ms.
+    /// Returns `(physics_duration_ms, diffusion_duration_ms)`, the CPU-side
+    /// time spent gathering and dispatching this tick's GPU physics and
+    /// diffusion work (not the GPU execution time itself, which is measured
+    /// separately via timestamp queries in
+    /// [`Self::advance_simulation_for_frame`] when the Metrics panel is
+    /// visible).
     pub(crate) fn update_simulation(&mut self) -> (f64, f64) {
         let mut physics_duration_ms = 0.0;
         let mut diffusion_duration_ms = 0.0;
@@ -81,9 +130,9 @@ impl PhylonApp {
 
         // 1. Run Biology Systems (Sensing, Brain, Behavior)
         self.world.ecs.run_system_once(organisms::growth_system);
-        // Life-stage transitions (Phase 4, P4-L1): only affects organisms
-        // not currently mid-growth, so this can safely run right after
-        // `growth_system` in the same tick without racing it — see
+        // Life-stage transitions only affect organisms not currently
+        // mid-growth, so this can safely run right after `growth_system` in
+        // the same tick without racing it — see
         // `organisms::life_stage_system`'s doc comment.
         self.world.ecs.run_system_once(organisms::life_stage_system);
         // Rebuilds the shared food/mineral/corpse spatial grids once for
@@ -158,9 +207,9 @@ impl PhylonApp {
             .run_system_once(organisms::pack_hunting_system);
 
         // 2. Gather Nodes and build Entity -> Index map.
-        // Phase 9, P9.1 (performance foundation): reused across ticks via
-        // `self.sim_scratch` (see `SimTickScratch`'s doc comment) instead
-        // of a fresh, zero-capacity `HashMap`/`Vec` every tick.
+        // Reused across ticks via `self.sim_scratch` (see
+        // `SimTickScratch`'s doc comment) instead of a fresh, zero-capacity
+        // `HashMap`/`Vec` every tick.
         self.sim_scratch.entity_to_index.clear();
         self.sim_scratch.gpu_nodes.clear();
         self.sim_scratch.node_entities.clear();
@@ -188,7 +237,7 @@ impl PhylonApp {
             node_entities.push(entity);
         }
 
-        // 3. Gather Springs (P9.1: reused scratch, see above).
+        // 3. Gather Springs (reused scratch, see above).
         let mut query_springs = self.world.ecs.query::<&physics::Spring>();
         self.sim_scratch.gpu_springs.clear();
         let gpu_springs = &mut self.sim_scratch.gpu_springs;
@@ -244,10 +293,9 @@ impl PhylonApp {
             );
             physics_duration_ms += dispatch_start.elapsed().as_secs_f64() * 1000.0;
             // `node_entities` is scratch (`self.sim_scratch`, reused across
-            // ticks — see P9.1's doc comment above); `pending_physics`
-            // needs its own owned copy to carry into next tick's readback,
-            // so this clone is real and necessary, not something P9.1 left
-            // unoptimized.
+            // ticks — see its doc comment above); `pending_physics` needs
+            // its own owned copy to carry into next tick's readback, so
+            // this clone is real and necessary rather than an oversight.
             self.pending_physics = Some((pending, node_entities.clone()));
         }
 
@@ -281,28 +329,28 @@ impl PhylonApp {
         self.world
             .ecs
             .run_system_once(ecology::disease_spread_system);
-        // Per-segment immune response (Phase 4, P4-F5): spreads the
-        // organism-wide `Infection` progressed just above out into each
-        // segment's own severity/resistance state.
+        // Per-segment immune response: spreads the organism-wide
+        // `Infection` progressed just above out into each segment's own
+        // severity/resistance state.
         self.world
             .ecs
             .run_system_once(organisms::segment_infection_system);
-        // Intra-body transport (Phase 4, P4-F3) right before metabolism, so
-        // resources gained this tick (foraging/photosynthesis, above) can
-        // reach a segment's local pool before `metabolism_system` respires
-        // from it — see `organisms::transport_system`'s doc comment.
+        // Intra-body transport runs right before metabolism, so resources
+        // gained this tick (foraging/photosynthesis, above) can reach a
+        // segment's local pool before `metabolism_system` respires from it —
+        // see `organisms::transport_system`'s doc comment.
         self.world.ecs.run_system_once(organisms::transport_system);
-        // Endocrine diffusion (Phase 4, P4-F4): propagates the head's
-        // `Neuromodulators` reading (last updated this tick at step 0.5,
-        // above) out to every segment's own `HormoneLevel` along the same
-        // Body Graph edges transport just used.
+        // Endocrine diffusion propagates the head's `Neuromodulators`
+        // reading (last updated this tick at step 0.5, above) out to every
+        // segment's own `HormoneLevel` along the same Body Graph edges
+        // transport just used.
         self.world
             .ecs
             .run_system_once(organisms::endocrine_diffusion_system);
-        // Intra-organism morphogen diffusion (Phase 6, Epic D, D1a): spreads
-        // and decays the growing tip's own seeded `MorphogenLevel` along the
-        // same Body Graph edges, one tick behind `growth_system`'s own read
-        // of it — see `organisms::morphogen_field`'s doc comment.
+        // Intra-organism morphogen diffusion spreads and decays the growing
+        // tip's own seeded `MorphogenLevel` along the same Body Graph edges,
+        // one tick behind `growth_system`'s own read of it — see
+        // `organisms::morphogen_field`'s doc comment.
         self.world
             .ecs
             .run_system_once(organisms::morphogen_diffusion_system);
@@ -318,18 +366,18 @@ impl PhylonApp {
         self.world
             .ecs
             .run_system_once(process_narrative_events_system);
-        // Phase 4, P4-E1: the first real `events::PhylonEvent` consumer,
-        // plus expiring this tick's timed effects — both must run after
-        // `process_deaths_system` (this tick's producer, above).
+        // The `events::PhylonEvent` consumer, plus expiring this tick's
+        // timed effects — both must run after `process_deaths_system`
+        // (this tick's producer, above).
         self.world.ecs.run_system_once(interaction_event_log_system);
         self.world.ecs.run_system_once(expire_timed_effects_system);
-        // Phase 5, SX-1a: opt-in, zero-cost when `PHYLON_MOTION_DIAGNOSTIC`
-        // is unset — see `motion_diagnostic`'s module doc comment.
+        // Opt-in, zero-cost when `PHYLON_MOTION_DIAGNOSTIC` is unset — see
+        // `motion_diagnostic`'s module doc comment.
         self.world
             .ecs
             .run_system_once(crate::motion_diagnostic::motion_diagnostic_system);
-        // Phase 9, Goal 3: opt-in, zero-cost when `PHYLON_BEHAVIOR_VALIDATION`
-        // is unset — see `behavior_validation`'s module doc comment.
+        // Opt-in, zero-cost when `PHYLON_BEHAVIOR_VALIDATION` is unset —
+        // see `behavior_validation`'s module doc comment.
         self.world
             .ecs
             .run_system_once(crate::behavior_validation::behavior_validation_system);
@@ -459,16 +507,16 @@ impl PhylonApp {
             }
             let co2_count = gpu_emitters.len() as u32 - co2_offset;
 
-            // Layer 4: Morphogen (Phase 6, Epic D, D1b — ADR-D1-01's
-            // inter-organism/environmental half). Every segment's own
-            // intra-organism `MorphogenLevel` (D1a) — seeded on growth,
-            // spread and decayed along the Body Graph by
-            // `organisms::morphogen_diffusion_system` — doubles as this
-            // layer's emission source: a segment only carries a meaningful
-            // concentration while its organism is actively growing (mature
-            // organisms' levels decay toward zero with nothing to reseed
-            // them), so this naturally emits only near real developmental
-            // activity without needing a separate "is growing" query.
+            // Layer 4: Morphogen — the environmental/inter-organism half of
+            // morphogen diffusion. Every segment's own intra-organism
+            // `MorphogenLevel` — seeded on growth, spread and decayed along
+            // the Body Graph by `organisms::morphogen_diffusion_system` —
+            // doubles as this layer's emission source: a segment only
+            // carries a meaningful concentration while its organism is
+            // actively growing (mature organisms' levels decay toward zero
+            // with nothing to reseed them), so this naturally emits only
+            // near real developmental activity without needing a separate
+            // "is growing" query.
             let morphogen_offset = gpu_emitters.len() as u32;
             let mut query_morphogen = self
                 .world
@@ -514,8 +562,8 @@ impl PhylonApp {
                 },
                 gpu::diffusion_pipeline::LayerConfig {
                     // Untuned placeholders, same status as every other
-                    // layer's rates here — no biological calibration
-                    // attempted (Epic M's job).
+                    // layer's rates here — no biological calibration has
+                    // been attempted for this layer yet.
                     diffusion_rate: 0.3,
                     decay_rate: 0.1,
                     emitter_count: morphogen_count,
@@ -560,7 +608,7 @@ impl PhylonApp {
         (physics_duration_ms, diffusion_duration_ms)
     }
 
-    /// # Per-Frame Simulation Cadence and Telemetry (Phase 7, W2d)
+    /// Per-frame simulation cadence and telemetry.
     ///
     /// Advances the fixed-timestep accumulator by this frame's real elapsed
     /// wall-clock time, runs as many ticks (via [`Self::update_simulation`])
@@ -568,14 +616,10 @@ impl PhylonApp {
     /// performance/demographic telemetry (population census, memory, and —
     /// if the Metrics panel is visible — a GPU profiling readback).
     ///
-    /// Extracted verbatim from `render()`'s prior inline body (Phase 7,
-    /// W2d's re-audit): every local this used to produce (`ticks_to_run`,
-    /// both duration_ms values, population counts, env samples) was
-    /// confirmed unreferenced anywhere else in `render()` before this
-    /// extraction — it is a fully self-contained "advance simulation and
-    /// record what happened" step, called once per redraw, before any
-    /// drawing. `render()` itself keeps its own camera-tracking step
-    /// (unrelated to simulation cadence) and calls this method right after.
+    /// This is a fully self-contained "advance simulation and record what
+    /// happened" step, called once per redraw, before any drawing.
+    /// `render()` itself keeps its own camera-tracking step (unrelated to
+    /// simulation cadence) and calls this method right after.
     pub(crate) fn advance_simulation_for_frame(&mut self) {
         let dt = self.world.ecs.resource::<common::TickRate>().dt();
 

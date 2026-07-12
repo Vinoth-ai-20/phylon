@@ -1,22 +1,69 @@
 //! # Phylon Brain
 //!
+//! ## Purpose
 //! Neural substrate for organisms: NEAT topology evolution (via `genetics`),
 //! CTRNN dynamics, Hebbian plasticity, and neuromodulator channels.
 //!
-//! The brain crate defines the data structures and evaluation interfaces for
-//! neural networks; it is deliberately independent of `burn`, `metabolism`,
-//! and every other simulation crate to keep compilation fast and dependency
-//! direction one-way. The systems that actually *drive* plasticity each
-//! tick — reading metabolic state, applying [`Brain::apply_hebbian_update`]
-//! — live in `organisms` (see `organisms::neuromodulator_system` and
-//! `organisms::hebbian_plasticity_system`), since they need to bridge
-//! `brain` with `metabolism`.
+//! A **CTRNN** (continuous-time recurrent neural network) is this
+//! simulation's brain model: unlike a standard feed-forward or discrete-step
+//! recurrent network, each neuron ([`CtrnnNode`]) is a leaky integrator
+//! governed by a differential equation with its own time constant, so its
+//! state evolves smoothly over simulated time rather than jumping instantly
+//! to a new value every tick. This naturally supports rhythmic pattern
+//! generation (walking gaits, oscillatory signals) and a form of short-term
+//! memory that a plain feed-forward network doesn't have. A **neuromodulator**
+//! ([`Neuromodulators`]) is a simulated chemical signal, analogous to a real
+//! neurotransmitter or hormone, that adjusts how the network learns or
+//! behaves *globally* — by scaling a learning rate, for instance — rather
+//! than by carrying information along one specific synaptic connection the
+//! way a normal signal between two neurons does.
+//!
+//! ## Architecture
+//! - **Topology**: [`Brain`] holds flat `Vec<CtrnnNode>` / `Vec<CtrnnSynapse>`
+//!   arrays rather than a graph of pointers/handles, so the whole brain can
+//!   be cheaply cloned at reproduction time and uploaded directly to the
+//!   GPU as a byte buffer (`CtrnnNode`/`CtrnnSynapse` are `#[repr(C)]` /
+//!   `bytemuck::Pod`). Synapses are kept sorted by target node, and each
+//!   node's `first_synapse`/`synapse_count` fields point into that sorted
+//!   array — this lets the GPU integration kernel gather a node's incoming
+//!   synapses with a simple slice, no pointer-chasing.
+//! - **`RegionId`**: coarse anatomical grouping metadata, one entry per node
+//!   (`Brain::node_regions`), identifying which neural region (e.g. a
+//!   specific ganglion segment) a node conceptually belongs to. It exists so
+//!   that future wiring logic can express *anatomically informed sparsity*
+//!   — e.g. "only wire nodes within the same region densely, and connect
+//!   across regions more sparsely," similar to how real nervous systems
+//!   aren't one big fully-connected blob but a set of somewhat-specialized,
+//!   somewhat-interconnected clusters. Every node defaults to
+//!   `RegionId::Central` today; the field is populated but not yet
+//!   consumed by any wiring/mutation logic that biases connectivity by
+//!   region.
+//! - This crate defines *data* and *CPU-only* logic (Hebbian updates,
+//!   pruning, winner-take-all output gating); it is deliberately
+//!   independent of `burn`, `metabolism`, and every other simulation crate
+//!   to keep compilation fast and dependency direction one-way. The systems
+//!   that actually *drive* plasticity each tick — reading metabolic state,
+//!   applying [`Brain::apply_hebbian_update`] — live in `organisms` (see
+//!   `organisms::neuromodulator_system` and
+//!   `organisms::hebbian_plasticity_system`), since they need to bridge
+//!   `brain` with `metabolism`.
 //!
 //! CTRNN numerical integration itself runs on the GPU (`crates/gpu/src/brain.wgsl`);
 //! this crate only defines the data layout that gets uploaded/read back, plus
 //! the CPU-only Hebbian/pruning/winner-take-all logic — see
 //! [`Brain::apply_hebbian_update`], [`Brain::prune_weak_synapses`], and
 //! [`Brain::get_outputs`]'s doc comments for why each lives where it does.
+//!
+//! ## Determinism
+//! Given the same node/synapse state, the same inputs, and the same RNG
+//! state (for anything upstream that mutates topology, e.g. NEAT mutation
+//! in `genetics`), CTRNN integration must produce identical results run to
+//! run — the simulation's reproducibility guarantee depends on it. The GPU
+//! integration kernel and this crate's CPU-side Hebbian update are both pure
+//! functions of their inputs (no hidden global state, no unseeded
+//! randomness), so this holds as long as callers always route randomness
+//! through the simulation's seeded RNG (`common::SimRng`) rather than an
+//! unseeded source.
 //!
 //! ## Not yet implemented
 //!
@@ -118,7 +165,7 @@ pub struct CtrnnSynapse {
     pub _padding: u32,
 }
 
-/// # Neural Region Identity (Phase 6, Epic C, Milestone N1a)
+/// # Neural Region Identity
 ///
 /// ## 1. What Happens
 /// Identifies which anatomical cluster a `Brain` node belongs to — pure
@@ -126,21 +173,22 @@ pub struct CtrnnSynapse {
 /// `Brain::node_regions`).
 ///
 /// ## 2. Why It Happens
-/// `PHASE4_EPIC1_NEURAL_ROADMAP.md`'s audit found brain wiring today is
-/// purely index-driven (`growth_system` queries the CPPN with each node's
-/// *normalized array index*, not its body position or anatomy) — there is
-/// no way to express "these nodes belong to this Ganglion" at all. This is
-/// the first, additive step: the field exists and defaults uniformly, with
-/// no behavior change yet. Region-bound *wiring* (N1b) and real Ganglion
-/// anchoring (N1c) are later, separate milestones.
+/// Brain wiring today is purely index-driven (`growth_system` queries the
+/// CPPN with each node's *normalized array index*, not its body position or
+/// anatomy) — there is no way to express "these nodes belong to this
+/// Ganglion" at all. This type is the first, additive step toward
+/// anatomically-informed wiring sparsity: the field exists and defaults
+/// uniformly, with no behavior change yet. Region-bound *wiring* and real
+/// Ganglion anchoring are separate, later pieces of work built on top of
+/// this field.
 ///
 /// ## 3. How It Happens
 /// `RegionId::Central` is every node's default — `Brain::new` fills
 /// `node_regions` with it uniformly, so no existing organism's brain
 /// topology changes as a result of this type existing. `Ganglion(usize)`
 /// names a specific developmental-graph position (see
-/// `organisms::developmental_graph::DevelopmentalGraph`) once N1c starts
-/// actually assigning it — unused by any wiring logic until then.
+/// `organisms::developmental_graph::DevelopmentalGraph`) for wiring logic
+/// that wants to anchor a region there — unused by any wiring logic today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum RegionId {
     /// No anatomical anchor — every node's default today.
@@ -149,7 +197,7 @@ pub enum RegionId {
     /// Anchored to the `SegmentType::Ganglion` segment at this
     /// developmental-graph position (see
     /// `organisms::developmental_graph::DevelopmentalNode::position`).
-    /// Not yet assigned by any wiring logic — reserved for N1c.
+    /// Not yet assigned by any wiring logic.
     Ganglion(usize),
 }
 
@@ -198,21 +246,21 @@ pub struct Brain {
     /// any tick with no discontinuity in its internal state).
     ///
     /// `#[serde(skip)]`: this is transient per-tick control state, not
-    /// evolved/genetic data — skipping it means adding this field needed no
-    /// `storage::SchemaVersion` bump, unlike `winner_take_all`/
-    /// `plasticity_enabled` in Epic 8.
+    /// evolved/genetic data — skipping it means adding this field needs no
+    /// `storage::SchemaVersion` bump, unlike genuinely persisted fields such
+    /// as `winner_take_all`/`plasticity_enabled`.
     #[serde(skip)]
     pub external_override: Option<Vec<f32>>,
-    /// Phase 6, Epic C (N1a): which anatomical region each node in `nodes`
-    /// belongs to, same length and index alignment as `nodes` — parallel,
-    /// not embedded in `CtrnnNode` itself, since `CtrnnNode` is a
-    /// `#[repr(C)]`/`Pod` GPU upload type and region is purely a CPU-side
-    /// wiring-time concept (ADR-N1-01: no GPU buffer/shader change). Always
-    /// `RegionId::Central` for every node until N1c starts assigning
-    /// `Ganglion` regions. `nodes` is never reordered/resized after
-    /// `Brain::new` (`prune_weak_synapses`/`reindex_synapses` only ever
-    /// mutate `synapses`), so this stays index-aligned with no
-    /// synchronization logic needed.
+    /// Which anatomical region each node in `nodes` belongs to, same length
+    /// and index alignment as `nodes` — parallel, not embedded in
+    /// `CtrnnNode` itself, since `CtrnnNode` is a `#[repr(C)]`/`Pod` GPU
+    /// upload type and region is purely a CPU-side wiring-time concept (no
+    /// GPU buffer/shader change needed to add it). Always `RegionId::Central`
+    /// for every node until wiring logic starts assigning `Ganglion`
+    /// regions. `nodes` is never reordered/resized after `Brain::new`
+    /// (`prune_weak_synapses`/`reindex_synapses` only ever mutate
+    /// `synapses`), so this stays index-aligned with no synchronization
+    /// logic needed.
     pub node_regions: Vec<RegionId>,
 }
 
@@ -526,16 +574,16 @@ impl Neuromodulators {
 /// # Per-Segment Hormone Level
 ///
 /// A body segment's own local reading of the same three channels
-/// [`Neuromodulators`] tracks — Phase 4, `PHASE4_ROADMAP.md` milestone
-/// P4-F4. The organism's head carries the authoritative [`Neuromodulators`]
-/// (driven directly by its own metabolic state); every other segment
-/// carries a `HormoneLevel` instead, which `organisms::endocrine_diffusion_system`
-/// relaxes toward its structural parent's level each tick (head's
-/// `Neuromodulators` for a segment attached directly to the head, or an
-/// upstream segment's own already-updated `HormoneLevel` otherwise) — an
-/// unbroadcast, non-conserved diffusion (the source keeps its own level;
-/// only the receiving side moves), unlike P4-F3's mass-conserving
-/// `ChemicalEconomy` transport.
+/// [`Neuromodulators`] tracks. The organism's head carries the authoritative
+/// [`Neuromodulators`] (driven directly by its own metabolic state); every
+/// other segment carries a `HormoneLevel` instead, which
+/// `organisms::endocrine_diffusion_system` relaxes toward its structural
+/// parent's level each tick (head's `Neuromodulators` for a segment attached
+/// directly to the head, or an upstream segment's own already-updated
+/// `HormoneLevel` otherwise) — an unbroadcast, non-conserved diffusion (the
+/// source keeps its own level; only the receiving side moves), unlike the
+/// mass-conserving `ChemicalEconomy` transport used for nutrients between
+/// segments.
 #[derive(
     bevy_ecs::prelude::Component, Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize,
 )]
@@ -656,9 +704,9 @@ mod tests {
         assert_eq!(outputs[1], -0.9);
     }
 
-    /// Phase 6, Epic C (N1a): `Brain::new` must default every node's region
-    /// to `RegionId::Central`, one entry per node, with no wiring-behavior
-    /// change — this is purely additive infrastructure per ADR-N1-01.
+    /// `Brain::new` must default every node's region to `RegionId::Central`,
+    /// one entry per node, with no wiring-behavior change — this field is
+    /// purely additive infrastructure.
     #[test]
     fn brain_new_defaults_every_node_region_to_central() {
         let brain = two_node_brain(0.5);
@@ -669,9 +717,9 @@ mod tests {
             .all(|region| *region == RegionId::Central));
     }
 
-    /// `RegionId::default()` (the derive N1a relies on for future
-    /// convenience constructors) must agree with what `Brain::new` actually
-    /// assigns — both should mean "no anatomical anchor."
+    /// `RegionId::default()` (which future convenience constructors can
+    /// rely on) must agree with what `Brain::new` actually assigns — both
+    /// should mean "no anatomical anchor."
     #[test]
     fn region_id_default_is_central() {
         assert_eq!(RegionId::default(), RegionId::Central);

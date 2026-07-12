@@ -10,11 +10,36 @@
 //! - **Entity identity**: [`EntityId`], [`ChunkId`], [`Tick`]
 //! - **Simulation unit newtypes**: [`SimLength`], [`SimMass`], [`SimEnergy`], [`SimTime`]
 //! - **Math re-exports**: [`Vec2`] (UI-internal 2D layouts), [`Vec3`]
-//!   (simulation space, Phase 8), [`IVec2`], [`Quat`]/[`Mat4`]/[`Mat3`]
-//!   (the 3D camera, Phase 8)
+//!   (simulation-space positions/velocities/forces), [`IVec2`], [`Quat`]/[`Mat4`]/[`Mat3`]
+//!   (the 3D camera)
 //! - **Error base**: [`PhylonError`] trait and [`PhylonResult`] type alias
 //! - **Determinism**: [`SimRng`], the single seeded source of randomness
 //! - **Tick timing**: [`TickRate`], the single source of truth for the fixed per-tick delta-time
+//!
+//! ## Determinism contract
+//!
+//! "Determinism" here means: given the same RNG seed and the same sequence of
+//! external inputs (config, scripted interventions, replayed commands), a
+//! simulation run must produce bit-identical results on any machine, any
+//! number of times. This matters because Phylon is a research tool —
+//! findings are only credible if a run can be reproduced exactly, and bugs
+//! are only debuggable if "run it again" actually reproduces the failure.
+//!
+//! Two types in this crate are the load-bearing pieces of that contract, and
+//! every other crate's determinism guarantee ultimately rests on both being
+//! used correctly everywhere:
+//!
+//! - [`SimRng`] is the *only* permitted source of randomness anywhere in the
+//!   simulation. Any code that reaches for `rand::thread_rng()` or another
+//!   unseeded generator instead breaks reproducibility silently — two runs of
+//!   "the same" experiment will diverge with no error and no obvious cause.
+//! - [`TickRate`] is the *only* permitted source of the fixed per-tick
+//!   delta-time. Any code that hardcodes its own `1.0 / 60.0` instead risks
+//!   silently disagreeing with `PhylonConfig::simulation::tick_rate` and with
+//!   every other call site that reads the shared value.
+//!
+//! Both are inserted into the ECS `World` exactly once, at startup, as
+//! `bevy_ecs` resources — see each type's own doc comment for details.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -30,34 +55,34 @@ use serde::{Deserialize, Serialize};
 
 /// 2-D floating-point vector — used by UI-internal, non-simulation-space
 /// concerns (egui graph-canvas node-link layouts for the Neural/GRN/HOX
-/// Viewer panels, `CameraBookmark`'s pre-Phase-8 shape). As of Phase 8,
-/// simulation-space positions/velocities/forces use [`Vec3`] instead — see
-/// that type's own doc comment and `PHASE8_NATIVE_3D_ENGINE_ROADMAP.md`'s
-/// ADR-P8-01 for why the two are kept deliberately separate rather than
-/// unified under one generic type.
+/// Viewer panels). Simulation-space positions/velocities/forces use [`Vec3`]
+/// instead; the two are kept deliberately separate rather than unified under
+/// one generic type, since a UI graph-canvas coordinate and a simulation
+/// world coordinate are never interchangeable and mixing them would let a
+/// caller accidentally pass one where the other is expected.
 pub use glam::Vec2;
 
 /// 3-D floating-point vector — the primary spatial type for all simulation
-/// coordinates, velocities, and forces (Phase 8, ADR-P8-01). Introduced
-/// alongside [`Vec2`], not as its replacement — UI-internal 2D layout
-/// concerns (graph-canvas node positions, which have no 3D meaning) stay on
-/// `Vec2` deliberately.
+/// coordinates, velocities, and forces. Exists alongside [`Vec2`], not as its
+/// replacement — UI-internal 2D layout concerns (graph-canvas node
+/// positions, which have no 3D meaning) stay on `Vec2` deliberately.
 pub use glam::Vec3;
 
 /// 2-D integer vector — used for chunk grid coordinates and spatial hash keys.
 pub use glam::IVec2;
 
-/// Rotation quaternion — the orientation half of `ui::camera::Camera3d`
-/// (Phase 8, ADR-P8-02). No simulation code produces or consumes rotations
-/// yet (organism orientation is still a scalar `heading` angle, untouched
-/// until Epic 8.6) — today this exists solely for the 3D camera.
+/// Rotation quaternion — the orientation half of `ui::camera::Camera3d`.
+/// No simulation code produces or consumes rotations yet — organism
+/// orientation is still a scalar `heading` angle — so today this exists
+/// solely to represent the 3D camera's orientation.
 pub use glam::Quat;
 
-/// 4x4 matrix — used for `Camera3d::view_proj()` (Phase 8, ADR-P8-02).
+/// 4x4 matrix — used for `Camera3d::view_proj()`, the camera's combined
+/// view-projection transform.
 pub use glam::Mat4;
 
 /// 3x3 matrix — used internally to build a `Quat` from an explicit
-/// right/up/forward basis (Phase 8, ADR-P8-02's camera controllers).
+/// right/up/forward basis in the 3D camera's controllers.
 pub use glam::Mat3;
 
 // ────────────────────────────────────────────────────────────────────────────

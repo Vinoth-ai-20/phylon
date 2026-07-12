@@ -47,24 +47,24 @@ fn apply_replay_action(app: &mut PhylonApp, tick: u64, action: &storage::replay:
     }
 }
 
-/// # Deterministic Replay Playback
+/// Deterministic replay playback.
 ///
-/// ## 1. What Happens
 /// Restores a `PhylonApp` to `bundle.initial_snapshot`'s exact state
-/// (including reseeding `common::SimRng` from `bundle.log.seed` — see the
-/// bug this fixes in `events.rs`'s `LoadComplete` handler), then steps the
-/// simulation forward tick by tick via the same `update_simulation` every
-/// interactive/headless/batch run uses, re-applying every recorded
-/// intervention at the exact tick it was originally applied.
+/// (including reseeding `common::SimRng` — the single seeded RNG every
+/// stochastic system must draw from, see `app.rs`'s module doc — from
+/// `bundle.log.seed`, since restoring world state alone is not sufficient
+/// for deterministic continuation without also restoring the RNG stream
+/// that state was produced from), then steps the simulation forward tick by
+/// tick via the same `update_simulation` every interactive/headless/batch
+/// run uses, re-applying every recorded intervention at the exact tick it
+/// was originally applied.
 ///
-/// ## 2. Why It Happens
-/// This is the whole point of recording *interventions* instead of
-/// per-tick state (see `storage::replay::ReplayLog`'s doc comment):
-/// everything between interventions is already perfectly reproducible from
-/// the seeded `SimRng` alone, so replay only needs to re-inject the
-/// non-deterministic *external* inputs at the right moments.
+/// This is the whole point of recording *interventions* instead of per-tick
+/// state (see `storage::replay::ReplayLog`'s doc comment): everything
+/// between interventions is already perfectly reproducible from the seeded
+/// `SimRng` alone, so replay only needs to re-inject the non-deterministic
+/// *external* inputs at the right moments.
 ///
-/// ## 3. How It Happens
 /// `speed_multiplier` controls real-time pacing when `realtime_pacing` is
 /// requested: sleeping `tick_duration / speed_multiplier` between ticks
 /// gives an "Nx speed" viewing experience; when `realtime_pacing` is

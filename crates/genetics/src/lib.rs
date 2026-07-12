@@ -2,19 +2,22 @@
 //!
 //! Genome representation, mutation operators, and crossover.
 //!
-//! The genome is the heritable blueprint of an organism. Contrary to this
-//! module's original design intent, it is **not** a bitstring — it's three
-//! independent [`Cppn`] graphs (neural wiring, body morphology, and — as of
-//! Phase 3, M1 — a gene-regulatory-network generator). As of Phase 3 M4, the
-//! explicit `HoxSequence` direct-lookup body plan is retired entirely (see
-//! `PHASE3_ROADMAP.md`'s ADR-P3-02): segment identity, branching, actuation,
-//! and pigmentation are all decoded from the regulatory network at a body
-//! position — see [`develop::develop_at_position`]. See [`Genome`]'s doc
-//! comment for the full structure, including diploid second-allele support.
+//! The genome is the heritable blueprint of an organism. It is **not** a
+//! bitstring — it's three independent [`Cppn`] graphs: one for neural
+//! wiring, one for body morphology, and one that generates a gene
+//! regulatory network (a small network of interacting "genes" whose
+//! settled activation levels decide what grows where — see [`regulatory`]
+//! for the full explanation). There is no separate direct-lookup body-plan
+//! table: segment identity, branching, actuation, and pigmentation are all
+//! decoded from the regulatory network at a body position — see
+//! [`develop::develop_at_position`]. See [`Genome`]'s doc comment for the
+//! full structure, including diploid second-allele support.
 //!
 //! All stochastic operations (mutation, crossover) take a caller-supplied
 //! `rand::Rng` — see `common::SimRng` for why a fresh, unseeded RNG is never
-//! used here.
+//! used here. This keeps every run reproducible from its seed: given the
+//! same seed and the same sequence of calls, mutation and crossover always
+//! produce byte-identical results.
 //!
 //! Each [`cppn::CppnConnection`] carries its own evolvable `mutation_rate`
 //! (self-adaptive: it drifts slightly on every mutation pass and is
@@ -24,8 +27,8 @@
 //!
 //! ## Not yet implemented
 //!
-//! Epigenetic markers, horizontal gene transfer, and non-disjunction are
-//! all named in the original spec but have no code here yet.
+//! Epigenetic markers, horizontal gene transfer, and non-disjunction have
+//! no code here yet.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
@@ -45,23 +48,26 @@ pub use cppn::{
 pub mod genome;
 pub use genome::Genome;
 
-/// Gene Regulatory Network runtime (Phase 3, M1) — see `PHASE3_ROADMAP.md`'s
-/// ADR-P3-01 for why this is a third evolvable `Cppn` plus a small recurrent
-/// runtime network, not a new execution engine.
+/// Gene Regulatory Network runtime: a third evolvable `Cppn` that generates
+/// the weights of a small recurrent runtime network, rather than a bespoke
+/// execution engine — see the module doc for why this mirrors the
+/// brain-wiring `Cppn` → `Brain` pattern used elsewhere in this workspace.
 pub mod regulatory;
 pub use regulatory::{
     RegulatoryEdge, RegulatoryGeneNode, RegulatoryGeneRole, RegulatoryNetwork,
     REGULATORY_GENE_ROLES,
 };
 
-/// Analytic morphogen gradients (Phase 3, M3) — closed-form positional
-/// inputs to a `RegulatoryNetwork`, see `PHASE3_ROADMAP.md`'s ADR-P3-03.
+/// Analytic morphogen gradients — closed-form positional inputs to a
+/// `RegulatoryNetwork` (a diffused PDE field would be more physically
+/// realistic but far more expensive; see the module doc for why a
+/// closed-form approximation is a reasonable first model, not just a
+/// convenience shortcut).
 pub mod morphogen;
 pub use morphogen::{ap_position, distance_from_head_gradient, external_inputs_for_position};
 
 /// Positional decode of a `RegulatoryNetwork` into segment identity,
-/// branching, actuation, and pigmentation (Phase 3, M4) — see
-/// `PHASE3_ROADMAP.md`'s ADR-P3-02.
+/// branching, actuation, and pigmentation.
 pub mod develop;
 pub use develop::{
     decode_apoptosis, decode_segment_type, develop_at_position,

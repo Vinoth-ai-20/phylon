@@ -24,16 +24,16 @@ pub fn spawn_organism(
     let forward = Vec3::new(heading.cos(), heading.sin(), 0.0);
 
     // Decode the head node (body position 0) through the same regulatory
-    // pipeline every later segment uses — no special-cased "head" template
-    // (Phase 3 M4; see ADR-P3-02). Color is likewise emergent per-position
-    // pigmentation, never genome-stored data.
+    // pipeline every later segment uses — no special-cased "head" template.
+    // Color is likewise emergent per-position pigmentation, never
+    // genome-stored data.
     let expressed_regulatory_cppn = genome.expressed_regulatory_cppn();
     let head_outputs =
         genetics::develop_at_position(&expressed_regulatory_cppn, 0, crate::MAX_SEGMENTS);
     let color = head_outputs.pigment;
-    // Phase 3 M6: the same decode-to-physics mapping `growth_system` uses
-    // for every later segment (see `developmental_graph::compile_segment`)
-    // — no separate head-specific lookup.
+    // The same decode-to-physics mapping `growth_system` uses for every
+    // later segment (see `developmental_graph::compile_segment`) — no
+    // separate head-specific lookup.
     let head_compiled = crate::compile_segment(head_outputs.segment_type);
 
     // Spawn the head node at start_pos (gene index 0).
@@ -48,10 +48,9 @@ pub fn spawn_organism(
         OrganismColor(color),
     ));
 
-    // The Body Graph's root node (Phase 3, M6 — see ADR-P3-04): index 0,
-    // no parent, not a branch. `entity` (Phase 4, P4-F2) is `head_node`
-    // itself — the same entity this milestone's per-segment physiology
-    // would look up via `DevelopmentalGraph::root()`.
+    // The Body Graph's root node: index 0, no parent, not a branch.
+    // `entity` is `head_node` itself — the same entity per-segment
+    // physiology systems look up via `DevelopmentalGraph::root()`.
     let mut graph = crate::developmental_graph::DevelopmentalGraph::new();
     graph.push(
         head_outputs.segment_type,
@@ -87,9 +86,9 @@ pub fn spawn_organism(
         SpawnTick(spawn_tick),
         diet,
         category,
-        // Phase 6, Epic D (D1a): the head starts as the organism's own
-        // growing tip, seeded exactly like every later segment
-        // `growth_system` spawns — see `morphogen_field`'s doc comment.
+        // The head starts as the organism's own growing tip, seeded exactly
+        // like every later segment `growth_system` spawns — see
+        // `morphogen_field`'s doc comment.
         crate::morphogen_field::MorphogenLevel {
             concentration: crate::morphogen_field::MORPHOGEN_SEED_CONCENTRATION,
         },
@@ -115,11 +114,11 @@ pub fn spawn_organism(
             forward,
             dorsal: Vec3::Z,
         },
-        // Phase 4, ADR-P4-01: a sibling component, not nested in
-        // `GrowthState` — it survives that component's removal once growth
-        // completes, since `growth_system` writes to it directly.
+        // A sibling component, not nested in `GrowthState` — it survives
+        // that component's removal once growth completes, since
+        // `growth_system` writes to it directly.
         graph,
-        // Phase 4, P4-L1 (ADR-P4-03): every organism starts `Juvenile`;
+        // Every organism starts `Juvenile`;
         // `organisms::life_cycle::life_stage_system` promotes it later.
         LifeStage::Juvenile,
         sensing::HeadVision {
@@ -127,10 +126,10 @@ pub fn spawn_organism(
             fov: std::f32::consts::PI * 0.8, // ~144 degrees
             last_forward: common::Vec3::X,
             dorsal: common::Vec3::Z,
-            // Body length isn't known ahead of growth (Phase 3 M4 decodes
+            // Body length isn't known ahead of growth (growth decodes
             // segment-by-segment rather than reading a fixed-length
-            // sequence) — use the fixed growth ceiling as a safe upper-bound
-            // estimate, same as before this milestone's approximation.
+            // sequence) — use the fixed growth ceiling as a safe
+            // upper-bound estimate.
             self_occlusion_radius: crate::MAX_SEGMENTS as f32 * segment_length * 1.5,
             locked_target: None,
         },
@@ -180,8 +179,8 @@ pub fn spawn_organism(
 /// # CPPN branching backlog note
 ///
 /// The CPPN's `branching_signal` (output index 5) threshold is too rarely
-/// exceeded in random genomes. A targeted tuning pass is required — see the
-/// Phase 5 implementation plan for details.
+/// exceeded in random genomes. A targeted tuning pass is a possible future
+/// improvement.
 pub fn spawn_proto_fish(
     world: &mut bevy_ecs::world::World,
     pos: Vec3,
@@ -246,10 +245,10 @@ pub fn spawn_proto_fish(
     let fin_root = spine_nodes[2];
     let fin_root_pos = pos + dir * (-2.0 * segment_len);
 
-    // Phase 8, Epic 8.6 (ADR-P8-06): same bilateral fin-placement formula
-    // `growth_system` uses, with a fixed `Vec3::Z` dorsal (this preset has
-    // no per-organism `GrowthState`/dorsal of its own) — reproduces the
-    // pre-8.6 `Vec3::new(-dir.y, dir.x, 0.0)` exactly.
+    // Same bilateral fin-placement formula `growth_system` uses, with a
+    // fixed `Vec3::Z` dorsal (this preset has no per-organism
+    // `GrowthState`/dorsal of its own) — equivalent to the simpler 2D-only
+    // `Vec3::new(-dir.y, dir.x, 0.0)` formula for this fixed dorsal.
     let perp = crate::bilateral_fin_direction(Vec3::Z, dir);
     let f_up_pos = fin_root_pos + perp * fin_spread;
     let f_dn_pos = fin_root_pos + perp * -fin_spread;

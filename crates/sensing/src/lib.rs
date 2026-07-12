@@ -46,8 +46,9 @@ pub enum SensorModality {
 /// the organism's current environmental perception.
 ///
 /// ## 2. Why It Happens
-/// Neural networks (like CTRNNs or neat-based brains) require normalized numeric arrays as
-/// input. We decouple the biological sensors (eyes, noses) from the neural network topology.
+/// Neural networks — including this project's CTRNNs (continuous-time recurrent neural
+/// networks; see the `brain` crate) — require normalized numeric arrays as input. We decouple
+/// the biological sensors (eyes, noses) from the neural network topology.
 /// The biology writes to this array, and the brain reads from it.
 ///
 /// ## 3. How It Happens
@@ -81,11 +82,11 @@ impl SensoryState {
 ///
 /// ## 3. How It Happens
 /// The system checks the angle to nearby entities. If the entity falls within the `fov` cone,
-/// its inverse-distance is accumulated into a 3×3 azimuth×elevation grid of bins (Phase 8,
-/// Epic 8.7, ADR-P8-07 — extended from the pre-8.7 3-bin Left/Center/Right azimuth-only
-/// model). This gives the neural network enough gradient information to turn toward or away
-/// from a target, and (once organisms have real vertical body-plan variation — not yet, see
-/// `dorsal`'s own doc comment) to pitch up/down toward it too.
+/// its inverse-distance is accumulated into a 3×3 azimuth×elevation grid of bins (crossing
+/// Left/Center/Right azimuth with Up/Mid/Down elevation). This gives the neural network enough
+/// gradient information to turn toward or away from a target, and (once organisms have real
+/// vertical body-plan variation — not yet, see `dorsal`'s own doc comment) to pitch up/down
+/// toward it too.
 #[derive(bevy_ecs::prelude::Component, Debug, Clone)]
 pub struct HeadVision {
     /// Maximum distance the organism can see.
@@ -93,14 +94,15 @@ pub struct HeadVision {
     /// Field of view angle in radians.
     pub fov: f32,
     /// Last known forward (direction-of-travel) unit vector, used when
-    /// velocity is near zero. `Vec3` since Phase 8, Epic 8.7 (ADR-P8-07) —
-    /// still confined to the `Z = 0` plane in practice today, since it's
+    /// velocity is near zero. Stored as `Vec3` (rather than 2D) so the
+    /// vision math generalizes to a real third spatial dimension, though in
+    /// practice it's still confined to the `Z = 0` plane today, since it's
     /// derived from `physics::ParticleNode::velocity`, which is itself
     /// always `Z = 0` (no code path gives an organism vertical velocity).
     pub last_forward: Vec3,
-    /// Body-fixed dorsal ("up") reference (Phase 8, Epic 8.7, ADR-P8-07) —
-    /// together with `last_forward`, forms the body frame the azimuth/
-    /// elevation calculation is computed in (`crate::vision_azimuth_elevation`),
+    /// Body-fixed dorsal ("up") reference — together with `last_forward`,
+    /// forms the body frame the azimuth/elevation calculation is computed
+    /// in (`crate::vision_azimuth_elevation`),
     /// mirroring `organisms::GrowthState::dorsal`'s same role and same
     /// `Vec3::Z` default. Since every sensed position is also `Z = 0` today
     /// (no world-space vertical variation exists anywhere yet), elevation
@@ -122,18 +124,18 @@ pub struct HeadVision {
 
 /// Azimuth (angle in the forward-right plane) and elevation (angle in the
 /// forward-up/dorsal plane) of a unit direction `dir`, relative to the body
-/// frame defined by `forward`/`dorsal` (Phase 8, Epic 8.7, ADR-P8-07) —
-/// replaces the pre-8.7 `Vec2::angle_to`, a signed 2D angle with no direct
-/// 3D analogue (see the ADR's own Context section).
+/// frame defined by `forward`/`dorsal`. This is a genuine 3D generalization
+/// of a simple signed 2D angle (which has no direct 3D analogue once a
+/// dorsal/up axis is introduced).
 ///
-/// `azimuth` reproduces the pre-8.7 formula exactly whenever `dorsal ==
-/// Vec3::Z` and `forward`/`dir` are confined to the XY plane (true for
-/// every real call site today): `atan2((forward × dir) · dorsal, forward ·
-/// dir)` reduces to the 2D cross-product/dot-product form `Vec2::angle_to`
-/// used. `elevation` is `asin(dir · dorsal)` — the signed angle `dir` makes
-/// above (`> 0`) or below (`< 0`) the horizontal (forward-right) plane;
-/// always `0.0` today since every `dir` this crate constructs has `z ==
-/// 0.0` and `dorsal == Vec3::Z`.
+/// `azimuth` reproduces the equivalent 2D signed-angle formula exactly
+/// whenever `dorsal == Vec3::Z` and `forward`/`dir` are confined to the XY
+/// plane (true for every real call site today): `atan2((forward × dir) ·
+/// dorsal, forward · dir)` reduces to the familiar 2D cross-product/
+/// dot-product angle formula in that case. `elevation` is `asin(dir ·
+/// dorsal)` — the signed angle `dir` makes above (`> 0`) or below (`< 0`)
+/// the horizontal (forward-right) plane; always `0.0` today since every
+/// `dir` this crate constructs has `z == 0.0` and `dorsal == Vec3::Z`.
 ///
 /// All three of `forward`, `dorsal`, and `dir` must be unit vectors.
 pub fn vision_azimuth_elevation(forward: Vec3, dorsal: Vec3, dir: Vec3) -> (f32, f32) {
@@ -262,9 +264,8 @@ fn compute_sensing(snap: &EntitySnapshot, world: &WorldSnapshot) -> SensingResul
 
     let mut vision_update = None;
 
-    // 4-12. Vision (Phase 8, Epic 8.7, ADR-P8-07: a 3×3 azimuth×elevation
-    // grid of bins — Left/Center/Right crossed with Up/Mid/Down — extended
-    // from the pre-8.7 3-bin azimuth-only model).
+    // 4-12. Vision: a 3x3 azimuth x elevation grid of bins — Left/Center/
+    // Right crossed with Up/Mid/Down.
     if let Some(vision) = snap.vision {
         // Update forward direction based on velocity — still Z=0-confined
         // in practice (`snap.velocity` is a `Vec2`, extended to `Vec3` with
@@ -477,7 +478,7 @@ fn compute_sensing(snap: &EntitySnapshot, world: &WorldSnapshot) -> SensingResul
 ///
 /// ## Parallel/sequential split (determinism)
 ///
-/// Unlike `metabolism::metabolism_system` (Epic 6, M6.1), this system has
+/// Unlike `metabolism::metabolism_system`, this system has
 /// **no shared mutable state accumulated across entities at all** — every
 /// organism reads only read-only snapshots (other organisms' positions, the
 /// diet map, field samples, the pacemaker tick) and writes only to its own
@@ -524,10 +525,10 @@ pub fn sensing_system(
     // tick by `build_resource_grids_system`) since `foraging_system` needs
     // the exact same indices — no reason to rebuild them twice.
     // Vision remains 2D math throughout this module (angle-based FOV
-    // checks) even though the underlying grids/components are `Vec3` since
-    // Phase 8 (ADR-P8-01) — every position is truncated to its XY plane at
-    // this snapshot boundary, mirroring the same pattern used at the
-    // metabolism/catastrophe diffusion-field boundaries.
+    // checks) even though the underlying grids/components are `Vec3` —
+    // every position is truncated to its XY plane at this snapshot
+    // boundary, mirroring the same pattern used at the metabolism/
+    // catastrophe diffusion-field boundaries.
     let mut organism_grid = spatial::UniformGrid::new(SPATIAL_CELL_SIZE).unwrap();
     let mut node_positions = HashMap::new();
     for (entity, node) in node_query.iter() {
@@ -621,10 +622,10 @@ pub fn sensing_system(
 mod tests {
     use super::*;
 
-    /// ADR-P8-07's own named regression check: for the default `Vec3::Z`
-    /// dorsal and any `forward`/`dir` confined to the XY plane (every real
-    /// call site today), the new azimuth formula must reproduce the pre-8.7
-    /// `Vec2::angle_to` result exactly, and elevation must be exactly zero.
+    /// For the default `Vec3::Z` dorsal and any `forward`/`dir` confined to
+    /// the XY plane (every real call site today), the 3D azimuth formula
+    /// must reproduce the equivalent 2D signed-angle (`Vec2::angle_to`)
+    /// result exactly, and elevation must be exactly zero.
     #[test]
     fn vision_azimuth_elevation_with_z_dorsal_matches_the_pre_8_7_2d_angle() {
         let forward = Vec3::new(1.0, 0.0, 0.0);

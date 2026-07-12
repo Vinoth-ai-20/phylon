@@ -51,11 +51,10 @@ struct GpuCamera {
 /// The debug renderer.
 ///
 /// Renders Health/Disease/Category badges and colony-link markers as
-/// camera-facing billboards (Epic 8.3), depth-tested against — but not
-/// writing into — `OrganismRenderer`'s shared depth buffer (via its
-/// `depth_view()` accessor), so badges correctly hide behind nearer
-/// organisms instead of always drawing flat-on-top as the pre-Epic-8.3 2D
-/// technique did.
+/// camera-facing billboards, depth-tested against — but not writing into —
+/// `OrganismRenderer`'s shared depth buffer (via its `depth_view()`
+/// accessor), so badges correctly hide behind nearer organisms instead of
+/// always drawing flat-on-top regardless of occlusion.
 pub struct DebugRenderer {
     pipeline: wgpu::RenderPipeline,
     camera_bind_group: wgpu::BindGroup,

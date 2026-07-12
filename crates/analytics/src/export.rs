@@ -1,8 +1,8 @@
-//! CSV/JSON export of [`crate::MetricsState`]'s time-series histories —
-//! closes the spec's "CSV and JSON export for all time-series data"
-//! requirement for the *live* metrics ring buffers (population, FPS/TPS,
-//! environment, diversity). Epic 11's `storage` crate export covers
-//! organisms/lineages/events instead — this is the other half.
+//! CSV/JSON export of [`crate::MetricsState`]'s time-series histories: the
+//! live metrics ring buffers (population, FPS/TPS, environment, diversity).
+//! The `storage` crate's own export covers organisms/lineages/events
+//! instead — this module is the other half, for time-series metrics rather
+//! than full simulation state.
 
 use crate::MetricsState;
 use serde::Serialize;

@@ -26,13 +26,12 @@ pub struct GpuSplat {
 
 /// Configuration for the field rendering colormap.
 ///
-/// Phase 8, Epic 8.5 (ADR-P8-05): the field is now sampled as a genuine
-/// `Camera3d`-driven plane-slice — `inv_view_proj` lets the fragment shader
-/// unproject each screen pixel into a world-space ray and intersect it with
-/// the field's world-space `Z = slice_z` plane, replacing the previous flat
-/// `camera_pos`/`camera_zoom`/`screen_size` orthographic approximation
-/// (which assumed a top-down camera and drifted out of registration with
-/// the organism renderer under any camera tilt).
+/// The field is sampled as a genuine `Camera3d`-driven plane-slice —
+/// `inv_view_proj` lets the fragment shader unproject each screen pixel into
+/// a world-space ray and intersect it with the field's world-space `Z =
+/// slice_z` plane. This keeps the field overlay in registration with the
+/// organism renderer under any camera angle, unlike a flat orthographic
+/// (top-down-only) projection would.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FieldConfig {
@@ -43,8 +42,8 @@ pub struct FieldConfig {
     /// Maximum value to map to the end of the colormap.
     pub max_val: f32,
     /// World-space height of the field's sampling plane — `0.0` today,
-    /// matching the single Z=0 field layer ADR-P8-05 keeps for Phase 8 (no
-    /// multi-height-band data exists yet to slice through).
+    /// since the diffusion field currently has a single `Z = 0` layer with
+    /// no multi-height-band data to slice through.
     pub slice_z: f32,
     /// Colormap index.
     pub colormap: u32,

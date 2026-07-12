@@ -1,8 +1,13 @@
-//! Runtime Behavior Validation (Phase 9, Goal 3) — measures, rather than
-//! assumes, whether the movement-pipeline fix (Goal 2's `seed_ecosystem`
-//! mutation-dosage and apoptosis fixes) actually produces the downstream
-//! behaviors those fixes were meant to restore: sustained foraging,
-//! reproduction, predator/prey interaction, and long-run physical stability.
+//! # Runtime Behavior Validation
+//!
+//! Measures, rather than assumes, whether the simulation actually produces
+//! the downstream ecological behaviors a healthy locomotion/reproduction
+//! pipeline is expected to: sustained foraging, reproduction, predator/prey
+//! interaction, and long-run physical stability. This is the population-
+//! level counterpart to `motion_diagnostic`'s per-organism measurements —
+//! movement being possible for individual organisms doesn't by itself
+//! guarantee the population as a whole forages, reproduces, and survives
+//! over a long run, so this module measures that separately.
 //!
 //! **Purely observational**, mirroring `motion_diagnostic`'s own precedent
 //! exactly: reads existing `ParticleNode`/`Diet`/`ChemicalEconomy`/
@@ -71,9 +76,8 @@ pub struct BehaviorValidationState {
     first_anomaly_logged: bool,
 }
 
-/// # Behavior Validation System
+/// Logs population-level ecological health metrics, at two cadences.
 ///
-/// ## 1. What Happens
 /// Every tick: tallies `PhylonEvent`s (births/deaths-by-cause/reproductions)
 /// into cross-tick totals, and scans every `ParticleNode` for a NaN or
 /// exploding velocity (logging the first occurrence immediately, at ERROR,
@@ -86,18 +90,13 @@ pub struct BehaviorValidationState {
 /// established, extended with `ChemicalEconomy::atp` to correlate energy
 /// against motion.
 ///
-/// ## 2. Why It Happens
-/// Phase 9 Goal 3 requires measuring, not assuming, that the Goal 2
-/// locomotion fix produces real downstream behavior over a long run:
-/// sustained foraging/reproduction (population not collapsing to zero),
-/// real predator/prey interaction (`DeathCause::Predation` counts rising),
-/// hazard avoidance and starvation resistance (`DeathCause::Starvation` not
-/// dominating), species divergence (species count `> 1` and changing), and
-/// physical stability (no NaN/exploding velocities, stable average speed).
-///
-/// ## 3. How It Happens
-/// See field-level comments on `BehaviorValidationState` and the per-window
-/// query below.
+/// These numbers together distinguish a genuinely healthy ecosystem from
+/// one that merely fails to crash: sustained foraging/reproduction
+/// (population not collapsing to zero), real predator/prey interaction
+/// (`DeathCause::Predation` counts rising), hazard avoidance and starvation
+/// resistance (`DeathCause::Starvation` not dominating), species divergence
+/// (species count `> 1` and changing), and physical stability (no
+/// NaN/exploding velocities, stable average speed).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn behavior_validation_system(
     config: Res<BehaviorValidationConfig>,
@@ -140,7 +139,7 @@ pub(crate) fn behavior_validation_system(
                 entity = ?entity,
                 position = ?position,
                 velocity = ?velocity,
-                "Phase 9 Goal 3: NaN or exploding velocity detected"
+                "behavior_validation: NaN or exploding velocity detected"
             );
             state.first_anomaly_logged = true;
         }
@@ -243,6 +242,6 @@ pub(crate) fn behavior_validation_system(
         deaths_senescence = state.deaths_senescence,
         deaths_other = state.deaths_other,
         anomaly_ticks_total = state.anomaly_ticks_total,
-        "Phase 9 Goal 3 behavior validation window"
+        "behavior_validation window"
     );
 }

@@ -1,25 +1,21 @@
-//! # Phylon Application
+//! # Window Events and Menu Actions
 //!
-//! The main binary entry point for the Phylon simulation.
+//! This module implements `winit::application::ApplicationHandler` for
+//! [`PhylonApp`] — the entry point for every OS window/input event
+//! (resize, redraw request, keyboard, mouse) — and handles every
+//! `ui::MenuAction` the egui UI can emit (spawning presets, saving/loading
+//! state, camera framing commands, selection, and so on).
 //!
-//! ## Responsibilities
+//! ## Architecture
 //!
-//! 1. Parse CLI arguments and locate the config file.
-//! 2. Initialise structured logging via `tracing_subscriber`.
-//! 3. Load `PhylonConfig` from `data/default.ron` (falls back to defaults).
-//! 4. Create a `winit` `EventLoop` and application window.
-//! 5. Initialise a `wgpu` surface on the window.
-//! 6. Run the event loop, calling `PhylonApp::update_simulation` each tick
-//!    (see `app.rs`'s top doc comment — Phase 6, Epic A removed the
-//!    `SimulationScheduler` this step previously constructed, since it was
-//!    never actually advanced by anything) and presenting a cleared frame
-//!    on each `RedrawRequested`.
-//!
-//! ## Architecture note
-//!
-//! The `app` crate is the **composition root** — the only crate permitted to
-//! depend on everything. All other crates are decoupled from each other via
-//! the dependency rules in `docs/02_crate_dependency_graph.md`.
+//! Window/input events arrive through the `ApplicationHandler` trait
+//! methods (`resumed`, `window_event`, ...), which is winit's callback
+//! interface for a running event loop. Menu actions arrive as a `Vec` of
+//! `ui::MenuAction`s collected during the egui pass in `render()` and
+//! dispatched here via `handle_menu_actions`. Both paths ultimately mutate
+//! `PhylonApp`'s ECS world, UI state, or camera — this module is where the
+//! effects of user interaction actually happen, as opposed to `render.rs`
+//! (drawing) or `simulation.rs` (per-tick simulation advancement).
 
 use std::sync::Arc;
 
@@ -34,10 +30,10 @@ use winit::{
 
 use crate::app::PhylonApp;
 
-/// Phase 9, P9.4 — a simple centroid/bounding-radius pass over a set of
-/// world-space positions, used by `MenuAction::FrameSelected`/`FrameAll` to
-/// compute a real "fit this in view" target rather than guessing a fixed
-/// distance. Not a tight minimal bounding sphere (that's overkill for a
+/// A simple centroid/bounding-radius pass over a set of world-space
+/// positions, used by `MenuAction::FrameSelected`/`FrameAll` to compute a
+/// real "fit this in view" target rather than guessing a fixed distance.
+/// Not a tight minimal bounding sphere (that's overkill for a
 /// camera-framing heuristic) — centroid plus the farthest point's distance
 /// from it is a cheap, adequate over-approximation.
 fn bounding_sphere(positions: &[common::Vec3]) -> Option<(common::Vec3, f32)> {
@@ -53,8 +49,8 @@ fn bounding_sphere(positions: &[common::Vec3]) -> Option<(common::Vec3, f32)> {
     Some((center, radius))
 }
 
-/// Phase 9, P9.4 — converts a bounding-sphere radius into an orbit
-/// distance that comfortably fits it in view: `radius / sin(fov_y / 2)`
+/// Converts a bounding-sphere radius into an orbit distance that
+/// comfortably fits it in view: `radius / sin(fov_y / 2)`
 /// (the standard "fit a sphere in a perspective frustum" formula), with a
 /// small padding multiplier so the framed subject isn't touching the
 /// viewport edges, clamped to `OrbitController`'s own distance bounds and
@@ -73,10 +69,8 @@ fn frame_distance_for_radius(radius: f32) -> f32 {
 impl PhylonApp {
     /// Shared body of `MenuAction::LoadState` (path chosen via a fresh file
     /// picker) and `MenuAction::LoadStateFromPath` (path chosen from "Open
-    /// Recent" — Phase 7, W0d) — one implementation instead of two, so
-    /// they can't silently drift apart the way `LoadState`'s handler and
-    /// the old "Open Recent" menu once did (the latter used to just
-    /// re-push `LoadState`, ignoring the specific entry the user clicked).
+    /// Recent") — one implementation instead of two, so they can't silently
+    /// drift apart on how a load actually happens.
     ///
     /// Missing-file handling: checked here, not assumed — the "Open
     /// Recent" menu already grays out entries whose file no longer
@@ -121,9 +115,9 @@ impl PhylonApp {
                         .set_file_name("autosave.bin")
                         .save_file()
                     {
-                        // Phase 7, W0d: record before the background save
-                        // completes — the point is remembering what the
-                        // user picked, not gating on success.
+                        // Record before the background save completes — the
+                        // point is remembering what the user picked, not
+                        // gating on success.
                         self.ui.recent_items.record(
                             ui::RecentCategory::Files,
                             path.to_string_lossy().to_string(),
@@ -211,19 +205,18 @@ impl PhylonApp {
                     self.ui.is_paused = false;
                     self.ui.show_about = false;
                     self.ui.show_docs = false;
-                    // Phase 5, SX-9a: fires the first time this session the
-                    // user actually reaches the simulation view — not at
+                    // Fires the first time this session the user actually
+                    // reaches the simulation view — not at
                     // `WorkbenchState::default()` construction time, since
                     // `show_dialogs` also renders over the Main Menu screen,
                     // where this dialog's viewport/Inspector references
                     // wouldn't make sense yet.
                     //
-                    // Phase 6, Epic J: gated on `preferences.onboarding_seen`
-                    // so this is genuinely first-run-ever, not first-run-
-                    // per-session — the gap SX-9a's own disclosed
-                    // limitation named. Marked seen and saved immediately
-                    // (not deferred to app exit), so an early crash/kill
-                    // doesn't make the hint reappear next launch.
+                    // Gated on `preferences.onboarding_seen` so this is
+                    // genuinely first-run-ever, not merely first-run-per-
+                    // session. Marked seen and saved immediately (not
+                    // deferred to app exit), so an early crash/kill doesn't
+                    // make the hint reappear next launch.
                     if !self.preferences.onboarding_seen {
                         self.ui.show_onboarding_hints = true;
                         self.preferences.onboarding_seen = true;
@@ -302,10 +295,10 @@ impl PhylonApp {
                         match std::fs::read_to_string(&path) {
                             Ok(text) => match ron::de::from_str::<ui::ExportedWorkspace>(&text) {
                                 Ok(exported) => {
-                                    // Phase 7, W3c: never trust an imported
-                                    // layout as-is — `sanitized()` is the
-                                    // mandatory step before this data ever
-                                    // reaches `rebuild_tree_from_modes`.
+                                    // Never trust an imported layout as-is —
+                                    // `sanitized()` is the mandatory step
+                                    // before this data ever reaches
+                                    // `rebuild_tree_from_modes`.
                                     let sanitized = exported.layout.sanitized();
                                     let unique_name =
                                         self.ui.workspaces.unique_name(&exported.name);
@@ -363,12 +356,11 @@ impl PhylonApp {
                     }
                 },
                 ui::MenuAction::SelectAll => {
-                    // Just select the first head we find. Phase 7, W0b:
-                    // routed through `select()` so this behaves like every
-                    // other selection entry point (opens the Inspector,
-                    // doesn't start camera-follow) — it previously set
-                    // `tracked_entity` directly, one more instance of the
-                    // inconsistency W0a's audit found.
+                    // Just select the first head we find, routed through
+                    // `select()` so this behaves like every other selection
+                    // entry point (opens the Inspector, doesn't start
+                    // camera-follow) rather than setting `tracked_entity`
+                    // directly.
                     let mut query = self
                         .world
                         .ecs
@@ -694,11 +686,10 @@ impl PhylonApp {
                     self.ui.global_search_query.clear();
                 }
                 ui::MenuAction::FocusSelection => {
-                    // Phase 6, Epic J: previously a stub. Distinct from
-                    // `tracked_entity` (viewport double-click on a real
-                    // selection, `crates/app/src/render.rs`'s "Camera
-                    // Tracking" step) — that's a continuous per-frame lerp
-                    // follow; this is a one-shot snap, matching what a
+                    // Distinct from `tracked_entity` (viewport double-click
+                    // on a real selection, `render.rs`'s "Camera Tracking"
+                    // step) — that's a continuous per-frame lerp follow;
+                    // this is a one-shot snap, matching what a
                     // menu-triggered "Focus Selection" should do (jump
                     // there once, don't keep following).
                     if let Some(entity) = self.ui.selected_entity {
@@ -720,12 +711,12 @@ impl PhylonApp {
                     }
                 }
                 ui::MenuAction::FrameSelected => {
-                    // Phase 9, P9.4: smooth re-center-and-re-distance onto
-                    // the selected organism's own bounding sphere (every
-                    // `ParticleNode` sharing its `organism_id`), not a
-                    // fixed guessed distance — a large evolved organism and
-                    // a single-segment sandbox structure both end up
-                    // framed comfortably. Orbit-mode only (see
+                    // Smooth re-center-and-re-distance onto the selected
+                    // organism's own bounding sphere (every `ParticleNode`
+                    // sharing its `organism_id`), not a fixed guessed
+                    // distance — a large evolved organism and a
+                    // single-segment sandbox structure both end up framed
+                    // comfortably. Orbit-mode only (see
                     // `WorkbenchState::start_frame_animation`'s own
                     // no-op-in-Fly precedent).
                     if let Some(entity) = self.ui.selected_entity {
@@ -745,8 +736,8 @@ impl PhylonApp {
                     }
                 }
                 ui::MenuAction::FrameAll => {
-                    // Phase 9, P9.4: same as `FrameSelected`, over the
-                    // entire current population's `ParticleNode`s.
+                    // Same as `FrameSelected`, over the entire current
+                    // population's `ParticleNode`s.
                     let mut nodes = self.world.ecs.query::<&physics::ParticleNode>();
                     let positions: Vec<common::Vec3> =
                         nodes.iter(&self.world.ecs).map(|n| n.position).collect();
@@ -756,11 +747,11 @@ impl PhylonApp {
                     }
                 }
                 ui::MenuAction::SetCameraPreset(preset) => {
-                    // Phase 9, P9.4: only the viewing angle changes —
-                    // `focus`/`distance` are read from whatever the orbit
-                    // is currently at, matching Blender's own preset-view
-                    // behavior of re-orienting around the existing pivot,
-                    // not re-framing it.
+                    // Only the viewing angle changes — `focus`/`distance`
+                    // are read from whatever the orbit is currently at,
+                    // matching Blender's own preset-view behavior of
+                    // re-orienting around the existing pivot, not
+                    // re-framing it.
                     if let ui::camera::CameraController::Orbit(orbit) =
                         &mut self.ui.camera_controller
                     {
@@ -807,9 +798,9 @@ impl PhylonApp {
                         .push_toast("Entity killed", ui::ToastSeverity::Warning, 2.0);
                 }
                 ui::MenuAction::TrackEntity(entity) => {
-                    // The context menu's explicit "Track / Follow" command
-                    // (Phase 7, W0b) — selects and starts following in one
-                    // step, since this action's whole purpose is following.
+                    // The context menu's explicit "Track / Follow" command —
+                    // selects and starts following in one step, since this
+                    // action's whole purpose is following.
                     self.ui.select(entity);
                     self.ui.set_follow(Some(entity));
                 }
@@ -821,16 +812,15 @@ impl PhylonApp {
                     screen_max,
                     viewport_size,
                 } => {
-                    // Frustum-based box-select (Phase 8, Epic 8.4) — each
-                    // head node's real `Vec3` position is projected through
-                    // the camera's own `view_proj` and tested in screen
-                    // space, replacing the previous flat Z=0-plane
-                    // world-space rectangle (which was blind to camera tilt
-                    // and to any future non-zero `Z`). Head nodes only
-                    // (`segment_type == 0`) — one selection entry per
-                    // organism, matching how the rest of the app treats "the
-                    // organism" as its head entity (e.g. `SelectHeadOf`, the
-                    // Lineage panel).
+                    // Frustum-based box-select — each head node's real
+                    // `Vec3` position is projected through the camera's own
+                    // `view_proj` and tested in screen space, so this stays
+                    // correct under camera tilt and non-zero `Z`, unlike a
+                    // flat Z=0-plane world-space rectangle test would. Head
+                    // nodes only (`segment_type == 0`) — one selection entry
+                    // per organism, matching how the rest of the app treats
+                    // "the organism" as its head entity (e.g. `SelectHeadOf`,
+                    // the Lineage panel).
                     let camera = self.ui.camera();
                     let mut node_q = self
                         .world
@@ -862,9 +852,9 @@ impl PhylonApp {
                     points,
                     viewport_size,
                 } => {
-                    // Lasso-select (Phase 8, Epic 8.4) — same projection as
-                    // box-select above, tested against a freeform polygon
-                    // instead of a rectangle.
+                    // Lasso-select — same projection as box-select above,
+                    // tested against a freeform polygon instead of a
+                    // rectangle.
                     let camera = self.ui.camera();
                     let mut node_q = self
                         .world
@@ -907,8 +897,8 @@ impl PhylonApp {
                             break;
                         }
                     }
-                    // Phase 7, W0b: routed through `select()` — plain
-                    // selection, no automatic camera-follow.
+                    // Routed through `select()` — plain selection, no
+                    // automatic camera-follow.
                     if let Some(e) = found {
                         self.ui.select(e);
                     }
@@ -942,7 +932,7 @@ impl PhylonApp {
                     if !found_next {
                         next_selection = first;
                     }
-                    // Phase 7, W0b: routed through `select()`.
+                    // Routed through `select()`.
                     if let Some(e) = next_selection {
                         self.ui.select(e);
                     } else {
@@ -1057,19 +1047,18 @@ impl ApplicationHandler for PhylonApp {
                 ..
             } => {
                 // WASD/arrows pan in `Orbit` mode or fly in `Fly` mode —
-                // Phase 9, ADR-P9-01: this winit adapter builds a
-                // `ViewportInput` and hands it to the same
-                // `ui::viewport_input::apply_to_camera` the egui-routed
-                // path (`app::render`) uses, rather than mutating the
-                // camera controller directly here. Each individual keydown
-                // event moves a fixed step, relying on the OS's own
-                // key-repeat rate for continuous movement while held,
-                // exactly like the pre-existing behavior did. Discrete
-                // `+`/`-` zoom is deliberately not handled here — it was a
-                // straight duplicate of `shortcuts.rs`'s `Key::Plus`/
-                // `Key::Minus` binding (`MenuAction::CameraZoomIn/Out`),
-                // not a distinct input source, so it was removed rather
-                // than migrated.
+                // this winit adapter builds a `ViewportInput` and hands it
+                // to the same `ui::viewport_input::apply_to_camera` the
+                // egui-routed path (`app::render`) uses, rather than
+                // mutating the camera controller directly here, so there is
+                // exactly one place that turns viewport input into camera
+                // motion. Each individual keydown event moves a fixed step,
+                // relying on the OS's own key-repeat rate for continuous
+                // movement while held. Discrete `+`/`-` zoom is
+                // deliberately not handled here — it would be a straight
+                // duplicate of `shortcuts.rs`'s `Key::Plus`/`Key::Minus`
+                // binding (`MenuAction::CameraZoomIn/Out`), not a distinct
+                // input source.
                 use winit::keyboard::{KeyCode, PhysicalKey};
                 let pan_speed = 10.0 / self.ui.camera_zoom_2d();
                 let mut input = ui::viewport_input::ViewportInput::default();
@@ -1163,13 +1152,12 @@ impl ApplicationHandler for PhylonApp {
                         .and_then(|g| g.config.as_ref())
                         .map(|c| (c.width as f32, c.height as f32));
                     if let Some((gpu_w, gpu_h)) = dims {
-                        // Phase 7, W0b: a plain viewport click selects and
-                        // opens the Inspector, but does not start camera-
-                        // follow (see `ui::WorkbenchState::select`'s doc
-                        // comment) — this was the audit's top finding: the
-                        // most natural gesture didn't reliably show what
-                        // was clicked on, while the less-discoverable
-                        // right-click "Inspect" path did.
+                        // A plain viewport click selects and opens the
+                        // Inspector, but does not start camera-follow (see
+                        // `ui::WorkbenchState::select`'s doc comment) — the
+                        // most natural gesture should reliably show what
+                        // was clicked on, without also requiring the
+                        // less-discoverable right-click "Inspect" path.
                         if let Some(selected) = self.pick_entity(click_pos, gpu_w, gpu_h) {
                             self.ui.select(selected);
                         } else {

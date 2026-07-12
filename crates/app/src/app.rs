@@ -1,28 +1,112 @@
-//! # Phylon Application
+//! # Phylon Application — Composition Root
 //!
-//! The main binary entry point for the Phylon simulation.
+//! This module owns [`PhylonApp`], the top-level struct that ties together
+//! the ECS simulation world, the `wgpu` GPU context, and the `egui`
+//! immediate-mode UI into a single running program.
 //!
-//! ## Responsibilities
+//! ## Purpose
 //!
-//! 1. Parse CLI arguments and locate the config file.
-//! 2. Initialise structured logging via `tracing_subscriber`.
-//! 3. Load `PhylonConfig` from `data/default.ron` (falls back to defaults).
-//! 4. Create a `winit` `EventLoop` and application window.
-//! 5. Initialise a `wgpu` surface on the window.
-//! 6. Run the event loop, calling `PhylonApp::update_simulation` each tick
-//!    (the per-tick system order lives in `simulation::update_simulation`;
-//!    see that module's doc comment — Phase 6, Epic A removed the
-//!    `SimulationScheduler` this step previously constructed here, since it
-//!    was never actually advanced by anything; the `scheduler` crate itself
-//!    is untouched and remains a workspace member, just no longer a
-//!    dependency of `app`) and presenting a cleared frame on each
-//!    `RedrawRequested`.
+//! `app` is the **composition root** of the workspace: the one crate allowed
+//! to depend on every other crate (ECS world model, GPU compute pipelines,
+//! rendering, UI, storage, and domain crates such as `genetics`, `ecology`,
+//! `brain`). All other crates are decoupled from each other by the
+//! dependency rules in `docs/02_crate_dependency_graph.md`; this crate is
+//! where those independently-developed pieces are wired together into one
+//! executable.
 //!
-//! ## Architecture note
+//! ## Architecture
 //!
-//! The `app` crate is the **composition root** — the only crate permitted to
-//! depend on everything. All other crates are decoupled from each other via
-//! the dependency rules in `docs/02_crate_dependency_graph.md`.
+//! `PhylonApp` bridges three otherwise-independent domains:
+//!
+//! - **ECS world state** (`world::World`, wrapping a `bevy_ecs::World`) —
+//!   entities (organisms, food, hazards, ...) and the resources that drive
+//!   per-tick simulation logic (genetics, metabolism, ecology, evolution).
+//! - **GPU compute and rendering** (`GpuContext`, the physics/diffusion/brain
+//!   compute pipelines, and the `rendering` crate's renderers) — offloads
+//!   the parts of the simulation and its visualization that are
+//!   embarrassingly parallel (particle-node physics integration, CTRNN —
+//!   continuous-time recurrent neural network, the organism "brain" model —
+//!   forward passes, reaction-diffusion fields) to the GPU.
+//! - **egui UI** (`egui_winit::State`, `egui_wgpu::Renderer`, `ui::WorkbenchState`)
+//!   — the workbench panels, menus, and overlays drawn on top of the 3D
+//!   scene each frame.
+//!
+//! ## Data flow (per rendered frame)
+//!
+//! 1. `winit` delivers input/window events to `PhylonApp` (mouse, keyboard,
+//!    resize, `RedrawRequested`).
+//! 2. On `RedrawRequested`, elapsed wall-clock time (via `last_frame_instant`)
+//!    is accumulated into `accumulated_time` and drained in fixed-size steps
+//!    of `common::TickRate::dt()`, each step calling
+//!    [`PhylonApp::update_simulation`] once — see `crate::simulation`'s
+//!    module doc for the exact per-tick system order. `max_ticks_per_frame` bounds how
+//!    many ticks a single slow frame can catch up by, so a debugger pause or
+//!    a stalled GPU readback cannot cause an unbounded catch-up burst.
+//! 3. GPU compute results dispatched on the *previous* tick (`pending_physics`,
+//!    `pending_brain`) are resolved at the start of the *current* tick,
+//!    letting GPU work for tick N overlap with tick N's CPU-side systems
+//!    instead of stalling immediately after submission.
+//! 4. After ticking, render data is gathered from the ECS world
+//!    (`render::world_instances::gather_world_render_instances`) and
+//!    submitted to the GPU renderers, followed by the egui pass drawing the
+//!    workbench UI on top.
+//! 5. The frame is presented (`output.present()`), after first servicing any
+//!    pending screenshot/chart-export request, since the live swapchain
+//!    texture is only available at that point.
+//!
+//! ## Lifecycle
+//!
+//! Window and GPU surface creation are deferred to the `winit` `Resumed`
+//! event (required on some platforms, e.g. Android, and harmless elsewhere)
+//! rather than done in [`PhylonApp::new`]. `new` only builds the ECS world,
+//! registers resources, and seeds the initial organism population; `window`,
+//! `gpu`, `egui_state`, and the compute/render pipelines all start as `None`
+//! and are populated once a window exists. Shutdown (`MenuAction::Quit` or
+//! the window's `CloseRequested` event) flushes preferences to disk via
+//! [`PhylonApp::save_preferences`] before the process exits.
+//!
+//! ## Determinism
+//!
+//! `PhylonApp` owns the single seeded `common::SimRng` resource in `world`.
+//! Every stochastic system (mutation, crossover, spawn placement, mate
+//! selection, ...) must draw from this one RNG rather than constructing its
+//! own, so that a given `PhylonConfig` (including its `rng_seed`) always
+//! produces the same simulation trajectory. GPU compute does not
+//! participate in this contract — the compute shaders are purely numerical
+//! (physics integration, diffusion, CTRNN evaluation) and take no random
+//! inputs.
+//!
+//! ## Thread safety
+//!
+//! `PhylonApp` and the ECS world it owns are single-threaded from the
+//! simulation's point of view: `update_simulation` runs its systems on the
+//! calling thread (bevy_ecs schedules are not used here — systems are called
+//! directly in a fixed order). The one asynchronous boundary is
+//! `task_tx`/`task_rx`, an `mpsc` channel used to hand background save/load
+//! work off to a spawned thread without blocking the event loop; GPU
+//! command submission itself is also inherently asynchronous (the driver
+//! schedules submitted work), but `PhylonApp` treats `queue.submit` as
+//! fire-and-forget and does not otherwise share GPU resources across
+//! threads.
+//!
+//! ## Extension points
+//!
+//! - New per-tick systems: add them to
+//!   [`PhylonApp::update_simulation`], not here.
+//! - New GPU compute pipelines: follow the `Option<...ComputePipeline>`
+//!   pattern already used by `physics_compute`/`diffusion_compute`/
+//!   `splat_compute`/`brain_compute` — constructed once GPU init succeeds,
+//!   `None` before then and on headless/failed-init runs.
+//! - New persisted preferences: add the field to `preferences::Preferences`
+//!   and mirror it into/out of `PhylonApp::ui` in `new`/`save_preferences`.
+//!
+//! ## Related modules
+//!
+//! - [`crate::simulation`] — the per-tick system order.
+//! - [`crate::gpu_init`] — GPU device/surface bring-up, called once a window exists.
+//! - [`crate::species_seed`] — initial organism population construction.
+//! - `crate::preferences` — cross-session UI preference persistence.
+//! - `crate::render` — per-frame render-instance gathering from ECS state.
 
 use std::sync::Arc;
 
@@ -33,36 +117,52 @@ use config::PhylonConfig;
 use crate::gpu_init::GpuContext;
 use crate::species_seed::seed_ecosystem;
 
-// PhylonUIState was removed in favor of ui::WorkbenchState.
-
-/// # Phylon Application Orchestrator
+/// The Phylon application: owns the ECS world, the GPU context, and the UI
+/// state, and drives the per-frame update/render loop.
 ///
-/// ## 1. What Happens
-/// The `PhylonApp` struct is the Composition Root of the entire engine. It holds the
-/// Bevy ECS `World`, the WGPU graphics context, the immediate-mode EGUI state, and the
-/// bindings to the custom GPU Compute pipelines (Physics, Diffusion, and Neural Networks).
+/// ## Purpose
 ///
-/// ## 2. Why It Happens
-/// Architecturally, ALife engines require a strict boundary between discrete logic (biology,
-/// genetics, metabolism) and continuous presentation (rendering, input). The `PhylonApp`
-/// exists to safely bridge these domains without violating Rust's borrowing rules, managing
-/// the lifetime of the GPU buffers alongside the ECS world data.
+/// `PhylonApp` is the composition root's central struct — see this module's
+/// top-level doc comment for the full architecture, data-flow, lifecycle,
+/// determinism, and thread-safety discussion. In short: it exists to bridge
+/// discrete simulation logic (genetics, metabolism, ecology — evaluated on
+/// the ECS world) with continuous presentation (GPU rendering, egui UI)
+/// without either domain needing to know about the other's internals.
 ///
-/// ## 3. How It Happens
-/// During initialization, `PhylonApp` consumes the `PhylonConfig` to bootstrap the GPU device.
-/// On every OS event loop iteration, it delegates control flow to the UI renderer, which
-/// drives `simulation::update_simulation` directly (see this module's top doc comment).
-/// Memory is passed over the PCIe bus to the GPU compute shaders
-/// strictly through the `Option<GpuContext>` and mapped uniform buffers.
+/// ## Architecture
+///
+/// Fields fall into a few groups:
+/// - Simulation state: `sim_config`, `world` (the ECS world and its
+///   resources), `total_sim_time`, `accumulated_time`, `simulation_speed`,
+///   `max_ticks_per_frame`.
+/// - GPU context and compute/render pipelines: `gpu`, `physics_compute`,
+///   `diffusion_compute`, `splat_compute`, `brain_compute`, `debug_renderer`,
+///   `organism_renderer`, `field_renderer`. All `Option`-wrapped because
+///   they are only constructed after a window exists (see "Lifecycle"
+///   above) and may remain `None` if GPU init fails.
+/// - Windowing/UI: `window`, `egui_state`, `egui_renderer`, `ui`, `app_state`.
+/// - Cross-tick bookkeeping: `pending_physics`, `pending_brain` (deferred
+///   GPU readbacks), `sim_scratch`, `render_scratch` (reused scratch
+///   buffers, see their own doc comments), `replay_log`,
+///   `experiment_manifest`.
+/// - Deferred one-shot actions: `pending_screenshot`, `pending_chart_export`,
+///   `recording`, `task_tx`/`task_rx` (background save/load results).
+///
+/// Ownership of GPU buffers and ECS world data never overlaps in a way that
+/// would violate Rust's borrow rules: GPU readbacks are resolved into plain
+/// CPU-side data (`PendingPhysicsReadback`, `PendingBrainReadback`) before
+/// being scattered back into ECS components, rather than holding a live GPU
+/// mapping alongside a `World` borrow.
 pub(crate) struct PhylonApp {
     /// Deserialised application/simulation config
     pub(crate) sim_config: PhylonConfig,
 
-    /// Cross-session UI preferences (Phase 6, Epic J) — High Contrast Mode,
-    /// UI scale, whether onboarding hints have ever been shown, (Phase 7,
-    /// W0d) recent-items history, and (Phase 7, W3a) panel layout. See
-    /// `crate::preferences`'s module doc comment for why this is separate
-    /// from `sim_config`.
+    /// Cross-session UI preferences — high-contrast mode, UI scale, whether
+    /// onboarding hints have ever been shown, recent-items history, and
+    /// panel layout. See `crate::preferences`'s module doc comment for why
+    /// this is kept separate from `sim_config`: it is user/workstation
+    /// state, not simulation-affecting configuration, and is persisted and
+    /// restored independently of any particular `PhylonConfig`.
     pub(crate) preferences: crate::preferences::Preferences,
 
     /// Central ECS World holding all entities and global resources
@@ -84,8 +184,12 @@ pub(crate) struct PhylonApp {
     /// Rendering pipeline for structural/debug view
     pub(crate) debug_renderer: Option<rendering::DebugRenderer>,
 
-    /// Mesh-based capsule organism renderer (Phase 8, ADR-P8-03) — the
-    /// replacement for `SdfSkinRenderer`.
+    /// Mesh-based capsule organism renderer. Organisms are drawn as
+    /// instanced capsule meshes (a cylinder-with-hemisphere-caps primitive)
+    /// rather than via a signed-distance-field (SDF) raymarch, which is
+    /// cheaper to shade at the resolution and organism counts this app
+    /// targets and composes more easily with the rest of the mesh-based
+    /// scene (debug renderer, field renderer).
     pub(crate) organism_renderer: Option<rendering::OrganismRenderer>,
 
     /// Renderer for the diffusion field.
@@ -121,13 +225,13 @@ pub(crate) struct PhylonApp {
     /// per-redraw increment.
     pub(crate) last_frame_instant: std::time::Instant,
 
-    /// Phase 9, P9.4: wall-clock time of the previous `render()` call, used
-    /// only to advance `ui::WorkbenchState::frame_animation` — deliberately
-    /// a separate field from `last_frame_instant` rather than reusing it,
-    /// since that one is consumed and overwritten by
-    /// `advance_simulation_for_frame` (which runs after camera tracking),
-    /// and camera-transition smoothness shouldn't become coupled to
-    /// simulation-tick bookkeeping.
+    /// Wall-clock time of the previous `render()` call, used only to advance
+    /// `ui::WorkbenchState::frame_animation` — deliberately a separate field
+    /// from `last_frame_instant` rather than reusing it, since that one is
+    /// consumed and overwritten by `advance_simulation_for_frame` (which
+    /// runs after camera tracking), and camera-transition smoothness
+    /// shouldn't become coupled to simulation-tick bookkeeping (e.g. a
+    /// paused simulation should still animate smooth camera transitions).
     pub(crate) last_camera_animation_instant: std::time::Instant,
 
     /// Storage manager for snapshots and database logs
@@ -158,9 +262,9 @@ pub(crate) struct PhylonApp {
     /// only place the live swapchain texture is available.
     pub(crate) pending_screenshot: bool,
 
-    /// Set by `MenuAction::ExportChartPng` (Phase 5, SX-7c) — `(x, y, width,
-    /// height)` in physical pixels. Same deferred-to-next-`render()` timing
-    /// as `pending_screenshot`, just cropped to one Metrics chart's rect
+    /// Set by `MenuAction::ExportChartPng` — `(x, y, width, height)` in
+    /// physical pixels. Same deferred-to-next-`render()` timing as
+    /// `pending_screenshot`, just cropped to one Metrics chart's rect
     /// instead of the whole window.
     pub(crate) pending_chart_export: Option<(u32, u32, u32, u32)>,
 
@@ -170,9 +274,9 @@ pub(crate) struct PhylonApp {
 
     /// This run's experiment identity (id, description, RNG seed) — built
     /// from `config::ResearchConfig::experiment_id`/`SimulationConfig::rng_seed`
-    /// and persisted to `data/experiments/<id>/manifest.ron` at startup, so
-    /// `research::ExperimentManifest` is no longer dead code (see that
-    /// crate's doc comment for the history).
+    /// and persisted to `data/experiments/<id>/manifest.ron` at startup so
+    /// that later reproducing or comparing a run doesn't depend on
+    /// out-of-band notes about which config/seed produced it.
     pub(crate) experiment_manifest: research::ExperimentManifest,
 
     /// Every safe external intervention (see `storage::replay::ReplayAction`)
@@ -181,17 +285,19 @@ pub(crate) struct PhylonApp {
     /// at any point via `MenuAction::SaveState`'s replay counterpart.
     pub(crate) replay_log: storage::replay::ReplayLog,
 
-    /// Phase 9, P9.1 (performance foundation): cross-frame scratch storage
-    /// for `gather_world_render_instances`'s intermediate lookup tables —
-    /// see `render::world_instances::RenderInstanceScratch`'s doc comment.
+    /// Cross-frame scratch storage for `gather_world_render_instances`'s
+    /// intermediate lookup tables — see
+    /// `render::world_instances::RenderInstanceScratch`'s doc comment for why
+    /// this is kept as a reused allocation rather than built fresh each
+    /// frame.
     pub(crate) render_scratch: crate::render::world_instances::RenderInstanceScratch,
 
-    /// Phase 9, P9.1 (performance foundation): cross-tick scratch storage
-    /// for `update_simulation`'s GPU node/spring buffer gathering — reused
-    /// the same way `render_scratch` is (see that field's doc comment);
-    /// `.clear()` at the top of each tick keeps the backing allocation
-    /// instead of reallocating from empty every tick, which otherwise
-    /// happens up to `max_ticks_per_frame` times per rendered frame.
+    /// Cross-tick scratch storage for `update_simulation`'s GPU node/spring
+    /// buffer gathering — reused the same way `render_scratch` is (see that
+    /// field's doc comment); `.clear()` at the top of each tick keeps the
+    /// backing allocation instead of reallocating from empty every tick,
+    /// which otherwise happens up to `max_ticks_per_frame` times per
+    /// rendered frame.
     pub(crate) sim_scratch: crate::simulation::SimTickScratch,
 }
 
@@ -237,18 +343,13 @@ impl PhylonApp {
         world
             .ecs
             .insert_resource(diffusion::CpuHazardFieldState::default());
-        // Phase 9, Goal 3 behavior-validation finding: `EcologyConfig`'s
-        // default `max_organisms` (50) was never connected to
-        // `SimulationConfig::target_organism_count` (default 1_000, the
-        // value `seed_ecosystem` actually spawns towards) — since founders
-        // are spawned directly (bypassing `reproduction_system`'s own
-        // population-cap check), a founder population past 50 permanently
-        // blocked *all* asexual and sexual reproduction from tick 1 onward
-        // in every default-config run, measured directly via a real
-        // headless run showing `births_since_start = 0` /
-        // `reproductions_since_start = 0` across 2000 ticks. Wiring the
-        // already-existing (previously unread) config field through fixes
-        // the root cause without inventing a new one.
+        // `EcologyConfig::max_organisms` must track `target_organism_count`
+        // rather than use its own default: `seed_ecosystem` spawns founders
+        // directly, bypassing `reproduction_system`'s population-cap check,
+        // so if the cap were lower than the founder population, every
+        // asexual and sexual reproduction attempt would be rejected from
+        // tick 1 onward for the lifetime of the run — reproduction would be
+        // permanently, silently disabled rather than merely throttled.
         world.ecs.insert_resource(ecology::EcologyConfig {
             max_organisms: sim_config.simulation.target_organism_count as usize,
             ..Default::default()
@@ -268,26 +369,26 @@ impl PhylonApp {
         world.ecs.insert_resource(
             bevy_ecs::event::Events::<ecology::catastrophe::HazardSpawned>::default(),
         );
-        // Phase 4, P4-E1: the first real `events::PhylonEvent` producer/
-        // consumer wiring — registered the same way as the two native bevy
-        // events above (see `crates/app/src/simulation.rs`'s per-tick
-        // `Events::update()` calls, extended for this one too).
+        // Registered the same way as the two native bevy_ecs events above —
+        // see `simulation.rs`'s per-tick `Events::update()` calls, which
+        // must be extended for every new `Events<T>` resource so its buffer
+        // is drained on schedule instead of growing unbounded.
         world
             .ecs
             .insert_resource(bevy_ecs::event::Events::<events::PhylonEvent>::default());
         world.ecs.insert_resource(events::TimedEffects::default());
-        // Phase 5, SX-1a: reads `PHYLON_MOTION_DIAGNOSTIC` once at startup —
-        // see `motion_diagnostic::MotionDiagnosticConfig`'s doc comment for
-        // why this isn't re-checked per tick.
+        // Reads `PHYLON_MOTION_DIAGNOSTIC` once at startup — see
+        // `motion_diagnostic::MotionDiagnosticConfig`'s doc comment for why
+        // this isn't re-checked per tick.
         world
             .ecs
             .insert_resource(crate::motion_diagnostic::MotionDiagnosticConfig::from_env());
         world
             .ecs
             .insert_resource(crate::motion_diagnostic::MotionDiagnosticState::default());
-        // Phase 9, Goal 3: reads `PHYLON_BEHAVIOR_VALIDATION` once at
-        // startup — see `behavior_validation::BehaviorValidationConfig`'s
-        // doc comment for why this isn't re-checked per tick.
+        // Reads `PHYLON_BEHAVIOR_VALIDATION` once at startup — see
+        // `behavior_validation::BehaviorValidationConfig`'s doc comment for
+        // why this isn't re-checked per tick.
         world
             .ecs
             .insert_resource(crate::behavior_validation::BehaviorValidationConfig::from_env());
@@ -378,7 +479,7 @@ impl PhylonApp {
         ui.high_contrast = preferences.high_contrast;
         ui.ui_scale = preferences.ui_scale;
         ui.recent_items = preferences.recent_items.clone();
-        // Phase 7, W3a: restore the persisted panel layout in place of
+        // Restore the persisted panel layout in place of
         // `WorkbenchState::default()`'s own hardcoded starting tree, then
         // rebuild `dock_tree` from it — `rebuild_tree_from_modes` is the
         // sole authoritative tree builder (see `layout.rs`'s own doc
@@ -387,9 +488,9 @@ impl PhylonApp {
         ui.panel_modes = preferences.panel_modes.clone();
         ui.layout_shares = preferences.layout_shares.clone();
         ui::layout::rebuild_tree_from_modes(&mut ui.dock_tree, &ui.panel_modes, &ui.layout_shares);
-        // Phase 7, W3c: restore saved workspaces + which one was last
-        // active. Purely metadata layered on top of the shape already
-        // restored above — see `ui::workspace`'s module doc comment.
+        // Restore saved workspaces and which one was last active — purely
+        // metadata layered on top of the shape already restored above, see
+        // `ui::workspace`'s module doc comment.
         ui.workspaces = preferences.workspaces.clone();
 
         Self {
@@ -440,17 +541,17 @@ impl PhylonApp {
     pub(crate) fn save_preferences(&mut self) {
         self.preferences.high_contrast = self.ui.high_contrast;
         self.preferences.ui_scale = self.ui.ui_scale;
-        // Phase 7, W0d: recent-items history persists across restarts the
-        // same way high_contrast/ui_scale do.
+        // Recent-items history persists across restarts the same way
+        // high_contrast/ui_scale do.
         self.preferences.recent_items = self.ui.recent_items.clone();
-        // Phase 7, W3a: panel layout persists the same way. `layout_shares`
-        // is already kept current every frame by `ui::render`'s
-        // `extract_shares` (reads the live tree's actual split ratios), so
-        // this is just copying its current value, not computing anything.
+        // Panel layout persists the same way. `layout_shares` is already
+        // kept current every frame by `ui::render`'s `extract_shares` (reads
+        // the live tree's actual split ratios), so this is just copying its
+        // current value, not computing anything.
         self.preferences.panel_modes = self.ui.panel_modes.clone();
         self.preferences.layout_shares = self.ui.layout_shares.clone();
-        // Phase 7, W3c: saved workspaces + active-workspace identity
-        // persist the same way.
+        // Saved workspaces and active-workspace identity persist the same
+        // way.
         self.preferences.workspaces = self.ui.workspaces.clone();
         self.preferences
             .save(&crate::preferences::preferences_path());
@@ -467,15 +568,16 @@ impl PhylonApp {
     }
 
     /// Converts a physical-pixel screen coordinate to a world-space ray and
-    /// finds the nearest entity it hits, by true ray-vs-capsule (Phase 8,
-    /// Epic 8.4) intersection against the exact radius the renderer draws
-    /// each entity at — replacing the previous flat technique (unproject to
-    /// the `Z = 0` plane, then 2D nearest-point-within-a-fudge-radius),
-    /// which was blind to camera tilt and to each entity's actual on-screen
-    /// size. "Nearest" here means nearest *along the ray* (smallest hit
-    /// `t`), i.e. depth-correct — the frontmost entity under the cursor,
-    /// not merely the one whose point happens to be closest to the Z=0
-    /// unprojection.
+    /// finds the nearest entity it hits, by true ray-vs-capsule intersection
+    /// against the exact radius the renderer draws each entity at. This is
+    /// depth-correct and tilt-correct: it accounts for the camera's actual
+    /// orientation and each entity's true on-screen size, unlike a flatter
+    /// technique that unprojects to the `Z = 0` plane and finds the 2D
+    /// nearest point within a fixed fudge radius (which misidentifies the
+    /// picked entity whenever the camera is tilted or entities differ in
+    /// apparent size). "Nearest" here means nearest *along the ray* (smallest
+    /// hit `t`) — the frontmost entity under the cursor, not merely the one
+    /// whose point happens to be closest to the Z=0 unprojection.
     ///
     /// Returns `None` if nothing is hit, or if GPU surface is not ready.
     pub(crate) fn pick_entity(

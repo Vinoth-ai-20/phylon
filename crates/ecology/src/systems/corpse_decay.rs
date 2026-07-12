@@ -29,15 +29,16 @@ pub fn corpse_decay_system(
     mut corpse_query: Query<(Entity, &mut Corpse)>,
     mut timed_effects: ResMut<events::TimedEffects>,
 ) {
-    // Phase 4, P4-V1: not biologically tuned, same placeholder status as
-    // every other Phase 4 effect-duration constant.
+    // Not biologically tuned — a placeholder duration shared with the
+    // other short-lived floating-text effect durations in this crate.
     const DECOMPOSITION_EFFECT_DURATION_TICKS: u64 = 90;
 
     for (entity, mut corpse) in corpse_query.iter_mut() {
         if corpse.decay_timer > 0 {
             corpse.decay_timer -= 1;
-            // Phase 3: Corpse Outgassing
-            // Slowly release CO2 back into the atmosphere as the corpse decays.
+            // Slowly release CO2 back into the atmosphere as the corpse
+            // decays, rather than all at once on death — see this system's
+            // "Why It Happens" above for the carbon-leak problem this avoids.
             atmosphere.co2 += corpse.energy_value * 0.0001;
         } else {
             // Decay into mineral

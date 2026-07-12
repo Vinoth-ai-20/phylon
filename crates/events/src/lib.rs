@@ -8,23 +8,44 @@
 //! (analytics, storage, UI) consume events without modifying the simulation
 //! world.
 //!
-//! ## Current wiring caveat (corrected, Phase 7 W0f — see
-//! `PHASE7_WORKBENCH_ROADMAP.md`'s event-architecture audit)
+//! ## Current wiring caveat
 //!
 //! `scheduler::SimulationScheduler` does own an [`EventBus`] instance as
 //! described above, but the live `app` binary's actual per-tick driver
 //! (`PhylonApp::update_simulation`) calls simulation systems directly via
 //! `bevy_ecs::system::RunSystemOnce` rather than ticking through
 //! `SimulationScheduler` — so [`EventBus`] itself is genuinely unused by
-//! the running application. **[`PhylonEvent`] itself is not dead**,
-//! though, contrary to what this paragraph used to claim: `OrganismBorn`,
-//! `OrganismDied`, and `ReproductionEvent` are published via bevy_ecs's
-//! own native `Event`/`EventWriter`/`EventReader` machinery (a second,
-//! simpler delivery path alongside [`EventBus`], described above) and
-//! consumed today by `crates/app/src/systems.rs`'s
+//! the running application. **[`PhylonEvent`] itself is not dead**, though:
+//! `OrganismBorn`, `OrganismDied`, and `ReproductionEvent` are published via
+//! bevy_ecs's own native `Event`/`EventWriter`/`EventReader` machinery (a
+//! second, simpler delivery path alongside [`EventBus`], described above)
+//! and consumed today by `crates/app/src/systems.rs`'s
 //! `interaction_event_log_system`. Only [`ExperimentCheckpoint`](PhylonEvent::ExperimentCheckpoint)
 //! remains defined but never actually published or consumed by anything —
 //! a real, disclosed gap, not a description of every variant.
+//!
+//! ## Purpose and architecture
+//!
+//! Many parts of the simulation need to react to things that happen
+//! elsewhere — the UI wants to log a birth, analytics wants to count a
+//! death, a future achievement system might want to notice a reproduction
+//! milestone — without every producing system (physics, metabolism,
+//! reproduction) needing a direct dependency on every consumer. Events
+//! solve this with a **pub-sub** pattern: a producer system publishes a
+//! [`PhylonEvent`] describing something that already happened, and any
+//! number of consumer systems read it later without the producer knowing or
+//! caring who's listening.
+//!
+//! Concretely, `bevy_ecs::event::Events<T>` is a small ring-buffer resource
+//! bevy_ecs provides for exactly this: an `EventWriter<T>` system parameter
+//! pushes values in, an `EventReader<T>` system parameter drains values that
+//! haven't been read yet, and calling `Events::update()` once per tick
+//! retires old events so the buffer doesn't grow forever. This crate uses
+//! that mechanism directly for [`PhylonEvent`] (see the wiring caveat
+//! above), and also defines its own [`EventBus`] — a thread-safe MPMC
+//! channel wrapper — for use by `scheduler::SimulationScheduler`, which
+//! needs to publish events from worker threads rather than from ECS systems
+//! running on the main World.
 //!
 //! ## Design
 //!
@@ -104,11 +125,11 @@ pub enum DeathCause {
 ///
 /// $$ T_{birth} \le t \le T_{death} $$
 ///
-/// **Phase 4, P4-F-adjacent milestone P4-E1:** also derives `bevy_ecs::event::Event`,
-/// so it can be published/consumed as a native `bevy_ecs::event::Events<PhylonEvent>`
-/// resource directly on the simulation `World` — the same pattern already
-/// established by `reproduction::BirthRequest`/`ecology::catastrophe::HazardSpawned`
-/// (see `crates/app/src/app.rs`'s resource registration and
+/// Also derives `bevy_ecs::event::Event`, so it can be published/consumed as
+/// a native `bevy_ecs::event::Events<PhylonEvent>` resource directly on the
+/// simulation `World` — the same pattern already established by
+/// `reproduction::BirthRequest`/`ecology::catastrophe::HazardSpawned` (see
+/// `crates/app/src/app.rs`'s resource registration and
 /// `crates/app/src/simulation.rs`'s per-tick `Events::update()` calls). This
 /// is deliberately a *second*, simpler delivery path alongside [`EventBus`]
 /// (which remains for `SimulationScheduler`-based, cross-thread use) rather
@@ -137,12 +158,11 @@ pub enum PhylonEvent {
 
     /// An organism has reproduced, creating a child entity.
     ///
-    /// Phase 5, SX-3a: `generation`/`lineage` were added so a real consumer
-    /// (`crates/app/src/systems.rs`'s `interaction_event_log_system`) could
-    /// log lineage milestones *from this event* instead of a parallel,
-    /// never-actually-reading-this-event code path in
-    /// `SpawnOrganismCommand::apply` that duplicated the same "every 5th
-    /// generation" logic directly against `NarrationLog`.
+    /// Carries `generation`/`lineage` so a consumer (e.g.
+    /// `crates/app/src/systems.rs`'s `interaction_event_log_system`) can log
+    /// lineage milestones directly from this event, rather than needing a
+    /// parallel code path that recomputes the same information against
+    /// `NarrationLog`.
     ReproductionEvent {
         /// The parent organism's ID.
         parent: EntityId,
@@ -237,7 +257,7 @@ impl EventBus {
     ///
     /// `capacity` should be set to a multiple of the expected events-per-tick
     /// to avoid drops during high-activity ticks. A value of `1024` is
-    /// sufficient for most Phase 0–3 workloads.
+    /// sufficient for typical simulation workloads.
     pub fn new(capacity: usize) -> Self {
         let (sender, receiver) = channel::bounded(capacity);
         Self {
@@ -295,15 +315,15 @@ impl EventBus {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Timed Effects (Phase 4, P4-E1)
+// Timed Effects
 // ────────────────────────────────────────────────────────────────────────────
 
 /// One kind of transient, position-anchored visual effect. Deliberately a
-/// single variant for now — this milestone (P4-E1) is the shared
-/// infrastructure, not the effect catalog; individual visual effects
-/// (predation flash, blood-flow particle trail, hormone diffusion glow) are
-/// Epic 8's job (`PHASE4_ROADMAP.md`'s P4-V1/P4-V2), gated behind this one
-/// per ADR-P4-05.
+/// single variant for now — this is the shared infrastructure for
+/// "something happened here, briefly show it," not the full effect catalog;
+/// additional visual effects (predation flash, blood-flow particle trail,
+/// hormone diffusion glow) can be added as new variants once a renderer
+/// exists to consume them.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TimedEffectKind {
     /// A short line of text that appears at a world position and expires.
@@ -319,13 +339,10 @@ pub enum TimedEffectKind {
 /// tick-based expiry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimedEffect {
-    /// World-space position this effect is anchored to. `Vec3` since
-    /// Phase 8 (ADR-P8-01) — this is a simulation-space event location
-    /// (birth/death/predation happened *here*), not a UI-layout concern,
-    /// so it follows the same migration as `physics::ParticleNode` even
-    /// though the roadmap's own ECS Evolution table didn't name this
-    /// struct by name; the underlying principle (simulation-space
-    /// positions become `Vec3`) applies regardless.
+    /// World-space position this effect is anchored to. This is a
+    /// simulation-space event location (birth/death/predation happened
+    /// *here*), not a UI-layout concern, so it uses the same `Vec3` type as
+    /// `physics::ParticleNode::position` rather than a screen-space type.
     pub position: common::Vec3,
     /// What kind of effect this is.
     pub kind: TimedEffectKind,
@@ -336,31 +353,31 @@ pub struct TimedEffect {
 /// # Timed Effects
 ///
 /// ## 1. What Happens
-/// Holds every currently-active transient visual effect (Phase 4, P4-E1) —
-/// e.g. a "such-and-such happened" floating text — each with a world
-/// position and a tick-based expiry.
+/// Holds every currently-active transient visual effect — e.g. a
+/// "such-and-such happened" floating text — each with a world position and
+/// a tick-based expiry.
 ///
 /// ## 2. Why It Happens
-/// Before this milestone, every visual in the running app was steady-state,
-/// recomputed fresh every frame from current ECS state (diet rings, hover
-/// highlight, a selection pulse driven by `total_sim_time`) — there was no
-/// way to represent "this happened, briefly show something about it, then
-/// stop," which every future interaction VFX (Epic 8) and physiology
-/// visualization (blood flow, hormone diffusion) needs. This resource, plus
-/// [`expire`](Self::expire), is that missing primitive — modeled on the
-/// existing `WorkbenchState::push_toast`/`cleanup_toasts` pattern already
-/// used for UI notifications (`crates/ui/src/state.rs`), but anchored to a
-/// world position and a simulation tick instead of a screen corner and
-/// wall-clock time.
+/// Most visuals in the app are steady-state, recomputed fresh every frame
+/// from current ECS state (diet rings, hover highlight, a selection pulse
+/// driven by `total_sim_time`). There was no way to represent "this
+/// happened, briefly show something about it, then stop," which
+/// interaction VFX and physiology visualization (blood flow, hormone
+/// diffusion) need. This resource, plus [`expire`](Self::expire), is that
+/// missing primitive — modeled on the existing
+/// `WorkbenchState::push_toast`/`cleanup_toasts` pattern already used for UI
+/// notifications (`crates/ui/src/state.rs`), but anchored to a world
+/// position and a simulation tick instead of a screen corner and wall-clock
+/// time.
 ///
 /// ## 3. How It Happens
 /// [`spawn`](Self::spawn) appends a new effect with `expires_at_tick =
 /// current_tick + duration_ticks`; [`expire`](Self::expire), called once per
 /// tick, retains only effects whose `expires_at_tick` is still in the
-/// future. **Rendering is explicitly out of scope for this milestone** — per
-/// ADR-P4-05, Epic 6 (this milestone) is the shared data-side
-/// infrastructure; drawing these onto the viewport is Epic 8's job, once a
-/// real visual effect is designed to consume them.
+/// future. **Rendering is explicitly out of scope for this crate** — this is
+/// the shared data-side infrastructure; drawing these onto the viewport is
+/// the UI crate's job, once a real visual effect is designed to consume
+/// them.
 #[derive(Debug, Clone, Default, bevy_ecs::prelude::Resource)]
 pub struct TimedEffects {
     /// Every effect currently active, in spawn order.

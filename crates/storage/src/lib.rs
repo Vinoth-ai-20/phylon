@@ -29,40 +29,41 @@ pub struct SchemaVersion(pub u32);
 impl SchemaVersion {
     /// The current `.phylon` snapshot schema version.
     ///
-    /// Bumped from 1 to 2 by Epic 8's `brain::Brain` field additions
-    /// (`winner_take_all`, `plasticity_enabled`) — `SnapshotNode.brain`
-    /// embeds `brain::Brain` directly via bincode, so any `.phylon` file
-    /// saved under version 1 will fail to deserialize against the current
-    /// layout (no migration path exists yet; the same situation as
-    /// `genetics::GENOME_SCHEMA_VERSION`'s bump in Epic 7).
+    /// Because bincode is a non-self-describing, positional binary format,
+    /// *any* change to the layout of a type embedded in [`SimulationSnapshot`]
+    /// (adding/removing/reordering fields, changing a field's type) makes
+    /// existing saved files fail to deserialize against the new layout —
+    /// there is no way to "skip" or reinterpret bytes the way a
+    /// self-describing format (JSON, RON) could. This project has
+    /// consistently chosen not to write migration code for these breaks;
+    /// instead every layout change bumps this version, and
+    /// [`StorageManager::load_simulation_state`] rejects any file whose
+    /// `schema_version` exceeds what this build supports with a clear
+    /// [`StorageError::UnsupportedSchema`] rather than corrupting data or
+    /// panicking. Version history:
     ///
-    /// Bumped from 2 to 3 by Phase 6, Epic C, Milestone N1a's addition of
-    /// `brain::Brain::node_regions` (`Vec<RegionId>`) — same reasoning:
-    /// `Brain` is embedded directly via bincode, so its positional layout
-    /// changing breaks any `.phylon` file saved under version 2.
+    /// - **1 -> 2**: `brain::Brain` gained `winner_take_all` and
+    ///   `plasticity_enabled` fields. `SnapshotNode.brain` embeds
+    ///   `brain::Brain` directly, so any file saved under version 1 breaks.
+    /// - **2 -> 3**: `brain::Brain` gained `node_regions: Vec<RegionId>`,
+    ///   for the same reason as above.
+    /// - **3 -> 4**: `SnapshotNode` gained roughly 15 new optional fields
+    ///   covering physiology (`ChemicalEconomy`, `Age`, `Metabolism`,
+    ///   `Health`, `Hydration`, `BodyTemperature`, `HormoneLevel`,
+    ///   neuromodulator channels, disease state) and the persistent body
+    ///   graph, all of which previously vanished silently on save/load.
+    /// - **4 -> 5**: every world-space position/velocity field
+    ///   (`SnapshotNode.position`/`velocity`,
+    ///   `SnapshotFood`/`SnapshotMineral`/`SnapshotCorpse.position`) changed
+    ///   from a 2-field `SerializedVec2` (which silently dropped `z` on save
+    ///   and re-extended it with `0.0` on restore) to a 3-field
+    ///   `SerializedVec3` with full `Vec3` fidelity and no truncation.
     ///
-    /// Bumped from 3 to 4 by Phase 6, Epic E's `SnapshotNode` expansion —
-    /// ~15 new optional fields covering physiology (`ChemicalEconomy`,
-    /// `Age`, `Metabolism`, `Health`, `Hydration`, `BodyTemperature`,
-    /// `HormoneLevel`, neuromodulator channels, disease state) and the
-    /// persistent Body Graph, all of which previously vanished silently on
-    /// save/load. `SnapshotNode`'s positional/field layout changing breaks
-    /// any `.phylon` file saved under version 3, same reasoning as every
-    /// prior bump.
-    ///
-    /// Bumped from 4 to 5 by Phase 8, Epic 8.13 (ADR-P8-08): every world-
-    /// space position/velocity field (`SnapshotNode.position`/`velocity`,
-    /// `SnapshotFood`/`SnapshotMineral`/`SnapshotCorpse.position`) changed
-    /// from the 2-field `SerializedVec2` (which silently dropped `z` on
-    /// save and re-extended it with `0.0` on restore, throughout Phase 8's
-    /// "2D embedded in 3D" intermediate state) to the 3-field
-    /// `SerializedVec3` — full `Vec3` fidelity, no truncation. Following
-    /// this project's own established precedent (this is the 4th such
-    /// bump), **no migration path is provided**: any `.phylon`/
-    /// `.phylon-replay` file saved under version ≤ 4 will fail to load.
-    /// This must be communicated to users/researchers explicitly, not
-    /// silently discovered — see the Phase 8 roadmap's own execution log
-    /// (§17, Epic 8.13) for the release-notes wording.
+    /// As with every prior bump, **no migration path is provided** for this
+    /// change: any `.phylon`/`.phylon-replay` file saved under version ≤ 4
+    /// will fail to load, and this must be communicated to
+    /// users/researchers explicitly rather than discovered as a silent data
+    /// loss.
     pub const CURRENT: Self = Self(5);
 }
 
@@ -357,8 +358,8 @@ pub fn export_organisms_csv(
     snapshot: &SimulationSnapshot,
     path: &Path,
 ) -> Result<(), StorageError> {
-    // Phase 8, Epic 8.13: `z`/`vz` columns added alongside `SnapshotNode`'s
-    // `SerializedVec2` -> `SerializedVec3` schema bump.
+    // `z`/`vz` columns exist alongside `SnapshotNode`'s `SerializedVec3`
+    // fields (full 3D fidelity — see `SchemaVersion::CURRENT`'s doc comment).
     let mut out =
         String::from("id,x,y,z,vx,vy,vz,mass,segment_type,organism_id,is_fixed,diet,category\n");
     for node in &snapshot.nodes {
@@ -424,18 +425,16 @@ mod tests {
         assert!(SchemaVersion::CURRENT.0 > 0);
     }
 
-    /// Phase 8, Epic 8.13's own named verification requirement: an
-    /// incompatible/old-schema file must be rejected cleanly (a returned
-    /// `Err`, never a panic or silently-corrupted data) — per ADR-P8-08's
-    /// precedented "no migration path" policy. Rather than hand-crafting a
-    /// byte-perfect pre-8.13 (`SerializedVec2`-shaped) artifact, this feeds
-    /// `load_simulation_state` a byte sequence bincode cannot possibly
+    /// An incompatible/old-schema file must be rejected cleanly (a returned
+    /// `Err`, never a panic or silently-corrupted data) — per the "no
+    /// migration path" policy described on `SchemaVersion::CURRENT`. Rather
+    /// than hand-crafting a byte-perfect old-schema-shaped artifact, this
+    /// feeds `load_simulation_state` a byte sequence bincode cannot possibly
     /// parse as the current `SimulationSnapshot` shape — the same failure
-    /// mode a real mismatched-schema file produces (bincode is a
-    /// non-self-describing positional format, so a `SerializedVec2`-shaped
-    /// v4 file fails to deserialize against the current `SerializedVec3`-
-    /// shaped struct for exactly this reason, before `schema_version` is
-    /// ever inspected).
+    /// mode a real mismatched-schema file produces, since bincode is a
+    /// non-self-describing positional format that fails to deserialize
+    /// against a struct with a different layout before `schema_version` is
+    /// ever inspected.
     #[test]
     fn load_simulation_state_rejects_incompatible_data_cleanly() {
         let dir = std::env::temp_dir().join(format!("phylon-schema-test-{}", std::process::id()));

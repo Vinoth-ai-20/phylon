@@ -2,9 +2,9 @@ use crate::types::*;
 
 /// The Command Palette's registry: `(label, action)` pairs a user can invoke
 /// by fuzzy-typing the label. Deliberately scoped to `MenuAction` variants
-/// that need no extra context (no `Entity`, no `Diet`, ...) — per the Phase
-/// 2 roadmap's own risk note, this milestone does not expand `MenuAction`
-/// itself, it only makes a subset of what already exists searchable.
+/// that need no extra context (no `Entity`, no `Diet`, ...) — this makes a
+/// subset of what already exists in `MenuAction` searchable, rather than
+/// expanding `MenuAction` itself.
 const COMMANDS: &[(&str, MenuAction)] = &[
     ("Play / Pause", MenuAction::TogglePlayPause),
     ("Step Forward", MenuAction::StepForward),

@@ -22,9 +22,9 @@ struct SpawnOrganismCommand {
 
 impl bevy_ecs::world::Command for SpawnOrganismCommand {
     fn apply(self, world: &mut bevy_ecs::world::World) {
-        // Phase 5, SX-3a: computed up front (previously computed later, near
-        // the `OrganismBorn` emission) so `register_birth` below can use the
-        // real current tick instead of a hardcoded `0 // TODO` placeholder.
+        // Computed up front so `register_birth` below can use the real
+        // current tick, and so every use of "when this birth happened" in
+        // this function reads from the same value.
         let tick = common::Tick(
             world
                 .get_resource::<metabolism::GlobalAtmosphere>()
@@ -117,22 +117,19 @@ impl bevy_ecs::world::Command for SpawnOrganismCommand {
             }
         }
 
-        // Phase 4, P4-E1: the first real `events::PhylonEvent` producer for
-        // births/reproduction — mirrors the death-side emission in
-        // `process_deaths_system`. `Command::apply` runs directly against
-        // `&mut World`, so events are sent via `World::send_event` rather
-        // than an `EventWriter` system param.
+        // Mirrors the death-side emission in `process_deaths_system`.
+        // `Command::apply` runs directly against `&mut World`, so events are
+        // sent via `World::send_event` rather than an `EventWriter` system
+        // param.
         world.send_event(events::PhylonEvent::OrganismBorn {
             id: common::EntityId(entity.to_bits()),
             tick,
         });
-        // Phase 5, SX-3a: the "every 5th generation" lineage-milestone
-        // narration previously lived here as a direct `NarrationLog` write
-        // that never actually consumed `ReproductionEvent` — a real,
-        // silently-dead event variant (published, but read by nothing).
-        // Moved to `interaction_event_log_system`, which now reads this
-        // event to produce the exact same message, with the real `tick`
-        // (was hardcoded `0`) instead of a duplicate code path.
+        // The "every 5th generation" lineage-milestone narration is
+        // produced by `interaction_event_log_system` reading this event,
+        // not written directly here — keeping birth-side event production
+        // separate from narration-logging means there is exactly one place
+        // that decides which events are worth narrating.
         if let Some(parent_id) = self.parent_id {
             world.send_event(events::PhylonEvent::ReproductionEvent {
                 parent: common::EntityId(parent_id.to_bits()),
@@ -143,8 +140,8 @@ impl bevy_ecs::world::Command for SpawnOrganismCommand {
             });
         }
 
-        // Phase 4, P4-V1: reproduction is one of this milestone's individual
-        // interaction VFX triggers — rendered by `ui::render::render_timed_effects`.
+        // Reproduction is one of the interaction VFX triggers rendered by
+        // `ui::render::render_timed_effects`.
         if let Some(mut timed_effects) = world.get_resource_mut::<events::TimedEffects>() {
             timed_effects.spawn(
                 self.position,
@@ -175,13 +172,12 @@ pub fn process_births_system(
     }
 }
 
-/// Phase 5, SX-7a: `HazardSpawned` carries no tick of its own (just the
-/// spawn position), so this previously logged every hazard at a hardcoded
-/// `tick: 0` — harmless while nothing read `NarrativeEvent::tick`, but a
-/// real bug once SX-7a started plotting `NarrationLog` entries as
-/// time-axis annotations on Metrics (every hazard marker would have piled
-/// up at x=0). `GlobalAtmosphere::ticks` is the same tick counter
-/// `expire_timed_effects_system` (below) already reads for this purpose.
+/// `HazardSpawned` carries no tick of its own (just the spawn position), so
+/// this system reads `GlobalAtmosphere::ticks` — the same tick counter
+/// `expire_timed_effects_system` (below) reads — to log the real current
+/// tick rather than an arbitrary placeholder. `NarrationLog` entries are
+/// plotted as time-axis annotations on Metrics, so an inaccurate tick here
+/// would misplace every hazard marker on that timeline.
 pub fn process_narrative_events_system(
     mut hazard_events: EventReader<ecology::catastrophe::HazardSpawned>,
     mut log: ResMut<analytics::NarrationLog>,
@@ -199,31 +195,19 @@ pub fn process_narrative_events_system(
     }
 }
 
-/// # Interaction Event Log System
+/// Reads every `events::PhylonEvent` published this tick and logs the
+/// notable ones (predation deaths, lineage milestones) into
+/// `analytics::NarrationLog`.
 ///
-/// ## 1. What Happens
-/// The first real consumer of `events::PhylonEvent` (Phase 4, P4-E1) — reads
-/// every event published this tick and logs the notable ones (predation
-/// deaths) into `analytics::NarrationLog`.
-///
-/// ## 2. Why It Happens
-/// `PhylonEvent` (`crates/events`) was fully designed but never wired into
-/// the running app — nothing published or consumed a single event before
-/// this milestone. This system proves the wiring works end-to-end: a real
-/// event, published by `process_deaths_system`, drained and acted on here.
-///
-/// ## 3. How It Happens
 /// `OrganismDied { cause: Predation, .. }` is logged — ordinary
 /// (non-predation) deaths are common enough that logging every one would
 /// flood `NarrationLog`. `ReproductionEvent` is logged only on a lineage
 /// milestone (every 5th generation), for the same reason — births
-/// themselves are far too frequent to log individually. Phase 5, SX-3a:
-/// this milestone-narration logic used to live directly in
-/// `SpawnOrganismCommand::apply` as a parallel write to `NarrationLog` that
-/// never actually read `ReproductionEvent` — a real, silently-dead event
-/// variant (published every non-seed birth, consumed by nothing). Moved
-/// here so the event has a genuine consumer, and so the tick it logs is the
-/// event's own real tick rather than a hardcoded placeholder.
+/// themselves are far too frequent to log individually. This is the sole
+/// place that decides which `PhylonEvent`s are narration-worthy, so
+/// `SpawnOrganismCommand::apply` (which publishes `ReproductionEvent`) does
+/// not need its own parallel narration logic, and the tick logged here is
+/// always the event's own real tick.
 pub fn interaction_event_log_system(
     mut phylon_events: EventReader<events::PhylonEvent>,
     mut log: ResMut<analytics::NarrationLog>,
@@ -256,7 +240,7 @@ pub fn interaction_event_log_system(
 }
 
 /// Expires every `events::TimedEffects` entry whose duration has elapsed —
-/// the per-tick half of the P4-E1 timed-effects framework (see
+/// the per-tick half of the timed-effects framework (see
 /// `events::TimedEffects::expire`'s doc comment for why expiry is
 /// tick-based, not wall-clock).
 pub fn expire_timed_effects_system(
@@ -266,28 +250,25 @@ pub fn expire_timed_effects_system(
     effects.expire(atmosphere.ticks);
 }
 
-/// Ticks a P4-E1 [`events::TimedEffectKind::FloatingText`] stays active for
-/// after being spawned — not biologically tuned, same placeholder status as
-/// every other Phase 4 rate/duration constant introduced so far.
+/// Ticks a [`events::TimedEffectKind::FloatingText`] stays active for after
+/// being spawned — not biologically tuned, a placeholder constant like
+/// several other rate/duration constants in this module.
 const DEATH_EFFECT_DURATION_TICKS: u64 = 90; // ~1.5s at 60Hz
 
 /// One shared `(text, color)` mapping, exhaustive over every
-/// [`events::DeathCause`] — Phase 5, SX-1e. Before this milestone only
-/// `Predation` (`eaten.is_some()`) got a `TimedEffects` floating-text burst;
-/// `Starvation`/`Senescence`/`Disease` deaths produced a correctly-caused
-/// `PhylonEvent::OrganismDied` but no viewport signal at all, an event-
-/// coverage gap (`PHASE5_SX_ROADMAP.md` §2.6). This function is the single
-/// place every current *and future* cause is visualized — `GodMode`/
-/// `Injury`/`Environment` aren't constructed by any code path yet, but are
-/// matched here anyway so a future system that starts producing them needs
-/// no rendering change, only a new arm here (per the standing "plug into the
-/// same architecture without new rendering systems" rule).
+/// [`events::DeathCause`], so every death cause gets a viewport signal
+/// rather than only predation deaths. This function is the single place
+/// every current *and future* cause is visualized — `GodMode`/`Injury`/
+/// `Environment` aren't constructed by any code path yet, but are matched
+/// here anyway so a future system that starts producing them needs no
+/// rendering change, only a new arm here.
 ///
-/// Colors are drawn from the same limited semantic palette every other SX
-/// milestone uses — never a new literal per cause: `Disease` reuses
-/// `ecology::Diet::Decomposer.standard_color()`, the *exact* purple SX-1d's
-/// Disease badge already uses, so a death-by-disease burst visually
-/// reads as the same biological family, not a coincidentally similar hue.
+/// Colors are drawn from a shared semantic palette rather than a new
+/// literal per cause: `Disease` reuses
+/// `ecology::Diet::Decomposer.standard_color()`, the *exact* purple the
+/// Disease badge elsewhere in the UI uses, so a death-by-disease burst
+/// visually reads as the same biological family, not a coincidentally
+/// similar hue.
 /// `Starvation`/`Environment` (resource/condition depletion) share
 /// `theme::WARN`; `Predation`/`Injury` (violent/traumatic) share
 /// `theme::BAD`; `Senescence` (a natural, expected end) and `GodMode` (a
@@ -315,8 +296,7 @@ fn death_effect_text_and_color(cause: events::DeathCause) -> (&'static str, [f32
     }
 }
 
-/// Same as [`DEATH_EFFECT_DURATION_TICKS`], for the "Born!" effect (Phase 4,
-/// P4-V1).
+/// Same as [`DEATH_EFFECT_DURATION_TICKS`], for the "Born!" effect.
 const BIRTH_EFFECT_DURATION_TICKS: u64 = 90;
 
 /// Traverses the physics spring network to completely remove organisms marked as Dead.
@@ -371,8 +351,8 @@ pub fn process_deaths_system(
             // TODO: Get actual tick
         }
 
-        // Phase 4, P4-E1/P4-L2: true cause-of-death tracking. Every death
-        // that reaches this system was triggered by
+        // True cause-of-death tracking. Every death that reaches this
+        // system was triggered by
         // `metabolism::compute_metabolism`'s `should_die = atp <= 0.0 ||
         // age_ticks >= max_lifespan` — except predation, which kills
         // directly regardless of ATP/age. So for a non-eaten death, the two
@@ -407,10 +387,10 @@ pub fn process_deaths_system(
             tick: common::Tick(atmosphere.ticks),
         });
 
-        // Phase 5, SX-1e: every death gets a `TimedEffects` floating-text
-        // burst, not just predation (P4-E1's original demonstration trigger)
-        // — see `death_effect_text_and_color`'s doc comment for the single
-        // shared `(text, color)` mapping every cause routes through.
+        // Every death gets a `TimedEffects` floating-text burst, not just
+        // predation — see `death_effect_text_and_color`'s doc comment for
+        // the single shared `(text, color)` mapping every cause routes
+        // through.
         {
             let (text, color) = death_effect_text_and_color(cause);
             timed_effects.spawn(
@@ -598,11 +578,9 @@ mod tests {
         ));
     }
 
-    /// Phase 5, SX-1e: before this milestone, only a predation death (the
-    /// `eaten.is_some()` branch) spawned a `TimedEffects::FloatingText` —
-    /// Starvation/Senescence/Disease deaths produced a correctly-caused
-    /// `PhylonEvent` but no viewport signal at all. This proves the gap is
-    /// closed for a real non-predation cause, not just asserted.
+    /// Every death cause, not just predation, must spawn a
+    /// `TimedEffects::FloatingText` viewport signal — this proves it for a
+    /// real non-predation cause, not just asserted.
     #[test]
     fn non_predation_death_still_spawns_a_timed_effect() {
         let mut world = base_world();
@@ -620,10 +598,10 @@ mod tests {
     #[test]
     fn death_effect_text_and_color_is_exhaustive_and_distinguishes_predation_from_disease() {
         // Not a full snapshot of every string/color (brittle) — just the
-        // property this milestone actually cares about: two causes with very
-        // different biological meaning must not render identically, and the
-        // Disease color must be the *exact* value SX-1d's Disease badge
-        // uses, not a coincidentally similar one.
+        // property that matters: two causes with very different biological
+        // meaning must not render identically, and the Disease color must
+        // be the *exact* value the Disease badge elsewhere in the UI uses,
+        // not a coincidentally similar one.
         let (predation_text, predation_color) =
             death_effect_text_and_color(events::DeathCause::Predation);
         let (disease_text, disease_color) =
@@ -633,11 +611,9 @@ mod tests {
         assert_eq!(disease_color, ecology::Diet::Decomposer.standard_color());
     }
 
-    /// Phase 5, SX-3a: `ReproductionEvent` was published but had zero
-    /// consumers — a silently-dead event variant. This proves
-    /// `interaction_event_log_system` now genuinely reads it: a generation-5
-    /// milestone must produce a real `NarrationLog` entry, using the event's
-    /// own tick (not a hardcoded placeholder).
+    /// `interaction_event_log_system` must genuinely read `ReproductionEvent`:
+    /// a generation-5 milestone must produce a real `NarrationLog` entry,
+    /// using the event's own tick (not a hardcoded placeholder).
     #[test]
     fn reproduction_event_at_a_generation_milestone_is_logged() {
         let mut world = World::new();
@@ -685,12 +661,10 @@ mod tests {
             .is_empty());
     }
 
-    /// Phase 5, SX-7a: `process_narrative_events_system` used to log every
-    /// hazard at a hardcoded `tick: 0` — harmless until SX-7a started
-    /// plotting `NarrationLog` entries as time-axis annotations on Metrics,
-    /// at which point every hazard marker would've piled up at x=0
-    /// regardless of when it actually happened. Proves the real
-    /// `GlobalAtmosphere::ticks` value is what gets logged now.
+    /// `process_narrative_events_system` must log the real
+    /// `GlobalAtmosphere::ticks` value, not a hardcoded tick — `NarrationLog`
+    /// entries are plotted as time-axis annotations on Metrics, so an
+    /// inaccurate tick would misplace the hazard marker on that timeline.
     #[test]
     fn hazard_event_logs_the_real_tick_not_a_hardcoded_zero() {
         let mut world = World::new();

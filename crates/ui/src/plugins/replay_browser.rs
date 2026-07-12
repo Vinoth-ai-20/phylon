@@ -1,13 +1,11 @@
 use crate::types::*;
 
 /// Renders the Replay Browser — static inspection of a loaded
-/// `.phylon-replay` bundle's recorded interventions (Phase 2, M6, scoped
-/// down from a live-playback "Replay Timeline" to this instead: replay
-/// execution is a separate headless mode that never coexists with the
-/// interactive UI — see `UI_PHASE2_ROADMAP.md`'s Execution Log for the
-/// discrepancy that forced this scope change). Answers "what's in this
-/// recording?" (seed, event count/tick range, every recorded intervention)
-/// without live scrub/seek control.
+/// `.phylon-replay` bundle's recorded interventions. Deliberately not a
+/// live-playback "Replay Timeline": replay execution is a separate
+/// headless mode that never coexists with the interactive UI. Answers
+/// "what's in this recording?" (seed, event count/tick range, every
+/// recorded intervention) without live scrub/seek control.
 #[allow(clippy::too_many_arguments)]
 pub fn replay_browser_ui(
     _ctx: &egui::Context,

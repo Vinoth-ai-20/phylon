@@ -1,6 +1,7 @@
-//! Procedural capsule mesh generation (Phase 8, ADR-P8-03) — one shared,
-//! low-poly vertex/index buffer, generated once at startup and instanced
-//! per bone. Replaces the retired `sdf_skin` accumulate-blend technique.
+//! Procedural capsule mesh generation — one shared, low-poly vertex/index
+//! buffer, generated once at startup and instanced per body-graph bone (a
+//! "capsule" is a cylinder with hemispherical caps, the render/collision
+//! primitive for one body segment).
 //!
 //! ## Local-space convention
 //!
@@ -17,10 +18,9 @@
 //! The vertex shader classifies each vertex by its local `y` into one of
 //! these three regions and reconstructs its world position from
 //! `pos_a`/`pos_b`/`radius` accordingly — see that shader's own doc comment
-//! for the exact formula. This is the "oriented-look-at vertex shader
-//! technique" ADR-P8-03 names: no per-instance rotation/quaternion is
-//! stored, only the two endpoints and a radius (nearly the same instance
-//! *data* as the old `SdfBoneInstance`).
+//! for the exact formula. No per-instance rotation/quaternion is stored on
+//! the CPU side, only the two endpoints and a radius; the vertex shader
+//! derives the orientation by looking from one endpoint toward the other.
 
 /// One vertex of the shared capsule mesh, in local capsule space (see this
 /// module's doc comment).
@@ -49,16 +49,16 @@ impl CapsuleVertex {
     }
 }
 
-/// Longitude divisions — kept low-poly per the roadmap's explicit
-/// "shared low-poly capsule mesh" instruction; a future LOD/billboard-
-/// impostor tier (mentioned in the roadmap's Mesh pipeline section) is
-/// explicitly out of scope for this epic.
+/// Longitude divisions — kept low-poly since this single mesh is instanced
+/// for every bone in the simulation; a future distance-based LOD or
+/// billboard-impostor tier would reduce this further for far-away
+/// organisms, but that's not implemented here.
 const RADIAL_SEGMENTS: u32 = 12;
 /// Latitude divisions per hemisphere cap (not counting the degenerate pole
 /// ring, which is included as ring index 0/last with a zero radius —
 /// simpler than a special-cased triangle fan, at the cost of a few
-/// zero-area triangles at each pole, an explicitly acceptable tradeoff for
-/// a "kept simple" low-poly primitive).
+/// zero-area triangles at each pole, an acceptable tradeoff for a
+/// low-poly primitive drawn thousands of times per frame).
 const CAP_RINGS: u32 = 4;
 
 /// Builds the shared capsule mesh once, returning `(vertices, indices)`.
@@ -132,14 +132,12 @@ pub fn build_capsule_mesh() -> (Vec<CapsuleVertex>, Vec<u16>) {
     for pair in ring_starts.windows(2) {
         connect_rings(pair[0], pair[1]);
     }
-    // The cylinder-body band isn't covered by `ring_starts.windows(2)` since
-    // that only connects rings *within* the same hemisphere's push order —
-    // wait, it is: `ring_starts` is pushed in one contiguous sequence
-    // (bottom hemisphere then top hemisphere), so `windows(2)` already
-    // includes the bottom-equator→top-equator pair (`cylinder_bottom_ring`→
-    // `cylinder_top_ring`) as the middle transition. Kept as named
-    // constants above only for clarity/documentation, not because they're
-    // used separately here.
+    // `ring_starts` is pushed in one contiguous sequence (bottom hemisphere
+    // then top hemisphere), so `windows(2)` above already includes the
+    // bottom-equator -> top-equator pair (`cylinder_bottom_ring` ->
+    // `cylinder_top_ring`) as its middle transition — the cylinder body
+    // needs no separate stitching pass. These two are kept as named
+    // constants only for readability, not because they're used separately.
     let _ = (cylinder_bottom_ring, cylinder_top_ring);
 
     (vertices, indices)

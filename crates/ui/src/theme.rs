@@ -37,11 +37,11 @@ pub const PANEL_PADDING: f32 = SPACE_SM;
 /// every non-Viewport panel.
 pub const CHROME_HEIGHT: f32 = 22.0;
 
-// ─── Dialog / toast geometry (Phase 7, W4a) ────────────────────────────────
+// ─── Dialog / toast geometry ────────────────────────────────────────────────
 //
-// Previously hardcoded literals in `plugins::dialogs`/`render::render_toasts`
-// (§2.6's audit finding) — tokenized here so a future dialog/toast doesn't
-// have to guess whether to match these by re-typing the same numbers.
+// Tokenized here (rather than left as literals in `plugins::dialogs`/
+// `render::render_toasts`) so a future dialog/toast doesn't have to guess
+// whether to match these by re-typing the same numbers.
 
 /// Default size for a standard modal dialog (e.g. the onboarding dialog).
 pub const DIALOG_SIZE: egui::Vec2 = egui::vec2(500.0, 400.0);
@@ -165,31 +165,28 @@ pub const FOCUS_RING: Color32 = ACCENT;
 
 /// Explicit full-bright text color for a label drawn on a colored/opaque
 /// card background (e.g. a toast's message) where egui's default text color
-/// isn't guaranteed to contrast — previously a bare `Color32::WHITE` literal
-/// (Phase 7, §2.6's audit finding).
+/// isn't guaranteed to contrast.
 pub const TEXT_PRIMARY: Color32 = Color32::WHITE;
 
 /// The onboarding dialog's "a glyph above an organism" icon color — an
 /// illustrative orange distinct from every semantic (`GOOD`/`WARN`/`BAD`)
-/// and diet token, previously a bare literal (Phase 7, §2.6's audit
-/// finding). Not `LOG_HAZARD`/`WARN` despite similar hue — this is a UI
-/// chrome/onboarding color, unrelated to either's semantic meaning, and
+/// and diet token. Not `LOG_HAZARD`/`WARN` despite similar hue — this is a
+/// UI chrome/onboarding color, unrelated to either's semantic meaning, and
 /// unifying them would be a coincidence-driven merge, not a real one.
 pub const ACTIVITY_GLYPH: Color32 = Color32::from_rgb(230, 140, 30);
 
-// ─── Panel visual-hierarchy tiers (docs/design/layout.md, ADR-P5-05) ───────
+// ─── Panel visual-hierarchy tiers (docs/design/layout.md) ──────────────────
 //
-// Phase 5, SX-8a: `layout::chrome_bar` is the single consolidated chrome
-// implementation every docked/tabbed/floating panel already routes through
-// (Milestone 6's consolidation, predating this epic) — these tokens give it
-// a *tiering* on top of that, so a panel whose content changes with the
+// `layout::chrome_bar` is the single consolidated chrome implementation
+// every docked/tabbed/floating panel routes through; these tokens give it a
+// *tiering* on top of that, so a panel whose content changes with the
 // current selection (Contextual) reads with more visual weight than an
 // aggregate dashboard/log (Secondary) that doesn't. Deliberately a color +
-// structural (accent bar) distinction, not a size change — ADR-P5-05 is
-// explicit that tiering must not just resize `CHROME_HEIGHT`.
+// structural (accent bar) distinction, not a size change — tiering must not
+// just resize `CHROME_HEIGHT`.
 
 /// Chrome title color for a Contextual-tier panel (Sidebar/Inspector, Neural
-/// Viewer, the P4-R-tier Physiology/Circulation/Hormone/Immune/Lineage
+/// Viewer, the Physiology/Circulation/Hormone/Immune/Lineage
 /// viewers) — full-strength text, unchanged from before tiering existed.
 pub const CHROME_TITLE_CONTEXTUAL: Color32 = Color32::from_gray(230);
 /// Chrome title color for a Secondary-tier panel (Metrics, Event Log,
@@ -284,8 +281,8 @@ pub const SIZE_SPLASH_BUTTON: f32 = 20.0;
 /// Font size for section headings (`ui.heading()` / `TextStyle::Heading`).
 pub const SIZE_HEADING: f32 = 18.0;
 /// Font size for panel/window titles and CollapsingHeader-level
-/// sub-sections — bumped from 14 so it reads as distinct from Body at a
-/// glance (they used to be visually indistinguishable at arm's length).
+/// sub-sections — kept a step above `SIZE_BODY` so it reads as visually
+/// distinct at a glance rather than blending into body text.
 pub const SIZE_SUBHEADING: f32 = 15.0;
 /// Font size for standard body text, data-grid rows, and interactive
 /// options (buttons, toggles) — the app's default text size.
@@ -338,10 +335,10 @@ pub fn install_fonts(fonts: &mut egui::FontDefinitions) {
 
 /// Applies global spacing + text-style tokens. Called once at startup (after
 /// `set_fonts`) and again every frame from `render_ui` with the current
-/// `high_contrast` setting (Phase 2, M18 — Accessibility pass 2), so toggling
-/// it takes effect immediately; the per-field writes here are cheap enough
-/// (no font re-registration, just style-struct assignment) that calling this
-/// once per frame is not a measurable cost.
+/// `high_contrast` setting, so toggling it takes effect immediately; the
+/// per-field writes here are cheap enough (no font re-registration, just
+/// style-struct assignment) that calling this once per frame is not a
+/// measurable cost.
 pub fn apply_style(ctx: &egui::Context, high_contrast: bool) {
     ctx.style_mut(|style| {
         style.spacing.item_spacing = egui::vec2(SPACE_SM, SPACE_XS + 2.0);
@@ -381,13 +378,12 @@ pub fn apply_style(ctx: &egui::Context, high_contrast: bool) {
         style.visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0_f32, FOCUS_RING);
         style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, FOCUS_RING);
 
-        // High Contrast Mode (Phase 2, M18): brightens body/button text and
-        // widget borders app-wide. Scoped to these few style fields rather
-        // than a full second token palette — a live colorblind preview
-        // (also considered for this pass) would need a genuine color-space
-        // transform pipeline and is deliberately deferred, tied to the same
-        // `palette`-crate trigger condition the Phase 2 roadmap's Color
-        // Architecture section already documents, not silently dropped.
+        // High Contrast Mode: brightens body/button text and widget borders
+        // app-wide. Scoped to these few style fields rather than a full
+        // second token palette — a live colorblind preview would need a
+        // genuine color-space transform pipeline (a `palette`-crate-based
+        // trigger, per `docs/design/`'s Color Architecture section) and is
+        // deliberately out of scope for this toggle, not silently dropped.
         if high_contrast {
             style.visuals.override_text_color = Some(egui::Color32::WHITE);
             style.visuals.widgets.noninteractive.bg_stroke =

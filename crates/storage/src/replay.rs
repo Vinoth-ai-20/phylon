@@ -1,8 +1,38 @@
-//! Deterministic replay: an initial [`SimulationSnapshot`] plus a
-//! chronological log of external interventions, together sufficient to
-//! reproduce a run bit-for-bit (per the spec's determinism guarantee:
-//! "replay is guaranteed by recording the RNG seed + all external
-//! interventions").
+//! # Replay: a log of interventions, for reproducing a run
+//!
+//! ## Purpose
+//!
+//! A replay bundle ([`crate::replay::ReplayBundle`]) reproduces a
+//! simulation run bit-for-bit, but takes a fundamentally different — and
+//! much smaller — approach than a snapshot (see the `snapshot` module). A
+//! snapshot is a complete copy of simulation state at one instant; a replay
+//! bundle is one initial snapshot (state at tick 0, or whenever recording
+//! started) plus a chronological log of every *external* intervention
+//! applied afterward (see [`crate::replay::ReplayAction`]) — it does not
+//! store per-tick state at all.
+//!
+//! ## Why this is enough
+//!
+//! Every stochastic decision the simulation itself makes (mutation rolls,
+//! foraging choices, disease transmission, ...) draws from `common::SimRng`
+//! — the single seeded random-number generator every stochastic system in
+//! the simulation is required to use, rather than each system keeping its
+//! own independent source of randomness. Given the same seed and the same
+//! starting state, a purely emergent run
+//! with no manual interventions is therefore already bit-reproducible with
+//! nothing more than that seed — the simulation is a deterministic function
+//! of its inputs. The only way a rerun can diverge from the original is if
+//! a human (or a research/god-mode tool) reached in and changed something
+//! from outside that deterministic process — reseeding the ecosystem,
+//! spawning a preset organism, dropping a manual hazard.
+//! [`crate::replay::ReplayLog`] records exactly those events, tagged with
+//! the tick they occurred at, so replaying a run means: restore the
+//! initial snapshot, then re-run the simulation forward, re-applying each
+//! recorded intervention at its original tick. This is dramatically
+//! cheaper than snapshotting every tick, at the cost of only supporting
+//! interventions that are safe to record and replay literally (see
+//! [`crate::replay::ReplayAction`]'s doc comment for what's excluded and
+//! why).
 
 use crate::snapshot::{SerializedVec2, SimulationSnapshot};
 use crate::StorageError;
@@ -70,9 +100,9 @@ pub struct ReplayEvent {
 /// bit-reproducible from its initial snapshot + seed, since every
 /// stochastic decision draws from the same seeded `common::SimRng`. Manual
 /// god-mode interventions are the only *external* source of divergence —
-/// recording them (and only them, not full per-tick state) is what the
-/// spec means by "replayable experiments" without the cost of a full
-/// per-tick recording.
+/// recording them (and only them, not full per-tick state) is what makes
+/// replayable experiments possible without the cost of a full per-tick
+/// recording.
 ///
 /// ## 3. How It Happens
 /// `record` appends events in call order (already tick-ascending in

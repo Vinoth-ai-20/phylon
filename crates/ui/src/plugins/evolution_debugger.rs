@@ -1,25 +1,24 @@
-//! Evolution Debugger panel (Phase 3, M12) — cross-organism mutation diff,
+//! Evolution Debugger panel — cross-organism mutation diff,
 //! parent-vs-offspring and arbitrary-pair comparison, and a
-//! development-failure inspector, following `PHASE3_ROADMAP.md` §8's design.
+//! development-failure inspector.
 //!
 //! Unlike the HOX Visualizer / GRN Viewer (Sidebar tabs, scoped to the
-//! single selected/tracked organism), this is a dock panel per §8's own
-//! spec ("cross-organism/cross-run, like Research Dashboard") — it compares
-//! *any two* organisms, not just "selected vs. its parent."
+//! single selected/tracked organism), this is a dock panel like Research
+//! Dashboard — it compares *any two* organisms, not just "selected vs. its
+//! parent."
 //!
 //! Reuses `crate::regulatory_view`'s network-building/bias-diff helpers
-//! (built for the GRN Viewer, M11) rather than duplicating that logic —
+//! (shared with the GRN Viewer) rather than duplicating that logic —
 //! "mutation diff" here is the same per-gene bias comparison, just for an
 //! arbitrary pair instead of a fixed parent link.
 //!
 //! **Deliberately out of scope, documented not silently dropped:** a
-//! "development event log" (§8's fifth bullet). No event-emission
-//! infrastructure exists today for development events (`growth_system`
-//! doesn't publish to `events::PhylonEvent` at all) — building one would be
-//! a materially separate feature (new event variants, emission wiring in
+//! "development event log". No event-emission infrastructure exists today
+//! for development events (`growth_system` doesn't publish to
+//! `events::PhylonEvent` at all) — building one would be a materially
+//! separate feature (new event variants, emission wiring in
 //! `organisms::growth_system`, a log display), not an additive reuse of
-//! data this phase's pipeline already produces. Flagged for a future
-//! milestone rather than built here.
+//! data this panel's pipeline already produces.
 
 use crate::types::MenuAction;
 use bevy_ecs::entity::Entity;
@@ -256,9 +255,9 @@ fn development_failure_inspector(
                     .selectable_label(false, format!("Entity {} — 0 effectors", entity.index()))
                     .clicked()
                 {
-                    // Phase 7, W0b: routed through the single selection
-                    // pathway so this behaves like every other entity list
-                    // (recent selections, viewport, context menu).
+                    // Routed through the single selection pathway so this
+                    // behaves like every other entity list (recent
+                    // selections, viewport, context menu).
                     state.select(entity);
                 }
             }

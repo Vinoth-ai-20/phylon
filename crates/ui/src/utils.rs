@@ -1,4 +1,11 @@
-/// Recursively draws the segment / spring tree of an organism in the inspector.
+//! Small UI helper utilities shared across panels.
+
+/// Recursively draws the segment / spring tree of an organism in the
+/// Inspector's Body Plan section — one row per `physics::ParticleNode`
+/// body-segment entity, nested by `physics::Spring` connectivity, starting
+/// from `current_node` (typically the organism's head) and walking outward.
+/// Clicking a row updates `selected_entity`, so picking a segment here
+/// behaves like picking it in the viewport.
 pub(crate) fn draw_segment_tree(
     ui: &mut egui::Ui,
     current_node: bevy_ecs::entity::Entity,

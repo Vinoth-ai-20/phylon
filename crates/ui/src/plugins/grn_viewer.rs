@@ -1,13 +1,11 @@
-//! GRN Viewer panel (Phase 3, M11) — graph layout of the selected
-//! organism's `genetics::RegulatoryNetwork`, developmental-step time
-//! playback, and a mutation-vs-parent comparison, following
-//! `PHASE3_ROADMAP.md` §8's design.
+//! GRN Viewer panel — graph layout of the selected organism's
+//! `genetics::RegulatoryNetwork`, developmental-step time playback, and a
+//! mutation-vs-parent comparison.
 //!
-//! Reuses `crate::graph_canvas`'s pan/zoom/hit-test helpers (extracted from
-//! `plugins::neural_viewer` for this milestone) rather than reimplementing
-//! node-link graph navigation — `RegulatoryNetwork` is structurally the
-//! same shape (nodes + signed weighted edges) as the `Cppn`/`Brain` graphs
-//! Neural Viewer already draws.
+//! Reuses `crate::graph_canvas`'s pan/zoom/hit-test helpers (shared with
+//! `plugins::neural_viewer`) rather than reimplementing node-link graph
+//! navigation — `RegulatoryNetwork` is structurally the same shape (nodes +
+//! signed weighted edges) as the `Cppn`/`Brain` graphs Neural Viewer draws.
 
 const NODE_HOX: egui::Color32 = egui::Color32::from_rgb(255, 180, 90);
 const NODE_DIFFERENTIATION: egui::Color32 = egui::Color32::from_rgb(150, 170, 255);
@@ -103,8 +101,8 @@ fn node_color(role: genetics::RegulatoryGeneRole) -> egui::Color32 {
 }
 
 /// Draws `network` as a node-link graph: nodes arranged in a circle
-/// (a fixed, deterministic layout — appropriate for this milestone's small,
-/// fixed 10-gene vocabulary; a force-directed layout would be overkill),
+/// (a fixed, deterministic layout — appropriate for the small, fixed
+/// 10-gene vocabulary; a force-directed layout would be overkill),
 /// edges colored by activator (blue, positive weight) vs. repressor (red,
 /// negative weight) exactly like Neural Viewer's CPPN canvas, and node fill
 /// brightness encoding the gene's live expression level (`state`, in
@@ -206,9 +204,8 @@ fn draw_grn_graph(
 }
 
 /// Compares the selected organism's regulatory genes against its recorded
-/// parent's (via `evolution::LineageTracker`), reusing Recent Selections'
-/// comparison instinct (Phase 2, M13) at gene granularity rather than
-/// building a new diff UI from scratch. Gracefully reports "no parent
+/// parent's (via `evolution::LineageTracker`) at gene granularity, rather
+/// than building a new diff UI from scratch. Gracefully reports "no parent
 /// data" when the lineage record, parent id, or parent entity isn't
 /// available — a dead/despawned parent is the common case, not an error.
 fn mutation_comparison(

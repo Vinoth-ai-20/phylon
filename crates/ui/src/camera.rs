@@ -1,38 +1,108 @@
-//! The canonical 3D camera (Phase 8, ADR-P8-02) — replaces the pre-Phase-8
-//! flat `camera_pos: Vec2` + `camera_zoom: f32` pair on `WorkbenchState`.
+//! Camera and projection math for the workbench viewport.
 //!
-//! [`Camera3d`] is the single object every renderer and every input
-//! controller consumes; `view_proj()` and `screen_to_ray()` are its only two
-//! projection-related methods (per the ADR — no renderer or controller ever
-//! derives its own projection matrix again). [`OrbitController`] (the
-//! default mode) and [`FlyController`] (opt-in) are the two ways user input
-//! produces a `Camera3d` — see [`CameraController`].
+//! ## Purpose
+//!
+//! This module is the single source of truth for turning user camera input
+//! into a 3D view, and for converting between world space and screen space.
+//! Nothing else in the `ui` crate is allowed to derive its own projection
+//! matrix or hand-roll a screen↔world transform — every renderer and every
+//! input controller goes through [`Camera3d`].
+//!
+//! ## Architecture
+//!
+//! [`Camera3d`] is a plain position/orientation/projection-parameters struct
+//! with exactly two projection-related methods: [`Camera3d::view_proj`]
+//! (world → clip space, for rendering) and [`Camera3d::screen_to_ray`]
+//! (screen → world, for picking/selection). [`Camera3d::world_to_screen`] is
+//! the inverse of the latter, used by box-select and lasso-select.
+//!
+//! User input never edits a `Camera3d` directly. Instead, two independent
+//! controllers each hold their own minimal state and derive a `Camera3d` on
+//! demand:
+//!
+//! - [`OrbitController`] — arcball/turntable orbit around a focus point
+//!   (the default mode, matching the Blender-style convention this project's
+//!   UX otherwise follows).
+//! - [`FlyController`] — free WASD + mouselook, direct control over
+//!   position/orientation with no focus point (opt-in).
+//!
+//! [`CameraController`] wraps whichever of the two is active and mediates
+//! switching between them, reseeding the new controller from the old one's
+//! current `Camera3d` so the transition is visually continuous rather than
+//! snapping to a default view.
+//!
+//! Orientation in both controllers is built via quaternion composition
+//! rather than stored as raw Euler angles, and `Camera3d::orientation` is
+//! itself a `Quat` — see "Design decisions" below for why.
+//!
+//! Projection mode (perspective vs. orthographic) is a separate, additive
+//! axis: `Camera3d::ortho_half_height` toggles it independently of which
+//! controller is active or how that controller's orientation was built.
+//!
+//! ## Data flow
+//!
+//! `viewport_input.rs` translates raw pointer/keyboard events into
+//! high-level deltas (orbit deltas, pan deltas, zoom factors, WASD/mouselook
+//! deltas) and applies them to whichever `CameraController` variant is
+//! active. `frame_animation.rs` layers smooth interpolation on top for
+//! programmatic camera moves (e.g. "focus selection"). Each frame, the
+//! active controller's `.camera()` method produces a fresh `Camera3d`, which
+//! `render.rs` uses for `view_proj()` and which `plugins/viewport.rs` and
+//! `plugins/gizmos.rs` use for `screen_to_ray()`/`world_to_screen()` to
+//! convert pointer positions to world-space picks and vice versa.
 //!
 //! ## World/camera axis convention
 //!
-//! `Z` is the world's fixed up axis (Phase 9, P9.3 — see
-//! `OrbitController::orientation`'s doc comment for the full reasoning).
-//! The default orbit configuration sits above the origin at a fixed
-//! height, looking straight down (`-Z`) — this reproduces the original
-//! flat top-down view (see `WorkbenchState::camera_pos_2d`/
-//! `camera_zoom_2d`, the temporary bridge that feeds the not-yet-migrated
-//! 2D renderers this same information), with world `+Y` reading as
-//! screen-up specifically *at that default view* — not because `Y` is the
-//! up axis, but because `Y` is what a Z-up camera's screen-up naturally
-//! reduces to when looking straight down the up axis itself. Tilt the
-//! camera toward the horizon and screen-up smoothly rotates toward world
-//! `+Z`, which *is* the up axis everywhere else on the sphere.
+//! `Z` is the world's fixed up axis (see `OrbitController::orientation`'s
+//! doc comment for the full reasoning). The default orbit configuration
+//! sits above the origin at a fixed height, looking straight down (`-Z`),
+//! reproducing a flat top-down view (see `WorkbenchState::camera_pos_2d`/
+//! `camera_zoom_2d`, the bridge that feeds this same information to the
+//! still-2D renderers), with world `+Y` reading as screen-up specifically
+//! *at that default view* — not because `Y` is the up axis, but because `Y`
+//! is what a Z-up camera's screen-up naturally reduces to when looking
+//! straight down the up axis itself. Tilt the camera toward the horizon and
+//! screen-up smoothly rotates toward world `+Z`, which *is* the up axis
+//! everywhere else on the sphere.
 //!
 //! `OrbitController` orbits freely over the full sphere (no pitch clamp);
-//! `FlyController` still clamps pitch a few degrees short of straight
-//! up/down to keep its own forward/right/up basis non-degenerate — the two
-//! controllers are independent, and only `OrbitController`'s clamp was in
-//! scope for the P9.3 fix (Fly mode's own feel was explicitly left
-//! unchanged).
+//! `FlyController` clamps pitch a few degrees short of straight up/down to
+//! keep its own forward/right/up basis non-degenerate. The two controllers
+//! are independent — `FlyController`'s clamp exists purely for its own
+//! internal basis construction and has no bearing on `OrbitController`'s
+//! unclamped pitch.
+//!
+//! ## Determinism
+//!
+//! Camera state is purely presentational: it affects what is drawn and
+//! where clicks are picked, but it is never read by simulation systems and
+//! never advances the simulation clock. Nothing in this module needs to be
+//! (or is) part of the simulation's deterministic state.
+//!
+//! ## Extension points
+//!
+//! A third camera mode would be a new variant on [`CameraController`] plus a
+//! `.camera()` method producing a `Camera3d` from its own state — the rest
+//! of the pipeline (rendering, picking, animation) needs no changes since it
+//! only ever consumes the resulting `Camera3d`. A new projection mode would
+//! extend `Camera3d::projection_matrix`'s match and both directions of the
+//! screen↔world conversion in lockstep, the same way orthographic mode was
+//! added alongside perspective.
+//!
+//! ## Related modules
+//!
+//! - `viewport_input.rs` — translates raw input into controller deltas.
+//! - `frame_animation.rs` — smooth interpolation for programmatic camera
+//!   moves.
+//! - `plugins/gizmos.rs` — screen-space gizmo rendering built on
+//!   `world_to_screen`/`screen_to_ray`.
 
 use common::{Mat3, Mat4, Quat, Vec2, Vec3};
 
-/// The single canonical 3D camera object (Phase 8, ADR-P8-02).
+/// The single canonical 3D camera object: everything a renderer needs to
+/// build a view-projection matrix, and everything a picking routine needs to
+/// cast a ray. Produced by whichever `CameraController` variant is active;
+/// never constructed or mutated directly by UI/input code.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera3d {
     /// World-space eye position.
@@ -49,18 +119,18 @@ pub struct Camera3d {
     pub near: f32,
     /// Far clip distance.
     pub far: f32,
-    /// Phase 9, P9.4: `None` (the default, and the only value before this
-    /// milestone) means perspective projection. `Some(half_height)` means
+    /// `None` means perspective projection. `Some(half_height)` means
     /// orthographic, with `half_height` the world-space half-extent
     /// visible at the vertical center of the viewport — deliberately a
     /// *projection-mode* field, not an orbit/orientation one; nothing
-    /// about `yaw`/`pitch`/`orientation` construction changes based on it.
+    /// about `yaw`/`pitch`/`orientation` construction changes based on it,
+    /// so toggling this field alone is enough to switch projection modes
+    /// without touching the camera's position or orientation.
     pub ortho_half_height: Option<f32>,
 }
 
 impl Camera3d {
-    /// Default vertical FOV — an untuned-but-reasonable ~50°, same status as
-    /// every other not-yet-measured constant introduced this phase.
+    /// Default vertical FOV — an untuned-but-reasonable ~50°.
     pub const DEFAULT_FOV_Y: f32 = 50.0_f32.to_radians();
     /// Default near clip.
     pub const DEFAULT_NEAR: f32 = 1.0;
@@ -107,17 +177,17 @@ impl Camera3d {
 
     /// The combined view-projection matrix for the given viewport aspect
     /// ratio (`width / height`). The one and only place any renderer should
-    /// obtain a projection matrix from (ADR-P8-02).
+    /// obtain a projection matrix from.
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         let view = Mat4::look_to_rh(self.position, self.forward(), self.up());
         self.projection_matrix(aspect) * view
     }
 
     /// Produces a world-space ray `(origin, direction)` from a screen-space
-    /// point — the one and only unproject pathway (ADR-P8-02), replacing
-    /// the 3 independently hand-derived screen↔world transforms the Phase 8
-    /// audit found (`app::pick_entity`, and two closures in
-    /// `ui::plugins::viewport`). In orthographic mode (Phase 9, P9.4) every
+    /// point — the one and only unproject pathway; every "where in the world
+    /// did the user click/hover" call site (entity picking, box-select,
+    /// lasso-select, gizmo interaction) goes through this method rather than
+    /// deriving its own screen↔world transform. In orthographic mode every
     /// ray shares the same `forward()` direction and only the *origin*
     /// varies across the viewport, matching how parallel projection
     /// actually works — perspective's diverging-rays-from-one-point model
@@ -150,10 +220,9 @@ impl Camera3d {
     }
 
     /// Projects a world-space point to a screen-space pixel coordinate —
-    /// the inverse direction of [`Camera3d::screen_to_ray`], and (Phase 8,
-    /// Epic 8.4) the second of this type's two projection-related methods,
-    /// used by frustum-based box-select and lasso-select to test entity
-    /// positions against a screen-space region. Returns `None` if
+    /// the inverse direction of [`Camera3d::screen_to_ray`], used by
+    /// frustum-based box-select and lasso-select to test entity positions
+    /// against a screen-space region. Returns `None` if
     /// `world_pos` is behind the camera (not meaningfully projectable to a
     /// screen pixel).
     pub fn world_to_screen(&self, world_pos: Vec3, viewport_size: Vec2) -> Option<Vec2> {
@@ -193,13 +262,12 @@ impl Default for Camera3d {
     }
 }
 
-/// Intersects a world-space ray with the `Z = 0` plane (where every
-/// organism/food/mineral/corpse still lives until Epic 8.6) — the shared
-/// primitive behind every "screen click/hover → world position" call site
-/// this epic consolidates. Not a `Camera3d` method: the `Z = 0` plane is a
-/// simulation-space convention the camera itself has no reason to know
-/// about (mirrors `ADR-P8-05`'s "world-space fields stay a flat plane"
-/// precedent).
+/// Intersects a world-space ray with the `Z = 0` plane, where every
+/// organism/food/mineral/corpse currently lives — the shared primitive
+/// behind every "screen click/hover → world position" call site. Not a
+/// `Camera3d` method: the `Z = 0` plane is a simulation-space convention the
+/// camera itself has no reason to know about, so this stays a free function
+/// rather than coupling `Camera3d` to a fact about world layout.
 pub fn ray_intersect_z0(origin: Vec3, direction: Vec3) -> Option<Vec2> {
     if direction.z.abs() < 1e-6 {
         return None;
@@ -212,9 +280,10 @@ pub fn ray_intersect_z0(origin: Vec3, direction: Vec3) -> Option<Vec2> {
 }
 
 /// Standard even-odd (crossing-number) point-in-polygon test, in
-/// screen-space pixels (Phase 8, Epic 8.4 — lasso-select). `polygon` need
-/// not be explicitly closed; the last point is implicitly connected back to
-/// the first. Fewer than 3 points never contains anything.
+/// screen-space pixels — used by lasso-select to test whether a projected
+/// entity position falls inside the freehand selection outline. `polygon`
+/// need not be explicitly closed; the last point is implicitly connected
+/// back to the first. Fewer than 3 points never contains anything.
 pub fn point_in_polygon(point: Vec2, polygon: &[Vec2]) -> bool {
     if polygon.len() < 3 {
         return false;
@@ -235,38 +304,36 @@ pub fn point_in_polygon(point: Vec2, polygon: &[Vec2]) -> bool {
     inside
 }
 
-/// Arcball/turntable orbit around a focus point — the default camera mode
-/// (ADR-P8-02), matching the Blender-style scientific-tool convention this
-/// project's UX already leans on elsewhere.
+/// Arcball/turntable orbit around a focus point — the default camera mode,
+/// matching the Blender-style scientific-tool convention this project's UX
+/// otherwise follows.
 ///
-/// Phase 9, P9.3: `pitch` is an **unbounded** polar angle (radians, `0.0` =
-/// looking straight down at `focus`, matching the original top-down
-/// default) — the previous `[0.0, 89°]` clamp stopped the camera just short
-/// of the horizon and could never orbit "up and over" the pivot, which is
-/// the exact "camera feels locked" complaint this milestone fixes. `yaw` is
-/// the azimuth of the tilt direction; kept well-defined at `pitch == 0.0`
-/// (where azimuth is otherwise meaningless) by simply leaving it unchanged
-/// rather than resetting it. `forward()`'s spherical parameterization is
-/// continuous and periodic in `pitch` by construction (`sin`/`cos` are
-/// periodic), so letting `pitch` grow or shrink without bound produces a
-/// smooth, unbroken orbit over the full sphere — no wraparound logic is
-/// needed, and there is no artificial stopping point.
+/// `pitch` is an **unbounded** polar angle (radians, `0.0` = looking
+/// straight down at `focus`, matching the top-down default view). It is
+/// deliberately not clamped to `[0, π]` or any other range: clamping would
+/// stop the camera just short of the horizon and prevent it from ever
+/// orbiting "up and over" the pivot, which is exactly the freedom a
+/// turntable orbit is supposed to give. `yaw` is the azimuth of the tilt
+/// direction; it is kept well-defined at `pitch == 0.0` (where azimuth is
+/// otherwise meaningless) by simply leaving it unchanged rather than
+/// resetting it. `forward()`'s spherical parameterization is continuous and
+/// periodic in `pitch` by construction (`sin`/`cos` are periodic), so
+/// letting `pitch` grow or shrink without bound produces a smooth, unbroken
+/// orbit over the full sphere — no wraparound logic is needed, and there is
+/// no artificial stopping point.
 ///
-/// **World `Z` is the fixed reference-up for this orbit** (previously
-/// `Vec3::Y` — an inconsistency with `FlyController`, which always used
-/// `Z`, left over from when the simulation was 2D-in-the-XY-plane and `Z`
-/// was merely a camera "altitude," not a true up axis). With `Z` as the
-/// reference, screen-up stays anchored to world-up everywhere except at
-/// the exact poles (`pitch` an exact multiple of π, where `forward` is
-/// parallel to `Z`) — there,
-/// `orientation_from_forward_and_reference_up`'s existing fallback to
-/// `Vec3::X` keeps the basis non-degenerate, at the cost of a one-instant
-/// roll-reference discontinuity exactly at that single point. This is the
-/// same, well-known, accepted behavior every Z-up turntable camera has at
-/// true zenith/nadir (Blender's turntable orbit included) — it is not the
-/// pathological "gimbal lock" (loss of a whole degree of freedom) the
-/// previous hard pitch clamp was a workaround for, and does not recur
-/// anywhere else on the sphere.
+/// **World `Z` is the fixed reference-up for this orbit**, consistent with
+/// `FlyController`. With `Z` as the reference, screen-up stays anchored to
+/// world-up everywhere except at the exact poles (`pitch` an exact multiple
+/// of π, where `forward` is parallel to `Z`) — there,
+/// `orientation_from_forward_and_reference_up`'s fallback to `Vec3::X` keeps
+/// the basis non-degenerate, at the cost of a one-instant roll-reference
+/// discontinuity exactly at that single point. This is the same, universal
+/// behavior every Z-up turntable camera has at true zenith/nadir (Blender's
+/// turntable orbit included) — it is not the pathological "gimbal lock"
+/// (loss of a whole degree of freedom) that a hard pitch clamp would be
+/// needed to work around, and it does not recur anywhere else on the
+/// sphere.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OrbitController {
     /// World-space point the camera looks at and orbits around — always an
@@ -284,12 +351,12 @@ pub struct OrbitController {
 }
 
 impl OrbitController {
-    /// Distance at which the default view reproduces the pre-Phase-8
-    /// `camera_zoom = 1.0` default (1 world unit == 1 pixel) at the
-    /// application's default 720px-tall window (`data/default.ron`) —
-    /// `360.0 / tan(Camera3d::DEFAULT_FOV_Y / 2.0)`, see
-    /// `WorkbenchState::camera_zoom_2d`'s doc comment. Precomputed rather
-    /// than derived at const-eval time since `f32::tan` isn't `const fn`.
+    /// Distance at which the default view reproduces a 1-world-unit ==
+    /// 1-pixel default zoom at the application's default 720px-tall window
+    /// (`data/default.ron`) — `360.0 / tan(Camera3d::DEFAULT_FOV_Y / 2.0)`,
+    /// see `WorkbenchState::camera_zoom_2d`'s doc comment. Precomputed
+    /// rather than derived at const-eval time since `f32::tan` isn't
+    /// `const fn`.
     pub const DEFAULT_DISTANCE: f32 = 772.02;
     /// Closest the camera is allowed to approach its focus point.
     pub const MIN_DISTANCE: f32 = 20.0;
@@ -298,28 +365,27 @@ impl OrbitController {
 
     /// The full orientation this orbit configuration describes, as a
     /// genuine quaternion composition — **not** a from-forward-vector
-    /// reconstruction (which is what the pre-P9.3 code, and this method's
-    /// own first draft, used, via `orientation_from_forward_and_reference_up`
-    /// with a fixed reference-up vector). That approach has an inherent
-    /// blind spot: whichever single vector is chosen as "reference up" is
-    /// itself degenerate (parallel to `forward`) at *some* orientation, and
-    /// there is no one choice that is simultaneously non-degenerate at
-    /// nadir (where the pre-existing top-down default needs `Y` to read as
-    /// screen-up) and correct at the horizon (where a genuinely Z-up world
-    /// needs `Z` to read as screen-up).
+    /// reconstruction (see `orientation_from_forward_and_reference_up`,
+    /// which `FlyController` uses instead). A from-forward-vector
+    /// reconstruction needs a fixed reference-up vector, and that approach
+    /// has an inherent blind spot: whichever single vector is chosen as
+    /// "reference up" is itself degenerate (parallel to `forward`) at *some*
+    /// orientation, and there is no one choice that is simultaneously
+    /// non-degenerate at nadir (where the top-down default needs `Y` to
+    /// read as screen-up) and correct at the horizon (where a genuinely
+    /// Z-up world needs `Z` to read as screen-up).
     ///
     /// Composing two rotations instead has no such blind spot anywhere on
     /// the sphere: `yaw` rotates around world `Z` (spinning the view around
     /// the vertical axis), then `pitch` rotates around the *local* `X`
     /// (tilting forward away from nadir). At `pitch == 0.0` this reduces to
     /// pure yaw-around-`Z`, which leaves local `-Z` (forward) and `+Y` (up)
-    /// exactly where the pre-existing top-down default expects them — this
-    /// is a genuine mathematical property of the composition, not a
-    /// special-cased branch. At `pitch == π/2` (horizon), the composition
-    /// puts world `+Z` exactly at screen-up, satisfying "the world stays
-    /// Z-up." Every angle in between interpolates continuously and is
-    /// numerically well-defined; `Quat` multiplication has no singularity
-    /// to fall back from.
+    /// exactly where the top-down default expects them — this is a genuine
+    /// mathematical property of the composition, not a special-cased
+    /// branch. At `pitch == π/2` (horizon), the composition puts world `+Z`
+    /// exactly at screen-up, satisfying "the world stays Z-up." Every angle
+    /// in between interpolates continuously and is numerically well-defined;
+    /// `Quat` multiplication has no singularity to fall back from.
     fn orientation(&self) -> Quat {
         Quat::from_axis_angle(Vec3::Z, self.yaw) * Quat::from_axis_angle(Vec3::X, self.pitch)
     }
@@ -348,8 +414,8 @@ impl OrbitController {
 
     /// Rotates the orbit by a screen-space drag delta (radians per pixel is
     /// baked into the caller's scale factor — this method just applies the
-    /// resulting angle deltas). Phase 9, P9.3: `pitch` is no longer
-    /// clamped — see this struct's own doc comment.
+    /// resulting angle deltas). `pitch` is never clamped — see this
+    /// struct's own doc comment.
     pub fn orbit(&mut self, delta_yaw: f32, delta_pitch: f32) {
         self.yaw += delta_yaw;
         self.pitch += delta_pitch;
@@ -357,16 +423,14 @@ impl OrbitController {
 
     /// Pans `focus` along the camera's own right/up-on-ground axes, scaled
     /// by `distance` so a given screen-space drag covers the same *visual*
-    /// fraction of the viewport regardless of zoom level — the direct
-    /// analog of the pre-Phase-8 `camera_pos -= drag_delta / camera_zoom`.
+    /// fraction of the viewport regardless of zoom level.
     pub fn pan(&mut self, screen_delta: Vec2, viewport_height: f32) {
         if viewport_height <= 0.0 {
             return;
         }
-        // Same proportionality the old flat camera used: one world unit
-        // spans `viewport_height / (2 * distance * tan(fov_y / 2))` pixels
-        // at the focus plane — invert that to convert a pixel delta into a
-        // world delta.
+        // One world unit spans `viewport_height / (2 * distance *
+        // tan(fov_y / 2))` pixels at the focus plane — invert that to
+        // convert a pixel delta into a world delta.
         let world_per_pixel =
             (2.0 * self.distance * (Camera3d::DEFAULT_FOV_Y * 0.5).tan()) / viewport_height;
         let camera = self.camera();
@@ -377,8 +441,7 @@ impl OrbitController {
     }
 
     /// Multiplies `distance` by `1 / factor` (a `factor > 1.0` zooms in,
-    /// matching the pre-Phase-8 `camera_zoom *= factor` convention where
-    /// bigger `camera_zoom` meant "closer"), clamped to
+    /// i.e. bigger `factor` means "closer"), clamped to
     /// `[MIN_DISTANCE, MAX_DISTANCE]`.
     pub fn zoom_by(&mut self, factor: f32) {
         if factor > 0.0 {
@@ -393,8 +456,8 @@ impl OrbitController {
         self.focus = target;
     }
 
-    /// Resets to the exact pre-Phase-8 default view: origin, default
-    /// distance, looking straight down.
+    /// Resets to the default view: origin, default distance, looking
+    /// straight down.
     pub fn reset(&mut self) {
         *self = Self::default();
     }
@@ -418,9 +481,9 @@ impl OrbitController {
         let forward = (-offset / offset.length().max(1e-6)).normalize();
         // Invert `forward()`: forward = (-sin(p)sin(y), sin(p)cos(y), -cos(p)).
         // `acos` already returns `[0, π]`, exactly `forward()`'s valid
-        // domain — no further clamp needed (P9.3: `pitch` is unbounded, but
-        // a freshly-derived value from a concrete `forward` vector is
-        // naturally within one period).
+        // domain — no further clamp needed. `pitch` is unbounded in
+        // general, but a freshly-derived value from a concrete `forward`
+        // vector is naturally within one period.
         let pitch = (-forward.z).clamp(-1.0, 1.0).acos();
         let sin_p = pitch.sin();
         let yaw = if sin_p > 1e-4 {
@@ -456,7 +519,7 @@ impl Default for OrbitController {
     }
 }
 
-/// Free WASD + mouselook camera — opt-in (ADR-P8-02); direct control over
+/// Free WASD + mouselook camera — opt-in; direct control over
 /// position/orientation, no focus/distance concept.
 ///
 /// `pitch` here uses the conventional FPS zero (`0.0` = horizontal,
@@ -585,8 +648,8 @@ fn orientation_from_forward_and_reference_up(forward: Vec3, reference_up: Vec3) 
     Quat::from_mat3(&Mat3::from_cols(right, up, -forward))
 }
 
-/// Which camera mode is currently active (ADR-P8-02) — `Orbit` is the
-/// default; `Fly` is opt-in via `MenuAction::ToggleCameraMode`.
+/// Which camera mode is currently active — `Orbit` is the default; `Fly` is
+/// opt-in via `MenuAction::ToggleCameraMode`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CameraController {
     /// Arcball orbit around a focus point (default mode).
@@ -610,8 +673,8 @@ impl CameraController {
     }
 
     /// Switches to the other mode, seeding it from the current camera state
-    /// so the transition is visually continuous (ADR-P8-02's "camera
-    /// transitions" requirement) rather than snapping to a default.
+    /// so the transition is visually continuous rather than snapping to a
+    /// default.
     pub fn toggle(&mut self) {
         *self = match self {
             Self::Orbit(_) => Self::Fly(FlyController::from_camera(&self.camera())),
@@ -711,9 +774,8 @@ mod tests {
 
     #[test]
     fn orbit_pitch_is_unbounded_and_never_clamped() {
-        // P9.3: the previous [0, 89°] clamp is gone — orbit must be able to
-        // swing well past the old horizon-adjacent limit in either
-        // direction without being stopped.
+        // Orbit pitch has no clamp — it must be able to swing well past a
+        // horizon-adjacent angle in either direction without being stopped.
         let mut orbit = OrbitController::default();
         orbit.orbit(0.0, -10.0);
         assert!((orbit.pitch - (-10.0)).abs() < 1e-6);
@@ -724,9 +786,9 @@ mod tests {
     #[test]
     fn orbit_can_pass_continuously_over_the_top_of_the_pivot() {
         // A full pole-to-pole sweep (pitch 0 -> π -> 2π) must never panic,
-        // produce a NaN, or visibly reverse direction tick-to-tick — the
-        // exact "camera feels locked / can orbit over the top" requirement
-        // this milestone fixes.
+        // produce a NaN, or visibly reverse direction tick-to-tick — this is
+        // what lets the camera orbit continuously over the top of the pivot
+        // instead of feeling locked at some tilt limit.
         let mut orbit = OrbitController::default();
         let steps = 200;
         let mut last_forward = orbit.forward();
@@ -750,11 +812,10 @@ mod tests {
 
     #[test]
     fn orbit_reference_up_is_world_z_not_y() {
-        // P9.3: Orbit used to build its basis from `Vec3::Y`, inconsistent
-        // with `FlyController`'s `Vec3::Z` — this must no longer be true.
-        // With the camera looking horizontally (pitch near the equator,
-        // away from the degenerate poles), its screen-up vector should
-        // read close to world +Z.
+        // Orbit's reference-up must be world Z, consistent with
+        // FlyController. With the camera looking horizontally (pitch near
+        // the equator, away from the degenerate poles), its screen-up
+        // vector should read close to world +Z.
         let orbit = OrbitController {
             pitch: std::f32::consts::FRAC_PI_2, // horizon, away from either pole
             ..OrbitController::default()
@@ -866,14 +927,13 @@ mod tests {
         controller.toggle();
         assert!(!controller.is_fly());
         let after = controller.camera();
-        // Round-tripping through Fly is lossy: P9.3 removed Orbit's own
-        // pitch clamp, but `FlyController` still clamps a degree short of
-        // its own pole (`FlyController::MAX_PITCH = 89°`, left unchanged —
-        // Fly mode is explicitly out of this milestone's scope) to keep
-        // its forward/up basis non-degenerate. A straight-down orbit view
-        // can therefore only round-trip through Fly to within about that
-        // margin, not exactly — the resulting orbit must still look in
-        // approximately the same direction, not identically.
+        // Round-tripping through Fly is lossy: Orbit's pitch is unclamped,
+        // but `FlyController` clamps a degree short of its own pole
+        // (`FlyController::MAX_PITCH = 89°`) to keep its forward/up basis
+        // non-degenerate. A straight-down orbit view can therefore only
+        // round-trip through Fly to within about that margin, not exactly —
+        // the resulting orbit must still look in approximately the same
+        // direction, not identically.
         assert!(before.forward().abs_diff_eq(after.forward(), 0.05));
     }
 }

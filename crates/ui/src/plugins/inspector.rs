@@ -1,22 +1,17 @@
 //! The Inspector panel — the selected/tracked organism's live component
 //! data, presented as a sequence of logical sections rather than one
-//! monolithic view (Phase 7, W0e; extends Phase 5, ADR-P5-04's original
-//! "fold standalone panels into Inspector" decision). Each section below
-//! is already a self-contained `(ctx, ui, state, world, actions) -> ()`
-//! render step operating on its own slice of the entity's components —
-//! the same shape `physiology_viewer_ui`/`circulation_viewer_ui`/
-//! `hormone_viewer_ui`/`immune_viewer_ui`/`lineage_viewer_ui` already use
-//! as real, separately-defined functions reused verbatim here. The
-//! sections that are still inline in `inspector_ui` (Identity, Physiology
-//! summary, Genetics, Neural, Morphology, Behavior, Ecology,
-//! Relationships/History, Body Plan) are conceptually the same kind of
-//! independent widget, just not yet extracted to their own functions/
-//! files — a future repository-modernization pass (not this milestone)
-//! could give each its own `fn foo_section_ui(...)` in its own module,
-//! mirroring the pattern the already-extracted viewers demonstrate. W0e
-//! documents this as the identified decomposition, not the same "one
-//! large file" candidate a mechanical split would treat it as, per this
-//! phase's own "split only when it improves architecture" rule.
+//! monolithic view. Each section below is already a self-contained
+//! `(ctx, ui, state, world, actions) -> ()` render step operating on its
+//! own slice of the entity's components — the same shape
+//! `physiology_viewer_ui`/`circulation_viewer_ui`/`hormone_viewer_ui`/
+//! `immune_viewer_ui`/`lineage_viewer_ui` use as real, separately-defined
+//! functions reused verbatim here. The sections that are still inline in
+//! `inspector_ui` (Identity, Physiology summary, Genetics, Neural,
+//! Morphology, Behavior, Ecology, Relationships/History, Body Plan) are
+//! conceptually the same kind of independent widget, just not yet
+//! extracted to their own functions/files — a future pass could give each
+//! its own `fn foo_section_ui(...)` in its own module, mirroring the
+//! pattern the already-extracted viewers demonstrate.
 //!
 //! ## Section inventory (render order)
 //! 1. Recent Selections (`render_recent_selections`) — already its own function.
@@ -27,10 +22,8 @@
 //! 4. Genetics — genome identity, CPPN sizes, mutation count, Export Genome action.
 //! 5. Evolution / History — already its own function (`lineage_viewer_ui`).
 //! 6. Neural — brain topology size and a live activation/weight preview.
-//! 7. Morphology — transform/velocity (Phase 7, W0e: trimmed of 4 rows that
-//!    were permanently "Not Available" — see removal notes inline below).
-//! 8. Behavior — current behavior state/goal/target (Phase 7, W0e: trimmed
-//!    of 2 permanently-"Not Available" rows).
+//! 7. Morphology — transform/velocity.
+//! 8. Behavior — current behavior state/goal/target.
 //! 9. Ecology — diet, trophic level, species population.
 //! 10. Relationships / History — nearby organisms, trajectory summary.
 //! 11. Body Plan (`render_body_plan`) — already its own function; the real
@@ -41,8 +34,8 @@ use crate::types::*;
 use crate::WorkbenchState;
 
 /// Renders a compact "Recent:" row of the last few distinct entities
-/// `selected_entity` has pointed at (Phase 2, M13 — "Recent Selections"),
-/// each a clickable, Diet-colored chip. Shown above the Inspector's normal
+/// `selected_entity` has pointed at ("Recent Selections"), each a
+/// clickable, Diet-colored chip. Shown above the Inspector's normal
 /// content — including when nothing is currently selected — so a user can
 /// click back into a recent organism. Entities that have since despawned
 /// (killed, died) are skipped rather than shown as dead links, but are left
@@ -115,15 +108,15 @@ pub fn inspector_ui(
         }
     };
 
-    // Phase 5, SX-4a: an explicit "this entity no longer exists" state,
-    // checked *before* any component query — previously, a despawned
-    // entity (almost always because it died) fell through every query
-    // below as a plain `Err` indistinguishable from "exists but happens to
-    // lack this one optional component," rendering 40+ generic "Not
-    // Available" rows with no indication the organism was gone at all.
-    // Deliberately does *not* clear `selected_entity`/`tracked_entity` —
-    // showing "you were looking at this, and it died" is more informative
-    // than silently reverting to the generic empty-selection prompt.
+    // An explicit "this entity no longer exists" state, checked *before*
+    // any component query — otherwise a despawned entity (almost always
+    // because it died) would fall through every query below as a plain
+    // `Err` indistinguishable from "exists but happens to lack this one
+    // optional component," rendering dozens of generic "Not Available"
+    // rows with no indication the organism was gone at all. Deliberately
+    // does *not* clear `selected_entity`/`tracked_entity` — showing "you
+    // were looking at this, and it died" is more informative than
+    // silently reverting to the generic empty-selection prompt.
     if world.ecs.get_entity(entity).is_none() {
         crate::widgets::empty_state(
             ui,
@@ -201,8 +194,8 @@ pub fn inspector_ui(
         );
         let mut is_tracked = state.tracked_entity == Some(entity);
         if ui.checkbox(&mut is_tracked, "Track").changed() {
-            // Phase 7, W0b: the explicit per-entity Follow toggle, routed
-            // through the single `set_follow` pathway.
+            // The explicit per-entity Follow toggle, routed through the
+            // single `set_follow` pathway.
             state.set_follow(is_tracked.then_some(entity));
         }
     });
@@ -248,20 +241,13 @@ pub fn inspector_ui(
                             Some(label) => crate::widgets::kv_row_mono(ui, "SpeciesId", label),
                             None => crate::widgets::kv_row(ui, "SpeciesId", "Not Available"),
                         }
-                        // Phase 7, W0e (Category A — remove immediately):
-                        // a "GenomeId" row lived here permanently hardcoded
-                        // to "Not Available", duplicating the real,
-                        // working "GenomeId" row the Genetics section
-                        // already shows a few sections down — the exact
-                        // fake-vs-real redundancy SX-4d's own fix already
-                        // addressed for "SpeciesId" above, just missed
-                        // here. Removed rather than fixed in place, since
-                        // Genetics is the correct owner of genome facts.
-                        // "EntityName" removed too (Category B — no
-                        // EntityName concept exists anywhere in this
-                        // codebase; organisms aren't named. Not replaced
-                        // with a placeholder — reintroduce with real data
-                        // if that concept is ever built).
+                        // No "GenomeId" row here — the Genetics section a
+                        // few sections down is the correct owner of genome
+                        // facts. No "EntityName" row either: no such
+                        // concept exists anywhere in this codebase;
+                        // organisms aren't named. Neither is shown as a
+                        // placeholder — add them here only alongside real
+                        // data.
                         let mut gen_q = world.ecs.query::<&organisms::Generation>();
                         if let Ok(gen) = gen_q.get(&world.ecs, entity) {
                             crate::widgets::kv_row_mono(ui, "Generation", &gen.0.to_string());
@@ -396,44 +382,43 @@ pub fn inspector_ui(
                         }
                     });
 
-                // Phase 5, Epic 6 (ADR-P5-04): folds the P4-R1-R4 standalone
+                // Folds the Physiology/Circulation/Hormone/Immune Viewer
                 // panels' full per-segment detail directly into Inspector,
-                // instead of leaving them as separate, default-closed dock
-                // panels a researcher would never discover. Each nested
-                // section reuses that panel's own render function verbatim
-                // (not a reimplementation) — `physiology_viewer_ui`/
-                // `circulation_viewer_ui`/`hormone_viewer_ui`/`immune_viewer_ui`
-                // all already take the same `(ctx, ui, state, world, actions)`
-                // shape Inspector itself uses, so they compose directly
-                // inside a nested `CollapsingHeader`. Collapsed by default
-                // (per ADR-P5-04's own explicit mitigation) — this is a lot
-                // of additional detail, and progressive disclosure is what
-                // keeps Inspector from becoming the same "everything
-                // competing for attention" wall the redesign's audit found
-                // elsewhere.
+                // rather than leaving them only as separate, default-closed
+                // dock panels a researcher would need to discover
+                // independently. Each nested section reuses that panel's
+                // own render function verbatim (not a reimplementation) —
+                // `physiology_viewer_ui`/`circulation_viewer_ui`/
+                // `hormone_viewer_ui`/`immune_viewer_ui` all take the same
+                // `(ctx, ui, state, world, actions)` shape Inspector itself
+                // uses, so they compose directly inside a nested
+                // `CollapsingHeader`. Collapsed by default — this is a lot
+                // of additional detail, and progressive disclosure keeps
+                // Inspector from becoming a wall of everything competing
+                // for attention at once.
                 ui.add_space(crate::theme::SPACE_SM);
-                egui::CollapsingHeader::new("Per-Segment Detail (SX-6a)")
+                egui::CollapsingHeader::new("Per-Segment Detail")
                     .default_open(false)
                     .show(ui, |ui| {
                         crate::plugins::physiology_viewer::physiology_viewer_ui(
                             _ctx, ui, state, world, actions,
                         );
                     });
-                egui::CollapsingHeader::new("Circulation (SX-6b)")
+                egui::CollapsingHeader::new("Circulation")
                     .default_open(false)
                     .show(ui, |ui| {
                         crate::plugins::circulation_viewer::circulation_viewer_ui(
                             _ctx, ui, state, world, actions,
                         );
                     });
-                egui::CollapsingHeader::new("Hormones (SX-6b)")
+                egui::CollapsingHeader::new("Hormones")
                     .default_open(false)
                     .show(ui, |ui| {
                         crate::plugins::hormone_viewer::hormone_viewer_ui(
                             _ctx, ui, state, world, actions,
                         );
                     });
-                egui::CollapsingHeader::new("Immune Response (SX-6b)")
+                egui::CollapsingHeader::new("Immune Response")
                     .default_open(false)
                     .show(ui, |ui| {
                         crate::plugins::immune_viewer::immune_viewer_ui(
@@ -493,15 +478,13 @@ pub fn inspector_ui(
                                 "Regulatory Genes",
                                 &genetics::REGULATORY_GENE_ROLES.len().to_string(),
                             );
-                            // Phase 5, SX-4b: `Genome::mutation_count` is a
-                            // real running count (incremented once per
-                            // `Genome::mutate` call), added specifically
-                            // because nothing here previously tracked
-                            // mutations at all. A full per-event history
-                            // (what changed, when) is a larger, separate
-                            // feature — not implemented, so no
-                            // "MutationHistory" row is shown rather than a
-                            // fabricated or placeholder one.
+                            // `Genome::mutation_count` is a real running
+                            // count, incremented once per `Genome::mutate`
+                            // call. A full per-event history (what
+                            // changed, when) is a larger, separate feature
+                            // — not implemented, so no "MutationHistory"
+                            // row is shown rather than a fabricated or
+                            // placeholder one.
                             crate::widgets::kv_row_mono(
                                 ui,
                                 "MutationCount",
@@ -529,12 +512,11 @@ pub fn inspector_ui(
             });
 
             // --- EVOLUTION / HISTORY ---
-            // Phase 5, SX-6c (ADR-P5-04): folds the Cell Lineage Viewer
-            // (P4-R5) in the same way SX-6a/6b fold Physiology/Circulation/
-            // Hormone/Immune above — `lineage_viewer_ui` already takes the
-            // same `(ctx, ui, state, world, actions)` shape, reused
-            // verbatim. Collapsed by default, same progressive-disclosure
-            // reasoning.
+            // Folds the Cell Lineage Viewer in the same way the
+            // Physiology/Circulation/Hormone/Immune sections fold their own
+            // panels above — `lineage_viewer_ui` takes the same
+            // `(ctx, ui, state, world, actions)` shape, reused verbatim.
+            // Collapsed by default, same progressive-disclosure reasoning.
             egui::CollapsingHeader::new(format!(
                 "{} Evolution / History",
                 egui_remixicon::icons::GIT_BRANCH_LINE
@@ -549,19 +531,16 @@ pub fn inspector_ui(
                 .default_open(true)
                 .show(ui, |ui| {
                     egui::Grid::new("insp_neural").striped(true).show(ui, |ui| {
-                        // Phase 5, SX-4b: every row below used to be a
-                        // hardcoded "Not Available" despite `Brain` already
-                        // being queried live just above — `Brain.nodes[i].state`
-                        // is real, per-tick CTRNN activation (confirmed by
-                        // reading `brain::Brain::set_inputs`/`get_outputs`
-                        // directly): inputs are written into the first
-                        // `input_count` node states, outputs are read from
-                        // the last `output_count`. A compact preview (first
-                        // 6 values), not a full per-neuron dump — the
-                        // dedicated Neural Viewer panel already owns full
-                        // topology detail; this Inspector section is a
-                        // quick-glance summary, per this phase's
-                        // progressive-disclosure principle.
+                        // `Brain.nodes[i].state` is real, per-tick CTRNN
+                        // (continuous-time recurrent neural network — the
+                        // organism's brain model) activation:
+                        // `brain::Brain::set_inputs`/`get_outputs` write
+                        // inputs into the first `input_count` node states
+                        // and read outputs from the last `output_count`. A
+                        // compact preview (first 6 values), not a full
+                        // per-neuron dump — the dedicated Neural Viewer
+                        // panel owns full topology detail; this Inspector
+                        // section is a quick-glance summary.
                         let mut brain_q = world.ecs.query::<&brain::Brain>();
                         if let Ok(brain) = brain_q.get(&world.ecs, entity) {
                             crate::widgets::kv_row(
@@ -644,16 +623,12 @@ pub fn inspector_ui(
                 });
 
             // --- MORPHOLOGY ---
-            // Phase 7, W0e: this section previously also carried 4 rows
-            // permanently hardcoded to "Not Available" — "BodyPlan" and
-            // "SegmentTree" (Category A: not just dead, actively
-            // misleading, since a real, working segment tree is rendered
-            // a few sections below in "Body Plan" — this section falsely
-            // implied no such data existed at all) and "SensorArray"/
-            // "MuscleSystem" (Category A: no backing data source, plainly
-            // wrong to leave in). All 4 removed, not replaced with a
-            // placeholder — see this file's module doc comment for the
-            // full removal rationale.
+            // Deliberately just Transform/Velocity here — a real, working
+            // segment tree is already rendered a few sections below in
+            // "Body Plan", so a second "BodyPlan"/"SegmentTree" summary
+            // here would be redundant. "SensorArray"/"MuscleSystem" have no
+            // backing data source in this codebase and are omitted rather
+            // than shown as a placeholder.
             egui::CollapsingHeader::new(format!(
                 "{} Morphology",
                 egui_remixicon::icons::SHAPE_LINE
@@ -697,11 +672,9 @@ pub fn inspector_ui(
             });
 
             // --- BEHAVIOR ---
-            // Phase 7, W0e (Category B): "ActionState"/"MemoryState" rows
-            // permanently hardcoded to "Not Available" were removed — no
-            // such concepts exist in `behavior`'s component set today.
-            // Not replaced with a placeholder; reintroduce with real data
-            // if/when those concepts are actually built.
+            // No "ActionState"/"MemoryState" rows here — no such concepts
+            // exist in `behavior`'s component set today. Add them only
+            // alongside real data if those concepts are built.
             egui::CollapsingHeader::new(format!("{} Behavior", egui_remixicon::icons::RUN_LINE))
                 .default_open(true)
                 .show(ui, |ui| {
@@ -784,19 +757,14 @@ pub fn inspector_ui(
                                 }
                             }
 
-                            // Phase 5, SX-4d: previously a hardcoded
-                            // "Not Available" sitting alongside the
-                            // Identity section's real, working "SpeciesId"
-                            // row — a confirmed redundancy-inconsistency
-                            // (same underlying species assignment, one
-                            // section showing it, the other faking it).
                             // Rather than duplicate the same `SpeciesId`
-                            // value in two places, this row answers a
-                            // genuinely different, Ecology-relevant
-                            // question: how large is that species'
-                            // *current living population* — reusing
-                            // SX-3b's `MetricsState::species_distribution`
-                            // snapshot, not a second lookup mechanism.
+                            // value the Identity section already shows,
+                            // this row answers a genuinely different,
+                            // Ecology-relevant question: how large is that
+                            // species' *current living population* —
+                            // reusing `MetricsState::species_distribution`'s
+                            // periodic snapshot, not a second lookup
+                            // mechanism.
                             let species_id = world
                                 .ecs
                                 .get_resource::<evolution::LineageTracker>()
@@ -838,17 +806,15 @@ pub fn inspector_ui(
                 });
 
             // --- RELATIONSHIPS / HISTORY ---
-            // Phase 5, SX-4c: previously nothing here at all. "Nearby
-            // organisms" uses spatial proximity (a distance query against
-            // `sensing::HeadVision.range` when present), not the
-            // `get_connected_component` spring-graph BFS the roadmap
-            // originally named — that BFS finds entities connected by a
-            // *physical spring* (same body, or a colony bud-link, SX-3d),
-            // which would show nothing at all for the common case of two
-            // separate, unlinked organisms simply near each other. Spatial
-            // distance is the mechanism that actually answers "who else is
-            // around me right now," which is what this section and
-            // "interaction radius" are both about.
+            // "Nearby organisms" uses spatial proximity (a distance query
+            // against `sensing::HeadVision.range` when present), not a
+            // spring-graph BFS over physically-connected entities (same
+            // body, or a colony bud-link) — that BFS would show nothing at
+            // all for the common case of two separate, unlinked organisms
+            // simply near each other. Spatial distance is the mechanism
+            // that actually answers "who else is around me right now,"
+            // which is what this section and "interaction radius" are both
+            // about.
             egui::CollapsingHeader::new(format!(
                 "{} Relationships / History",
                 egui_remixicon::icons::TEAM_LINE
@@ -1066,8 +1032,8 @@ fn render_pellet_summary(
         );
         let mut is_tracked = state.tracked_entity == Some(entity);
         if ui.checkbox(&mut is_tracked, "Track").changed() {
-            // Phase 7, W0b: same single Follow pathway as the organism
-            // Inspector's own "Track" checkbox above.
+            // Same single Follow pathway as the organism Inspector's own
+            // "Track" checkbox above.
             state.set_follow(is_tracked.then_some(entity));
         }
     });

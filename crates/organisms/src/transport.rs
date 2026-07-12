@@ -1,14 +1,13 @@
-//! Intra-body resource transport (Phase 4, `PHASE4_ROADMAP.md` milestones
-//! P4-F3 and P4-F6) — moves glucose, oxygen, ATP, and (as of P4-F6) carbon
+//! Intra-body resource transport — moves glucose, oxygen, ATP, and carbon
 //! dioxide along the persistent
 //! [`crate::developmental_graph::DevelopmentalGraph`]'s parent/child edges,
 //! the same edges `physics::Spring` uses to hold the body together
-//! structurally. This is the consumer P4-F2's per-segment
-//! `metabolism::ChemicalEconomy` pools were seeded for: without it, those
-//! pools are inert placeholder data (see P4-F2's execution log entry).
+//! structurally. This is the consumer every body segment's per-segment
+//! `metabolism::ChemicalEconomy` pool was seeded for: without it, those
+//! pools would be inert placeholder data with nothing connecting them to
+//! each other.
 //!
-//! **Waste expulsion (P4-F6), reusing the same mechanism, not a new one:**
-//! co2 was deliberately excluded from P4-F3 pending this milestone. No
+//! **Waste expulsion reuses the same mechanism, not a separate one:** no
 //! segment produces co2 locally — only `metabolism::compute_metabolism`
 //! (organism-level respiration, head-only) does, and `metabolism_system`
 //! actively vents the head's co2 toward `GlobalAtmosphere` every tick,
@@ -33,7 +32,7 @@ use std::collections::HashMap;
 
 /// Fraction of the concentration gradient exchanged per tick, per resource,
 /// per edge. Not biologically tuned — a placeholder rate, same status as
-/// `ChemicalEconomy::segment_default()`'s pool sizes (P4-F2).
+/// `ChemicalEconomy::segment_default()`'s pool sizes.
 const TRANSPORT_RATE: f32 = 0.15;
 
 /// Moves `amount` of one resource from `from` to `to` (or the reverse, if
@@ -65,13 +64,14 @@ fn relax_toward_equilibrium(from: f32, from_max: f32, to: f32, to_max: f32) -> (
 /// concentration.
 ///
 /// ## 2. Why It Happens
-/// P4-F2 gave every body segment its own small resource pool, but nothing
-/// connected them to each other or to the organism's main (head) pool — a
-/// segment that used up its glucose had no way to receive more, and the
-/// head's large pool had no way to reach the rest of the body. This system
-/// is that connective pass: the circulatory/respiratory/digestive transport
-/// the roadmap's P4-F3 calls for, scoped to the organism's own anatomy
-/// rather than the world-space `diffusion` crate's PDE grid.
+/// Every body segment has its own small resource pool, but without this
+/// system nothing connects them to each other or to the organism's main
+/// (head) pool — a segment that used up its glucose would have no way to
+/// receive more, and the head's large pool would have no way to reach the
+/// rest of the body. This system is that connective pass: a
+/// circulatory/respiratory/digestive transport model scoped to the
+/// organism's own anatomy, rather than the world-space `diffusion` crate's
+/// PDE grid.
 ///
 /// ## 3. How It Happens
 /// 1. **Collect edges:** every `(parent_entity, child_entity)` pair implied
@@ -202,8 +202,7 @@ mod tests {
 
     /// A head that has been actively venting co2 (per `metabolism_system`'s
     /// own behavior) — low co2 relative to a segment that has accumulated
-    /// some, modeling the gradient P4-F6 relies on to pull co2 back toward
-    /// the head.
+    /// some, modeling the gradient that pulls co2 back toward the head.
     fn vented_head_economy() -> ChemicalEconomy {
         ChemicalEconomy {
             co2: 0.0,
@@ -303,8 +302,8 @@ mod tests {
 
     #[test]
     fn transport_system_pulls_co2_from_a_congested_segment_toward_a_vented_head() {
-        // Phase 4, P4-F6: co2 now moves too — a segment with accumulated
-        // co2 next to a head kept low by `metabolism_system`'s own venting
+        // co2 moves too — a segment with accumulated co2 next to a head
+        // kept low by `metabolism_system`'s own venting
         // should see its co2 decrease (flowing toward, and eventually out
         // through, the head).
         let mut world = World::new();
