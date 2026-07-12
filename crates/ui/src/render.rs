@@ -226,6 +226,13 @@ pub fn render_ui(
     // drawing logic.
     render_timed_effects(ctx, state, world, interact_response.rect);
 
+    // ── Viewport navigation gizmos (Phase 9, P9.5) ──────────────────────────
+    // Navigation chrome, not biological content — paints after every
+    // biological overlay above (so it's never obscured by one), but before
+    // the transient UI popups below (Command Palette/Toasts stay on top of
+    // everything, matching their existing "pure UI chrome" precedent).
+    crate::plugins::gizmos::render_gizmos(ctx, state, world, interact_response.rect, &mut actions);
+
     // ── Command Palette overlay (Phase 2, M15) ──────────────────────────────
     crate::plugins::command_palette::command_palette_ui(ctx, state, &mut actions);
 

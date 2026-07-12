@@ -28,6 +28,12 @@ cargo doc --no-deps --document-private-items
 
 A pull request that doesn't pass all four cleanly will not merge.
 
+For changes that touch viewport interaction, the camera, gizmos, or window
+performance, also run through [MANUAL_TESTING.md](MANUAL_TESTING.md) — there
+is no automated input-injection tooling for the live `winit`/`egui` window in
+this project's environments, so that checklist is the actual interactive
+verification for those areas.
+
 ## Branching Strategy
 
 All pull requests must originate from feature branches using the following naming conventions:

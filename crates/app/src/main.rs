@@ -30,6 +30,8 @@ pub mod batch;
 pub mod behavior_validation;
 pub mod capture;
 pub mod events;
+/// GPU/surface bring-up — extracted from `app.rs` (Phase 9, P9.6).
+pub mod gpu_init;
 pub mod interventions;
 pub mod learning_bridge;
 pub mod motion_diagnostic;
@@ -38,6 +40,8 @@ pub mod render;
 pub mod replay;
 pub mod scripting;
 pub mod simulation;
+/// Starter-species genome/CPPN seeding — extracted from `app.rs` (Phase 9, P9.6).
+pub mod species_seed;
 pub mod systems;
 
 use anyhow::{Context, Result};

@@ -45,6 +45,19 @@ Discrete, one-shot camera commands (Home/reset, menu-driven zoom-in/out, frame-s
 
 Six axis-aligned views (Top/Bottom/Front/Back/Left/Right) each just set `OrbitController::yaw`/`pitch` to a fixed value, leaving `focus`/`distance` untouched — a preset view only ever changes the viewing angle, matching Blender's own preset-view behavior of re-orienting around the existing pivot rather than re-framing it.
 
+## Viewport gizmos (P9.5)
+
+`ui::plugins::gizmos::render_gizmos` draws six read-only overlays on top of the 3D scene, all as plain egui background-layer painting through the existing `Camera3d::world_to_screen` projection — per ADR-P9-02, none of them mutate `OrbitController`/`FlyController` or add new orientation math; interactive ones only push the pre-existing `MenuAction::SetCameraPreset`:
+
+- **World origin indicator** — a small crosshair at world `(0, 0, 0)` when in view.
+- **Camera pivot indicator** — a diamond at `OrbitController::focus`, Orbit mode only (Fly has no pivot concept).
+- **Selection bounding box** — a wireframe AABB around every `ParticleNode` sharing the selected entity's `organism_id`, using the same organism-walk `MenuAction::FrameSelected` already established.
+- **Axis triad** — fixed bottom-left, X/Y/Z drawn via `camera.right()`/`up()`/`forward()` projected as 2D directions (depth-ignoring), sorted back-to-front.
+- **Navigation cube** — top-right, a simplified 6-button egui overlay (not a true rendered 3D cube) for the six preset views; highlights whichever preset the current forward vector is closest to. Disclosed as a fidelity simplification, not presented as a real 3D widget.
+- **Scene info overlay** — compact text readout: coordinate convention (Z-up), active projection (Perspective/Orthographic), active nav mode (Orbit/Fly), clip-plane status, and a world-scale line (`Scale: {2×half-height}u across`, derived from Orbit's focus distance and `fov_y`, or a labeled 100-unit reference depth in Fly mode since Fly has no pivot).
+
+Measurement gizmos (dynamic ruler/distance readout) were deferred — the pre-existing `MarqueeMode::Measure` tool already covers the same need. The clipping-plane manipulator was explicitly marked optional/later by design and has not been built.
+
 ## Picking and selection
 
 Picking is ray-based: `screen_to_ray` produces a world-space ray from a screen-space click, tested against organism capsule geometry (`rendering::picking::ray_capsule_hit`). Box-select and lasso-select build on the same `world_to_screen` projection, testing organism head positions against a screen-space rectangle or polygon.

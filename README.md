@@ -117,7 +117,7 @@ See [Project History](docs/roadmap/history.md) for what's shipped, phase by phas
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for build/test commands, branch conventions, and required checks. New crates must preserve the acyclic dependency graph; simulation-affecting changes must go through `SimRng`, never an unseeded RNG.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build/test commands, branch conventions, and required checks. New crates must preserve the acyclic dependency graph; simulation-affecting changes must go through `SimRng`, never an unseeded RNG. Changes to viewport interaction, the camera, gizmos, or window performance also need a pass through [MANUAL_TESTING.md](MANUAL_TESTING.md) — there's no automated input-injection tooling for the live window in this project's environments.
 
 ## Citation
 

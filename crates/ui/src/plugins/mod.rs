@@ -10,6 +10,10 @@ pub mod event_log;
 /// Evolution Debugger panel — cross-organism mutation diff and a
 /// development-failure inspector (Phase 3, M12).
 pub mod evolution_debugger;
+/// Viewport navigation gizmos — axis triad, navigation cube, world-origin
+/// and camera-pivot indicators, selection bounding box, and a scientific
+/// scene-info overlay (Phase 9, P9.5).
+pub mod gizmos;
 /// Global Search overlay — fuzzy-searchable list of every currently-alive
 /// organism, by diet or `{Idx, Gen}` (Phase 7, W6a).
 pub mod global_search;

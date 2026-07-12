@@ -244,7 +244,11 @@ pub fn menu_ui(
                     if ui
                         .button(format!(
                             "{}  Toggle Perspective / Orthographic",
-                            if state.is_orthographic { "◻" } else { "◇" }
+                            if state.is_orthographic {
+                                egui_remixicon::icons::SQUARE_LINE
+                            } else {
+                                egui_remixicon::icons::SHAPES_LINE
+                            }
                         ))
                         .clicked()
                     {

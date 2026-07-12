@@ -54,7 +54,7 @@ impl PhylonApp {
         self.world
             .ecs
             .resource_scope::<common::SimRng, _>(|ecs, mut sim_rng| {
-                crate::app::seed_ecosystem(
+                crate::species_seed::seed_ecosystem(
                     ecs,
                     &mut tracker,
                     &mut species_registry,
@@ -84,15 +84,15 @@ impl PhylonApp {
             let diet = preset.diet.unwrap_or(ecology::Diet::Herbivore);
             // Evolvable presets get a seed regulatory genome matching the
             // corresponding starter species' body-plan tendency (Phase 3
-            // M4 — see `app::seed_ecosystem`'s doc comment; pigmentation is
+            // M4 — see `species_seed::seed_ecosystem`'s doc comment; pigmentation is
             // emergent, so this no longer forces the diet's canonical
             // color the way the retired `HoxSequence`-driven path did).
             // Phase 5, SX-2a (ADR-P5-07): mirrors `seed_ecosystem`'s own
             // swept `RegulatorySeedWeights` combinations for the
             // corresponding starter species — see
-            // `crate::app::seed_regulatory_cppn`'s doc comment.
+            // `crate::species_seed::seed_regulatory_cppn`'s doc comment.
             let weights = match name {
-                "Herbivore (Evolvable)" => crate::app::RegulatorySeedWeights {
+                "Herbivore (Evolvable)" => crate::species_seed::RegulatorySeedWeights {
                     output_bias: -4.45,
                     hox_weight: 8.97,
                     differentiation_weight: 7.07,
@@ -101,7 +101,7 @@ impl PhylonApp {
                     sine_coarse_weight: 2.15,
                     sine_fine_weight: 1.76,
                 },
-                "Hunter (Evolvable)" => crate::app::RegulatorySeedWeights {
+                "Hunter (Evolvable)" => crate::species_seed::RegulatorySeedWeights {
                     output_bias: -4.40,
                     hox_weight: 6.21,
                     differentiation_weight: 6.27,
@@ -110,7 +110,7 @@ impl PhylonApp {
                     sine_coarse_weight: 0.34,
                     sine_fine_weight: 1.95,
                 },
-                "Edible Plant (Evolvable)" => crate::app::RegulatorySeedWeights {
+                "Edible Plant (Evolvable)" => crate::species_seed::RegulatorySeedWeights {
                     output_bias: -3.0,
                     hox_weight: 0.0,
                     differentiation_weight: 0.0,
@@ -119,7 +119,7 @@ impl PhylonApp {
                     sine_coarse_weight: 0.0,
                     sine_fine_weight: 0.0,
                 },
-                _ => crate::app::RegulatorySeedWeights {
+                _ => crate::species_seed::RegulatorySeedWeights {
                     output_bias: -4.45,
                     hox_weight: 8.97,
                     differentiation_weight: 7.07,
@@ -132,9 +132,9 @@ impl PhylonApp {
             let genome = genetics::Genome::seed(
                 genetics::GenomeId(0), // Would normally be a unique ID
                 common::EntityId(0),
-                crate::app::seed_brain_cppn(),
+                crate::species_seed::seed_brain_cppn(),
                 genetics::Cppn::new(),
-                crate::app::seed_regulatory_cppn(weights),
+                crate::species_seed::seed_regulatory_cppn(weights),
             );
 
             let category = preset.category.unwrap_or(ecology::EcologicalCategory::None);
@@ -199,9 +199,9 @@ impl PhylonApp {
         let fish_genome = genetics::Genome::seed(
             genetics::GenomeId(100),
             common::EntityId(0),
-            crate::app::seed_brain_cppn(),
+            crate::species_seed::seed_brain_cppn(),
             genetics::Cppn::new(),
-            crate::app::seed_regulatory_cppn(crate::app::RegulatorySeedWeights {
+            crate::species_seed::seed_regulatory_cppn(crate::species_seed::RegulatorySeedWeights {
                 output_bias: -4.40,
                 hox_weight: 6.21,
                 differentiation_weight: 6.27,

@@ -1,6 +1,73 @@
 # Phase 9 — Workbench UX, Performance & Optimization Roadmap
 
-**Status: P9.1 through P9.4 implemented and verified. P9.5 (viewport gizmos) is next.** Everything in this document is either a direct measurement or a code-cited finding — no claim here is a guess or an assumption carried over from prior phases' documentation.
+**Status: Phase 9 complete — P9.1 through P9.8 all implemented and verified.** Everything in this document is either a direct measurement or a code-cited finding — no claim here is a guess or an assumption carried over from prior phases' documentation.
+
+## P9.8 — `MANUAL_TESTING.md`: implemented
+
+Authored `MANUAL_TESTING.md` at the repo root (matching `README.md`/`CONTRIBUTING.md`'s existing top-level placement) — a checklist a human tester runs against a real build, covering exactly the interactive surface every P9.x milestone disclosed it couldn't verify itself: no automated input-injection tooling exists in this environment for the live `winit`/`egui` window, so every milestone's own verification fell back to unit tests plus a launch/stability smoke test. This document is that missing interactive pass, written down rather than left as a standing gap.
+
+Sections: setup, Orbit-mode camera (drag/pan/zoom/select/follow/context-menu — the original Phase 7 W0b selection/follow behavior this session's first task was to verify), Camera Navigation (Frame Selected/All, presets, bookmarks, ortho toggle — P9.2–P9.4), Fly mode, Viewport Gizmos (P9.5 — axis triad, nav cube, origin/pivot indicators, selection box, scene info overlay), Performance (the FPS/frame-time claims P9.1 fixed), and a general simulation-controls sanity check. Cross-referenced from both `README.md`'s Contributing section and `CONTRIBUTING.md` itself, so it's discoverable from the two places a contributor would already be looking.
+
+**Verification:** documentation only, no code changed — reviewed against `docs/reference/controls.md`'s authoritative keybinding table for accuracy rather than re-deriving bindings from memory.
+
+---
+
+## P9.7 — UI Polish: implemented, verified
+
+**Scope, confirmed with the user before starting:** a separately-approved 13-milestone "UI Architecture Refinement" plan exists (design tokens, component catalog, shortcut-system fix, sidebar/status-bar rework, Metrics palette, Neural Viewer zoom/pan, docking/window management, accessibility pass, ~5-7 weeks) — but the Phase 9 roadmap's own P9.7 line item only ever named a light "polish spacing/animation/transitions" pass. Asked the user directly rather than guessing which was meant; confirmed P9.7 stays scoped to the light pass, with the 13-milestone plan treated as a separate, later initiative.
+
+With that scope confirmed, P9.7 became a consistency pass over the UI surfaces P9.1–P9.6 themselves added, checked against conventions this codebase had already established elsewhere:
+
+- **`gizmos.rs`'s floating overlays used hand-picked color literals** (`Color32::from_rgba_unmultiplied(20, 20, 24, …)` for both panel backgrounds, `(255, 255, 255, …)` for the origin marker and selection box) instead of the existing `theme::` token system — `render.rs`'s `toast_colors` had already established the "base theme color + explicit alpha" pattern for exactly this situation (semi-transparent floating surfaces). Added `gizmo_panel_fill(alpha)` routing through `theme::CHROME_BG`, and routed the origin-marker/selection-box colors through `theme::TEXT_PRIMARY` the same way. The X/Y/Z axis-triad colors were deliberately left as literals — red/green/blue-for-XYZ is a fixed, universal 3D-tool convention (Blender, Unity, Unreal all use it), not a brand color, so tokenizing it would be a false consistency.
+- **The orthographic/perspective toggle in the P9.4 Camera menu used raw Unicode glyphs** (`◻`/`◇`) instead of the Remix Icon font every other menu entry in this file uses (e.g. `CAMERA_LINE` on the submenu itself) — replaced with `egui_remixicon::icons::{SQUARE_LINE, SHAPES_LINE}`, so the toggle's icon renders consistently with the icon font/weight/baseline of every other menu icon instead of falling back to whatever Unicode glyph support the OS font happens to have.
+
+No spacing/animation changes were made — P9.4's `FrameAnimation` easing and the Camera submenu's existing spacing/shortcut-hint formatting were already internally consistent with the rest of `menu.rs` on inspection, so there was nothing there to fix.
+
+**Verification:** `fmt`/`clippy --workspace --all-targets -D warnings`/`build --workspace`/`test --workspace` all clean (no test count change — this pass touched no logic, only color/icon sourcing), `cargo doc --no-deps --document-private-items --workspace` clean, and a windowed release smoke test (no panics beyond the pre-existing `B0003` warning).
+
+---
+
+## P9.6 — Architecture & File Decomposition: implemented, verified
+
+Re-audited the roadmap's own two size-flagged files (`crates/app/src/app.rs` at 1,796 lines, `crates/organisms/src/systems.rs` at 1,823 lines) directly against current code rather than trusting the earlier line counts, per this phase's own "measure, don't assume" discipline — both had grown further since the original audit. Per this project's own established precedent (Phase 7's `render.rs` decomposition, justified by mixed responsibility, not size alone), each file was read in full before splitting anything, looking for genuine seams rather than cutting at an arbitrary line count.
+
+**`app.rs` (1,796 → 579 lines)** bundled four distinct responsibilities that had accreted into one file over several phases:
+
+- **GPU/surface bring-up** — `GpuContext`, `GpuCore`, `request_gpu_core`, and `PhylonApp::{init_gpu, init_gpu_headless, resize}` — extracted verbatim (no logic changed) to `crates/app/src/gpu_init.rs` (332 lines). This is a self-contained concern: acquiring a `wgpu::Device`/`Queue`, the four compute pipelines, and (windowed only) a swapchain surface plus egui state. It shares no logic with ECS/resource wiring or genome seeding.
+- **Starter-species genome/CPPN seeding** — `RegulatorySeedWeights`, `seed_regulatory_cppn`, `seed_brain_cppn`, `seed_ecosystem`, plus their existing test module — extracted verbatim to `crates/app/src/species_seed.rs` (909 lines). This is pure data/genome-construction logic with no dependency on GPU state or the ECS resource-wiring `PhylonApp::new` does; `crates/app/src/interventions.rs`'s call sites (sandbox preset spawning) were updated to reference the new module path.
+- **ECS resource wiring, lifecycle, and entity picking** (`PhylonApp::new`, `save_preferences`, `current_tick`, `pick_entity`) remain in `app.rs`, alongside the `PhylonApp` struct definition itself and `GpuContext`'s re-export — this is the composition root's actual job and doesn't decompose further without inventing an artificial boundary.
+
+**`organisms/systems.rs` (1,823 → 1,425 lines)** bundled brain-wiring with body growth — the file's own doc comments already named this as a historical accident (`wire_brain_for_completed_organism` was originally `growth_system`'s own inline "Phase 1" block before Phase 7, W5a extracted it as a named function, but never moved to its own file). Extracted `should_wire_synapse`, `assign_hidden_node_regions`, `wire_brain_for_completed_organism`, and their 4 directly-associated pure-function unit tests to `crates/organisms/src/brain_wiring.rs` (416 lines, private module). The two integration tests that exercise brain-wiring through the shared `spawn_growth_entity`/`run_growth_to_completion` test harness stayed in `systems.rs`, since splitting them would have meant duplicating that harness rather than following a real seam.
+
+**Not split further:** `systems.rs`'s remaining ~1,425 lines are `decode_next_segment`/`spawn_grown_segment`/`growth_system`/`producer_growth_system` (one cohesive body-growth concern) plus their test module (~755 lines) — no other file in the codebase has a colocated test module this large, but splitting tests into a mirrored file isn't an existing pattern in this codebase, and inventing one here would be scope creep beyond "split where a clear seam exists." `pick_entity` stayed in `app.rs` for the same reason — a single self-contained ~100-line method doesn't justify its own file.
+
+**Verification:** `fmt`/`clippy --workspace --all-targets -D warnings`/`build --workspace`/`test --workspace` all clean, with identical test counts per crate before and after (no test was lost or silently dropped in the extraction) — plus `cargo doc --no-deps --document-private-items --workspace` clean, and a windowed release smoke test (log confirms `phylon::gpu_init` — the renamed module — logging `GPU surface initialised` at real startup, not just at compile time; no panics beyond the pre-existing, harmless `B0003` despawn-race warning).
+
+---
+
+## P9.5 — Viewport Gizmos: implemented, verified
+
+Built strictly on top of the now-frozen camera math (ADR-P9-02) and the new ADR-P9-03 rule the user imposed before this milestone started ("camera interaction and viewport visualization become separate responsibilities" — gizmos only issue commands to existing camera/navigation APIs, never touch orbit math). New module: `crates/ui/src/plugins/gizmos.rs`, one entry point `render_gizmos`, called once per frame from `render.rs` right after `render_timed_effects` and before the Command Palette overlay.
+
+Implemented, in the user's requested priority order:
+
+1. **Navigation cube** (Top/Bottom/Front/Back/Left/Right) — a simplified 6-button egui overlay, top-right, rather than a true rendered 3D cube widget. Highlights whichever preset the camera's current forward vector is closest to (dot-product match against `PRESET_DIRECTIONS`); clicking pushes the existing `MenuAction::SetCameraPreset`. **Disclosed simplification, not silently presented as the real thing** — a genuine 3D-rendered view-cube widget was out of scope for this milestone's egui-overlay technique.
+2. **XYZ axis triad** — fixed bottom-left corner, X/Y/Z drawn via `camera.right()`/`up()`/`forward()` projected as flat 2D directions (depth-ignoring), sorted back-to-front so the nearer axis draws on top.
+3. **World origin indicator** — a small crosshair at world `(0, 0, 0)`, drawn only when it projects inside the viewport.
+4. **Camera focus/pivot indicator** — a diamond at `OrbitController::focus`, Orbit mode only (Fly has no pivot concept, matching every other Orbit-only feature in this codebase).
+5. **Selection bounding box** — a wireframe AABB (8 corners, 12 edges) around every `ParticleNode` sharing the selected entity's `organism_id`, using the same organism-walk pattern `MenuAction::FrameSelected` already established rather than a new query shape.
+6. **Measurement gizmos** — not built as new work. The pre-existing `MarqueeMode::Measure` tool already covers this need; no gap was found that justified a second implementation.
+7. **Clipping-plane manipulator** — deferred, per the user's own "optional later" scoping.
+
+Plus the requested "beyond Blender" scientific-context overlay, `render_scene_info_overlay`: coordinate convention (Z-up), active projection (Perspective/Orthographic), active nav mode (Orbit/Fly), clip-plane status, and a **world-scale readout** (`Scale: {2×half-height}u across`, derived from Orbit's real focus distance and `fov_y`, or a clearly-labeled 100-unit reference depth in Fly mode since Fly has no pivot to measure from).
+
+Every function in the module only reads `Camera3d`/`WorkbenchState`/ECS state and either paints through the existing, frozen `Camera3d::world_to_screen` projection or pushes a pre-existing `MenuAction` — nothing touches `OrbitController`/`FlyController` directly, and no new orientation math was added anywhere.
+
+**Verification:** `fmt`/`clippy --workspace --all-targets -D warnings`/`build --workspace`/`test --workspace` (all pre-existing tests pass unmodified; no new automated tests were added since this module is pure egui painting with no non-trivial pure-function logic beyond `world_scale_label`, which was verified by hand-tracing against the existing orthographic/perspective test cases rather than a new test) all clean, plus a windowed release smoke test (no panics beyond the pre-existing, harmless `B0003` despawn-race warning).
+
+**Disclosed limitation, same as every prior P9.x milestone:** no automated input-injection tooling in this environment to interactively click the navigation cube or watch gizmos track a live camera drag — verified by code-path reasoning (every gizmo's projection math is the same `world_to_screen` already exercised by P9.4's tests) plus the launch/stability smoke test, not a real interactive pass. If you can drive real input, confirming the navigation cube's highlight tracks the current view and that clicking each face actually lands on the expected preset is the one thing worth a manual check.
+
+---
 
 ## P9.4 — Blender Navigation Parity: implemented, verified
 
@@ -111,13 +178,13 @@ Ordered by measured impact and risk, per this project's own "never optimize with
 
 **Epic P9.4 — Blender-parity navigation features. ✅ Done** — see the results section near the top of this document. Navigation gizmo/view pie menu deliberately deferred to P9.5/skipped; "orbit around selection" satisfied via Frame Selected rather than a separate persistent-mode toggle.
 
-**Epic P9.5 — View-cube, navigation gizmo, transform gizmo.** Larger UI/rendering surface area; scope after P9.1–P9.4 land, since a gizmo needs a stable camera/input layer under it.
+**Epic P9.5 — View-cube, navigation gizmo, transform gizmo. ✅ Done** — see the results section near the top of this document, and ADR-P9-03 below. Navigation cube shipped as a simplified egui button overlay, disclosed as such rather than a true rendered 3D widget; measurement gizmo satisfied by the pre-existing `MarqueeMode::Measure` tool (no new work needed); clipping-plane manipulator deferred per the user's own "optional later" scoping.
 
-**Epic P9.6 — Targeted file decomposition.** Only `crates/organisms/src/systems.rs` and `crates/app/src/app.rs` clearly qualify by this project's own prior precedent (Phase 7's `render.rs` decomposition was justified by size *and* mixed responsibility, not size alone) — audit each for real seams before splitting either.
+**Epic P9.6 — Targeted file decomposition. ✅ Done** — see the results section near the top of this document. `app.rs` split into `gpu_init.rs` (GPU/surface bring-up) and `species_seed.rs` (starter-species genome seeding), 1,796 → 579 lines; `organisms/systems.rs` split off `brain_wiring.rs`, 1,823 → 1,425 lines. Both remaining files' size reflects one cohesive concern each (ECS wiring/lifecycle, and body-growth systems + their test suite respectively), not an unaddressed mixed-responsibility problem.
 
-**Epic P9.7 — UI polish pass.** Deferred until P9.1–P9.5 land; polishing spacing/animation/transitions on top of an input/camera layer that's about to change would mean redoing some of it.
+**Epic P9.7 — UI polish pass. ✅ Done** — see the results section near the top of this document. Scope confirmed with the user as a light consistency pass (not the separately-approved 13-milestone UI Architecture Refinement plan): tokenized `gizmos.rs`'s hand-picked panel/marker colors through the existing `theme::` system, and swapped the Camera menu's ad-hoc Unicode toggle glyphs for the Remix Icon font every other menu entry already uses.
 
-**Epic P9.8 — `MANUAL_TESTING.md`.** Should be authored once P9.1–P9.5's actual feature set is known — a QA checklist written against features that don't exist yet would need immediate revision.
+**Epic P9.8 — `MANUAL_TESTING.md`. ✅ Done** — see the results section near the top of this document. Authored last, once every other milestone's real feature set (not a guessed one) was known.
 
 ## 4. What this pass did not do, and why
 

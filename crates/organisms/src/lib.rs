@@ -36,6 +36,11 @@ pub use developmental_graph::{
     CompiledSegment, DevelopmentalGraph, DevelopmentalNode,
 };
 
+/// Brain-wiring for a just-completed organism — a separate concern from
+/// body growth (Phase 9, P9.6 file decomposition), used internally by
+/// [`systems`].
+mod brain_wiring;
+
 /// Organism ECS systems.
 pub mod systems;
 pub use systems::growth_system;
