@@ -29,6 +29,9 @@ pub mod analytics_bridge;
 pub mod app;
 pub mod batch;
 pub mod behavior_validation;
+/// Hierarchical per-tick biology-system profiler (P9.1b) — see this
+/// module's own doc comment for scope and the opt-in activation variable.
+pub mod biology_profiler;
 pub mod capture;
 pub mod events;
 /// GPU/surface bring-up — see this module's own doc comment for why it is

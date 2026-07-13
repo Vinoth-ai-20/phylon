@@ -114,6 +114,27 @@ This exists to keep the project from becoming a collection of individually-inter
 ideas that collectively erode the properties (determinism, biological fidelity,
 maintainability) the principles above exist to protect.
 
+## Definition of done: the four gates
+
+A feature is not complete until it satisfies all four of these, regardless of how
+small it seemed going in:
+
+1. **Functional verification** — `cargo fmt`, `cargo clippy --workspace --all-targets
+   -- -D warnings`, `cargo build --workspace`, `cargo test --workspace` all clean.
+2. **Performance benchmark** — if the change touches a hot path (anything in the
+   per-tick or per-frame path: ECS systems, GPU pipelines, render gathering), a
+   before/after number exists, per Principle 5. If it doesn't touch a hot path, this
+   gate is satisfied by confirming that explicitly, not by silently skipping it.
+3. **Documentation update** — source comments and any `docs/` file the change makes
+   stale are updated in the same change, not deferred, per Principle 7.
+4. **Manual testing** — for anything touching viewport interaction, the camera,
+   gizmos, or window/rendering behavior, a real pass through the relevant section of
+   `MANUAL_TESTING.md` (there is no automated input-injection tooling in this
+   project's environments — see that document's own header). For anything else, this
+   gate is satisfied by the automated test suite in gate 1.
+
+A change that skips a gate should say so explicitly and why, not silently omit it.
+
 ## Relationship to other documents
 
 - `docs/roadmap/decisions.md` — the historical record of *specific* decisions made and

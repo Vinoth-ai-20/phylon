@@ -299,6 +299,25 @@ pub(crate) struct PhylonApp {
     /// which otherwise happens up to `max_ticks_per_frame` times per
     /// rendered frame.
     pub(crate) sim_scratch: crate::simulation::SimTickScratch,
+
+    /// Whether the hierarchical per-tick biology profiler (P9.1b) is active
+    /// this run — decided once at startup, so every instrumented call site
+    /// in `update_simulation` pays only a `bool` read when off. See
+    /// `crate::biology_profiler`'s module doc comment.
+    pub(crate) biology_profiler_config: crate::biology_profiler::BiologyProfilerConfig,
+
+    /// This tick's shared population-count context for the biology
+    /// profiler's "entities processed" figures, recomputed once per tick
+    /// only when the profiler is enabled — see
+    /// `simulation::update_simulation`'s own doc comment at its
+    /// computation site for why this is one shared count, not a
+    /// category-specific filtered query.
+    pub(crate) biology_profiler_population: u64,
+
+    /// Cross-tick accumulated timings for the biology profiler — see
+    /// `crate::biology_profiler`'s module doc comment for why this is a
+    /// plain field rather than an ECS resource.
+    pub(crate) biology_profiler_state: crate::biology_profiler::BiologyProfilerState,
 }
 
 /// Per-entity `(start_node_index, node_count)` offsets into a batched
@@ -528,6 +547,9 @@ impl PhylonApp {
             replay_log,
             render_scratch: Default::default(),
             sim_scratch: Default::default(),
+            biology_profiler_config: crate::biology_profiler::BiologyProfilerConfig::from_env(),
+            biology_profiler_population: 0,
+            biology_profiler_state: Default::default(),
         }
     }
 

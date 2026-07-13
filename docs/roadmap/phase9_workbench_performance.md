@@ -1,6 +1,32 @@
 # Phase 9 — Workbench UX, Performance & Optimization Roadmap
 
-**Status: Phase 9 complete — P9.1 through P9.9 all implemented and verified.** Everything in this document is either a direct measurement or a code-cited finding — no claim here is a guess or an assumption carried over from prior phases' documentation.
+**Status: Phase 9 complete — P9.1 through P9.9 all implemented and verified.** Everything in this document is either a direct measurement or a code-cited finding — no claim here is a guess or an assumption carried over from prior phases' documentation. **Addendum: P9.1b (Biology System Profiler) added after Phase 9's own close**, as a direct, measurement-driven follow-on to the P9.1 finding that CPU-side biology systems, not GPU throughput, dominate per-tick cost — see below.
+
+## P9.1b — Hierarchical Biology-System Profiler: implemented, verified
+
+A permanent, opt-in diagnostic (`crates/app/src/biology_profiler.rs`, gated behind `PHYLON_BIOLOGY_PROFILE`, zero-cost when unset — same pattern as `motion_diagnostic`/`behavior_validation`), built to answer the specific question P9.1's own frame-level probing couldn't: *which* biology systems dominate the ~150–190ms/tick already measured, not just "biology as one block." Every `run_system_once` call in `update_simulation` is now bucketed into one of 18 named categories (Growth, Development, Morphogenesis, Hormones, Diffusion, Immune, Metabolism, Sensing, Brain Gather, GPU Brain Dispatch, Behavior, Reproduction, Ecology, Disease, Predation, Spatial Update, Cleanup, Events), each tracked for average/max time, percentage of tick, call count, and time-per-entity (using one shared per-tick population count as the entity-count context, a disclosed simplification — see the module's own doc comment for why). A report prints every 300 ticks, ranked by cost, naming the systems covering 80% of the window's total.
+
+Also added: `PHYLON_TARGET_ORGANISM_COUNT`, a small env override on `PhylonConfig::load` for controlled population-scale benchmarking without hand-editing `data/default.ron` between runs — ignored (no effect) when unset.
+
+**Scaling measurements** (real windowed runs, one profiler-window sample per population target — see the disclosed limitation below on sample size):
+
+| System | ~564 organisms | ~1,327 organisms | ~2,492 organisms |
+| --- | --- | --- | --- |
+| Predation (`foraging_system`) | 30.4% (14.9ms) | 21.7% (30.3ms) | 36.4% (51.9ms) |
+| Sensing | 27.1% (12.6ms) | **37.0% (51.7ms)** | 4.2% (6.0ms) |
+| Behavior | 10.4–11.1% (2.4–2.7ms) | 15.3% (10.7ms) | **46.3% (33.0ms)** |
+| Morphogenesis | 7.6–8.0% (1.7–2.0ms) | 6.6% (4.6ms) | 2.7% (1.9ms) |
+| Hormones | 6.6–6.7% (1.5–1.6ms) | 6.9% (4.8ms) | 0.9% (0.6ms) |
+
+**Highest-confidence finding**: **Behavior and Predation are the only two categories that stay in the top 3 across all three measured scales**, and both show clearly super-linear absolute-cost growth — Behavior's total time went 2.4ms → 10.7ms → 33.0ms across population ratios of 1× → 2.35× → 4.4×, i.e. roughly a 13× cost increase for a 4.4× population increase. This is the concrete, actionable target the profiler was built to surface: **Behavior (and to a lesser, noisier extent Predation) is the leading candidate for a real algorithmic scaling problem** (an O(n²)-shaped neighbor interaction, most likely), not merely "biology is generically slow."
+
+**Disclosed limitation, stated plainly rather than smoothed over**: Sensing's measured share swung wildly across the three runs (27% → 37% → 4.2%) — each data point is a single 300-tick window at one population size, not an average across multiple windows or multiple independent runs, so transient conditions (how many organisms happened to be actively pursuing prey in that specific window) can dominate a category's apparent cost as much as population size does. **This single-sample-per-scale methodology is sufficient to identify Behavior/Predation as consistent, real hotspots, but is not sufficient to assign a precise Big-O exponent to any category** — a rigorous scaling study would need several windows averaged per population size before trusting a specific growth-rate number. This document reports the raw data and this caveat together, rather than presenting a cleaner-looking number than the evidence supports.
+
+**No optimization work has been done as part of this milestone** — per explicit instruction, P9.1b's scope is measurement only. The next step is algorithmic investigation of `behavior_system`/`foraging_system` specifically (why they scale the way they measured), not a blind optimization pass.
+
+**Verification:** `fmt`/`clippy --workspace --all-targets -D warnings`/`build --workspace`/`test --workspace`/`cargo doc --no-deps --document-private-items --workspace` all clean. Four real windowed release runs (250/500/1,000/2,000 organism targets) exercised the new instrumentation live; no panics, no regressions in existing behavior (the profiler only reads timing and existing component state, never mutates simulation state).
+
+---
 
 ## P9.9 — Source Code Documentation Modernization: implemented, verified
 

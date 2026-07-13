@@ -419,23 +419,30 @@ impl PhylonConfig {
     /// - [`ConfigError::ParseError`] — file contains invalid RON.
     /// - [`ConfigError::ValidationError`] — parsed config violates constraints.
     pub fn load(path: Option<&Path>) -> Result<Self, ConfigError> {
-        let Some(p) = path else {
-            return Ok(Self::default());
+        let mut cfg = match path {
+            Some(p) if p.exists() => {
+                let text = std::fs::read_to_string(p).map_err(|e| ConfigError::IoError {
+                    path: p.to_string_lossy().into_owned(),
+                    source: e,
+                })?;
+                ron::from_str(&text).map_err(|e| ConfigError::ParseError {
+                    path: p.to_string_lossy().into_owned(),
+                    source: e,
+                })?
+            }
+            _ => Self::default(),
         };
 
-        if !p.exists() {
-            return Ok(Self::default());
+        // `PHYLON_TARGET_ORGANISM_COUNT` — an env override for controlled
+        // population-scale benchmarking (e.g. running the same scenario at
+        // 250/500/1,000/2,000 organisms without hand-editing `default.ron`
+        // between runs). Ignored if unset or unparseable, so it never
+        // affects a normal run.
+        if let Ok(raw) = std::env::var("PHYLON_TARGET_ORGANISM_COUNT") {
+            if let Ok(count) = raw.parse::<u32>() {
+                cfg.simulation.target_organism_count = count;
+            }
         }
-
-        let text = std::fs::read_to_string(p).map_err(|e| ConfigError::IoError {
-            path: p.to_string_lossy().into_owned(),
-            source: e,
-        })?;
-
-        let cfg: Self = ron::from_str(&text).map_err(|e| ConfigError::ParseError {
-            path: p.to_string_lossy().into_owned(),
-            source: e,
-        })?;
 
         cfg.simulation.validate()?;
 
